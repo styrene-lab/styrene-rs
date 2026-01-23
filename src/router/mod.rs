@@ -1,1 +1,16 @@
-// Placeholder module for router APIs.
+use crate::message::WireMessage;
+
+#[derive(Default)]
+pub struct Router {
+    outbound: Vec<WireMessage>,
+}
+
+impl Router {
+    pub fn enqueue_outbound(&mut self, msg: WireMessage) {
+        self.outbound.push(msg);
+    }
+
+    pub fn outbound_len(&self) -> usize {
+        self.outbound.len()
+    }
+}
