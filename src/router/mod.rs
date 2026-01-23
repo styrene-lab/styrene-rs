@@ -1,4 +1,5 @@
 use crate::message::WireMessage;
+use crate::reticulum::Adapter;
 
 #[derive(Default)]
 pub struct Router {
@@ -6,6 +7,10 @@ pub struct Router {
 }
 
 impl Router {
+    pub fn with_adapter(_adapter: Adapter) -> Self {
+        Self::default()
+    }
+
     pub fn enqueue_outbound(&mut self, msg: WireMessage) {
         self.outbound.push(msg);
     }
