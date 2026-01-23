@@ -22,8 +22,19 @@ impl PropagationNode {
     pub fn new(store: Box<dyn Store + Send + Sync>) -> Self {
         Self {
             store,
-            mode: VerificationMode::Strict,
+            mode: VerificationMode::Permissive,
             verifier: None,
+        }
+    }
+
+    pub fn new_strict(
+        store: Box<dyn Store + Send + Sync>,
+        verifier: Box<dyn Verifier + Send + Sync>,
+    ) -> Self {
+        Self {
+            store,
+            mode: VerificationMode::Strict,
+            verifier: Some(verifier),
         }
     }
 
@@ -52,6 +63,9 @@ impl PropagationNode {
         if let VerificationMode::Strict = self.mode {
             if msg.signature.is_none() {
                 return Err(LxmfError::Verify("missing signature".into()));
+            }
+            if self.verifier.is_none() {
+                return Err(LxmfError::Verify("missing verifier".into()));
             }
         }
 
