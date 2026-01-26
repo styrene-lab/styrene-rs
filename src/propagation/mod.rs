@@ -1,6 +1,6 @@
 use crate::error::LxmfError;
 use crate::message::WireMessage;
-use crate::storage::Store;
+use crate::storage::{PropagationStore, Store};
 use serde::Deserialize;
 use serde_bytes::ByteBuf;
 
@@ -106,6 +106,29 @@ pub fn ingest_envelope(
     }
 
     Ok(out)
+}
+
+pub struct PropagationService {
+    store: PropagationStore,
+    target_cost: u32,
+}
+
+impl PropagationService {
+    pub fn new(store: PropagationStore, target_cost: u32) -> Self {
+        Self { store, target_cost }
+    }
+
+    pub fn ingest(&self, bytes: &[u8]) -> Result<usize, LxmfError> {
+        let messages = ingest_envelope(bytes, self.target_cost)?;
+        for msg in &messages {
+            self.store.save(&msg.transient_id, &msg.lxmf_data)?;
+        }
+        Ok(messages.len())
+    }
+
+    pub fn fetch(&self, transient_id: &[u8]) -> Result<Vec<u8>, LxmfError> {
+        self.store.get(transient_id)
+    }
 }
 
 impl PropagationNode {
