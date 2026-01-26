@@ -37,6 +37,9 @@ msg_strings.payload = msgpack.packb((msg_strings.timestamp, msg_strings.content,
 wire_msg = LXMessage(destination, source, content="wire", title="wire", fields=None)
 wire_msg.pack()
 
+packed_msg = LXMessage(destination, source, content="packed", title="packed", fields={"a": "b"})
+packed_msg.pack()
+
 storage_msg = LXMessage(destination, source, content="storage", title="", fields=None)
 storage_msg.pack()
 
@@ -56,6 +59,8 @@ with open(os.path.join(OUT, "payload_strings.bin"), "wb") as f:
     f.write(msg_strings.payload)
 with open(os.path.join(OUT, "wire_signed.bin"), "wb") as f:
     f.write(wire_msg.packed)
+with open(os.path.join(OUT, "message_packed.bin"), "wb") as f:
+    f.write(packed_msg.packed)
 with open(os.path.join(OUT, "storage_unsigned.bin"), "wb") as f:
     f.write(storage_msg.packed_container())
 with open(os.path.join(OUT, "storage_signed.bin"), "wb") as f:
