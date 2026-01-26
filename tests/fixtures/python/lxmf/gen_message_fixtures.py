@@ -18,6 +18,25 @@ os.makedirs(OUT, exist_ok=True)
 config_dir = os.path.join(OUT, ".reticulum")
 os.makedirs(config_dir, exist_ok=True)
 
+config_path = os.path.join(config_dir, "config")
+with open(config_path, "w", encoding="utf-8") as f:
+    f.write(
+        "\n".join(
+            [
+                "[reticulum]",
+                "  enable_transport = False",
+                "  share_instance = No",
+                "  instance_name = fixture",
+                "",
+                "[interfaces]",
+                "  [[Default Interface]]",
+                "    type = AutoInterface",
+                "    enabled = No",
+                "",
+            ]
+        )
+    )
+
 RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
 
 identity = RNS.Identity()
@@ -73,6 +92,21 @@ try:
     time.time = lambda: fixed_timestamp
     prop_msg.pack()
     paper_msg.pack()
+    router = LXMF.LXMRouter(identity=identity, storagepath=config_dir)
+    propagation_node_app_data = router.get_propagation_node_app_data()
+    custom_identity = RNS.Identity()
+    custom_router = LXMF.LXMRouter(
+        identity=custom_identity,
+        storagepath=config_dir,
+        propagation_limit=111,
+        sync_limit=222,
+        propagation_cost=20,
+        propagation_cost_flexibility=4,
+        peering_cost=25,
+        name="TestNode",
+    )
+    custom_router.propagation_node = True
+    custom_propagation_node_app_data = custom_router.get_propagation_node_app_data()
 finally:
     os.urandom = original_urandom
     time.time = original_time
@@ -97,6 +131,10 @@ with open(os.path.join(OUT, "propagation.bin"), "wb") as f:
     f.write(prop_msg.propagation_packed)
 with open(os.path.join(OUT, "paper.bin"), "wb") as f:
     f.write(paper_msg.paper_packed)
+with open(os.path.join(OUT, "propagation_node_app_data.bin"), "wb") as f:
+    f.write(propagation_node_app_data)
+with open(os.path.join(OUT, "propagation_node_app_data_custom.bin"), "wb") as f:
+    f.write(custom_propagation_node_app_data)
 
 # Delivery method/representation matrix
 def content_size_for(message):
