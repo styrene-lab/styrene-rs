@@ -1,6 +1,8 @@
 use crate::error::LxmfError;
 use crate::message::WireMessage;
 use crate::storage::Store;
+use serde::Deserialize;
+use serde_bytes::ByteBuf;
 
 #[derive(Debug, Clone, Copy)]
 pub enum VerificationMode {
@@ -24,6 +26,24 @@ pub struct PropagationNode {
     store: Box<dyn Store + Send + Sync>,
     mode: VerificationMode,
     verifier: Option<Box<dyn Verifier + Send + Sync>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PropagationEnvelope {
+    pub timestamp: f64,
+    pub messages: Vec<Vec<u8>>,
+}
+
+pub fn unpack_envelope(bytes: &[u8]) -> Result<PropagationEnvelope, LxmfError> {
+    #[derive(Deserialize)]
+    struct Envelope(f64, Vec<ByteBuf>);
+
+    let Envelope(timestamp, messages) =
+        rmp_serde::from_slice::<Envelope>(bytes).map_err(|e| LxmfError::Decode(e.to_string()))?;
+    Ok(PropagationEnvelope {
+        timestamp,
+        messages: messages.into_iter().map(|b| b.into_vec()).collect(),
+    })
 }
 
 impl PropagationNode {
