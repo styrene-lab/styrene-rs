@@ -9,5 +9,6 @@ pub mod router;
 pub mod storage;
 pub mod reticulum;
 pub mod stamper;
+pub mod ticket;
 
 pub use message::Message;
