@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::error::LxmfError;
+use crate::message::{MessageState, TransportMethod};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessageContainer {
@@ -23,5 +24,15 @@ impl MessageContainer {
         self.serialize(&mut serializer)
             .map_err(|e| LxmfError::Encode(e.to_string()))?;
         Ok(out)
+    }
+
+    pub fn state_enum(&self) -> Result<MessageState, LxmfError> {
+        MessageState::try_from(self.state)
+            .map_err(|_| LxmfError::Decode("unknown message state".into()))
+    }
+
+    pub fn method_enum(&self) -> Result<TransportMethod, LxmfError> {
+        TransportMethod::try_from(self.method)
+            .map_err(|_| LxmfError::Decode("unknown transport method".into()))
     }
 }
