@@ -1,9 +1,11 @@
 mod payload;
 mod state;
+mod types;
 mod wire;
 
 pub use payload::Payload;
 pub use state::State;
+pub use types::{MessageMethod, MessageState, TransportMethod, UnverifiedReason};
 pub use wire::WireMessage;
 
 #[derive(Debug, Clone)]
