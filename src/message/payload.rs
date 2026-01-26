@@ -1,26 +1,27 @@
 use serde::{Deserialize, Serialize};
+use serde_bytes::ByteBuf;
 
 use crate::error::LxmfError;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Payload {
     pub timestamp: f64,
-    pub content: Option<String>,
-    pub title: Option<String>,
-    pub fields: Option<serde_json::Value>,
+    pub content: Option<ByteBuf>,
+    pub title: Option<ByteBuf>,
+    pub fields: Option<rmpv::Value>,
 }
 
 impl Payload {
     pub fn new(
         timestamp: f64,
-        content: Option<String>,
-        title: Option<String>,
-        fields: Option<serde_json::Value>,
+        content: Option<Vec<u8>>,
+        title: Option<Vec<u8>>,
+        fields: Option<rmpv::Value>,
     ) -> Self {
         Self {
             timestamp,
-            content,
-            title,
+            content: content.map(ByteBuf::from),
+            title: title.map(ByteBuf::from),
             fields,
         }
     }
@@ -38,9 +39,9 @@ impl Payload {
     pub fn from_msgpack(bytes: &[u8]) -> Result<Self, LxmfError> {
         let (timestamp, content, title, fields): (
             f64,
-            Option<String>,
-            Option<String>,
-            Option<serde_json::Value>,
+            Option<ByteBuf>,
+            Option<ByteBuf>,
+            Option<rmpv::Value>,
         ) = rmp_serde::from_slice(bytes)
             .map_err(|e| LxmfError::Decode(e.to_string()))?;
         Ok(Self {
