@@ -16,6 +16,6 @@ Status legend: not-started | partial | done
 | RNS/Channel.py | src/channel.rs | partial | tests/resource_channel_parity.rs | channels |
 | RNS/Buffer.py | src/buffer.rs | partial | tests/buffer_parity.rs | buffer management |
 | RNS/Discovery.py | src/transport/discovery.rs (missing) | not-started |  | discovery/announce |
-| RNS/Resolver.py | src/utils/resolver.rs (missing) | not-started |  | resolver |
+| RNS/Resolver.py | src/utils/resolver.rs | partial | tests/resolver_parity.rs | resolver |
 | RNS/Utilities/* | src/utils/* | partial | tests/hash_parity.rs | helpers/hashes |
 | RNS/CRNS/* | src/bin/* (missing) | not-started |  | CLI tools |
