@@ -1,6 +1,8 @@
 mod file_store;
+mod propagation_store;
 
 pub use file_store::FileStore;
+pub use propagation_store::PropagationStore;
 use crate::message::WireMessage;
 
 pub trait Store {
