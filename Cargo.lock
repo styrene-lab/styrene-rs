@@ -742,6 +742,7 @@ dependencies = [
  "clap",
  "ed25519-dalek",
  "hex",
+ "hkdf",
  "reticulum",
  "rmp-serde",
  "serde",
