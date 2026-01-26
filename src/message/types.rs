@@ -1,13 +1,13 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageState {
-    Generating,
-    Outbound,
-    Sending,
-    Sent,
-    Delivered,
-    Rejected,
-    Cancelled,
-    Failed,
+    Generating = 0x00,
+    Outbound = 0x01,
+    Sending = 0x02,
+    Sent = 0x04,
+    Delivered = 0x08,
+    Rejected = 0xFD,
+    Cancelled = 0xFE,
+    Failed = 0xFF,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,8 +28,50 @@ pub enum TransportMethod {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnverifiedReason {
-    SourceUnknown,
-    SignatureInvalid,
+    SourceUnknown = 0x01,
+    SignatureInvalid = 0x02,
+}
+
+impl MessageState {
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+impl TryFrom<u8> for MessageState {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(MessageState::Generating),
+            0x01 => Ok(MessageState::Outbound),
+            0x02 => Ok(MessageState::Sending),
+            0x04 => Ok(MessageState::Sent),
+            0x08 => Ok(MessageState::Delivered),
+            0xFD => Ok(MessageState::Rejected),
+            0xFE => Ok(MessageState::Cancelled),
+            0xFF => Ok(MessageState::Failed),
+            _ => Err(()),
+        }
+    }
+}
+
+impl UnverifiedReason {
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+impl TryFrom<u8> for UnverifiedReason {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(UnverifiedReason::SourceUnknown),
+            0x02 => Ok(UnverifiedReason::SignatureInvalid),
+            _ => Err(()),
+        }
+    }
 }
 
 impl MessageMethod {
