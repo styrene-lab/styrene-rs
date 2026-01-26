@@ -1,8 +1,10 @@
+mod container;
 mod payload;
 mod state;
 mod types;
 mod wire;
 
+pub use container::MessageContainer;
 pub use payload::Payload;
 pub use state::State;
 pub use types::{MessageMethod, MessageState, TransportMethod, UnverifiedReason};
