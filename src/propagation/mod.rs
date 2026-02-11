@@ -69,6 +69,10 @@ impl PropagationNode {
             }
         }
 
+        if msg.signature.is_none() {
+            return Ok(());
+        }
+
         if let Some(verifier) = &self.verifier {
             let ok = verifier.verify(msg)?;
             if !ok && matches!(self.mode, VerificationMode::Strict) {

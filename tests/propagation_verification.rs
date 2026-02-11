@@ -20,6 +20,18 @@ impl Verifier for AlwaysOk {
     }
 }
 
+struct ErrorOnUnsigned;
+
+impl Verifier for ErrorOnUnsigned {
+    fn verify(&self, message: &WireMessage) -> Result<bool, LxmfError> {
+        if message.signature.is_none() {
+            Err(LxmfError::Verify("missing signature".into()))
+        } else {
+            Ok(true)
+        }
+    }
+}
+
 #[test]
 fn strict_rejects_unsigned_messages() {
     let dir = tempfile::tempdir().unwrap();
@@ -42,7 +54,8 @@ fn strict_rejects_invalid_signature_when_verifier_present() {
     let dir = tempfile::tempdir().unwrap();
     let store = FileStore::new(dir.path());
     let verifier = Box::new(AlwaysInvalid);
-    let mut node = PropagationNode::with_verifier(Box::new(store), VerificationMode::Strict, verifier);
+    let mut node =
+        PropagationNode::with_verifier(Box::new(store), VerificationMode::Strict, verifier);
 
     let mut msg = WireMessage::new(
         [12u8; 16],
@@ -68,6 +81,26 @@ fn permissive_allows_unsigned_messages_to_persist() {
         [20u8; 16],
         [21u8; 16],
         Payload::new(2.0, Some("hi".into()), None, None),
+    );
+
+    node.store(msg.clone()).unwrap();
+    let fetched = node.fetch(&msg.message_id()).unwrap();
+    assert_eq!(fetched.source, msg.source);
+    assert!(fetched.signature.is_none());
+}
+
+#[test]
+fn permissive_skips_verifier_for_unsigned_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = FileStore::new(dir.path());
+    let verifier = Box::new(ErrorOnUnsigned);
+    let mut node =
+        PropagationNode::with_verifier(Box::new(store), VerificationMode::Permissive, verifier);
+
+    let msg = WireMessage::new(
+        [22u8; 16],
+        [23u8; 16],
+        Payload::new(3.0, Some("hi".into()), None, None),
     );
 
     node.store(msg.clone()).unwrap();
