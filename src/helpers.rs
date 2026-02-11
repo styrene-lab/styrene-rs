@@ -2,6 +2,14 @@ use rmpv::Value;
 
 use crate::constants::PN_META_NAME;
 
+pub const MAX_DISPLAY_NAME_CHARS: usize = 64;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayNameError {
+    Empty,
+    ControlChars,
+}
+
 pub fn pn_announce_data_is_valid(data: &[u8]) -> bool {
     let decoded: Vec<Value> = match rmp_serde::from_slice(data) {
         Ok(decoded) => decoded,
@@ -81,7 +89,53 @@ pub fn pn_stamp_cost_from_app_data(data: &[u8]) -> Option<u32> {
         _ => return None,
     };
 
-    value_to_u32(stamp_costs.get(0)?)
+    value_to_u32(stamp_costs.first()?)
+}
+
+pub fn display_name_from_app_data(data: &[u8]) -> Option<String> {
+    if data.is_empty() {
+        return None;
+    }
+
+    if is_msgpack_array_prefix(data[0]) {
+        let decoded: Value = rmp_serde::from_slice(data).ok()?;
+        let entries = match decoded {
+            Value::Array(entries) => entries,
+            _ => return None,
+        };
+
+        let first = entries.first()?;
+        return match first {
+            Value::Nil => None,
+            Value::Binary(bytes) => String::from_utf8(bytes.clone()).ok(),
+            Value::String(text) => text.as_str().map(|s| s.to_string()),
+            _ => None,
+        };
+    }
+
+    std::str::from_utf8(data).ok().map(|s| s.to_string())
+}
+
+pub fn normalize_display_name(value: &str) -> Result<String, DisplayNameError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(DisplayNameError::Empty);
+    }
+
+    if trimmed.chars().any(char::is_control) {
+        return Err(DisplayNameError::ControlChars);
+    }
+
+    let normalized: String = trimmed.chars().take(MAX_DISPLAY_NAME_CHARS).collect();
+    if normalized.is_empty() {
+        Err(DisplayNameError::Empty)
+    } else {
+        Ok(normalized)
+    }
+}
+
+pub fn is_msgpack_array_prefix(byte: u8) -> bool {
+    (0x90..=0x9f).contains(&byte) || byte == 0xdc || byte == 0xdd
 }
 
 fn value_is_int(value: &Value) -> bool {
@@ -89,9 +143,12 @@ fn value_is_int(value: &Value) -> bool {
 }
 
 fn value_to_u32(value: &Value) -> Option<u32> {
-    value.as_u64().and_then(|v| u32::try_from(v).ok()).or_else(|| {
-        value
-            .as_i64()
-            .and_then(|v| if v >= 0 { u32::try_from(v).ok() } else { None })
-    })
+    value
+        .as_u64()
+        .and_then(|v| u32::try_from(v).ok())
+        .or_else(|| {
+            value
+                .as_i64()
+                .and_then(|v| if v >= 0 { u32::try_from(v).ok() } else { None })
+        })
 }

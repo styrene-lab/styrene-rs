@@ -120,7 +120,35 @@ Before writing your own programs using LXMF, you need to have a basic understand
 ## Rust Library (WIP)
 
 This repository now includes a Rust crate that implements LXMF on top of Reticulum-rs.
-See `docs/lxmf-rs-api.md` for the evolving API.
+See `docs/lxmf-rs-api.md` for the public API surface.
+Release hardening and publication gates are tracked in:
+
+- `docs/release-readiness.md`
+- `docs/compatibility-matrix.md`
+- `docs/plans/lxmf-parity-matrix.md`
+- `docs/plans/reticulum-parity-matrix.md`
+
+## Rust Operator CLI
+
+This repository includes an operator-facing Rust CLI:
+
+```bash
+cargo run --bin lxmf -- --help
+```
+
+Operator docs:
+
+- `docs/lxmf-cli.md`
+
+## Rust Coverage
+
+Generate an LCOV coverage report locally with:
+
+```bash
+make coverage
+```
+
+This writes `coverage.lcov` in the repository root. CI also publishes the same file as the `coverage-lcov` artifact.
 
 ## Example Paper Message
 
