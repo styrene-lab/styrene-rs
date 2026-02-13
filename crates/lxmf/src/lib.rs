@@ -1,5 +1,7 @@
 #[cfg(feature = "cli")]
 pub mod cli;
+#[cfg(feature = "embedded-runtime")]
+pub mod runtime;
 
 pub mod constants;
 #[doc(hidden)]
@@ -9,6 +11,7 @@ pub mod handlers;
 pub mod helpers;
 pub mod identity;
 pub mod message;
+pub mod payload_fields;
 pub mod peer;
 pub mod propagation;
 pub mod reticulum;
