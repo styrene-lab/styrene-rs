@@ -1,5 +1,7 @@
 #![cfg(feature = "cli")]
 
+mod support;
+
 use lxmf::cli::app::{
     AnnounceAction, AnnounceCommand, Cli, Command, DaemonAction, DaemonCommand, IfaceAction,
     IfaceCommand, MessageAction, MessageCommand, MessageSendArgs, PeerAction, PeerCommand,
@@ -55,7 +57,7 @@ struct ExpectedCall {
 fn message_and_announce_methods_contract() {
     let _guard = test_guard();
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = support::lock_config_root(temp.path());
     init_profile("rpc-contract-message", false, None).unwrap();
 
     let expected = vec![
@@ -157,15 +159,13 @@ fn message_and_announce_methods_contract() {
             "send_message",
         ]
     );
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 #[test]
 fn identity_resolution_contract_uses_status_fallback() {
     let _guard = test_guard();
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = support::lock_config_root(temp.path());
     init_profile("rpc-contract-identity", false, None).unwrap();
 
     let expected = vec![
@@ -215,15 +215,13 @@ fn identity_resolution_contract_uses_status_fallback() {
 
     let observed = worker.join().unwrap();
     assert_eq!(observed, vec!["daemon_status_ex", "status", "send_message_v2"]);
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 #[test]
 fn peer_iface_and_daemon_contract_methods() {
     let _guard = test_guard();
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = support::lock_config_root(temp.path());
     init_profile("rpc-contract-peer", false, None).unwrap();
 
     let expected = vec![
@@ -295,15 +293,13 @@ fn peer_iface_and_daemon_contract_methods() {
             "daemon_status_ex",
         ]
     );
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 #[test]
 fn propagation_contract_methods() {
     let _guard = test_guard();
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = support::lock_config_root(temp.path());
     init_profile("rpc-contract-propagation", false, None).unwrap();
 
     let expected = vec![
@@ -391,15 +387,13 @@ fn propagation_contract_methods() {
             "peer_sync",
         ]
     );
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 #[test]
 fn stamp_contract_methods() {
     let _guard = test_guard();
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = support::lock_config_root(temp.path());
     init_profile("rpc-contract-stamp", false, None).unwrap();
 
     let expected = vec![
@@ -468,8 +462,6 @@ fn stamp_contract_methods() {
             "stamp_policy_get",
         ]
     );
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 fn test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -511,12 +503,12 @@ fn spawn_scripted_rpc_server(
         let start = Instant::now();
         let mut idx = 0usize;
 
-        while idx < expected.len() && start.elapsed() < Duration::from_secs(10) {
+        while idx < expected.len() && start.elapsed() < Duration::from_secs(3) {
             match listener.accept() {
                 Ok((mut stream, _)) => {
                     stream.set_nonblocking(false).expect("set stream blocking");
-                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+                    let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
                     let request = read_http_request(&mut stream);
                     assert_eq!(request.path, "/rpc");
                     assert_eq!(request.http_method, "POST");
@@ -548,7 +540,7 @@ fn spawn_scripted_rpc_server(
                     idx += 1;
                 }
                 Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(20));
+                    thread::sleep(Duration::from_millis(5));
                 }
                 Err(err) => panic!("accept failed: {err}"),
             }
@@ -595,10 +587,10 @@ fn read_http_request(stream: &mut TcpStream) -> HttpRequest {
             Err(err)
                 if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::Interrupted =>
             {
-                if start.elapsed() > Duration::from_secs(3) {
+                if start.elapsed() > Duration::from_secs(1) {
                     panic!("timed out while reading http request body");
                 }
-                thread::sleep(Duration::from_millis(10));
+                thread::sleep(Duration::from_millis(2));
                 continue;
             }
             Err(err) => panic!("read http request failed: {err}"),
