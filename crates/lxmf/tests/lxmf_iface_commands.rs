@@ -1,5 +1,7 @@
 #![cfg(feature = "cli")]
 
+mod support;
+
 use lxmf::cli::app::{Cli, Command, IfaceAction, IfaceCommand, IfaceMutationArgs, RuntimeContext};
 use lxmf::cli::commands_iface;
 use lxmf::cli::output::Output;
@@ -7,10 +9,11 @@ use lxmf::cli::profile::{init_profile, load_profile_settings, profile_paths};
 use lxmf::cli::rpc_client::RpcClient;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::io::{ErrorKind, Read, Write};
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::{Duration, Instant};
+use support::lock_config_root;
 
 #[derive(Debug, Serialize)]
 struct RpcResponse {
@@ -28,7 +31,7 @@ struct RpcError {
 #[test]
 fn iface_apply_pushes_interfaces_to_rpc() {
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = lock_config_root(temp.path());
     init_profile("iface-test", true, None).unwrap();
 
     let (rpc_addr, worker) = spawn_apply_rpc_server();
@@ -73,13 +76,12 @@ fn iface_apply_pushes_interfaces_to_rpc() {
 
     let paths = worker.join().unwrap();
     assert!(!paths.is_empty());
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 #[test]
 fn iface_apply_restart_preserves_external_mode() {
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = lock_config_root(temp.path());
     init_profile("iface-external", false, None).unwrap();
 
     let settings = {
@@ -107,22 +109,22 @@ fn iface_apply_restart_preserves_external_mode() {
         commands_iface::run(&ctx, &IfaceCommand { action: IfaceAction::Apply { restart: true } })
             .unwrap_err();
     assert!(err.to_string().contains("external mode"));
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 fn spawn_apply_rpc_server() -> (String, thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    listener.set_nonblocking(true).unwrap();
 
     let worker = thread::spawn(move || {
         let mut paths = Vec::new();
         let start = Instant::now();
 
-        while start.elapsed() < Duration::from_secs(5) && paths.len() < 2 {
+        while start.elapsed() < Duration::from_secs(2) && paths.len() < 2 {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_millis(250)))
+                        .expect("set read timeout");
                     let request = read_http_request(&mut stream);
                     assert_eq!(request.path, "/rpc");
                     assert_eq!(request.http_method, "POST");
@@ -137,9 +139,6 @@ fn spawn_apply_rpc_server() -> (String, thread::JoinHandle<Vec<String>>) {
                     let response =
                         RpcResponse { id: paths.len() as u64, result: Some(result), error: None };
                     write_http_response(&mut stream, 200, &encode_frame(&response));
-                }
-                Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(20));
                 }
                 Err(err) => panic!("accept failed: {err}"),
             }

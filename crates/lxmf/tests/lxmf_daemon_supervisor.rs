@@ -1,21 +1,46 @@
 #![cfg(feature = "cli")]
 
+mod support;
+
 use lxmf::cli::daemon::DaemonSupervisor;
 use lxmf::cli::profile::{init_profile, profile_paths, save_profile_settings, ProfileSettings};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use support::lock_config_root;
+
+const STARTUP_GRACE_ENV_MS: &str = "LXMF_DAEMON_STARTUP_GRACE_MS";
+const STARTUP_POLL_ENV_MS: &str = "LXMF_DAEMON_STARTUP_POLL_MS";
 
 fn env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+struct StartupTimingGuard;
+
+impl StartupTimingGuard {
+    fn fast() -> Self {
+        // Keep startup checks fast for deterministic unit test runtime.
+        std::env::set_var(STARTUP_GRACE_ENV_MS, "150");
+        std::env::set_var(STARTUP_POLL_ENV_MS, "10");
+        Self
+    }
+}
+
+impl Drop for StartupTimingGuard {
+    fn drop(&mut self) {
+        std::env::remove_var(STARTUP_GRACE_ENV_MS);
+        std::env::remove_var(STARTUP_POLL_ENV_MS);
+    }
+}
+
 #[test]
 fn daemon_supervisor_start_stop_cycle() {
     let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
+    let _startup = StartupTimingGuard::fast();
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = lock_config_root(temp.path());
 
     init_profile("daemon-test", true, Some("127.0.0.1:4550".into())).unwrap();
     let paths = profile_paths("daemon-test").unwrap();
@@ -49,15 +74,14 @@ fn daemon_supervisor_start_stop_cycle() {
 
     let stopped = supervisor.stop().unwrap();
     assert!(!stopped.running);
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 #[test]
 fn daemon_supervisor_errors_when_reticulumd_missing() {
     let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
+    let _startup = StartupTimingGuard::fast();
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = lock_config_root(temp.path());
 
     init_profile("daemon-missing", true, Some("127.0.0.1:4554".into())).unwrap();
     let settings = ProfileSettings {
@@ -75,15 +99,13 @@ fn daemon_supervisor_errors_when_reticulumd_missing() {
     let supervisor = DaemonSupervisor::new("daemon-missing", settings);
     let err = supervisor.start(None, None, None).unwrap_err().to_string();
     assert!(err.contains("not found"));
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 #[test]
 fn daemon_supervisor_errors_when_process_exits_immediately() {
     let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = lock_config_root(temp.path());
 
     init_profile("daemon-exit-fast", true, Some("127.0.0.1:4555".into())).unwrap();
 
@@ -108,15 +130,14 @@ fn daemon_supervisor_errors_when_process_exits_immediately() {
     let supervisor = DaemonSupervisor::new("daemon-exit-fast", settings);
     let err = supervisor.start(None, None, None).unwrap_err().to_string();
     assert!(err.contains("exited during startup"));
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 #[test]
 fn daemon_supervisor_drops_empty_identity_stub_before_start() {
     let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
+    let _startup = StartupTimingGuard::fast();
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = lock_config_root(temp.path());
 
     init_profile("daemon-empty-id", true, Some("127.0.0.1:4556".into())).unwrap();
     let paths = profile_paths("daemon-empty-id").unwrap();
@@ -145,15 +166,14 @@ fn daemon_supervisor_drops_empty_identity_stub_before_start() {
     supervisor.start(None, None, None).unwrap();
     assert!(!paths.identity_file.exists());
     supervisor.stop().unwrap();
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 #[test]
 fn daemon_supervisor_infers_transport_when_interfaces_are_enabled() {
     let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
+    let _startup = StartupTimingGuard::fast();
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = lock_config_root(temp.path());
 
     init_profile("daemon-infer-transport", true, Some("127.0.0.1:4557".into())).unwrap();
     let paths = profile_paths("daemon-infer-transport").unwrap();
@@ -194,7 +214,7 @@ fn daemon_supervisor_infers_transport_when_interfaces_are_enabled() {
     assert!(started.transport_inferred);
     assert_eq!(started.transport.as_deref(), Some("127.0.0.1:0"));
 
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(1);
     let mut args = String::new();
     while Instant::now() < deadline {
         if let Ok(content) = std::fs::read_to_string(&args_log) {
@@ -203,20 +223,19 @@ fn daemon_supervisor_infers_transport_when_interfaces_are_enabled() {
                 break;
             }
         }
-        std::thread::sleep(Duration::from_millis(40));
+        std::thread::sleep(Duration::from_millis(10));
     }
 
     assert!(args.contains("--transport 127.0.0.1:0"), "args: {args}");
     supervisor.stop().unwrap();
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
 
 #[test]
 fn daemon_status_clears_stale_pid_file() {
     let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
+    let _startup = StartupTimingGuard::fast();
     let temp = tempfile::tempdir().unwrap();
-    std::env::set_var("LXMF_CONFIG_ROOT", temp.path());
+    let _config_root_guard = lock_config_root(temp.path());
 
     init_profile("daemon-stale-pid", true, Some("127.0.0.1:4558".into())).unwrap();
     let paths = profile_paths("daemon-stale-pid").unwrap();
@@ -239,6 +258,4 @@ fn daemon_status_clears_stale_pid_file() {
     assert!(!status.running);
     assert_eq!(status.pid, None);
     assert!(!paths.daemon_pid.exists());
-
-    std::env::remove_var("LXMF_CONFIG_ROOT");
 }
