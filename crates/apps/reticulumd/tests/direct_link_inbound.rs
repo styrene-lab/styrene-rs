@@ -2,7 +2,7 @@ use lxmf::inbound_decode::InboundPayloadMode;
 use rand_core::OsRng;
 use reticulum_daemon::inbound_delivery::decode_inbound_payload;
 use reticulum_daemon::lxmf_bridge::build_wire_message;
-use rns_transport::identity::PrivateIdentity;
+use rns_core::identity::PrivateIdentity;
 
 #[test]
 fn inbound_link_payload_is_decoded() {

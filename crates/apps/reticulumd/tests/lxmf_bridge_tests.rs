@@ -1,7 +1,7 @@
 use reticulum_daemon::lxmf_bridge::{
     build_wire_message, decode_wire_message, json_to_rmpv, rmpv_to_json,
 };
-use rns_transport::identity::PrivateIdentity;
+use rns_core::identity::PrivateIdentity;
 
 #[test]
 fn wire_roundtrip_preserves_content_title_fields() {
