@@ -58,6 +58,12 @@ rand_core = "0.6.4"
 x25519-dalek = "2.0.1"
 thiserror = "1"
 
+[profile.dev.package.rns-core]
+opt-level = 2
+
+[profile.test.package.rns-core]
+opt-level = 2
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unused_imports = "warn"
