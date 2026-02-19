@@ -804,6 +804,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "test-support",
  "thiserror 1.0.69",
  "tokio",
  "toml",
