@@ -1,6 +1,7 @@
 use rand_core::CryptoRngCore;
-use rns_transport::error::RnsError;
-use rns_transport::identity::PrivateIdentity;
+use rns_core::identity::PrivateIdentity;
+use rns_core::ratchets;
+use rns_core::RnsError;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 pub fn encrypt_for_public_key<R: CryptoRngCore + Copy>(
@@ -9,7 +10,7 @@ pub fn encrypt_for_public_key<R: CryptoRngCore + Copy>(
     plaintext: &[u8],
     rng: R,
 ) -> Result<Vec<u8>, RnsError> {
-    rns_transport::ratchets::encrypt_for_public_key(public_key, salt, plaintext, rng)
+    ratchets::encrypt_for_public_key(public_key, salt, plaintext, rng)
 }
 
 pub fn decrypt_with_private_key(
@@ -17,7 +18,7 @@ pub fn decrypt_with_private_key(
     salt: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, RnsError> {
-    rns_transport::ratchets::decrypt_with_private_key(private_key, salt, ciphertext)
+    ratchets::decrypt_with_private_key(private_key, salt, ciphertext)
 }
 
 pub fn decrypt_with_identity(
@@ -25,5 +26,5 @@ pub fn decrypt_with_identity(
     salt: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, RnsError> {
-    rns_transport::ratchets::decrypt_with_identity(identity, salt, ciphertext)
+    ratchets::decrypt_with_identity(identity, salt, ciphertext)
 }

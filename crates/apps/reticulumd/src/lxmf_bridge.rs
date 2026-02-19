@@ -1,7 +1,7 @@
 use lxmf::identity;
 use lxmf::message::Message;
 use lxmf::LxmfError;
-use rns_transport::identity::PrivateIdentity;
+use rns_core::identity::PrivateIdentity;
 use serde_json::Value as JsonValue;
 
 pub use lxmf::wire_fields::{json_to_rmpv, rmpv_to_json};

@@ -12,6 +12,7 @@ name = "reticulum_daemon"
 rns_transport = { package = "rns-transport", path = "../../libs/rns-transport" }
 rns_rpc = { package = "rns-rpc", path = "../../libs/rns-rpc" }
 lxmf = { package = "lxmf-core", path = "../../libs/lxmf-core", default-features = false }
+rns_core = { package = "rns-core", path = "../../libs/rns-core" }
 base64 = "0.22"
 clap = { version = "4.5.29", features = ["derive"] }
 rand_core = { version = "0.6.4", features = ["getrandom"] }

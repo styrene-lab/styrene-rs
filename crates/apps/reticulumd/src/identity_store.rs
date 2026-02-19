@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rand_core::OsRng;
 
-use rns_transport::identity::PrivateIdentity;
+use rns_core::identity::PrivateIdentity;
 
 pub fn load_or_create_identity(path: &Path) -> io::Result<PrivateIdentity> {
     match fs::read(path) {

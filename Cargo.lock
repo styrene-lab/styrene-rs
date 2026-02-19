@@ -821,6 +821,7 @@ dependencies = [
  "rand_core",
  "rmp-serde",
  "rmpv",
+ "rns-core",
  "rns-rpc",
  "rns-transport",
  "serde",
