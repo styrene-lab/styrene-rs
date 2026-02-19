@@ -1,0 +1,104 @@
+use anyhow::{bail, Context, Result};
+use clap::{Parser, Subcommand};
+use std::process::Command;
+
+#[derive(Parser)]
+#[command(name = "xtask")]
+struct Xtask {
+    #[command(subcommand)]
+    command: XtaskCommand,
+}
+
+#[derive(Subcommand)]
+enum XtaskCommand {
+    Ci,
+    ReleaseCheck,
+    ApiDiff,
+    Licenses,
+    MigrationChecks,
+    ArchitectureChecks,
+}
+
+fn main() -> Result<()> {
+    let xtask = Xtask::parse();
+    match xtask.command {
+        XtaskCommand::Ci => run_ci(),
+        XtaskCommand::ReleaseCheck => run_release_check(),
+        XtaskCommand::ApiDiff => run_api_diff(),
+        XtaskCommand::Licenses => run_licenses(),
+        XtaskCommand::MigrationChecks => run_migration_checks(),
+        XtaskCommand::ArchitectureChecks => run_architecture_checks(),
+    }
+}
+
+fn run_ci() -> Result<()> {
+    run("cargo", &["fmt", "--all", "--", "--check"])?;
+    run(
+        "cargo",
+        &[
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--all-features",
+            "--no-deps",
+            "--",
+            "-D",
+            "warnings",
+        ],
+    )?;
+    run("cargo", &["test", "--workspace"])?;
+    run("cargo", &["doc", "--workspace", "--no-deps"])?;
+    run_architecture_checks()?;
+    Ok(())
+}
+
+fn run_release_check() -> Result<()> {
+    run_ci()?;
+    run("cargo", &["deny", "check"])?;
+    run("cargo", &["audit"])?;
+    Ok(())
+}
+
+fn run_api_diff() -> Result<()> {
+    for manifest in [
+        "crates/libs/lxmf-core/Cargo.toml",
+        "crates/libs/lxmf-runtime/Cargo.toml",
+        "crates/libs/rns-core/Cargo.toml",
+        "crates/libs/rns-transport/Cargo.toml",
+        "crates/libs/rns-rpc/Cargo.toml",
+    ] {
+        let command = format!(
+            "RUSTUP_TOOLCHAIN=nightly RUSTC=\"$(rustup which --toolchain nightly rustc)\" RUSTDOC=\"$(rustup which --toolchain nightly rustdoc)\" cargo public-api --manifest-path {manifest}"
+        );
+        run("bash", &["-lc", &command])?;
+    }
+    Ok(())
+}
+
+fn run_licenses() -> Result<()> {
+    run("cargo", &["deny", "check", "licenses"])
+}
+
+fn run_migration_checks() -> Result<()> {
+    run(
+        "bash",
+        &[
+            "-lc",
+            "! rg -n 'crates/(lxmf|reticulum|reticulum-daemon)/' README.md CONTRIBUTING.md .github/workflows || exit 1",
+        ],
+    )?;
+    Ok(())
+}
+
+fn run_architecture_checks() -> Result<()> {
+    run("bash", &["-lc", "./tools/scripts/check-boundaries.sh"])
+}
+
+fn run(cmd: &str, args: &[&str]) -> Result<()> {
+    let status =
+        Command::new(cmd).args(args).status().with_context(|| format!("failed to spawn {cmd}"))?;
+    if !status.success() {
+        bail!("command failed: {cmd} {}", args.join(" "));
+    }
+    Ok(())
+}

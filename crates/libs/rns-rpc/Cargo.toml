@@ -1,0 +1,13 @@
+[package]
+name = "rns-rpc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+reticulum_legacy = { package = "reticulum-rs", path = "../../internal/reticulum-legacy" }
+
+[lints]
+workspace = true

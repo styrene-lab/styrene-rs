@@ -10,12 +10,12 @@ Status legend: `not-started` | `partial` | `done`.
 
 | Python Module | Rust Module | Status |
 | --- | --- | --- |
-| `LXMF/LXMF.py` | `crates/lxmf/src/constants.rs`, `crates/lxmf/src/helpers.rs` | done |
-| `LXMF/LXMessage.py` | `crates/lxmf/src/message/*` | done |
-| `LXMF/LXMPeer.py` | `crates/lxmf/src/peer/mod.rs` | done |
-| `LXMF/LXMRouter.py` | `crates/lxmf/src/router/mod.rs` | done |
-| `LXMF/Handlers.py` | `crates/lxmf/src/handlers.rs` | done |
-| `LXMF/LXStamper.py` | `crates/lxmf/src/stamper.rs`, `crates/lxmf/src/ticket.rs` | done |
+| `LXMF/LXMF.py` | `crates/internal/lxmf-legacy/src/constants.rs`, `crates/internal/lxmf-legacy/src/helpers.rs` | done |
+| `LXMF/LXMessage.py` | `crates/internal/lxmf-legacy/src/message/*` | done |
+| `LXMF/LXMPeer.py` | `crates/internal/lxmf-legacy/src/peer/mod.rs` | done |
+| `LXMF/LXMRouter.py` | `crates/internal/lxmf-legacy/src/router/mod.rs` | done |
+| `LXMF/Handlers.py` | `crates/internal/lxmf-legacy/src/handlers.rs` | done |
+| `LXMF/LXStamper.py` | `crates/internal/lxmf-legacy/src/stamper.rs`, `crates/internal/lxmf-legacy/src/ticket.rs` | done |
 
 ## Required Method-Level Checklist
 
