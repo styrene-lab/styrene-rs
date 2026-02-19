@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-reticulum_legacy = { package = "reticulum-rs", path = "../../internal/reticulum-legacy" }
+serde = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true

@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-lxmf_legacy = { package = "lxmf", path = "../../internal/lxmf-legacy", default-features = false }
 
 [lints]
 workspace = true
