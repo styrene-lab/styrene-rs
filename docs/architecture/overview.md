@@ -19,5 +19,5 @@
 - `rns-core` must not directly depend on `tokio` or `clap`.
 - CLI/daemon concerns live in `crates/apps/*`.
 
-## Transitional Note
-Legacy implementation crates currently remain under `crates/internal/*` while the module split is completed.
+## Legacy Cutover Note
+Legacy implementation crates are no longer part of the active workspace graph. Migration artifacts remain in `crates/internal/*` only where retention is still required.
