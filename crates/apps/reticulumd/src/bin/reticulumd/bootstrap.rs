@@ -3,18 +3,18 @@ use super::bridge::{PeerCrypto, TransportBridge};
 use super::inbound_worker::spawn_inbound_worker;
 use super::receipt_worker::spawn_receipt_worker;
 use super::Args;
-use reticulum::destination::{DestinationName, SingleInputDestination};
-use reticulum::iface::tcp_client::TcpClient;
-use reticulum::iface::tcp_server::TcpServer;
-use reticulum::rpc::{AnnounceBridge, InterfaceRecord, OutboundBridge, RpcDaemon};
-use reticulum::storage::messages::MessagesStore;
-use reticulum::transport::{Transport, TransportConfig};
 use reticulum_daemon::announce_names::{
     encode_delivery_display_name_app_data, normalize_display_name,
 };
 use reticulum_daemon::config::DaemonConfig;
 use reticulum_daemon::identity_store::load_or_create_identity;
 use reticulum_daemon::receipt_bridge::ReceiptBridge;
+use rns_transport::destination::{DestinationName, SingleInputDestination};
+use rns_transport::iface::tcp_client::TcpClient;
+use rns_transport::iface::tcp_server::TcpServer;
+use rns_transport::rpc::{AnnounceBridge, InterfaceRecord, OutboundBridge, RpcDaemon};
+use rns_transport::storage::messages::MessagesStore;
+use rns_transport::transport::{Transport, TransportConfig};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::rc::Rc;

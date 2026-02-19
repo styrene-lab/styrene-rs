@@ -1,5 +1,5 @@
 use clap::Parser;
-use reticulum::e2e_harness::{
+use rns_transport::e2e_harness::{
     build_daemon_args, build_http_post, build_rpc_frame, build_send_params,
     build_tcp_client_config, is_ready_line, parse_http_response_body, parse_rpc_frame,
     timestamp_millis,
@@ -273,7 +273,7 @@ fn rpc_call(
     id: u64,
     method: &str,
     params: Option<serde_json::Value>,
-) -> io::Result<reticulum::rpc::RpcResponse> {
+) -> io::Result<rns_transport::rpc::RpcResponse> {
     let frame = build_rpc_frame(id, method, params)?;
     let request = build_http_post("/rpc", rpc, &frame);
     let mut stream = TcpStream::connect(rpc)?;
@@ -326,7 +326,7 @@ fn poll_for_any_peer(
 }
 
 fn first_peer(
-    response: &reticulum::rpc::RpcResponse,
+    response: &rns_transport::rpc::RpcResponse,
     exclude_peer: Option<&str>,
 ) -> Option<String> {
     let result = response.result.as_ref()?;
@@ -353,7 +353,10 @@ fn parse_delivery_destination_hash(line: &str) -> Option<String> {
     }
 }
 
-fn inbound_content_present(response: &reticulum::rpc::RpcResponse, expected_content: &str) -> bool {
+fn inbound_content_present(
+    response: &rns_transport::rpc::RpcResponse,
+    expected_content: &str,
+) -> bool {
     let Some(result) = response.result.as_ref() else {
         return false;
     };

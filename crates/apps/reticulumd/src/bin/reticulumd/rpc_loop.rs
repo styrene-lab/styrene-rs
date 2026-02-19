@@ -1,4 +1,4 @@
-use reticulum::rpc::{http, RpcDaemon};
+use rns_transport::rpc::{http, RpcDaemon};
 use std::net::SocketAddr;
 use std::rc::Rc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

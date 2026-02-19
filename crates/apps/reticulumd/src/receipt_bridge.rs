@@ -1,9 +1,9 @@
-use reticulum::receipt::{
+use rns_transport::receipt::{
     record_receipt_status, resolve_receipt_message_id,
     track_receipt_mapping as shared_track_receipt_mapping,
 };
-use reticulum::rpc::RpcDaemon;
-use reticulum::transport::{DeliveryReceipt, ReceiptHandler};
+use rns_transport::rpc::RpcDaemon;
+use rns_transport::transport::{DeliveryReceipt, ReceiptHandler};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
