@@ -1,6 +1,6 @@
 use super::bridge::PeerCrypto;
 use reticulum_daemon::announce_names::parse_peer_name_from_app_data;
-use rns_transport::rpc::RpcDaemon;
+use rns_rpc::RpcDaemon;
 use rns_transport::time::now_epoch_secs_i64;
 use rns_transport::transport::Transport;
 use std::collections::HashMap;

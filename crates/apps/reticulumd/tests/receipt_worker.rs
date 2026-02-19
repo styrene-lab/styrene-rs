@@ -1,5 +1,5 @@
 use reticulum_daemon::receipt_bridge::{handle_receipt_event, ReceiptEvent};
-use rns_transport::rpc::{RpcDaemon, RpcRequest};
+use rns_rpc::{RpcDaemon, RpcRequest};
 use serde_json::json;
 
 #[test]

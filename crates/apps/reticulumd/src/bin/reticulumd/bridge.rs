@@ -4,6 +4,7 @@ use super::bridge_helpers::{
 };
 use reticulum_daemon::lxmf_bridge::build_wire_message;
 use reticulum_daemon::receipt_bridge::{track_receipt_mapping, ReceiptEvent};
+use rns_rpc::{AnnounceBridge, OutboundBridge};
 use rns_transport::delivery::{
     send_outcome_is_sent, send_outcome_status, send_via_link, LinkSendResult,
 };
@@ -15,7 +16,6 @@ use rns_transport::packet::{
     ContextFlag, DestinationType, Header, HeaderType, IfacFlag, Packet, PacketContext,
     PacketDataBuffer, PacketType, PropagationType,
 };
-use rns_transport::rpc::{AnnounceBridge, OutboundBridge};
 use rns_transport::transport::Transport;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -252,7 +252,7 @@ impl OutboundBridge for TransportBridge {
     fn deliver(
         &self,
         record: &rns_transport::storage::messages::MessageRecord,
-        _options: &rns_transport::rpc::OutboundDeliveryOptions,
+        _options: &rns_rpc::OutboundDeliveryOptions,
     ) -> Result<(), std::io::Error> {
         let destination = parse_destination_hash_required(&record.destination)?;
         let peer_info =
