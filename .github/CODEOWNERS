@@ -18,7 +18,6 @@
 /crates/apps/reticulumd/ @FreeTAKTeam
 /crates/apps/rns-tools/ @FreeTAKTeam
 
-/crates/internal/ @FreeTAKTeam
 /.github/workflows/ @FreeTAKTeam
 /xtask/ @FreeTAKTeam
 /tools/scripts/ @FreeTAKTeam

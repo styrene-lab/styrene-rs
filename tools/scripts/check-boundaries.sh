@@ -14,6 +14,10 @@ check_forbidden_dep() {
   fi
 }
 
+if rg -n "crates/internal/lxmf-legacy|crates/internal/reticulum-legacy" Cargo.toml >/dev/null; then
+  fail "Workspace membership must not include crates/internal legacy crates"
+fi
+
 # Core crates keep a minimal direct dependency surface.
 check_forbidden_dep "crates/libs/lxmf-core/Cargo.toml" "tokio"
 check_forbidden_dep "crates/libs/lxmf-core/Cargo.toml" "clap"

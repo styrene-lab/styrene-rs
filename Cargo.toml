@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/internal/lxmf-legacy",
-  "crates/internal/reticulum-legacy",
   "crates/libs/lxmf-core",
   "crates/libs/lxmf-router",
   "crates/libs/lxmf-runtime",
