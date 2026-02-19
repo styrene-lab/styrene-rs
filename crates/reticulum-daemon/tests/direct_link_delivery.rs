@@ -1,11 +1,11 @@
 use rand_core::OsRng;
+use reticulum::delivery::{send_via_link, LinkSendResult};
 use reticulum::destination::link::Link;
 use reticulum::destination::{DestinationDesc, DestinationName};
 use reticulum::identity::PrivateIdentity;
 use reticulum::iface::{Interface, InterfaceContext};
 use reticulum::packet::{DestinationType, PacketType};
 use reticulum::transport::{Transport, TransportConfig};
-use reticulum_daemon::direct_delivery::send_via_link;
 use tokio::time::Duration;
 
 struct SinkInterface;
@@ -47,9 +47,12 @@ async fn direct_send_uses_link_payloads() {
     link.lock().await.handle_packet(&proof);
     tokio::time::sleep(Duration::from_millis(20)).await;
 
-    let packet = send_via_link(&transport, destination, b"hello link", Duration::from_secs(1))
+    let result = send_via_link(&transport, destination, b"hello link", Duration::from_secs(1))
         .await
         .expect("send via link");
+    let LinkSendResult::Packet(packet) = result else {
+        panic!("expected packet delivery for small payload")
+    };
 
     assert_eq!(packet.header.destination_type, DestinationType::Link);
     assert_eq!(packet.header.packet_type, PacketType::Data);
