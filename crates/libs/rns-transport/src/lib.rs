@@ -1,5 +1,7 @@
 //! Transport boundary crate for runtime crates and daemon entrypoints.
 
+pub mod identity_bridge;
+
 pub mod core {
     pub use rns_core::*;
 }

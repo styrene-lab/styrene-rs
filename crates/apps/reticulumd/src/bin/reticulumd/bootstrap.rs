@@ -11,7 +11,6 @@ use reticulum_daemon::identity_store::load_or_create_identity;
 use reticulum_daemon::receipt_bridge::ReceiptBridge;
 use rns_rpc::{AnnounceBridge, InterfaceRecord, OutboundBridge, RpcDaemon};
 use rns_transport::destination::{DestinationName, SingleInputDestination};
-use rns_transport::identity::PrivateIdentity as TransportPrivateIdentity;
 use rns_transport::iface::tcp_client::TcpClient;
 use rns_transport::iface::tcp_server::TcpServer;
 use rns_transport::storage::messages::MessagesStore;
@@ -74,8 +73,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
 
     if let Some(addr) = args.transport.clone() {
         let transport_identity =
-            TransportPrivateIdentity::from_private_key_bytes(&identity.to_private_key_bytes())
-                .expect("valid local identity bytes");
+            rns_transport::identity_bridge::to_transport_private_identity(&identity);
         let config = TransportConfig::new("daemon", &transport_identity, true);
         let mut transport_instance = Transport::new(config);
         transport_instance
