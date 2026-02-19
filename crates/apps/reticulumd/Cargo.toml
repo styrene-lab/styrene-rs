@@ -1,8 +1,10 @@
 [package]
 name = "reticulumd"
 version = "0.1.0"
-edition = "2021"
-license = "MIT"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 publish = false
 
 [lib]
