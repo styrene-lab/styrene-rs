@@ -1,5 +1,24 @@
 * @FreeTAKTeam
 
 /docs/ @FreeTAKTeam
-/crates/lxmf/src/ @FreeTAKTeam
-/crates/lxmf/tests/ @FreeTAKTeam
+/docs/adr/ @FreeTAKTeam
+/docs/contracts/ @FreeTAKTeam
+/docs/migrations/ @FreeTAKTeam
+/docs/runbooks/ @FreeTAKTeam
+
+/crates/libs/lxmf-core/ @FreeTAKTeam
+/crates/libs/lxmf-router/ @FreeTAKTeam
+/crates/libs/lxmf-runtime/ @FreeTAKTeam
+/crates/libs/rns-core/ @FreeTAKTeam
+/crates/libs/rns-transport/ @FreeTAKTeam
+/crates/libs/rns-rpc/ @FreeTAKTeam
+/crates/libs/test-support/ @FreeTAKTeam
+
+/crates/apps/lxmf-cli/ @FreeTAKTeam
+/crates/apps/reticulumd/ @FreeTAKTeam
+/crates/apps/rns-tools/ @FreeTAKTeam
+
+/crates/internal/ @FreeTAKTeam
+/.github/workflows/ @FreeTAKTeam
+/xtask/ @FreeTAKTeam
+/tools/scripts/ @FreeTAKTeam

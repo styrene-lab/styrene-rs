@@ -812,6 +812,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "lxmf-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "lxmf",
+]
+
+[[package]]
+name = "lxmf-core"
+version = "0.1.0"
+dependencies = [
+ "lxmf",
+]
+
+[[package]]
+name = "lxmf-router"
+version = "0.1.0"
+dependencies = [
+ "lxmf",
+]
+
+[[package]]
+name = "lxmf-runtime"
+version = "0.1.0"
+dependencies = [
+ "lxmf",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1008,27 +1037,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
 
 [[package]]
-name = "reticulum-daemon"
-version = "0.1.0"
-dependencies = [
- "base64",
- "clap",
- "hex",
- "lxmf",
- "rand_core",
- "reticulum-rs",
- "rmp-serde",
- "rmpv",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "toml",
- "x25519-dalek",
-]
-
-[[package]]
 name = "reticulum-rs"
 version = "0.1.3"
 dependencies = [
@@ -1055,6 +1063,27 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "reticulumd"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "clap",
+ "hex",
+ "lxmf",
+ "rand_core",
+ "reticulum-rs",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "toml",
  "x25519-dalek",
 ]
 
@@ -1100,6 +1129,37 @@ dependencies = [
  "rmp",
  "serde",
  "serde_bytes",
+]
+
+[[package]]
+name = "rns-core"
+version = "0.1.0"
+dependencies = [
+ "reticulum-rs",
+]
+
+[[package]]
+name = "rns-rpc"
+version = "0.1.0"
+dependencies = [
+ "reticulum-rs",
+]
+
+[[package]]
+name = "rns-tools"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "reticulum-rs",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "rns-transport"
+version = "0.1.0"
+dependencies = [
+ "reticulum-rs",
 ]
 
 [[package]]
@@ -1376,6 +1436,10 @@ checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
 ]
+
+[[package]]
+name = "test-support"
+version = "0.1.0"
 
 [[package]]
 name = "thiserror"
@@ -1826,6 +1890,14 @@ dependencies = [
  "rand_core",
  "serde",
  "zeroize",
+]
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
 ]
 
 [[package]]

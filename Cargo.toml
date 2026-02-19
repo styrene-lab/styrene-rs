@@ -1,7 +1,54 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/lxmf",
-  "crates/reticulum",
-  "crates/reticulum-daemon",
+  "crates/internal/lxmf-legacy",
+  "crates/internal/reticulum-legacy",
+  "crates/libs/lxmf-core",
+  "crates/libs/lxmf-router",
+  "crates/libs/lxmf-runtime",
+  "crates/libs/rns-core",
+  "crates/libs/rns-transport",
+  "crates/libs/rns-rpc",
+  "crates/libs/test-support",
+  "crates/apps/lxmf-cli",
+  "crates/apps/reticulumd",
+  "crates/apps/rns-tools",
+  "xtask",
 ]
+default-members = [
+  "crates/libs/lxmf-core",
+  "crates/libs/lxmf-router",
+  "crates/libs/lxmf-runtime",
+  "crates/libs/rns-core",
+  "crates/libs/rns-transport",
+  "crates/libs/rns-rpc",
+  "crates/libs/test-support",
+  "crates/apps/lxmf-cli",
+  "crates/apps/reticulumd",
+  "crates/apps/rns-tools",
+  "xtask",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/FreeTAKTeam/LXMF-rs"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4.5.29", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.44.2", features = ["full"] }
+thiserror = "1"
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_imports = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "warn"

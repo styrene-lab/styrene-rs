@@ -1,0 +1,17 @@
+[package]
+name = "lxmf-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+lxmf_legacy = { package = "lxmf", path = "../../internal/lxmf-legacy", default-features = false }
+
+[features]
+default = []
+json-interop = ["lxmf_legacy/json-interop"]
+
+[lints]
+workspace = true
