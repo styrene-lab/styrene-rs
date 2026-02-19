@@ -125,6 +125,17 @@ while IFS=$'\t' read -r from to; do
   esac
 done <<<"$(metadata_deps)"
 
+if [ -d "crates/internal" ]; then
+  if find crates/internal -type d -path "*/tests/fixtures/python" | rg -q .; then
+    fail "Legacy Python fixtures under crates/*/tests/fixtures/python are not allowed in this repo"
+  fi
+fi
+if [ -d "crates/apps" ]; then
+  if find crates/apps -type d -path "*/tests/fixtures/python" | rg -q .; then
+    fail "Legacy Python fixtures under crates/apps/*/tests/fixtures/python are not allowed in this repo"
+  fi
+fi
+
 if (( ENFORCE_LEGACY_APP_IMPORTS == 1 )); then
   # 3a) Ensure app crates migrate away from legacy crate import paths.
   check_legacy_root_imports "crates/apps/lxmf-cli/src"
