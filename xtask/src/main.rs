@@ -17,6 +17,7 @@ enum XtaskCommand {
     Licenses,
     MigrationChecks,
     ArchitectureChecks,
+    ForbiddenDeps,
 }
 
 fn main() -> Result<()> {
@@ -28,6 +29,7 @@ fn main() -> Result<()> {
         XtaskCommand::Licenses => run_licenses(),
         XtaskCommand::MigrationChecks => run_migration_checks(),
         XtaskCommand::ArchitectureChecks => run_architecture_checks(),
+        XtaskCommand::ForbiddenDeps => run_forbidden_deps(),
     }
 }
 
@@ -91,6 +93,10 @@ fn run_migration_checks() -> Result<()> {
 }
 
 fn run_architecture_checks() -> Result<()> {
+    run_forbidden_deps()
+}
+
+fn run_forbidden_deps() -> Result<()> {
     run("bash", &["-lc", "./tools/scripts/check-boundaries.sh"])
 }
 

@@ -56,10 +56,8 @@ impl WireMessage {
         let Some(sig_bytes) = self.signature else {
             return Ok(false);
         };
-        let signature =
-            Signature::from_slice(&sig_bytes).map_err(|e: ed25519_dalek::SignatureError| {
-                LxmfError::Decode(e.to_string())
-            })?;
+        let signature = Signature::from_slice(&sig_bytes)
+            .map_err(|e: ed25519_dalek::SignatureError| LxmfError::Decode(e.to_string()))?;
 
         let payload = self.payload.to_msgpack_without_stamp()?;
         let mut data = Vec::with_capacity(16 + 16 + payload.len() + 32);

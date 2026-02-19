@@ -11,11 +11,7 @@ fn parse_peer_name_prefers_pn_metadata() {
         Value::Boolean(true),
         Value::from(16_u32),
         Value::from(40_u32),
-        Value::Array(vec![
-            Value::from(16_u32),
-            Value::from(16_u32),
-            Value::from(18_u32),
-        ]),
+        Value::Array(vec![Value::from(16_u32), Value::from(16_u32), Value::from(18_u32)]),
         Value::Map(vec![(Value::from(1_u8), Value::Binary(b"Alice PN".to_vec()))]),
     ]))
     .expect("pn app data");

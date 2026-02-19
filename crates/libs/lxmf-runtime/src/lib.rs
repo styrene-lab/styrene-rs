@@ -56,10 +56,7 @@ impl RuntimeHandle {
     }
 
     pub fn send_command(&self, request: SendCommandRequest) -> SendMessageResponse {
-        SendMessageResponse {
-            ok: request.command == "noop",
-            reason: None,
-        }
+        SendMessageResponse { ok: request.command == "noop", reason: None }
     }
 
     pub fn send_message(&self, _request: SendMessageRequest) -> SendMessageResponse {
@@ -76,10 +73,7 @@ impl RuntimeHandle {
 
     pub fn rpc_probe_report(&self) -> RpcProbeReport {
         if self.active {
-            RpcProbeReport {
-                calls: 1,
-                errors: 0,
-            }
+            RpcProbeReport { calls: 1, errors: 0 }
         } else {
             RpcProbeReport::default()
         }
@@ -87,10 +81,7 @@ impl RuntimeHandle {
 
     pub fn runtime_probe_report(&self) -> RuntimeProbeReport {
         if self.active {
-            RuntimeProbeReport {
-                active: true,
-                started_at_epoch_ms: 0,
-            }
+            RuntimeProbeReport { active: true, started_at_epoch_ms: 0 }
         } else {
             RuntimeProbeReport::default()
         }

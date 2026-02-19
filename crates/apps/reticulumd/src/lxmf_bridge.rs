@@ -1,6 +1,6 @@
+use lxmf::identity;
 use lxmf::message::Message;
 use lxmf::LxmfError;
-use lxmf::identity;
 use reticulum::identity::PrivateIdentity;
 use serde_json::Value as JsonValue;
 
@@ -22,8 +22,10 @@ pub fn build_wire_message(
     if let Some(fields) = fields {
         message.fields = Some(json_to_rmpv(&fields)?);
     }
-    let lxmf_signer = identity::PrivateIdentity::from_private_key_bytes(&signer.to_private_key_bytes())
-        .map_err(|error| LxmfError::Encode(format!("invalid signer key material: {error:?}")))?;
+    let lxmf_signer = identity::PrivateIdentity::from_private_key_bytes(
+        &signer.to_private_key_bytes(),
+    )
+    .map_err(|error| LxmfError::Encode(format!("invalid signer key material: {error:?}")))?;
     message.to_wire(Some(&lxmf_signer))
 }
 
