@@ -1,4 +1,4 @@
-use lxmf::constants::DESTINATION_LENGTH;
+use lxmf::inbound_decode::InboundPayloadMode;
 use rand_core::OsRng;
 use reticulum::identity::PrivateIdentity;
 use reticulum_daemon::inbound_delivery::decode_inbound_payload;
@@ -14,9 +14,8 @@ fn inbound_link_payload_is_decoded() {
     let wire = build_wire_message(source, destination, "", "hello inbound", None, &signer)
         .expect("wire message");
 
-    let payload = wire[DESTINATION_LENGTH..].to_vec();
-
-    let record = decode_inbound_payload(destination, &payload).expect("decoded record");
+    let record = decode_inbound_payload(destination, &wire, InboundPayloadMode::FullWire)
+        .expect("decoded record");
 
     assert_eq!(record.destination, hex::encode(destination));
     assert_eq!(record.content, "hello inbound");

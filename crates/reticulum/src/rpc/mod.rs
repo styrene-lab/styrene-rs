@@ -1,6 +1,7 @@
 pub mod codec;
 mod daemon;
 pub mod http;
+mod send_request;
 use rmpv::Value as MsgPackValue;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
@@ -11,6 +12,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::time::Duration;
+
+use send_request::parse_outbound_send_request;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct RpcRequest {
@@ -159,43 +162,20 @@ pub struct PeerRecord {
 }
 
 #[derive(Debug, Deserialize)]
-struct SendMessageParams {
-    id: String,
-    source: String,
-    destination: String,
-    #[serde(default)]
-    title: String,
-    content: String,
-    fields: Option<JsonValue>,
-    #[serde(default)]
-    source_private_key: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SendMessageV2Params {
-    id: String,
-    source: String,
-    destination: String,
-    #[serde(default)]
-    title: String,
-    content: String,
-    fields: Option<JsonValue>,
-    #[serde(default)]
-    method: Option<String>,
-    #[serde(default)]
-    stamp_cost: Option<u32>,
-    #[serde(default)]
-    include_ticket: Option<bool>,
-    #[serde(default)]
-    try_propagation_on_fail: Option<bool>,
-    #[serde(default)]
-    source_private_key: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct RecordReceiptParams {
     message_id: String,
     status: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReceiveMessageParams {
+    id: String,
+    source: String,
+    destination: String,
+    #[serde(default)]
+    title: String,
+    content: String,
+    fields: Option<JsonValue>,
 }
 
 #[derive(Debug, Deserialize)]
