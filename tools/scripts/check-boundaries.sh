@@ -85,6 +85,16 @@ if rg -n "crates/internal/lxmf-legacy|crates/internal/reticulum-legacy" Cargo.to
   fail "Workspace membership must not include crates/internal legacy crates"
 fi
 
+if [ -d "LXMF" ]; then
+  fail "Top-level LXMF python package must be externalized from this repository"
+fi
+if [ -f "setup.py" ] || [ -f "requirements.txt" ]; then
+  fail "Python packaging files must be owned by external interoperability repo"
+fi
+if [ -d "lxmf.egg-info" ]; then
+  fail "Python egg metadata must not be present in this repository"
+fi
+
 # 1) Core dependency constraints (hard policy).
 check_forbidden_dependency "lxmf-core" "tokio" "clap" "ureq"
 check_forbidden_dependency "rns-core" "tokio" "clap"
