@@ -821,6 +821,7 @@ dependencies = [
  "rand_core",
  "rmp-serde",
  "rmpv",
+ "rns-rpc",
  "rns-transport",
  "serde",
  "serde_json",
@@ -895,6 +896,7 @@ name = "rns-tools"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "rns-rpc",
  "rns-transport",
  "serde_json",
  "tempfile",
