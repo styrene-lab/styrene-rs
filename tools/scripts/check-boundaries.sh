@@ -31,6 +31,12 @@ fi
 check_forbidden_dep "crates/libs/rns-core/Cargo.toml" "tokio"
 check_forbidden_dep "crates/libs/rns-core/Cargo.toml" "clap"
 
+for manifest in crates/libs/*/Cargo.toml; do
+  if rg -n "lxmf_legacy|reticulum_legacy|crates/internal/" "$manifest" >/dev/null; then
+    fail "${manifest} must not reference legacy shim crates"
+  fi
+done
+
 # Keep core crates free of direct runtime/CLI imports at source level.
 if rg -n "\b(tokio|clap)::" crates/libs/lxmf-core/src >/dev/null; then
   fail "crates/libs/lxmf-core/src imports tokio/clap symbols"

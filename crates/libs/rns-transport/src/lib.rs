@@ -1,9 +1,19 @@
-pub use reticulum_legacy::delivery;
-pub use reticulum_legacy::iface;
-pub use reticulum_legacy::receipt;
-pub use reticulum_legacy::resource;
-pub use reticulum_legacy::transport;
+//! Transport boundary APIs for runtime crates and daemon entrypoints.
 
-pub use reticulum_legacy::transport::{
-    DeliveryReceipt, ReceiptHandler, Transport, TransportConfig,
-};
+use core::fmt;
+
+pub mod delivery;
+pub mod iface;
+pub mod receipt;
+pub mod resource;
+pub mod transport;
+
+pub use transport::{DeliveryReceipt, ReceiptHandler, Transport, TransportConfig};
+
+pub mod storage {
+    pub mod messages {
+        /// Placeholder retained for API parity during phased migration.
+        #[derive(Clone, Debug, Default)]
+        pub struct MessagesStore;
+    }
+}
