@@ -1,5 +1,5 @@
-use reticulum::delivery::strip_destination_prefix as shared_strip_destination_prefix;
-use reticulum::transport::SendPacketTrace;
+use rns_transport::delivery::strip_destination_prefix as shared_strip_destination_prefix;
+use rns_transport::transport::SendPacketTrace;
 use std::sync::OnceLock;
 
 pub(crate) fn opportunistic_payload<'a>(payload: &'a [u8], destination: &[u8; 16]) -> &'a [u8] {

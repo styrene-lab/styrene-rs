@@ -9,7 +9,7 @@ publish = false
 name = "reticulum_daemon"
 
 [dependencies]
-reticulum = { package = "rns-transport", path = "../../libs/rns-transport" }
+rns_transport = { package = "rns-transport", path = "../../libs/rns-transport" }
 lxmf = { package = "lxmf-core", path = "../../libs/lxmf-core", default-features = false }
 base64 = "0.22"
 clap = { version = "4.5.29", features = ["derive"] }

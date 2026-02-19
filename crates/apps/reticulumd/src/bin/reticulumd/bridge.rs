@@ -2,21 +2,21 @@ use super::bridge_helpers::{
     diagnostics_enabled, log_delivery_trace, opportunistic_payload, payload_preview,
     send_trace_detail,
 };
-use reticulum::delivery::{
+use reticulum_daemon::lxmf_bridge::build_wire_message;
+use reticulum_daemon::receipt_bridge::{track_receipt_mapping, ReceiptEvent};
+use rns_transport::delivery::{
     send_outcome_is_sent, send_outcome_status, send_via_link, LinkSendResult,
 };
-use reticulum::destination::{DestinationDesc, DestinationName, SingleInputDestination};
-use reticulum::destination_hash::parse_destination_hash_required;
-use reticulum::hash::AddressHash;
-use reticulum::identity::{Identity, PrivateIdentity};
-use reticulum::packet::{
+use rns_transport::destination::{DestinationDesc, DestinationName, SingleInputDestination};
+use rns_transport::destination_hash::parse_destination_hash_required;
+use rns_transport::hash::AddressHash;
+use rns_transport::identity::{Identity, PrivateIdentity};
+use rns_transport::packet::{
     ContextFlag, DestinationType, Header, HeaderType, IfacFlag, Packet, PacketContext,
     PacketDataBuffer, PacketType, PropagationType,
 };
-use reticulum::rpc::{AnnounceBridge, OutboundBridge};
-use reticulum::transport::Transport;
-use reticulum_daemon::lxmf_bridge::build_wire_message;
-use reticulum_daemon::receipt_bridge::{track_receipt_mapping, ReceiptEvent};
+use rns_transport::rpc::{AnnounceBridge, OutboundBridge};
+use rns_transport::transport::Transport;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -251,8 +251,8 @@ impl DeliveryTask {
 impl OutboundBridge for TransportBridge {
     fn deliver(
         &self,
-        record: &reticulum::storage::messages::MessageRecord,
-        _options: &reticulum::rpc::OutboundDeliveryOptions,
+        record: &rns_transport::storage::messages::MessageRecord,
+        _options: &rns_transport::rpc::OutboundDeliveryOptions,
     ) -> Result<(), std::io::Error> {
         let destination = parse_destination_hash_required(&record.destination)?;
         let peer_info =

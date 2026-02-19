@@ -1,11 +1,11 @@
 use rand_core::OsRng;
-use reticulum::delivery::{send_via_link, LinkSendResult};
-use reticulum::destination::link::Link;
-use reticulum::destination::{DestinationDesc, DestinationName};
-use reticulum::identity::PrivateIdentity;
-use reticulum::iface::{Interface, InterfaceContext};
-use reticulum::packet::{DestinationType, PacketType};
-use reticulum::transport::{Transport, TransportConfig};
+use rns_transport::delivery::{send_via_link, LinkSendResult};
+use rns_transport::destination::link::Link;
+use rns_transport::destination::{DestinationDesc, DestinationName};
+use rns_transport::identity::PrivateIdentity;
+use rns_transport::iface::{Interface, InterfaceContext};
+use rns_transport::packet::{DestinationType, PacketType};
+use rns_transport::transport::{Transport, TransportConfig};
 use tokio::time::Duration;
 
 struct SinkInterface;
