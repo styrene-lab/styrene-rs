@@ -824,7 +824,18 @@ dependencies = [
 name = "lxmf-core"
 version = "0.1.0"
 dependencies = [
- "lxmf",
+ "base64",
+ "ed25519-dalek",
+ "hex",
+ "rand_core",
+ "rmp-serde",
+ "rmpv",
+ "rns-core",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "thiserror 1.0.69",
+ "x25519-dalek",
 ]
 
 [[package]]

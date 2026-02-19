@@ -19,9 +19,21 @@ check_forbidden_dep "crates/libs/lxmf-core/Cargo.toml" "tokio"
 check_forbidden_dep "crates/libs/lxmf-core/Cargo.toml" "clap"
 check_forbidden_dep "crates/libs/lxmf-core/Cargo.toml" "ureq"
 check_forbidden_dep "crates/libs/lxmf-core/Cargo.toml" "serde_json"
+check_forbidden_dep "crates/libs/lxmf-core/Cargo.toml" "lxmf_legacy"
+if rg -n "internal/lxmf-legacy" "crates/libs/lxmf-core/Cargo.toml" >/dev/null; then
+  fail "crates/libs/lxmf-core/Cargo.toml must not reference internal/lxmf-legacy"
+fi
 
 check_forbidden_dep "crates/libs/rns-core/Cargo.toml" "tokio"
 check_forbidden_dep "crates/libs/rns-core/Cargo.toml" "clap"
+
+# Keep core crates free of direct runtime/CLI imports at source level.
+if rg -n "\b(tokio|clap)::" crates/libs/lxmf-core/src >/dev/null; then
+  fail "crates/libs/lxmf-core/src imports tokio/clap symbols"
+fi
+if rg -n "\b(tokio|clap)::" crates/libs/rns-core/src >/dev/null; then
+  fail "crates/libs/rns-core/src imports tokio/clap symbols"
+fi
 
 # Public libraries must not depend directly on app crates.
 for manifest in crates/libs/*/Cargo.toml; do
