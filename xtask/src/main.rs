@@ -84,13 +84,10 @@ fn run_licenses() -> Result<()> {
 
 fn run_migration_checks() -> Result<()> {
     let enforce_legacy_imports =
-        std::env::var("ENFORCE_LEGACY_APP_IMPORTS").unwrap_or("0".to_string());
-    let boundary_cmd = if enforce_legacy_imports == "1" {
-        "ENFORCE_LEGACY_APP_IMPORTS=1 ./tools/scripts/check-boundaries.sh"
-    } else {
-        "./tools/scripts/check-boundaries.sh"
-    };
-    run("bash", &["-lc", boundary_cmd])?;
+        std::env::var("ENFORCE_LEGACY_APP_IMPORTS").unwrap_or("1".to_string());
+    let enforce_legacy_shims =
+        std::env::var("ENFORCE_RETM_LEGACY_SHIMS").unwrap_or("1".to_string());
+    run_boundary_checks(&enforce_legacy_imports, &enforce_legacy_shims)?;
     run(
         "bash",
         &[
@@ -106,7 +103,18 @@ fn run_architecture_checks() -> Result<()> {
 }
 
 fn run_forbidden_deps() -> Result<()> {
-    run("bash", &["-lc", "./tools/scripts/check-boundaries.sh"])
+    let enforce_legacy_imports =
+        std::env::var("ENFORCE_LEGACY_APP_IMPORTS").unwrap_or("1".to_string());
+    let enforce_legacy_shims =
+        std::env::var("ENFORCE_RETM_LEGACY_SHIMS").unwrap_or("1".to_string());
+    run_boundary_checks(&enforce_legacy_imports, &enforce_legacy_shims)
+}
+
+fn run_boundary_checks(enforce_legacy_imports: &str, enforce_legacy_shims: &str) -> Result<()> {
+    let command = format!(
+        "ENFORCE_LEGACY_APP_IMPORTS={enforce_legacy_imports} ENFORCE_RETM_LEGACY_SHIMS={enforce_legacy_shims} ./tools/scripts/check-boundaries.sh"
+    );
+    run("bash", &["-lc", &command])
 }
 
 fn run(cmd: &str, args: &[&str]) -> Result<()> {
