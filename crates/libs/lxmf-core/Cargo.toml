@@ -9,18 +9,18 @@ repository.workspace = true
 
 [dependencies]
 rns-core = { path = "../rns-core" }
-base64 = "0.22"
-hex = "0.4"
-rand_core = { version = "0.6.4", features = ["getrandom"] }
-ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
-rmp-serde = "1"
-rmpv = { version = "1.0", features = ["with-serde"] }
+base64.workspace = true
+hex.workspace = true
+rand_core = { workspace = true, features = ["getrandom"] }
+ed25519-dalek = { workspace = true, features = ["rand_core"] }
+rmp-serde.workspace = true
+rmpv = { workspace = true, features = ["with-serde"] }
 serde = { workspace = true, features = ["derive"] }
-serde_bytes = "0.11"
-serde_json = { version = "1.0", features = ["std"] }
-sha2 = "0.10"
+serde_bytes.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+sha2.workspace = true
 thiserror.workspace = true
-x25519-dalek = "2.0.1"
+x25519-dalek.workspace = true
 
 [features]
 default = []
