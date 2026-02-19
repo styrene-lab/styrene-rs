@@ -1,4 +1,4 @@
-.PHONY: fmt clippy test test-all test-full-targets doc deny audit udeps boundaries ci release-check api-diff licenses migration-checks
+.PHONY: fmt clippy test test-all test-full-targets doc deny audit udeps boundaries ci release-check api-diff licenses migration-checks forbidden-deps
 
 fmt:
 	cargo fmt --all -- --check
@@ -29,6 +29,9 @@ udeps:
 
 boundaries:
 	./tools/scripts/check-boundaries.sh
+
+forbidden-deps:
+	cargo xtask forbidden-deps
 
 ci: fmt clippy test doc boundaries
 

@@ -27,15 +27,15 @@ pub fn parse_peer_name_from_app_data(app_data: &[u8]) -> Option<(String, &'stati
     }
 
     if is_msgpack_array_prefix(app_data[0]) {
-        if let Some(name) = display_name_from_app_data(app_data)
-            .and_then(|value| normalize_display_name(&value))
+        if let Some(name) =
+            display_name_from_app_data(app_data).and_then(|value| normalize_display_name(&value))
         {
             return Some((name, "delivery_app_data"));
         }
     }
 
-    if let Some(name) = pn_name_from_app_data(app_data)
-        .and_then(|value| normalize_display_name(&value))
+    if let Some(name) =
+        pn_name_from_app_data(app_data).and_then(|value| normalize_display_name(&value))
     {
         return Some((name, "pn_meta"));
     }
@@ -109,18 +109,19 @@ fn keys_match(candidate: &rmpv::Value, expected: &rmpv::Value) -> bool {
             candidate.as_u64() == expected.as_u64()
         }
         (rmpv::Value::String(candidate), rmpv::Value::String(expected)) => {
-            candidate
-                .as_str()
-                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(expected.as_str().unwrap_or_default()))
+            candidate.as_str().is_some_and(|candidate| {
+                candidate.eq_ignore_ascii_case(expected.as_str().unwrap_or_default())
+            })
         }
-        (rmpv::Value::Binary(candidate), rmpv::Value::String(expected)) => std::str::from_utf8(candidate)
-            .ok()
-            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(expected.as_str().unwrap_or_default().trim())),
+        (rmpv::Value::Binary(candidate), rmpv::Value::String(expected)) => {
+            std::str::from_utf8(candidate).ok().is_some_and(|candidate| {
+                candidate.eq_ignore_ascii_case(expected.as_str().unwrap_or_default().trim())
+            })
+        }
         (rmpv::Value::String(candidate), rmpv::Value::Binary(expected)) => {
             candidate.as_str().is_some_and(|candidate| {
-                std::str::from_utf8(expected.as_slice()).is_ok_and(|expected_key| {
-                    candidate.trim().eq_ignore_ascii_case(expected_key)
-                })
+                std::str::from_utf8(expected.as_slice())
+                    .is_ok_and(|expected_key| candidate.trim().eq_ignore_ascii_case(expected_key))
             })
         }
         _ => false,
