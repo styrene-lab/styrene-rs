@@ -1,4 +1,3 @@
-use lxmf::Router;
 use reticulum_daemon::announce_names::{
     encode_delivery_display_name_app_data, normalize_display_name, parse_peer_name_from_app_data,
 };
@@ -6,9 +5,20 @@ use rmpv::Value;
 
 #[test]
 fn parse_peer_name_prefers_pn_metadata() {
-    let mut router = Router::default();
-    router.set_name("Alice PN");
-    let app_data = router.get_propagation_node_app_data().expect("pn app data");
+    let app_data = rmp_serde::to_vec(&Value::Array(vec![
+        Value::Boolean(false),
+        Value::from(1_700_000_000_u64),
+        Value::Boolean(true),
+        Value::from(16_u32),
+        Value::from(40_u32),
+        Value::Array(vec![
+            Value::from(16_u32),
+            Value::from(16_u32),
+            Value::from(18_u32),
+        ]),
+        Value::Map(vec![(Value::from(1_u8), Value::Binary(b"Alice PN".to_vec()))]),
+    ]))
+    .expect("pn app data");
 
     let parsed = parse_peer_name_from_app_data(&app_data).expect("name from pn metadata");
     assert_eq!(parsed.0, "Alice PN");

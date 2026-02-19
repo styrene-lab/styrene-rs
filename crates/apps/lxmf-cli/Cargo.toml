@@ -9,7 +9,6 @@ publish = false
 
 [dependencies]
 clap.workspace = true
-lxmf = { package = "lxmf", path = "../../internal/lxmf-legacy", default-features = false, features = ["cli"] }
 
 [lints]
 workspace = true
