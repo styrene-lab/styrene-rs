@@ -40,7 +40,6 @@ impl Router {
 }
 
 pub mod router {
-    pub use crate::{Router, RouterConfig};
+    pub type Router = super::Router;
+    pub type RouterConfig = super::RouterConfig;
 }
-
-pub use self::router::*;

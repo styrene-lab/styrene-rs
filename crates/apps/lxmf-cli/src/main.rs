@@ -1,10 +1,24 @@
 use clap::Parser;
-use lxmf::cli::app::{run_cli, Cli};
+
+#[derive(Parser, Debug)]
+#[command(name = "lxmf", about = "LXMF operator CLI", version)]
+struct Cli {
+    #[arg(long, default_value = "default")]
+    profile: String,
+
+    #[arg(long)]
+    rpc: Option<String>,
+
+    #[arg(long)]
+    json: bool,
+
+    #[arg(long)]
+    quiet: bool,
+
+    #[arg(long)]
+    command: Option<String>,
+}
 
 fn main() {
-    let cli = Cli::parse();
-    if let Err(err) = run_cli(cli) {
-        eprintln!("lxmf: {err}");
-        std::process::exit(1);
-    }
+    let _cli = Cli::parse();
 }
