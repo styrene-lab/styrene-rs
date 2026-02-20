@@ -37,5 +37,19 @@
   - Cursor and stream-gap semantics that fail closed on invalid/expired cursors.
   - Bounded queue capacities with overflow policy enforcement.
 
+## Release Scorecard Process
+- Generated scorecard artifacts:
+  - `target/release-scorecard/release-scorecard.md`
+  - `target/release-scorecard/release-scorecard.json`
+- Generation command:
+  - `cargo run -p xtask -- release-scorecard-check`
+- CI gate:
+  - `release-scorecard-check` job in `.github/workflows/ci.yml`
+- Inputs for scorecard generation:
+  - perf budget report (`target/criterion/bench-budget-report.txt`)
+  - soak/chaos report (`target/soak/soak-report.json`)
+  - supply-chain provenance (`target/supply-chain/provenance/artifact-provenance.json`)
+  - security checklist (`docs/runbooks/security-review-checklist.md`)
+
 ## Legacy Cutover Note
 Legacy implementation crates are no longer part of the active workspace graph. Migration artifacts remain only where retention is still required.

@@ -267,6 +267,7 @@ enum XtaskCommand {
     SdkMigrationCheck,
     GovernanceCheck,
     SupportPolicyCheck,
+    ReleaseScorecardCheck,
     SecurityReviewCheck,
     SdkSecurityCheck,
     SdkFuzzCheck,
@@ -316,6 +317,7 @@ enum CiStage {
     SdkMigrationCheck,
     GovernanceCheck,
     SupportPolicyCheck,
+    ReleaseScorecardCheck,
     SecurityReviewCheck,
     SdkSecurityCheck,
     SdkFuzzCheck,
@@ -369,6 +371,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkMigrationCheck => run_sdk_migration_check(),
         XtaskCommand::GovernanceCheck => run_governance_check(),
         XtaskCommand::SupportPolicyCheck => run_support_policy_check(),
+        XtaskCommand::ReleaseScorecardCheck => run_release_scorecard_check(),
         XtaskCommand::SecurityReviewCheck => run_security_review_check(),
         XtaskCommand::SdkSecurityCheck => run_sdk_security_check(),
         XtaskCommand::SdkFuzzCheck => run_sdk_fuzz_check(),
@@ -428,6 +431,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_sdk_examples_check()?;
     run_governance_check()?;
     run_support_policy_check()?;
+    run_release_scorecard_check()?;
     run_security_review_check()?;
     run_sdk_security_check()?;
     run_sdk_fuzz_check()?;
@@ -484,6 +488,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkMigrationCheck => run_sdk_migration_check(),
         CiStage::GovernanceCheck => run_governance_check(),
         CiStage::SupportPolicyCheck => run_support_policy_check(),
+        CiStage::ReleaseScorecardCheck => run_release_scorecard_check(),
         CiStage::SecurityReviewCheck => run_security_review_check(),
         CiStage::SdkSecurityCheck => run_sdk_security_check(),
         CiStage::SdkFuzzCheck => run_sdk_fuzz_check(),
@@ -512,6 +517,7 @@ fn run_release_check() -> Result<()> {
     run_interop_drift_check(false)?;
     run_compat_kit_check()?;
     run_support_policy_check()?;
+    run_release_scorecard_check()?;
     run_sdk_api_break()?;
     run_supply_chain_check()?;
     run("cargo", &["deny", "check"])?;
@@ -1149,6 +1155,33 @@ fn run_support_policy_check() -> Result<()> {
     }
     if !workflow.contains("cargo xtask ci --stage support-policy-check") {
         bail!("ci workflow must execute `cargo xtask ci --stage support-policy-check`");
+    }
+
+    Ok(())
+}
+
+fn run_release_scorecard_check() -> Result<()> {
+    run_sdk_perf_budget_check()?;
+    run_sdk_soak_check()?;
+    run_supply_chain_check()?;
+    run("bash", &["tools/scripts/release-scorecard.sh"])?;
+
+    let markdown_path = "target/release-scorecard/release-scorecard.md";
+    let json_path = "target/release-scorecard/release-scorecard.json";
+    let markdown = fs::read_to_string(markdown_path)
+        .with_context(|| format!("missing generated scorecard markdown at {markdown_path}"))?;
+    let json = fs::read_to_string(json_path)
+        .with_context(|| format!("missing generated scorecard json at {json_path}"))?;
+
+    for marker in ["# Release Scorecard", "| Overall status |", "| Performance budget status |"] {
+        if !markdown.contains(marker) {
+            bail!("generated scorecard missing marker '{marker}' in {markdown_path}");
+        }
+    }
+    for marker in ["\"overall_status\"", "\"performance_status\"", "\"soak_status\""] {
+        if !json.contains(marker) {
+            bail!("generated scorecard json missing marker '{marker}' in {json_path}");
+        }
     }
 
     Ok(())
