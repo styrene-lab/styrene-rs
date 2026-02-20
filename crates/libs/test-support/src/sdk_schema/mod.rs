@@ -95,6 +95,10 @@ struct SchemaSet {
     telemetry: JSONSchema,
     attachment: JSONSchema,
     marker: JSONSchema,
+    identity: JSONSchema,
+    paper: JSONSchema,
+    command_plugin: JSONSchema,
+    voice_signaling: JSONSchema,
 }
 
 fn load_schemas() -> SchemaSet {
@@ -108,6 +112,10 @@ fn load_schemas() -> SchemaSet {
     let telemetry_schema = read_json(&schema_dir.join("telemetry.schema.json"));
     let attachment_schema = read_json(&schema_dir.join("attachment.schema.json"));
     let marker_schema = read_json(&schema_dir.join("marker.schema.json"));
+    let identity_schema = read_json(&schema_dir.join("identity.schema.json"));
+    let paper_schema = read_json(&schema_dir.join("paper.schema.json"));
+    let command_plugin_schema = read_json(&schema_dir.join("command-plugin.schema.json"));
+    let voice_signaling_schema = read_json(&schema_dir.join("voice-signaling.schema.json"));
     let command_schema = command_schema_with_embedded_config(&config_schema, command_schema);
 
     SchemaSet {
@@ -119,6 +127,10 @@ fn load_schemas() -> SchemaSet {
         telemetry: compile_schema(&telemetry_schema, "telemetry"),
         attachment: compile_schema(&attachment_schema, "attachment"),
         marker: compile_schema(&marker_schema, "marker"),
+        identity: compile_schema(&identity_schema, "identity"),
+        paper: compile_schema(&paper_schema, "paper"),
+        command_plugin: compile_schema(&command_plugin_schema, "command-plugin"),
+        voice_signaling: compile_schema(&voice_signaling_schema, "voice-signaling"),
     }
 }
 
@@ -194,6 +206,66 @@ fn sdk_schema_valid_fixtures_pass_contract_checks() {
         &fixture("docs/fixtures/sdk-v2/command.attachment_associate_topic.valid.json"),
     );
     assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.identity_activate.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.identity_activate.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.identity_list.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.identity_list.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.identity_import.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.identity_import.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.identity_export.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.identity_export.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.identity_resolve.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.identity_resolve.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.paper_encode.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.paper_encode.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.paper_decode.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.paper_decode.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.command_invoke.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.command_invoke.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.command_reply.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.command_reply.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.voice_session_open.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.voice_session_open.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.voice_session_update.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.voice_session_update.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.voice_session_close.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.voice_session_close.valid.json"),
+    );
+    assert_schema_valid(
         &schemas.error,
         "docs/fixtures/sdk-v2/error.validation.valid.json",
         &fixture("docs/fixtures/sdk-v2/error.validation.valid.json"),
@@ -217,6 +289,26 @@ fn sdk_schema_valid_fixtures_pass_contract_checks() {
         &schemas.marker,
         "docs/fixtures/sdk-v2/marker.record.valid.json",
         &fixture("docs/fixtures/sdk-v2/marker.record.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.identity,
+        "docs/fixtures/sdk-v2/identity.bundle.valid.json",
+        &fixture("docs/fixtures/sdk-v2/identity.bundle.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.paper,
+        "docs/fixtures/sdk-v2/paper.envelope.valid.json",
+        &fixture("docs/fixtures/sdk-v2/paper.envelope.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command_plugin,
+        "docs/fixtures/sdk-v2/command-plugin.request.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command-plugin.request.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.voice_signaling,
+        "docs/fixtures/sdk-v2/voice-signaling.update.valid.json",
+        &fixture("docs/fixtures/sdk-v2/voice-signaling.update.valid.json"),
     );
 }
 
@@ -247,6 +339,66 @@ fn sdk_schema_invalid_fixtures_are_rejected() {
         &schemas.command,
         "docs/fixtures/sdk-v2/command.attachment_associate_topic.invalid.json",
         &fixture("docs/fixtures/sdk-v2/command.attachment_associate_topic.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.voice_session_open.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.voice_session_open.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.identity_list.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.identity_list.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.identity_activate.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.identity_activate.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.identity_import.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.identity_import.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.identity_export.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.identity_export.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.identity_resolve.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.identity_resolve.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.paper_encode.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.paper_encode.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.paper_decode.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.paper_decode.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.command_reply.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.command_reply.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.command_invoke.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.command_invoke.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.voice_session_update.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.voice_session_update.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.voice_session_close.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.voice_session_close.invalid.json"),
     );
     assert_schema_invalid(
         &schemas.error,

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://weft.tak/contracts/sdk/v2/identity.schema.json",
+  "title": "LXMF SDK Identity Domain v2",
+  "oneOf": [
+    { "$ref": "#/$defs/identity_ref" },
+    { "$ref": "#/$defs/identity_bundle" },
+    { "$ref": "#/$defs/identity_import_request" },
+    { "$ref": "#/$defs/identity_resolve_request" }
+  ],
+  "$defs": {
+    "identity_ref": { "type": "string", "minLength": 1 },
+    "identity_bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "public_key"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/identity_ref" },
+        "public_key": { "type": "string", "minLength": 1 },
+        "display_name": { "type": ["string", "null"] },
+        "capabilities": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "extensions": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "identity_import_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundle_base64"],
+      "properties": {
+        "bundle_base64": { "type": "string", "minLength": 1 },
+        "passphrase": { "type": ["string", "null"] },
+        "extensions": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "identity_resolve_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hash"],
+      "properties": {
+        "hash": { "type": "string", "minLength": 1 },
+        "extensions": { "type": "object", "additionalProperties": true }
+      }
+    }
+  }
+}

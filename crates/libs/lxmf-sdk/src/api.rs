@@ -1,9 +1,11 @@
 use crate::domain::{
     AttachmentId, AttachmentListRequest, AttachmentListResult, AttachmentMeta,
-    AttachmentStoreRequest, MarkerCreateRequest, MarkerId, MarkerListRequest, MarkerListResult,
-    MarkerRecord, MarkerUpdatePositionRequest, TelemetryPoint, TelemetryQuery, TopicCreateRequest,
-    TopicId, TopicListRequest, TopicListResult, TopicPublishRequest, TopicRecord,
-    TopicSubscriptionRequest,
+    AttachmentStoreRequest, IdentityBundle, IdentityImportRequest, IdentityRef,
+    IdentityResolveRequest, MarkerCreateRequest, MarkerId, MarkerListRequest, MarkerListResult,
+    MarkerRecord, MarkerUpdatePositionRequest, PaperMessageEnvelope, RemoteCommandRequest,
+    RemoteCommandResponse, TelemetryPoint, TelemetryQuery, TopicCreateRequest, TopicId,
+    TopicListRequest, TopicListResult, TopicPublishRequest, TopicRecord, TopicSubscriptionRequest,
+    VoiceSessionId, VoiceSessionOpenRequest, VoiceSessionState, VoiceSessionUpdateRequest,
 };
 use crate::error::SdkError;
 use crate::event::{EventBatch, EventCursor};
@@ -127,5 +129,77 @@ pub trait LxmfSdkMarkers {
 
     fn marker_delete(&self, _marker_id: MarkerId) -> Result<Ack, SdkError> {
         Err(SdkError::capability_disabled("sdk.capability.markers"))
+    }
+}
+
+pub trait LxmfSdkIdentity {
+    fn identity_list(&self) -> Result<Vec<IdentityBundle>, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.identity_multi"))
+    }
+
+    fn identity_activate(&self, _identity: IdentityRef) -> Result<Ack, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.identity_multi"))
+    }
+
+    fn identity_import(&self, _req: IdentityImportRequest) -> Result<IdentityBundle, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.identity_import_export"))
+    }
+
+    fn identity_export(&self, _identity: IdentityRef) -> Result<IdentityImportRequest, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.identity_import_export"))
+    }
+
+    fn identity_resolve(
+        &self,
+        _req: IdentityResolveRequest,
+    ) -> Result<Option<IdentityRef>, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.identity_hash_resolution"))
+    }
+}
+
+pub trait LxmfSdkPaper {
+    fn paper_encode(&self, _message_id: MessageId) -> Result<PaperMessageEnvelope, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.paper_messages"))
+    }
+
+    fn paper_decode(&self, _envelope: PaperMessageEnvelope) -> Result<Ack, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.paper_messages"))
+    }
+}
+
+pub trait LxmfSdkRemoteCommands {
+    fn command_invoke(
+        &self,
+        _req: RemoteCommandRequest,
+    ) -> Result<RemoteCommandResponse, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.remote_commands"))
+    }
+
+    fn command_reply(
+        &self,
+        _correlation_id: String,
+        _reply: RemoteCommandResponse,
+    ) -> Result<Ack, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.remote_commands"))
+    }
+}
+
+pub trait LxmfSdkVoiceSignaling {
+    fn voice_session_open(
+        &self,
+        _req: VoiceSessionOpenRequest,
+    ) -> Result<VoiceSessionId, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.voice_signaling"))
+    }
+
+    fn voice_session_update(
+        &self,
+        _req: VoiceSessionUpdateRequest,
+    ) -> Result<VoiceSessionState, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.voice_signaling"))
+    }
+
+    fn voice_session_close(&self, _session_id: VoiceSessionId) -> Result<Ack, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.voice_signaling"))
     }
 }

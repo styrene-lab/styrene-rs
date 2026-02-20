@@ -179,3 +179,89 @@ pub struct MarkerListResult {
     pub markers: Vec<MarkerRecord>,
     pub next_cursor: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct IdentityRef(pub String);
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct IdentityBundle {
+    pub identity: IdentityRef,
+    pub public_key: String,
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct IdentityImportRequest {
+    pub bundle_base64: String,
+    pub passphrase: Option<String>,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct IdentityResolveRequest {
+    pub hash: String,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PaperMessageEnvelope {
+    pub uri: String,
+    pub transient_id: Option<String>,
+    pub destination_hint: Option<String>,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RemoteCommandRequest {
+    pub command: String,
+    pub target: Option<String>,
+    pub payload: JsonValue,
+    pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RemoteCommandResponse {
+    pub accepted: bool,
+    pub payload: JsonValue,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct VoiceSessionId(pub String);
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceSessionState {
+    New,
+    Ringing,
+    Active,
+    Holding,
+    Closed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct VoiceSessionOpenRequest {
+    pub peer_id: String,
+    pub codec_hint: Option<String>,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct VoiceSessionUpdateRequest {
+    pub session_id: VoiceSessionId,
+    pub state: VoiceSessionState,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, JsonValue>,
+}

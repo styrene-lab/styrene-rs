@@ -1,7 +1,8 @@
 #[cfg(feature = "sdk-async")]
 use crate::api::LxmfSdkAsync;
 use crate::api::{
-    LxmfSdk, LxmfSdkAttachments, LxmfSdkManualTick, LxmfSdkMarkers, LxmfSdkTelemetry, LxmfSdkTopics,
+    LxmfSdk, LxmfSdkAttachments, LxmfSdkIdentity, LxmfSdkManualTick, LxmfSdkMarkers, LxmfSdkPaper,
+    LxmfSdkRemoteCommands, LxmfSdkTelemetry, LxmfSdkTopics, LxmfSdkVoiceSignaling,
 };
 use crate::backend::SdkBackend;
 #[cfg(feature = "sdk-async")]
@@ -331,6 +332,14 @@ impl<B: SdkBackend> LxmfSdkTelemetry for Client<B> {}
 impl<B: SdkBackend> LxmfSdkAttachments for Client<B> {}
 
 impl<B: SdkBackend> LxmfSdkMarkers for Client<B> {}
+
+impl<B: SdkBackend> LxmfSdkIdentity for Client<B> {}
+
+impl<B: SdkBackend> LxmfSdkPaper for Client<B> {}
+
+impl<B: SdkBackend> LxmfSdkRemoteCommands for Client<B> {}
+
+impl<B: SdkBackend> LxmfSdkVoiceSignaling for Client<B> {}
 
 #[cfg(feature = "sdk-async")]
 impl<B: SdkBackendAsyncEvents> LxmfSdkAsync for Client<B> {

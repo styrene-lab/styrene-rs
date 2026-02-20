@@ -46,6 +46,13 @@ Legend:
 | `sdk.capability.attachments` | experimental | experimental | experimental |
 | `sdk.capability.attachment_delete` | experimental | experimental | experimental |
 | `sdk.capability.markers` | experimental | experimental | experimental |
+| `sdk.capability.identity_multi` | experimental | experimental | experimental |
+| `sdk.capability.identity_import_export` | experimental | experimental | experimental |
+| `sdk.capability.identity_hash_resolution` | experimental | experimental | experimental |
+| `sdk.capability.paper_messages` | experimental | experimental | experimental |
+| `sdk.capability.remote_commands` | experimental | experimental | experimental |
+| `sdk.capability.voice_signaling` | experimental | experimental | experimental |
+| `sdk.capability.shared_instance_rpc_auth` | experimental | experimental | experimental |
 
 ## Backend Support Matrix
 
