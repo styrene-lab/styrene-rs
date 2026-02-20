@@ -73,6 +73,11 @@ impl RpcBackendClient {
             *guard = effective_capabilities.clone();
         }
         {
+            let mut guard =
+                self.negotiated_limits.write().expect("negotiated_limits rwlock poisoned");
+            *guard = Some(effective_limits.clone());
+        }
+        {
             let mut guard = self.session_auth.write().expect("session_auth rwlock poisoned");
             *guard = session_auth;
         }
@@ -130,18 +135,19 @@ impl RpcBackendClient {
             }
         }
 
-        let result = self.call_rpc_with_fallback(
-            "sdk_send_v2",
-            "send_message_v2",
-            Some(json!({
-                "id": rpc_message_id,
-                "source": source,
-                "destination": destination,
-                "title": title,
-                "content": content,
-                "fields": fields,
-            })),
-        )?;
+        let params = Some(json!({
+            "id": rpc_message_id,
+            "source": source,
+            "destination": destination,
+            "title": title,
+            "content": content,
+            "fields": fields,
+        }));
+        let result = if self.legacy_send_fallback_enabled() {
+            self.call_rpc_with_fallback("sdk_send_v2", "send_message_v2", params)?
+        } else {
+            self.call_rpc("sdk_send_v2", params)?
+        };
         let message_id = Self::parse_required_string(&result, "message_id")?;
         Ok(MessageId(message_id))
     }
@@ -154,12 +160,21 @@ impl RpcBackendClient {
             })),
         )?;
         let value = Self::parse_required_string(&result, "result")?;
-        match value.as_str() {
+        Self::parse_cancel_result(value.as_str())
+    }
+
+    fn parse_cancel_result(value: &str) -> Result<CancelResult, SdkError> {
+        match value {
             "Accepted" => Ok(CancelResult::Accepted),
             "AlreadyTerminal" => Ok(CancelResult::AlreadyTerminal),
             "NotFound" => Ok(CancelResult::NotFound),
             "TooLateToCancel" => Ok(CancelResult::TooLateToCancel),
-            _ => Ok(CancelResult::Unsupported),
+            _ => Err(SdkError::new(
+                code::INTERNAL,
+                ErrorCategory::Internal,
+                "rpc returned unknown cancel result variant",
+            )
+            .with_detail("cancel_result", JsonValue::String(value.to_owned()))),
         }
     }
 
@@ -346,10 +361,89 @@ impl RpcBackendClient {
     }
 
     #[cfg(feature = "sdk-async")]
+    fn fast_forward_tail_cursor(
+        &self,
+        target_seq_no: u64,
+    ) -> Result<Option<EventCursor>, SdkError> {
+        if target_seq_no == 0 {
+            return Ok(None);
+        }
+
+        let poll_max = self.negotiated_max_poll_events();
+        let mut cursor: Option<EventCursor> = None;
+
+        // Prevent unbounded loops if the backend keeps returning the same cursor.
+        for _ in 0..1024 {
+            let batch = self.poll_events_impl(cursor.clone(), poll_max)?;
+            let next_cursor = batch.next_cursor.clone();
+            let reached_target =
+                batch.events.last().map(|event| event.seq_no >= target_seq_no).unwrap_or(true);
+            cursor = Some(next_cursor);
+            if reached_target {
+                return Ok(cursor);
+            }
+        }
+
+        Err(SdkError::new(
+            code::INTERNAL,
+            ErrorCategory::Internal,
+            "unable to fast-forward event cursor to tail within bounded attempts",
+        ))
+    }
+
+    #[cfg(feature = "sdk-async")]
     pub(super) fn subscribe_events_impl(
         &self,
         start: SubscriptionStart,
     ) -> Result<EventSubscription, SdkError> {
-        Ok(EventSubscription { start, cursor: None })
+        if !self.has_capability("sdk.capability.async_events") {
+            return Err(SdkError::capability_disabled("sdk.capability.async_events"));
+        }
+
+        let cursor = match start {
+            SubscriptionStart::Head | SubscriptionStart::Snapshot => None,
+            SubscriptionStart::Tail => {
+                let snapshot = self.snapshot_impl()?;
+                self.fast_forward_tail_cursor(snapshot.event_stream_position)?
+            }
+        };
+
+        Ok(EventSubscription { start, cursor })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RpcBackendClient;
+
+    #[test]
+    fn parse_cancel_result_accepts_contract_variants() {
+        assert!(matches!(
+            RpcBackendClient::parse_cancel_result("Accepted"),
+            Ok(crate::types::CancelResult::Accepted)
+        ));
+        assert!(matches!(
+            RpcBackendClient::parse_cancel_result("AlreadyTerminal"),
+            Ok(crate::types::CancelResult::AlreadyTerminal)
+        ));
+        assert!(matches!(
+            RpcBackendClient::parse_cancel_result("NotFound"),
+            Ok(crate::types::CancelResult::NotFound)
+        ));
+        assert!(matches!(
+            RpcBackendClient::parse_cancel_result("TooLateToCancel"),
+            Ok(crate::types::CancelResult::TooLateToCancel)
+        ));
+    }
+
+    #[test]
+    fn parse_cancel_result_rejects_unknown_variant() {
+        let err = RpcBackendClient::parse_cancel_result("LegacyUnsupported")
+            .expect_err("unknown cancel result must fail");
+        assert_eq!(err.machine_code, crate::error::code::INTERNAL);
+        assert_eq!(
+            err.details.get("cancel_result"),
+            Some(&serde_json::Value::String("LegacyUnsupported".to_owned()))
+        );
     }
 }
