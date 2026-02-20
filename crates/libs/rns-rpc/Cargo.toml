@@ -12,6 +12,7 @@ rand_core = { workspace = true, features = ["getrandom"] }
 rmp-serde.workspace = true
 rmpv = { workspace = true, features = ["with-serde"] }
 sha2.workspace = true
+hmac.workspace = true
 hex.workspace = true
 serde_json.workspace = true
 rusqlite = { workspace = true }

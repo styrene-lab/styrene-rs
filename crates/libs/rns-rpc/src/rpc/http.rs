@@ -1,20 +1,39 @@
 use std::io;
+use std::net::SocketAddr;
 
-use crate::rpc::{codec, handle_framed_request, RpcDaemon, RpcRequest};
+use crate::rpc::{codec, RpcDaemon, RpcRequest, RpcResponse};
 use serde_json::json;
 
 const HEADER_END: &[u8] = b"\r\n\r\n";
 
 pub fn handle_http_request(daemon: &RpcDaemon, request: &[u8]) -> io::Result<Vec<u8>> {
+    let _ = daemon;
+    let _ = request;
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "peer address is required; use handle_http_request_with_peer",
+    ))
+}
+
+pub fn handle_http_request_with_peer(
+    daemon: &RpcDaemon,
+    request: &[u8],
+    peer_addr: Option<SocketAddr>,
+) -> io::Result<Vec<u8>> {
     let header_end = find_header_end(request)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing headers"))?;
     let headers = &request[..header_end];
+    let parsed_headers = parse_headers(headers);
+    let peer_ip = peer_addr.map(|addr| addr.ip().to_string());
     let body_start = header_end + HEADER_END.len();
     let (method, path) = parse_request_line(headers)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid request line"))?;
     let (path_only, query) = split_path_and_query(path.as_str());
     match (method.as_str(), path_only) {
         ("GET", "/events") if query.is_empty() => {
+            if let Err(error) = daemon.authorize_http_request(&parsed_headers, peer_ip.as_deref()) {
+                return build_rpc_error_response(0, error);
+            }
             if let Some(event) = daemon.take_event() {
                 let body = codec::encode_frame(&event).map_err(io::Error::other)?;
                 Ok(build_response(StatusCode::Ok, &body))
@@ -23,6 +42,9 @@ pub fn handle_http_request(daemon: &RpcDaemon, request: &[u8]) -> io::Result<Vec
             }
         }
         ("GET", "/events") | ("GET", "/events/v2") => {
+            if let Err(error) = daemon.authorize_http_request(&parsed_headers, peer_ip.as_deref()) {
+                return build_rpc_error_response(0, error);
+            }
             let cursor = query_param(query, "cursor");
             let max = match query_param(query, "max") {
                 Some(raw) => raw.parse::<usize>().unwrap_or(0),
@@ -47,7 +69,12 @@ pub fn handle_http_request(daemon: &RpcDaemon, request: &[u8]) -> io::Result<Vec
                 return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "body incomplete"));
             }
             let body = &request[body_start..body_start + content_length];
-            let response_body = handle_framed_request(daemon, body)?;
+            let rpc_request: RpcRequest = codec::decode_frame(body)?;
+            if let Err(error) = daemon.authorize_http_request(&parsed_headers, peer_ip.as_deref()) {
+                return build_rpc_error_response(rpc_request.id, error);
+            }
+            let rpc_response = daemon.handle_rpc(rpc_request)?;
+            let response_body = codec::encode_frame(&rpc_response).map_err(io::Error::other)?;
             Ok(build_response(StatusCode::Ok, &response_body))
         }
         _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "unsupported request")),
@@ -80,6 +107,17 @@ fn parse_request_line(headers: &[u8]) -> Option<(String, String)> {
     let method = parts.next()?.to_string();
     let path = parts.next()?.to_string();
     Some((method, path))
+}
+
+fn parse_headers(headers: &[u8]) -> Vec<(String, String)> {
+    String::from_utf8_lossy(headers)
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            Some((name.trim().to_string(), value.trim().to_string()))
+        })
+        .collect()
 }
 
 fn split_path_and_query(path: &str) -> (&str, &str) {
@@ -155,6 +193,12 @@ fn build_response(status: StatusCode, body: &[u8]) -> Vec<u8> {
     response.extend_from_slice(b"\r\n");
     response.extend_from_slice(body);
     response
+}
+
+fn build_rpc_error_response(id: u64, error: crate::rpc::RpcError) -> io::Result<Vec<u8>> {
+    let response = RpcResponse { id, result: None, error: Some(error) };
+    let body = codec::encode_frame(&response).map_err(io::Error::other)?;
+    Ok(build_response(StatusCode::Ok, &body))
 }
 
 pub fn build_error_response(message: &str) -> Vec<u8> {

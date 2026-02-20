@@ -9,7 +9,7 @@ pub(super) async fn run_rpc_loop(addr: SocketAddr, daemon: Rc<RpcDaemon>) {
     println!("reticulumd listening on http://{}", addr);
 
     loop {
-        let (mut stream, _) = listener.accept().await.unwrap();
+        let (mut stream, peer_addr) = listener.accept().await.unwrap();
         let mut buffer = Vec::new();
         loop {
             let mut chunk = [0u8; 4096];
@@ -35,7 +35,7 @@ pub(super) async fn run_rpc_loop(addr: SocketAddr, daemon: Rc<RpcDaemon>) {
             continue;
         }
 
-        let response = http::handle_http_request(&daemon, &buffer)
+        let response = http::handle_http_request_with_peer(&daemon, &buffer, Some(peer_addr))
             .unwrap_or_else(|err| http::build_error_response(&format!("rpc error: {}", err)));
         let _ = stream.write_all(&response).await;
         let _ = stream.shutdown().await;

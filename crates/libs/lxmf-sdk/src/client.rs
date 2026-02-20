@@ -144,6 +144,11 @@ impl<B: SdkBackend> LxmfSdk for Client<B> {
             supported_contract_versions: req.supported_contract_versions.clone(),
             requested_capabilities: req.requested_capabilities.clone(),
             profile: req.config.profile.clone(),
+            bind_mode: req.config.bind_mode.clone(),
+            auth_mode: req.config.auth_mode.clone(),
+            overflow_policy: req.config.overflow_policy.clone(),
+            block_timeout_ms: req.config.block_timeout_ms,
+            rpc_backend: req.config.rpc_backend.clone(),
         }) {
             Ok(negotiation) => negotiation,
             Err(err) => {
