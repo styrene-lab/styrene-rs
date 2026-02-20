@@ -150,6 +150,7 @@ enum XtaskCommand {
     SdkBenchCheck,
     SdkPerfBudgetCheck,
     SdkMemoryBudgetCheck,
+    SdkQueuePressureCheck,
     SdkMatrixCheck,
 }
 
@@ -182,6 +183,7 @@ enum CiStage {
     SdkBenchCheck,
     SdkPerfBudgetCheck,
     SdkMemoryBudgetCheck,
+    SdkQueuePressureCheck,
     SdkMatrixCheck,
     MigrationChecks,
     ArchitectureChecks,
@@ -218,6 +220,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkBenchCheck => run_sdk_bench_check(),
         XtaskCommand::SdkPerfBudgetCheck => run_sdk_perf_budget_check(),
         XtaskCommand::SdkMemoryBudgetCheck => run_sdk_memory_budget_check(),
+        XtaskCommand::SdkQueuePressureCheck => run_sdk_queue_pressure_check(),
         XtaskCommand::SdkMatrixCheck => run_sdk_matrix_check(),
     }
 }
@@ -259,6 +262,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_sdk_replay_check()?;
     run_sdk_perf_budget_check()?;
     run_sdk_memory_budget_check()?;
+    run_sdk_queue_pressure_check()?;
     run_sdk_matrix_check()?;
     run_migration_checks()?;
     run_architecture_checks()?;
@@ -299,6 +303,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkBenchCheck => run_sdk_bench_check(),
         CiStage::SdkPerfBudgetCheck => run_sdk_perf_budget_check(),
         CiStage::SdkMemoryBudgetCheck => run_sdk_memory_budget_check(),
+        CiStage::SdkQueuePressureCheck => run_sdk_queue_pressure_check(),
         CiStage::SdkMatrixCheck => run_sdk_matrix_check(),
         CiStage::MigrationChecks => run_migration_checks(),
         CiStage::ArchitectureChecks => run_architecture_checks(),
@@ -1014,6 +1019,20 @@ fn collect_estimate_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn run_sdk_queue_pressure_check() -> Result<()> {
+    run(
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "rns-rpc",
+            "sdk_event_queues_remain_bounded_under_sustained_load",
+            "--",
+            "--nocapture",
+        ],
+    )
 }
 
 fn run_sdk_matrix_check() -> Result<()> {

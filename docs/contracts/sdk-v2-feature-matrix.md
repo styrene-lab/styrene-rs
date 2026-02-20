@@ -103,6 +103,16 @@ Profile memory ceilings are release-gated with `cargo run -p xtask -- sdk-memory
 | `desktop-local-runtime` | 134,217,728 | 33,554,432 | 268,435,456 |
 | `embedded-alloc` | 8,388,608 | 2,097,152 | 16,777,216 |
 
+## Queue Pressure Matrix
+
+Queue overflow behavior is release-gated with `cargo run -p xtask -- sdk-queue-pressure-check`.
+
+| Surface | Bound | Policy support |
+| --- | --- | --- |
+| Legacy event queue (`event_queue`) | 32 events | `reject`, `drop_oldest`, `block` |
+| SDK event log (`sdk_event_log`) | 1024 events | `reject`, `drop_oldest`, `block` |
+| Runtime broadcast channel | 64 events | bounded channel drop behavior |
+
 ## CI Mapping Matrix
 
 | Gate | Status |
@@ -114,6 +124,7 @@ Profile memory ceilings are release-gated with `cargo run -p xtask -- sdk-memory
 | `sdk-security-check` | required |
 | `sdk-perf-budget-check` | required |
 | `sdk-memory-budget-check` | required |
+| `sdk-queue-pressure-check` | required |
 | `sdk-migration-check` | required |
 | `sdk-matrix-check` | required |
 | `embedded-alloc` profile build | required |
