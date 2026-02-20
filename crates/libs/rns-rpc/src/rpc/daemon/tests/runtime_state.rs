@@ -430,3 +430,91 @@
         assert_eq!(result["state"], json!("running"));
         assert!(result.get("event_stream_position").is_some());
     }
+
+    #[test]
+    fn sdk_race_cancel_and_receipt_updates_converge_to_terminal_state() {
+        let daemon = RpcDaemon::test_instance();
+
+        for idx in 0..96_u64 {
+            let message_id = format!("race-message-{idx}");
+            let receive = daemon
+                .handle_rpc(rpc_request(
+                    50_000 + (idx * 10),
+                    "receive_message",
+                    json!({
+                        "id": message_id,
+                        "source": "race.source",
+                        "destination": "race.destination",
+                        "title": "",
+                        "content": "race payload",
+                        "fields": null
+                    }),
+                ))
+                .expect("receive");
+            assert!(receive.error.is_none(), "receive_message should succeed for race setup");
+
+            let call_cancel = |id: u64| {
+                daemon
+                    .handle_rpc(rpc_request(
+                        id,
+                        "sdk_cancel_message_v2",
+                        json!({ "message_id": message_id }),
+                    ))
+                    .expect("cancel")
+            };
+            let call_receipt = |id: u64| {
+                daemon
+                    .handle_rpc(rpc_request(
+                        id,
+                        "record_receipt",
+                        json!({
+                            "message_id": message_id,
+                            "status": "delivered"
+                        }),
+                    ))
+                    .expect("record_receipt")
+            };
+
+            let cancel = if idx % 2 == 0 {
+                let cancel = call_cancel(50_000 + (idx * 10) + 1);
+                let receipt = call_receipt(50_000 + (idx * 10) + 2);
+                assert!(receipt.error.is_none(), "record_receipt race call should stay error-free");
+                cancel
+            } else {
+                let receipt = call_receipt(50_000 + (idx * 10) + 2);
+                assert!(receipt.error.is_none(), "record_receipt race call should stay error-free");
+                call_cancel(50_000 + (idx * 10) + 1)
+            };
+
+            let cancel_payload = cancel.result.expect("cancel result");
+            let cancel_result = cancel_payload["result"].as_str().expect("cancel result string");
+            assert!(
+                matches!(cancel_result, "Accepted" | "AlreadyTerminal"),
+                "cancel race should resolve to accepted or already-terminal"
+            );
+
+            let status = daemon
+                .handle_rpc(rpc_request(
+                    50_000 + (idx * 10) + 3,
+                    "sdk_status_v2",
+                    json!({ "message_id": message_id }),
+                ))
+                .expect("status");
+            let status_payload = status.result.expect("status result");
+            let receipt_status =
+                status_payload["message"]["receipt_status"].as_str().expect("status receipt_status");
+            assert!(
+                matches!(receipt_status, "cancelled" | "delivered"),
+                "race must converge to a single terminal status"
+            );
+
+            let second_cancel = daemon
+                .handle_rpc(rpc_request(
+                    50_000 + (idx * 10) + 4,
+                    "sdk_cancel_message_v2",
+                    json!({ "message_id": message_id }),
+                ))
+                .expect("second cancel");
+            assert_eq!(second_cancel.result.expect("second cancel result")["result"], json!("AlreadyTerminal"));
+        }
+    }
