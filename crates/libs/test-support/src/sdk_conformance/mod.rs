@@ -1,13 +1,6 @@
 use lxmf_sdk::{
-    domain::{
-        IdentityImportRequest, IdentityResolveRequest, MarkerCreateRequest, MarkerListRequest,
-        MarkerUpdatePositionRequest, PaperMessageEnvelope, RemoteCommandRequest,
-        RemoteCommandResponse, TelemetryQuery, TopicCreateRequest, TopicListRequest, TopicPath,
-        TopicPublishRequest, VoiceSessionOpenRequest, VoiceSessionUpdateRequest,
-    },
-    CancelResult, Client, ConfigPatch, EventCursor, LxmfSdk, LxmfSdkAttachments, LxmfSdkIdentity,
-    LxmfSdkMarkers, LxmfSdkPaper, LxmfSdkRemoteCommands, LxmfSdkTelemetry, LxmfSdkTopics,
-    LxmfSdkVoiceSignaling, MessageId, RpcBackendClient, SendRequest, StartRequest,
+    CancelResult, Client, ConfigPatch, EventCursor, LxmfSdk, MessageId, RpcBackendClient,
+    SendRequest, StartRequest,
 };
 use rns_rpc::e2e_harness::{
     build_http_post, build_rpc_frame, parse_http_response_body, parse_rpc_frame,
@@ -15,13 +8,15 @@ use rns_rpc::e2e_harness::{
 use rns_rpc::storage::messages::MessagesStore;
 use rns_rpc::{http, RpcDaemon, RpcEvent, RpcResponse};
 use serde_json::{json, Value as JsonValue};
-use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+mod auth_mode_tests;
+mod release_bc_tests;
 
 const EVENT_LOG_OVERFLOW_TRIGGER: usize = 1_100;
 
@@ -457,69 +452,6 @@ fn sdk_conformance_poll_rejects_max_over_limit() {
 }
 
 #[test]
-fn sdk_conformance_remote_bind_requires_secure_auth_mode() {
-    let harness = RpcHarness::new();
-    let client = harness.client();
-
-    let err = client
-        .start(insecure_remote_start_request())
-        .expect_err("remote bind without token/mtls must fail");
-    assert_eq!(err.machine_code, "SDK_SECURITY_REMOTE_BIND_DISALLOWED");
-}
-
-#[test]
-fn sdk_conformance_token_mode_requires_token_config() {
-    let harness = RpcHarness::new();
-    let client = harness.client();
-
-    let err = client
-        .start(token_without_config_start_request())
-        .expect_err("token mode requires token config");
-    assert_eq!(err.machine_code, "SDK_SECURITY_AUTH_REQUIRED");
-}
-
-#[test]
-fn sdk_conformance_token_mode_supports_multiple_authenticated_rpc_calls() {
-    let harness = RpcHarness::new();
-    let client = harness.client();
-    client
-        .start(token_remote_start_request())
-        .expect("token-mode start with config should succeed");
-
-    let first = client.snapshot().expect("first snapshot");
-    let second = client.snapshot().expect("second snapshot");
-    assert_eq!(first.runtime_id, second.runtime_id);
-}
-
-#[test]
-fn sdk_conformance_mtls_mode_supports_authenticated_rpc_calls() {
-    let harness = RpcHarness::new();
-    let client = harness.client();
-    client.start(mtls_remote_start_request()).expect("mtls-mode start with config should succeed");
-
-    let first = client.snapshot().expect("first snapshot");
-    let second = client.snapshot().expect("second snapshot");
-    assert_eq!(first.runtime_id, second.runtime_id);
-}
-
-#[test]
-fn sdk_conformance_shared_instance_capability_is_negotiated_when_requested() {
-    let harness = RpcHarness::new();
-    let client = harness.client();
-    let mut request = token_remote_start_request();
-    request.requested_capabilities = vec!["sdk.capability.shared_instance_rpc_auth".to_string()];
-
-    let handle = client.start(request).expect("start with shared-instance capability request");
-    assert!(
-        handle
-            .effective_capabilities
-            .iter()
-            .any(|capability| capability == "sdk.capability.shared_instance_rpc_auth"),
-        "shared-instance auth capability should be present in effective capability set"
-    );
-}
-
-#[test]
 fn sdk_conformance_sent_terminality_depends_on_receipt_capability() {
     let harness = RpcHarness::new();
     let client = harness.client();
@@ -540,162 +472,4 @@ fn sdk_conformance_sent_terminality_depends_on_receipt_capability() {
         .expect("status")
         .expect("message should exist");
     assert!(!snapshot.terminal, "sent must be non-terminal with receipt_terminality");
-}
-
-#[test]
-fn sdk_conformance_release_bc_domain_methods_work_through_rpc_adapter() {
-    let harness = RpcHarness::new();
-    let client = harness.client();
-    client.start(base_start_request()).expect("start");
-
-    let topic = client
-        .topic_create(TopicCreateRequest {
-            topic_path: Some(TopicPath("ops/alerts".to_string())),
-            metadata: BTreeMap::new(),
-            extensions: BTreeMap::new(),
-        })
-        .expect("topic_create");
-    let listed = client
-        .topic_list(TopicListRequest { cursor: None, limit: Some(16), extensions: BTreeMap::new() })
-        .expect("topic_list");
-    assert!(
-        listed.topics.iter().any(|record| record.topic_id == topic.topic_id),
-        "created topic must appear in list"
-    );
-
-    client
-        .topic_publish(TopicPublishRequest {
-            topic_id: topic.topic_id.clone(),
-            payload: json!({ "kind": "alert", "msg": "hello" }),
-            correlation_id: Some("corr-1".to_string()),
-            extensions: BTreeMap::new(),
-        })
-        .expect("topic_publish");
-    let telemetry = client
-        .telemetry_query(TelemetryQuery {
-            peer_id: None,
-            topic_id: Some(topic.topic_id.clone()),
-            from_ts_ms: None,
-            to_ts_ms: None,
-            limit: Some(32),
-            extensions: BTreeMap::new(),
-        })
-        .expect("telemetry_query");
-    assert!(!telemetry.is_empty(), "topic publish should produce telemetry");
-
-    let attachment = client
-        .attachment_store(lxmf_sdk::domain::AttachmentStoreRequest {
-            name: "note.txt".to_string(),
-            content_type: "text/plain".to_string(),
-            bytes_base64: "aGVsbG8=".to_string(),
-            expires_ts_ms: None,
-            topic_ids: vec![topic.topic_id.clone()],
-            extensions: BTreeMap::new(),
-        })
-        .expect("attachment_store");
-    let fetched_attachment = client
-        .attachment_get(attachment.attachment_id.clone())
-        .expect("attachment_get")
-        .expect("attachment exists");
-    assert_eq!(fetched_attachment.name, "note.txt");
-
-    let marker = client
-        .marker_create(MarkerCreateRequest {
-            label: "alpha".to_string(),
-            position: lxmf_sdk::domain::GeoPoint { lat: 34.0, lon: -118.0, alt_m: Some(100.0) },
-            topic_id: Some(topic.topic_id.clone()),
-            extensions: BTreeMap::new(),
-        })
-        .expect("marker_create");
-    let marker_list = client
-        .marker_list(MarkerListRequest {
-            topic_id: Some(topic.topic_id.clone()),
-            cursor: None,
-            limit: Some(16),
-            extensions: BTreeMap::new(),
-        })
-        .expect("marker_list");
-    assert!(
-        marker_list.markers.iter().any(|record| record.marker_id == marker.marker_id),
-        "created marker must appear in list"
-    );
-    let updated_marker = client
-        .marker_update_position(MarkerUpdatePositionRequest {
-            marker_id: marker.marker_id.clone(),
-            position: lxmf_sdk::domain::GeoPoint { lat: 35.0, lon: -117.0, alt_m: None },
-            extensions: BTreeMap::new(),
-        })
-        .expect("marker_update_position");
-    assert_eq!(updated_marker.position.lat, 35.0);
-
-    let identities = client.identity_list().expect("identity_list");
-    assert!(!identities.is_empty(), "default identity expected");
-    let imported = client
-        .identity_import(IdentityImportRequest {
-            bundle_base64: "eyJpZGVudGl0eSI6Im5vZGUtYiIsInB1YmxpY19rZXkiOiJub2RlLWItcHViIiwiZGlzcGxheV9uYW1lIjoiTm9kZSBCIiwiY2FwYWJpbGl0aWVzIjpbXSwiZXh0ZW5zaW9ucyI6e319".to_string(),
-            passphrase: None,
-            extensions: BTreeMap::new(),
-        })
-        .expect("identity_import");
-    let resolved = client
-        .identity_resolve(IdentityResolveRequest {
-            hash: imported.public_key.clone(),
-            extensions: BTreeMap::new(),
-        })
-        .expect("identity_resolve");
-    assert!(resolved.is_some(), "imported identity should resolve by public key");
-
-    let sent = client.send(send_request("paper", None)).expect("send");
-    let envelope = client.paper_encode(sent.clone()).expect("paper_encode");
-    client
-        .paper_decode(PaperMessageEnvelope {
-            uri: envelope.uri,
-            transient_id: envelope.transient_id,
-            destination_hint: envelope.destination_hint,
-            extensions: BTreeMap::new(),
-        })
-        .expect("paper_decode");
-
-    let command_response = client
-        .command_invoke(RemoteCommandRequest {
-            command: "ping".to_string(),
-            target: Some("node-b".to_string()),
-            payload: json!({ "body": "hello" }),
-            timeout_ms: Some(1_000),
-            extensions: BTreeMap::new(),
-        })
-        .expect("command_invoke");
-    let correlation_id = command_response
-        .payload
-        .get("correlation_id")
-        .and_then(JsonValue::as_str)
-        .expect("command response correlation_id")
-        .to_string();
-    client
-        .command_reply(
-            correlation_id,
-            RemoteCommandResponse {
-                accepted: true,
-                payload: json!({ "body": "pong" }),
-                extensions: BTreeMap::new(),
-            },
-        )
-        .expect("command_reply");
-
-    let voice_session = client
-        .voice_session_open(VoiceSessionOpenRequest {
-            peer_id: "node-b".to_string(),
-            codec_hint: Some("opus".to_string()),
-            extensions: BTreeMap::new(),
-        })
-        .expect("voice_session_open");
-    let state = client
-        .voice_session_update(VoiceSessionUpdateRequest {
-            session_id: voice_session.clone(),
-            state: lxmf_sdk::domain::VoiceSessionState::Active,
-            extensions: BTreeMap::new(),
-        })
-        .expect("voice_session_update");
-    assert_eq!(state, lxmf_sdk::domain::VoiceSessionState::Active);
-    client.voice_session_close(voice_session).expect("voice_session_close");
 }
