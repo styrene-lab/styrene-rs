@@ -15,6 +15,7 @@ const RPC_CONTRACT_PATH: &str = "docs/contracts/rpc-contract.md";
 const PAYLOAD_CONTRACT_PATH: &str = "docs/contracts/payload-contract.md";
 const SECURITY_THREAT_MODEL_PATH: &str = "docs/adr/0004-sdk-v25-threat-model.md";
 const SECURITY_REVIEW_CHECKLIST_PATH: &str = "docs/runbooks/security-review-checklist.md";
+const SDK_DOCS_CHECKLIST_PATH: &str = "docs/runbooks/sdk-docs-checklist.md";
 const BENCH_SUMMARY_PATH: &str = "target/criterion/bench-summary.txt";
 const PERF_BUDGET_REPORT_PATH: &str = "target/criterion/bench-budget-report.txt";
 const SUPPLY_CHAIN_SBOM_PATH: &str = "target/supply-chain/sbom/cargo-metadata.sbom.json";
@@ -48,6 +49,65 @@ struct PerfBudget {
     max_p99_ns: f64,
     min_throughput_ops_per_sec: f64,
 }
+
+struct RequiredSdkDoc {
+    path: &'static str,
+    headings: &'static [&'static str],
+}
+
+const REQUIRED_SDK_DOCS: &[RequiredSdkDoc] = &[
+    RequiredSdkDoc {
+        path: "docs/sdk/README.md",
+        headings: &["# SDK Integration Guide", "## Reading Order", "## Core Concepts"],
+    },
+    RequiredSdkDoc {
+        path: "docs/sdk/quickstart.md",
+        headings: &[
+            "# SDK Quickstart",
+            "## Prerequisites",
+            "## Start `reticulumd`",
+            "## Minimal SDK Client",
+            "## Send and Poll Events",
+        ],
+    },
+    RequiredSdkDoc {
+        path: "docs/sdk/configuration-profiles.md",
+        headings: &[
+            "# SDK Configuration and Profiles",
+            "## Profile Selection",
+            "## Security Baselines",
+            "## Event Stream and Backpressure",
+        ],
+    },
+    RequiredSdkDoc {
+        path: "docs/sdk/lifecycle-and-events.md",
+        headings: &[
+            "# SDK Lifecycle and Event Flow",
+            "## Lifecycle State Machine",
+            "## Cursor Polling Pattern",
+            "## Event Handling Guidance",
+        ],
+    },
+    RequiredSdkDoc {
+        path: "docs/sdk/advanced-embedding.md",
+        headings: &[
+            "# SDK Advanced Embedding",
+            "## Capability-Negotiated Feature Use",
+            "## Idempotency and Cancellation",
+            "## Embedded and Manual Tick Integration",
+        ],
+    },
+];
+
+const REQUIRED_SDK_DOC_CHECKLIST_ITEMS: &[&str] = &[
+    "- [x] docs/sdk/README.md",
+    "- [x] docs/sdk/quickstart.md",
+    "- [x] docs/sdk/configuration-profiles.md",
+    "- [x] docs/sdk/lifecycle-and-events.md",
+    "- [x] docs/sdk/advanced-embedding.md",
+    "- [x] README.md includes SDK guide links",
+    "- [x] docs/architecture/overview.md links to SDK guide index",
+];
 
 const PERF_BUDGETS: &[PerfBudget] = &[
     PerfBudget {
@@ -150,6 +210,7 @@ enum XtaskCommand {
     ForbiddenDeps,
     SdkConformance,
     SdkSchemaCheck,
+    SdkDocsCheck,
     InteropArtifacts {
         #[arg(long)]
         update: bool,
@@ -194,6 +255,7 @@ enum CiStage {
     ApiSurfaceCheck,
     SdkConformance,
     SdkSchemaCheck,
+    SdkDocsCheck,
     InteropArtifacts,
     InteropMatrixCheck,
     InteropCorpusCheck,
@@ -234,6 +296,7 @@ fn main() -> Result<()> {
         XtaskCommand::ForbiddenDeps => run_forbidden_deps(),
         XtaskCommand::SdkConformance => run_sdk_conformance(),
         XtaskCommand::SdkSchemaCheck => run_sdk_schema_check(),
+        XtaskCommand::SdkDocsCheck => run_sdk_docs_check(),
         XtaskCommand::InteropArtifacts { update } => run_interop_artifacts(update),
         XtaskCommand::InteropMatrixCheck => run_interop_matrix_check(),
         XtaskCommand::InteropCorpusCheck => run_interop_corpus_check(),
@@ -282,6 +345,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     )?;
     run("cargo", &["test", "--workspace"])?;
     run("cargo", &["doc", "--workspace", "--no-deps"])?;
+    run_sdk_docs_check()?;
     run_sdk_schema_check()?;
     run_interop_artifacts(false)?;
     run_interop_matrix_check()?;
@@ -326,6 +390,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::ApiSurfaceCheck => run_api_diff(),
         CiStage::SdkConformance => run_sdk_conformance(),
         CiStage::SdkSchemaCheck => run_sdk_schema_check(),
+        CiStage::SdkDocsCheck => run_sdk_docs_check(),
         CiStage::InteropArtifacts => run_interop_artifacts(false),
         CiStage::InteropMatrixCheck => run_interop_matrix_check(),
         CiStage::InteropCorpusCheck => run_interop_corpus_check(),
@@ -393,6 +458,27 @@ fn run_sdk_conformance() -> Result<()> {
 
 fn run_sdk_schema_check() -> Result<()> {
     run("cargo", &["test", "-p", "test-support", "sdk_schema", "--", "--nocapture"])
+}
+
+fn run_sdk_docs_check() -> Result<()> {
+    let checklist = fs::read_to_string(SDK_DOCS_CHECKLIST_PATH)
+        .with_context(|| format!("read {SDK_DOCS_CHECKLIST_PATH}"))?;
+    for item in REQUIRED_SDK_DOC_CHECKLIST_ITEMS {
+        if !checklist.contains(item) {
+            bail!("missing checklist item in {SDK_DOCS_CHECKLIST_PATH}: {item}");
+        }
+    }
+
+    for required in REQUIRED_SDK_DOCS {
+        let doc =
+            fs::read_to_string(required.path).with_context(|| format!("read {}", required.path))?;
+        for heading in required.headings {
+            if !doc.contains(heading) {
+                bail!("missing required heading in {}: {heading}", required.path);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -9,8 +9,7 @@ LXMF-rs/
 ├── crates/
 │   ├── libs/
 │   │   ├── lxmf-core/
-│   │   ├── lxmf-router/
-│   │   ├── lxmf-runtime/
+│   │   ├── lxmf-sdk/
 │   │   ├── rns-core/
 │   │   ├── rns-transport/
 │   │   ├── rns-rpc/
@@ -37,8 +36,7 @@ Note: legacy migration-only implementation crates are retained under
 ## Public Crates
 
 - `lxmf-core`: message/payload/identity primitives.
-- `lxmf-router`: router, propagation, and delivery policy surface.
-- `lxmf-runtime`: embedded runtime API (`start`, `RuntimeHandle`, typed send requests).
+- `lxmf-sdk`: host-facing client API (`start/send/cancel/status/configure/poll/snapshot/shutdown`).
 - `rns-core`: Reticulum cryptographic and packet primitives.
 - `rns-transport`: transport + iface + receipt/resource API.
 - `rns-rpc`: RPC request/response/event contracts and bridges.
@@ -82,6 +80,14 @@ cargo run -p rns-tools --bin rnx -- e2e --timeout-secs 20
 - RPC contract: `docs/contracts/rpc-contract.md`
 - Payload contract: `docs/contracts/payload-contract.md`
 - Release readiness: `docs/runbooks/release-readiness.md`
+
+## SDK Guide
+
+- Guide index: `docs/sdk/README.md`
+- Quickstart: `docs/sdk/quickstart.md`
+- Profiles/configuration: `docs/sdk/configuration-profiles.md`
+- Lifecycle/events: `docs/sdk/lifecycle-and-events.md`
+- Advanced embedding: `docs/sdk/advanced-embedding.md`
 
 ## Governance
 

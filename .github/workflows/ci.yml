@@ -60,6 +60,14 @@ jobs:
       - name: Docs
         run: cargo xtask ci --stage doc
 
+  sdk-docs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SDK docs completeness
+        run: cargo xtask ci --stage sdk-docs-check
+
   security:
     runs-on: ubuntu-latest
     steps:
