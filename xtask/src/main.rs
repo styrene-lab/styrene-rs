@@ -25,6 +25,7 @@ enum XtaskCommand {
     SdkConformance,
     SdkSchemaCheck,
     SdkProfileBuild,
+    SdkExamplesCheck,
     SdkApiBreak,
     SdkMigrationCheck,
     SdkSecurityCheck,
@@ -45,6 +46,7 @@ enum CiStage {
     SdkConformance,
     SdkSchemaCheck,
     SdkProfileBuild,
+    SdkExamplesCheck,
     SdkApiBreak,
     SdkMigrationCheck,
     SdkSecurityCheck,
@@ -68,6 +70,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkConformance => run_sdk_conformance(),
         XtaskCommand::SdkSchemaCheck => run_sdk_schema_check(),
         XtaskCommand::SdkProfileBuild => run_sdk_profile_build(),
+        XtaskCommand::SdkExamplesCheck => run_sdk_examples_check(),
         XtaskCommand::SdkApiBreak => run_sdk_api_break(),
         XtaskCommand::SdkMigrationCheck => run_sdk_migration_check(),
         XtaskCommand::SdkSecurityCheck => run_sdk_security_check(),
@@ -100,6 +103,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_sdk_schema_check()?;
     run_sdk_conformance()?;
     run_sdk_profile_build()?;
+    run_sdk_examples_check()?;
     run_sdk_security_check()?;
     run_sdk_property_check()?;
     run_sdk_matrix_check()?;
@@ -126,6 +130,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkConformance => run_sdk_conformance(),
         CiStage::SdkSchemaCheck => run_sdk_schema_check(),
         CiStage::SdkProfileBuild => run_sdk_profile_build(),
+        CiStage::SdkExamplesCheck => run_sdk_examples_check(),
         CiStage::SdkApiBreak => run_sdk_api_break(),
         CiStage::SdkMigrationCheck => run_sdk_migration_check(),
         CiStage::SdkSecurityCheck => run_sdk_security_check(),
@@ -201,6 +206,10 @@ fn run_sdk_profile_build() -> Result<()> {
         ],
     )?;
     Ok(())
+}
+
+fn run_sdk_examples_check() -> Result<()> {
+    run("cargo", &["test", "-p", "lxmf-sdk", "--examples", "--no-run"])
 }
 
 fn run_sdk_api_break() -> Result<()> {
