@@ -318,6 +318,20 @@ jobs:
             target/criterion/bench-budget-report.txt
             target/criterion/bench-summary.txt
 
+  release-scorecard-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Release scorecard generation gate
+        run: cargo xtask ci --stage release-scorecard-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-scorecard
+          path: |
+            target/release-scorecard/release-scorecard.md
+            target/release-scorecard/release-scorecard.json
+
   sdk-memory-budget-check:
     runs-on: ubuntu-latest
     steps:

@@ -33,6 +33,7 @@ Optional longer soak:
 - `CI / security`
 - `CI / unused-deps`
 - `CI / api-surface-check`
+- `CI / release-scorecard-check`
 
 ## 4. RC tagging
 
@@ -50,4 +51,5 @@ Record the following in release notes or a tracking issue:
 - Commit SHA.
 - CI run URL(s).
 - Local gate command outputs.
+- Release scorecard artifact (`target/release-scorecard/release-scorecard.md`).
 - Known risks or deferred items.

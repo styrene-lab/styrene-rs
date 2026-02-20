@@ -39,6 +39,7 @@ This checklist is the publication gate for the Rust workspace.
 - `api-surface-check`
 - `compat-kit-check`
 - `support-policy-check`
+- `release-scorecard-check`
 
 ## 5. Local release checks
 
@@ -63,6 +64,7 @@ cargo run -p xtask -- lxmf-cli-check
 cargo run -p xtask -- dx-bootstrap-check
 cargo run -p xtask -- compat-kit-check
 cargo run -p xtask -- support-policy-check
+cargo run -p xtask -- release-scorecard-check
 cargo run -p xtask -- supply-chain-check
 cargo run -p xtask -- reproducible-build-check
 ```

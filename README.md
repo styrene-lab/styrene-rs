@@ -102,6 +102,7 @@ cargo run -p rns-tools --bin rnx -- e2e --timeout-secs 20
 - RPC contract: `docs/contracts/rpc-contract.md`
 - Payload contract: `docs/contracts/payload-contract.md`
 - Release readiness: `docs/runbooks/release-readiness.md`
+- Release scorecard process: `docs/architecture/overview.md`
 
 ## SDK Guide
 
