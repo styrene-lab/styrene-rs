@@ -1,4 +1,126 @@
 impl RpcDaemon {
+    fn sdk_overflow_policy(&self) -> String {
+        let configured = self
+            .sdk_runtime_config
+            .lock()
+            .expect("sdk_runtime_config mutex poisoned")
+            .get("overflow_policy")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("drop_oldest")
+            .trim()
+            .to_ascii_lowercase();
+        if matches!(configured.as_str(), "reject" | "drop_oldest" | "block") {
+            configured
+        } else {
+            "drop_oldest".to_string()
+        }
+    }
+
+    fn sdk_block_timeout_ms(&self) -> u64 {
+        self.sdk_runtime_config
+            .lock()
+            .expect("sdk_runtime_config mutex poisoned")
+            .get("block_timeout_ms")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0)
+    }
+
+    fn push_legacy_event_with_policy(
+        &self,
+        event: &RpcEvent,
+        policy: &str,
+        block_timeout_ms: u64,
+    ) -> bool {
+        const LEGACY_EVENT_QUEUE_CAPACITY: usize = 32;
+        match policy {
+            "reject" => {
+                let mut guard = self.event_queue.lock().expect("event_queue mutex poisoned");
+                if guard.len() >= LEGACY_EVENT_QUEUE_CAPACITY {
+                    return false;
+                }
+                guard.push_back(event.clone());
+                true
+            }
+            "block" => {
+                let timeout = block_timeout_ms.max(1);
+                let deadline =
+                    std::time::Instant::now() + std::time::Duration::from_millis(timeout);
+                loop {
+                    {
+                        let mut guard =
+                            self.event_queue.lock().expect("event_queue mutex poisoned");
+                        if guard.len() < LEGACY_EVENT_QUEUE_CAPACITY {
+                            guard.push_back(event.clone());
+                            return true;
+                        }
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+            _ => {
+                let mut guard = self.event_queue.lock().expect("event_queue mutex poisoned");
+                if guard.len() >= LEGACY_EVENT_QUEUE_CAPACITY {
+                    guard.pop_front();
+                }
+                guard.push_back(event.clone());
+                true
+            }
+        }
+    }
+
+    fn push_sdk_event_log_with_policy(
+        &self,
+        sequenced_event: SequencedRpcEvent,
+        policy: &str,
+        block_timeout_ms: u64,
+    ) -> bool {
+        match policy {
+            "reject" => {
+                let mut log_guard = self.sdk_event_log.lock().expect("sdk_event_log mutex poisoned");
+                if log_guard.len() >= SDK_EVENT_LOG_CAPACITY {
+                    return false;
+                }
+                log_guard.push_back(sequenced_event);
+                true
+            }
+            "block" => {
+                let timeout = block_timeout_ms.max(1);
+                let deadline =
+                    std::time::Instant::now() + std::time::Duration::from_millis(timeout);
+                loop {
+                    {
+                        let mut log_guard =
+                            self.sdk_event_log.lock().expect("sdk_event_log mutex poisoned");
+                        if log_guard.len() < SDK_EVENT_LOG_CAPACITY {
+                            log_guard.push_back(sequenced_event);
+                            return true;
+                        }
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
+            _ => {
+                let mut log_guard = self.sdk_event_log.lock().expect("sdk_event_log mutex poisoned");
+                if log_guard.len() >= SDK_EVENT_LOG_CAPACITY {
+                    log_guard.pop_front();
+                    let mut dropped = self
+                        .sdk_dropped_event_count
+                        .lock()
+                        .expect("sdk_dropped_event_count mutex poisoned");
+                    *dropped = dropped.saturating_add(1);
+                }
+                log_guard.push_back(sequenced_event);
+                true
+            }
+        }
+    }
+
     fn redaction_enabled(&self) -> bool {
         self.sdk_runtime_config
             .lock()
@@ -119,13 +241,10 @@ impl RpcDaemon {
 
     pub fn push_event(&self, event: RpcEvent) -> RpcEvent {
         let event = self.redact_event(event);
-        {
-            let mut guard = self.event_queue.lock().expect("event_queue mutex poisoned");
-            if guard.len() >= 32 {
-                guard.pop_front();
-            }
-            guard.push_back(event.clone());
-        }
+        let policy = self.sdk_overflow_policy();
+        let block_timeout_ms = self.sdk_block_timeout_ms();
+
+        let _ = self.push_legacy_event_with_policy(&event, policy.as_str(), block_timeout_ms);
 
         let seq_no = {
             let mut seq_guard =
@@ -133,16 +252,18 @@ impl RpcDaemon {
             *seq_guard = seq_guard.saturating_add(1);
             *seq_guard
         };
-        let mut log_guard = self.sdk_event_log.lock().expect("sdk_event_log mutex poisoned");
-        if log_guard.len() >= SDK_EVENT_LOG_CAPACITY {
-            log_guard.pop_front();
+        let inserted = self.push_sdk_event_log_with_policy(
+            SequencedRpcEvent { seq_no, event: event.clone() },
+            policy.as_str(),
+            block_timeout_ms,
+        );
+        if !inserted {
             let mut dropped = self
                 .sdk_dropped_event_count
                 .lock()
                 .expect("sdk_dropped_event_count mutex poisoned");
             *dropped = dropped.saturating_add(1);
         }
-        log_guard.push_back(SequencedRpcEvent { seq_no, event: event.clone() });
         event
     }
 
