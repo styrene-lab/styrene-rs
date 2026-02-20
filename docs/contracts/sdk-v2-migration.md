@@ -47,7 +47,7 @@ Compatibility window:
 - `sdk_v25_enabled`
 - env override `LXMF_SDK_V25_ENABLED`
 2. When disabled:
-- SDK v2.5 methods return `SDK_CAPABILITY_DISABLED`
+- SDK v2.5 methods may return `SDK_CAPABILITY_DISABLED` for disabled capabilities or disabled contract mode
 - legacy path remains available
 
 ## Fallback Safety Rules
