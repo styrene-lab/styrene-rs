@@ -130,6 +130,10 @@ Current additive extension traits:
 2. `LxmfSdkTelemetry`
 3. `LxmfSdkAttachments`
 4. `LxmfSdkMarkers`
+5. `LxmfSdkIdentity`
+6. `LxmfSdkPaper`
+7. `LxmfSdkRemoteCommands`
+8. `LxmfSdkVoiceSignaling`
 
 ## Lifecycle State Machine
 

@@ -42,7 +42,19 @@
         "marker_create",
         "marker_list",
         "marker_update_position",
-        "marker_delete"
+        "marker_delete",
+        "identity_list",
+        "identity_activate",
+        "identity_import",
+        "identity_export",
+        "identity_resolve",
+        "paper_encode",
+        "paper_decode",
+        "command_invoke",
+        "command_reply",
+        "voice_session_open",
+        "voice_session_update",
+        "voice_session_close"
       ]
     },
     "params": { "type": "object" },
@@ -597,6 +609,245 @@
                   "alt_m": { "type": ["number", "null"] }
                 }
               },
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "identity_list" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "identity_activate" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["identity"],
+            "properties": {
+              "identity": { "type": "string", "minLength": 1 },
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "identity_import" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["bundle_base64"],
+            "properties": {
+              "bundle_base64": { "type": "string", "minLength": 1 },
+              "passphrase": { "type": ["string", "null"] },
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "identity_export" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["identity"],
+            "properties": {
+              "identity": { "type": "string", "minLength": 1 },
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "identity_resolve" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["hash"],
+            "properties": {
+              "hash": { "type": "string", "minLength": 1 },
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "paper_encode" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["message_id"],
+            "properties": {
+              "message_id": { "type": "string", "minLength": 1 },
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "paper_decode" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["uri"],
+            "properties": {
+              "uri": { "type": "string", "minLength": 1 },
+              "transient_id": { "type": ["string", "null"] },
+              "destination_hint": { "type": ["string", "null"] },
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "command_invoke" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command", "payload"],
+            "properties": {
+              "command": { "type": "string", "minLength": 1 },
+              "target": { "type": ["string", "null"] },
+              "payload": {},
+              "timeout_ms": { "type": ["integer", "null"], "minimum": 1 },
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "command_reply" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["correlation_id", "accepted", "payload"],
+            "properties": {
+              "correlation_id": { "type": "string", "minLength": 1 },
+              "accepted": { "type": "boolean" },
+              "payload": {},
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "voice_session_open" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["peer_id"],
+            "properties": {
+              "peer_id": { "type": "string", "minLength": 1 },
+              "codec_hint": { "type": ["string", "null"] },
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "voice_session_update" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["session_id", "state"],
+            "properties": {
+              "session_id": { "type": "string", "minLength": 1 },
+              "state": {
+                "type": "string",
+                "enum": ["new", "ringing", "active", "holding", "closed", "failed"]
+              },
+              "extensions": { "$ref": "#/$defs/extension_map" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "method": { "const": "voice_session_close" } },
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "params": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["session_id"],
+            "properties": {
+              "session_id": { "type": "string", "minLength": 1 },
               "extensions": { "$ref": "#/$defs/extension_map" }
             }
           }
