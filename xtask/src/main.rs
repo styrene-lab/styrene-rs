@@ -211,6 +211,7 @@ enum XtaskCommand {
     SdkConformance,
     SdkSchemaCheck,
     SdkDocsCheck,
+    SdkCookbookCheck,
     InteropArtifacts {
         #[arg(long)]
         update: bool,
@@ -256,6 +257,7 @@ enum CiStage {
     SdkConformance,
     SdkSchemaCheck,
     SdkDocsCheck,
+    SdkCookbookCheck,
     InteropArtifacts,
     InteropMatrixCheck,
     InteropCorpusCheck,
@@ -297,6 +299,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkConformance => run_sdk_conformance(),
         XtaskCommand::SdkSchemaCheck => run_sdk_schema_check(),
         XtaskCommand::SdkDocsCheck => run_sdk_docs_check(),
+        XtaskCommand::SdkCookbookCheck => run_sdk_cookbook_check(),
         XtaskCommand::InteropArtifacts { update } => run_interop_artifacts(update),
         XtaskCommand::InteropMatrixCheck => run_interop_matrix_check(),
         XtaskCommand::InteropCorpusCheck => run_interop_corpus_check(),
@@ -346,6 +349,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run("cargo", &["test", "--workspace"])?;
     run("cargo", &["doc", "--workspace", "--no-deps"])?;
     run_sdk_docs_check()?;
+    run_sdk_cookbook_check()?;
     run_sdk_schema_check()?;
     run_interop_artifacts(false)?;
     run_interop_matrix_check()?;
@@ -391,6 +395,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkConformance => run_sdk_conformance(),
         CiStage::SdkSchemaCheck => run_sdk_schema_check(),
         CiStage::SdkDocsCheck => run_sdk_docs_check(),
+        CiStage::SdkCookbookCheck => run_sdk_cookbook_check(),
         CiStage::InteropArtifacts => run_interop_artifacts(false),
         CiStage::InteropMatrixCheck => run_interop_matrix_check(),
         CiStage::InteropCorpusCheck => run_interop_corpus_check(),
@@ -479,6 +484,10 @@ fn run_sdk_docs_check() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn run_sdk_cookbook_check() -> Result<()> {
+    run("cargo", &["test", "-p", "test-support", "sdk_cookbook", "--", "--nocapture"])
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

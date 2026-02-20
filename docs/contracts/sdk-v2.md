@@ -219,6 +219,13 @@ Rules:
 5. Concurrent config updates use revision CAS (`SDK_CONFIG_CONFLICT` on mismatch).
 6. `configure(expected_revision, patch)` targets the mutable typed-config subset only; immutable startup keys (`profile`, `bind_mode`, `auth_mode`) must be rejected.
 
+## Configuration Cookbook References
+
+Validated deployment templates are maintained in:
+
+- `docs/runbooks/sdk-config-cookbook.md`
+- `docs/fixtures/sdk-v2/cookbook/*.json`
+
 ## Config Layering
 
 `SdkCoreConfig` is backend-neutral.  

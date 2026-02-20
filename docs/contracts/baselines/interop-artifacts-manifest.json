@@ -68,8 +68,8 @@
     },
     {
       "path": "docs/contracts/sdk-v2-feature-matrix.md",
-      "bytes": 6241,
-      "sha256": "00b8c25161963c577260c3056d37006f0292d8921568ec1bcf391037e4d9efaa"
+      "bytes": 6277,
+      "sha256": "a8c518c65b01c8b165c9e6bd359153b907125cf2d81810f4dfff63a66bcc42c9"
     },
     {
       "path": "docs/contracts/sdk-v2-identity.md",
@@ -113,8 +113,8 @@
     },
     {
       "path": "docs/contracts/sdk-v2.md",
-      "bytes": 8180,
-      "sha256": "e2804cd38f31f133bd7ef57877c9a02730a75bd10b827a886ccaa167f465b714"
+      "bytes": 8352,
+      "sha256": "c220f647d59edd6e9978b9b0b1426bb0e377081efbe7896b2a5a3dd9d5a0e691"
     },
     {
       "path": "docs/fixtures/contract-v2/README.md",
@@ -470,6 +470,31 @@
       "path": "docs/fixtures/sdk-v2/config.remote_token.valid.json",
       "bytes": 676,
       "sha256": "835207f60b275854963e32c6d3a3295c096de27c49e49176935c1c89f3bf3940"
+    },
+    {
+      "path": "docs/fixtures/sdk-v2/cookbook/config.desktop_service_local.valid.json",
+      "bytes": 595,
+      "sha256": "9832e1d1f71cb0728c8edd25eeae000a08fc0e96b5dfcf5ae6ca474ad7d9b04c"
+    },
+    {
+      "path": "docs/fixtures/sdk-v2/cookbook/config.embedded_alloc.valid.json",
+      "bytes": 585,
+      "sha256": "c4acdca272e51cbeb2ddb6bb549dcf6c1238d7f317b6146355aac9bd4469154b"
+    },
+    {
+      "path": "docs/fixtures/sdk-v2/cookbook/config.remote_local_trusted.invalid.json",
+      "bytes": 375,
+      "sha256": "297d1a6af9104a68f7c5a02326fd255562eeaef23d0f20a8529148671a61ac34"
+    },
+    {
+      "path": "docs/fixtures/sdk-v2/cookbook/config.remote_mtls_gateway.valid.json",
+      "bytes": 795,
+      "sha256": "5241a0eac7c32066076520499451984145073db9c48a99814310fc99db58ab44"
+    },
+    {
+      "path": "docs/fixtures/sdk-v2/cookbook/config.remote_token_gateway.valid.json",
+      "bytes": 709,
+      "sha256": "fa70f64b7db5c37c9d052b081098be2c8a9c5bcbba43d78756f203ae15c93878"
     },
     {
       "path": "docs/fixtures/sdk-v2/error.invalid_machine_code.invalid.json",

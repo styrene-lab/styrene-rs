@@ -68,6 +68,14 @@ jobs:
       - name: SDK docs completeness
         run: cargo xtask ci --stage sdk-docs-check
 
+  sdk-cookbook-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SDK cookbook fixtures
+        run: cargo xtask ci --stage sdk-cookbook-check
+
   security:
     runs-on: ubuntu-latest
     steps:
