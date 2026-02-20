@@ -129,6 +129,7 @@ impl RpcDaemon {
             .lock()
             .expect("sdk_remote_commands mutex poisoned")
             .insert(correlation_id.clone());
+        self.persist_sdk_domain_snapshot()?;
         let response = json!({
             "accepted": true,
             "payload": {
@@ -186,6 +187,7 @@ impl RpcDaemon {
                 "correlation_id not found",
             ));
         }
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,
             result: Some(json!({

@@ -27,6 +27,7 @@ impl RpcDaemon {
                     .clear();
                 self.sdk_markers.lock().expect("sdk_markers mutex poisoned").clear();
                 self.sdk_marker_order.lock().expect("sdk_marker_order mutex poisoned").clear();
+                self.persist_sdk_domain_snapshot()?;
                 Ok(RpcResponse {
                     id: request.id,
                     result: Some(json!({ "cleared": "resources" })),
@@ -83,6 +84,7 @@ impl RpcDaemon {
                     .expect("sdk_remote_commands mutex poisoned")
                     .clear();
                 self.sdk_voice_sessions.lock().expect("sdk_voice_sessions mutex poisoned").clear();
+                self.persist_sdk_domain_snapshot()?;
                 Ok(RpcResponse {
                     id: request.id,
                     result: Some(json!({ "cleared": "all" })),

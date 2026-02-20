@@ -41,6 +41,7 @@ impl RpcDaemon {
             .expect("sdk_topics mutex poisoned")
             .insert(topic_id.clone(), record.clone());
         self.sdk_topic_order.lock().expect("sdk_topic_order mutex poisoned").push(topic_id.clone());
+        self.persist_sdk_domain_snapshot()?;
         let event = RpcEvent {
             event_type: "sdk_topic_created".to_string(),
             payload: json!({
@@ -179,6 +180,7 @@ impl RpcDaemon {
             .lock()
             .expect("sdk_topic_subscriptions mutex poisoned")
             .insert(topic_id.clone());
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,
             result: Some(json!({ "accepted": true, "topic_id": topic_id })),
@@ -217,6 +219,7 @@ impl RpcDaemon {
             .lock()
             .expect("sdk_topic_subscriptions mutex poisoned")
             .remove(topic_id.as_str());
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,
             result: Some(json!({ "accepted": removed, "topic_id": topic_id })),
@@ -278,6 +281,7 @@ impl RpcDaemon {
             .lock()
             .expect("sdk_telemetry_points mutex poisoned")
             .push(telemetry);
+        self.persist_sdk_domain_snapshot()?;
 
         let event = RpcEvent {
             event_type: "sdk_topic_published".to_string(),

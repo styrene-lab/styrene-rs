@@ -82,6 +82,38 @@ struct SdkVoiceSessionRecord {
     extensions: JsonMap<String, JsonValue>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+struct SdkDomainSnapshotV1 {
+    #[serde(default)]
+    next_domain_seq: u64,
+    #[serde(default)]
+    topics: HashMap<String, SdkTopicRecord>,
+    #[serde(default)]
+    topic_order: Vec<String>,
+    #[serde(default)]
+    topic_subscriptions: HashSet<String>,
+    #[serde(default)]
+    telemetry_points: Vec<SdkTelemetryPoint>,
+    #[serde(default)]
+    attachments: HashMap<String, SdkAttachmentRecord>,
+    #[serde(default)]
+    attachment_payloads: HashMap<String, String>,
+    #[serde(default)]
+    attachment_order: Vec<String>,
+    #[serde(default)]
+    markers: HashMap<String, SdkMarkerRecord>,
+    #[serde(default)]
+    marker_order: Vec<String>,
+    #[serde(default)]
+    identities: HashMap<String, SdkIdentityBundle>,
+    #[serde(default)]
+    active_identity: Option<String>,
+    #[serde(default)]
+    remote_commands: HashSet<String>,
+    #[serde(default)]
+    voice_sessions: HashMap<String, SdkVoiceSessionRecord>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SdkTopicCreateV2Params {

@@ -81,6 +81,7 @@ impl RpcDaemon {
             .lock()
             .expect("sdk_attachment_order mutex poisoned")
             .push(attachment_id.clone());
+        self.persist_sdk_domain_snapshot()?;
         let event = RpcEvent {
             event_type: "sdk_attachment_stored".to_string(),
             payload: json!({
@@ -243,6 +244,7 @@ impl RpcDaemon {
             .lock()
             .expect("sdk_attachment_order mutex poisoned")
             .retain(|current| current != attachment_id.as_str());
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,
             result: Some(json!({ "accepted": removed, "attachment_id": attachment_id })),
@@ -349,17 +351,21 @@ impl RpcDaemon {
                 "topic not found",
             ));
         }
-        let mut attachments = self.sdk_attachments.lock().expect("sdk_attachments mutex poisoned");
-        let Some(record) = attachments.get_mut(attachment_id.as_str()) else {
-            return Ok(self.sdk_error_response(
-                request.id,
-                "SDK_RUNTIME_NOT_FOUND",
-                "attachment not found",
-            ));
-        };
-        if !record.topic_ids.iter().any(|current| current == topic_id.as_str()) {
-            record.topic_ids.push(topic_id.clone());
+        {
+            let mut attachments =
+                self.sdk_attachments.lock().expect("sdk_attachments mutex poisoned");
+            let Some(record) = attachments.get_mut(attachment_id.as_str()) else {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_RUNTIME_NOT_FOUND",
+                    "attachment not found",
+                ));
+            };
+            if !record.topic_ids.iter().any(|current| current == topic_id.as_str()) {
+                record.topic_ids.push(topic_id.clone());
+            }
         }
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,
             result: Some(

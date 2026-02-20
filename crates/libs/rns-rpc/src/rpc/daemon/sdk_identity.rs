@@ -70,6 +70,7 @@ impl RpcDaemon {
         }
         *self.sdk_active_identity.lock().expect("sdk_active_identity mutex poisoned") =
             Some(identity.clone());
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,
             result: Some(json!({ "accepted": true, "identity": identity })),
@@ -130,6 +131,7 @@ impl RpcDaemon {
             .lock()
             .expect("sdk_identities mutex poisoned")
             .insert(bundle.identity.clone(), bundle.clone());
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse { id: request.id, result: Some(json!({ "identity": bundle })), error: None })
     }
 

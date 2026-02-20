@@ -37,6 +37,7 @@ impl RpcDaemon {
             .lock()
             .expect("sdk_voice_sessions mutex poisoned")
             .insert(session_id.clone(), record);
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,
             result: Some(json!({ "session_id": session_id })),
@@ -77,34 +78,37 @@ impl RpcDaemon {
                 "voice state is invalid",
             ));
         };
-        let mut sessions =
-            self.sdk_voice_sessions.lock().expect("sdk_voice_sessions mutex poisoned");
-        let Some(session) = sessions.get_mut(session_id.as_str()) else {
-            return Ok(self.sdk_error_response(
-                request.id,
-                "SDK_RUNTIME_NOT_FOUND",
-                "voice session not found",
-            ));
-        };
-        let current_state = session.state.clone();
-        let current_rank = Self::voice_state_rank(current_state.as_str());
-        let next_rank = Self::voice_state_rank(next_state);
-        if current_rank == 4 && current_state != next_state {
-            return Ok(self.sdk_error_response(
-                request.id,
-                "SDK_VALIDATION_INVALID_ARGUMENT",
-                "voice session is already terminal",
-            ));
+        {
+            let mut sessions =
+                self.sdk_voice_sessions.lock().expect("sdk_voice_sessions mutex poisoned");
+            let Some(session) = sessions.get_mut(session_id.as_str()) else {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_RUNTIME_NOT_FOUND",
+                    "voice session not found",
+                ));
+            };
+            let current_state = session.state.clone();
+            let current_rank = Self::voice_state_rank(current_state.as_str());
+            let next_rank = Self::voice_state_rank(next_state);
+            if current_rank == 4 && current_state != next_state {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "voice session is already terminal",
+                ));
+            }
+            if next_rank < current_rank && next_rank != 4 {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "voice session transitions must be monotonic",
+                ));
+            }
+            session.state = next_state.to_string();
+            session.extensions = parsed.extensions;
         }
-        if next_rank < current_rank && next_rank != 4 {
-            return Ok(self.sdk_error_response(
-                request.id,
-                "SDK_VALIDATION_INVALID_ARGUMENT",
-                "voice session transitions must be monotonic",
-            ));
-        }
-        session.state = next_state.to_string();
-        session.extensions = parsed.extensions;
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,
             result: Some(json!({ "state": next_state })),
@@ -139,16 +143,19 @@ impl RpcDaemon {
                 ))
             }
         };
-        let mut sessions =
-            self.sdk_voice_sessions.lock().expect("sdk_voice_sessions mutex poisoned");
-        let Some(session) = sessions.get_mut(session_id.as_str()) else {
-            return Ok(self.sdk_error_response(
-                request.id,
-                "SDK_RUNTIME_NOT_FOUND",
-                "voice session not found",
-            ));
-        };
-        session.state = "closed".to_string();
+        {
+            let mut sessions =
+                self.sdk_voice_sessions.lock().expect("sdk_voice_sessions mutex poisoned");
+            let Some(session) = sessions.get_mut(session_id.as_str()) else {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_RUNTIME_NOT_FOUND",
+                    "voice session not found",
+                ));
+            };
+            session.state = "closed".to_string();
+        }
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,
             result: Some(json!({ "accepted": true, "session_id": session_id })),
