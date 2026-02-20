@@ -866,3 +866,144 @@
 
         let _ = std::fs::remove_file(&db_path);
     }
+
+    #[test]
+    fn sdk_backup_restore_drill_recovers_snapshot_and_messages() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let run_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir()
+            .join(format!("lxmf-rs-sdk-drill-{run_id}-{}.sqlite", std::process::id()));
+        let backup_path = std::env::temp_dir()
+            .join(format!("lxmf-rs-sdk-drill-{run_id}-{}.sqlite.backup", std::process::id()));
+
+        let baseline_topic_id: String;
+        let baseline_message_id = "drill-baseline-msg-1";
+        let drift_topic_id: String;
+        let drift_message_id = "drill-drift-msg-1";
+
+        {
+            let store = MessagesStore::open(db_path.as_path()).expect("open sqlite store");
+            let daemon = RpcDaemon::with_store(store, "drill-node".to_string());
+            let topic = daemon
+                .handle_rpc(rpc_request(
+                    500,
+                    "sdk_topic_create_v2",
+                    json!({ "topic_path": "ops/drill-baseline" }),
+                ))
+                .expect("create baseline topic");
+            assert!(topic.error.is_none());
+            baseline_topic_id = topic.result.expect("topic result")["topic"]["topic_id"]
+                .as_str()
+                .expect("topic id")
+                .to_string();
+
+            let inbound = daemon
+                .handle_rpc(rpc_request(
+                    501,
+                    "receive_message",
+                    json!({
+                        "id": baseline_message_id,
+                        "source": "source.baseline",
+                        "destination": "destination.baseline",
+                        "title": "",
+                        "content": "baseline payload",
+                        "fields": null
+                    }),
+                ))
+                .expect("baseline receive");
+            assert!(inbound.error.is_none());
+        }
+
+        std::fs::copy(db_path.as_path(), backup_path.as_path()).expect("copy backup");
+
+        {
+            let store = MessagesStore::open(db_path.as_path()).expect("reopen sqlite store");
+            let daemon = RpcDaemon::with_store(store, "drill-node".to_string());
+            let drift_topic = daemon
+                .handle_rpc(rpc_request(
+                    502,
+                    "sdk_topic_create_v2",
+                    json!({ "topic_path": "ops/drill-drift" }),
+                ))
+                .expect("create drift topic");
+            assert!(drift_topic.error.is_none());
+            drift_topic_id = drift_topic.result.expect("topic result")["topic"]["topic_id"]
+                .as_str()
+                .expect("drift topic id")
+                .to_string();
+
+            let drift_inbound = daemon
+                .handle_rpc(rpc_request(
+                    503,
+                    "receive_message",
+                    json!({
+                        "id": drift_message_id,
+                        "source": "source.drift",
+                        "destination": "destination.drift",
+                        "title": "",
+                        "content": "drift payload",
+                        "fields": null
+                    }),
+                ))
+                .expect("drift receive");
+            assert!(drift_inbound.error.is_none());
+        }
+
+        std::fs::copy(backup_path.as_path(), db_path.as_path()).expect("restore backup");
+
+        {
+            let store = MessagesStore::open(db_path.as_path()).expect("open restored sqlite store");
+            let daemon = RpcDaemon::with_store(store, "drill-node".to_string());
+
+            let baseline_topic = daemon
+                .handle_rpc(rpc_request(
+                    504,
+                    "sdk_topic_get_v2",
+                    json!({ "topic_id": baseline_topic_id.clone() }),
+                ))
+                .expect("baseline topic after restore");
+            assert!(baseline_topic.error.is_none());
+
+            let topic_list = daemon
+                .handle_rpc(rpc_request(505, "sdk_topic_list_v2", json!({ "limit": 64 })))
+                .expect("topic list after restore");
+            let topic_list_result = topic_list.result.expect("topic list result");
+            let topic_rows = topic_list_result["topics"].as_array().expect("topic rows");
+            assert!(topic_rows.iter().any(|row| row["topic_id"] == json!(baseline_topic_id)));
+            assert!(
+                !topic_rows.iter().any(|row| row["topic_id"] == json!(drift_topic_id)),
+                "restored snapshot should not include post-backup drift topic"
+            );
+
+            let baseline_status = daemon
+                .handle_rpc(rpc_request(
+                    506,
+                    "sdk_status_v2",
+                    json!({ "message_id": baseline_message_id }),
+                ))
+                .expect("baseline status after restore");
+            assert!(
+                baseline_status.result.expect("status result")["message"].is_object(),
+                "baseline message should survive restore"
+            );
+
+            let drift_status = daemon
+                .handle_rpc(rpc_request(
+                    507,
+                    "sdk_status_v2",
+                    json!({ "message_id": drift_message_id }),
+                ))
+                .expect("drift status after restore");
+            assert!(
+                drift_status.result.expect("status result")["message"].is_null(),
+                "restored snapshot should not include post-backup drift message"
+            );
+        }
+
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&backup_path);
+    }
