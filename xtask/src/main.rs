@@ -14,6 +14,96 @@ const INTEROP_CORPUS_PATH: &str = "docs/fixtures/interop/v1/golden-corpus.json";
 const RPC_CONTRACT_PATH: &str = "docs/contracts/rpc-contract.md";
 const PAYLOAD_CONTRACT_PATH: &str = "docs/contracts/payload-contract.md";
 const BENCH_SUMMARY_PATH: &str = "target/criterion/bench-summary.txt";
+const PERF_BUDGET_REPORT_PATH: &str = "target/criterion/bench-budget-report.txt";
+
+#[derive(Copy, Clone)]
+struct PerfBudget {
+    benchmark: &'static str,
+    max_p50_ns: f64,
+    max_p95_ns: f64,
+    max_p99_ns: f64,
+    min_throughput_ops_per_sec: f64,
+}
+
+const PERF_BUDGETS: &[PerfBudget] = &[
+    PerfBudget {
+        benchmark: "lxmf_core_message_from_wire",
+        max_p50_ns: 1_500.0,
+        max_p95_ns: 2_500.0,
+        max_p99_ns: 3_500.0,
+        min_throughput_ops_per_sec: 500_000.0,
+    },
+    PerfBudget {
+        benchmark: "lxmf_core_decode_inbound_message",
+        max_p50_ns: 5_000.0,
+        max_p95_ns: 9_000.0,
+        max_p99_ns: 12_000.0,
+        min_throughput_ops_per_sec: 150_000.0,
+    },
+    PerfBudget {
+        benchmark: "lxmf_core_message_to_wire",
+        max_p50_ns: 2_000.0,
+        max_p95_ns: 3_000.0,
+        max_p99_ns: 4_000.0,
+        min_throughput_ops_per_sec: 350_000.0,
+    },
+    PerfBudget {
+        benchmark: "lxmf_sdk_start",
+        max_p50_ns: 15_000.0,
+        max_p95_ns: 25_000.0,
+        max_p99_ns: 35_000.0,
+        min_throughput_ops_per_sec: 30_000.0,
+    },
+    PerfBudget {
+        benchmark: "lxmf_sdk_send",
+        max_p50_ns: 2_000.0,
+        max_p95_ns: 3_000.0,
+        max_p99_ns: 4_500.0,
+        min_throughput_ops_per_sec: 350_000.0,
+    },
+    PerfBudget {
+        benchmark: "lxmf_sdk_poll_events",
+        max_p50_ns: 300.0,
+        max_p95_ns: 450.0,
+        max_p99_ns: 650.0,
+        min_throughput_ops_per_sec: 20_000_000.0,
+    },
+    PerfBudget {
+        benchmark: "lxmf_sdk_snapshot",
+        max_p50_ns: 1_500.0,
+        max_p95_ns: 2_000.0,
+        max_p99_ns: 2_500.0,
+        min_throughput_ops_per_sec: 600_000.0,
+    },
+    PerfBudget {
+        benchmark: "rns_rpc_send_message_v2",
+        max_p50_ns: 100_000.0,
+        max_p95_ns: 150_000.0,
+        max_p99_ns: 220_000.0,
+        min_throughput_ops_per_sec: 25_000.0,
+    },
+    PerfBudget {
+        benchmark: "rns_rpc_sdk_poll_events_v2",
+        max_p50_ns: 15_000.0,
+        max_p95_ns: 20_000.0,
+        max_p99_ns: 25_000.0,
+        min_throughput_ops_per_sec: 90_000.0,
+    },
+    PerfBudget {
+        benchmark: "rns_rpc_sdk_snapshot_v2",
+        max_p50_ns: 25_000.0,
+        max_p95_ns: 35_000.0,
+        max_p99_ns: 45_000.0,
+        min_throughput_ops_per_sec: 45_000.0,
+    },
+    PerfBudget {
+        benchmark: "rns_rpc_sdk_topic_create_v2",
+        max_p50_ns: 70_000.0,
+        max_p95_ns: 95_000.0,
+        max_p99_ns: 130_000.0,
+        min_throughput_ops_per_sec: 14_000.0,
+    },
+];
 
 #[derive(Parser)]
 #[command(name = "xtask")]
@@ -58,6 +148,7 @@ enum XtaskCommand {
     SdkRaceCheck,
     SdkReplayCheck,
     SdkBenchCheck,
+    SdkPerfBudgetCheck,
     SdkMatrixCheck,
 }
 
@@ -88,6 +179,7 @@ enum CiStage {
     SdkRaceCheck,
     SdkReplayCheck,
     SdkBenchCheck,
+    SdkPerfBudgetCheck,
     SdkMatrixCheck,
     MigrationChecks,
     ArchitectureChecks,
@@ -122,6 +214,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkRaceCheck => run_sdk_race_check(),
         XtaskCommand::SdkReplayCheck => run_sdk_replay_check(),
         XtaskCommand::SdkBenchCheck => run_sdk_bench_check(),
+        XtaskCommand::SdkPerfBudgetCheck => run_sdk_perf_budget_check(),
         XtaskCommand::SdkMatrixCheck => run_sdk_matrix_check(),
     }
 }
@@ -161,7 +254,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_sdk_model_check()?;
     run_sdk_race_check()?;
     run_sdk_replay_check()?;
-    run_sdk_bench_check()?;
+    run_sdk_perf_budget_check()?;
     run_sdk_matrix_check()?;
     run_migration_checks()?;
     run_architecture_checks()?;
@@ -200,6 +293,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkRaceCheck => run_sdk_race_check(),
         CiStage::SdkReplayCheck => run_sdk_replay_check(),
         CiStage::SdkBenchCheck => run_sdk_bench_check(),
+        CiStage::SdkPerfBudgetCheck => run_sdk_perf_budget_check(),
         CiStage::SdkMatrixCheck => run_sdk_matrix_check(),
         CiStage::MigrationChecks => run_migration_checks(),
         CiStage::ArchitectureChecks => run_architecture_checks(),
@@ -750,6 +844,104 @@ fn run_sdk_bench_check() -> Result<()> {
         ],
     )?;
     write_bench_summary()
+}
+
+#[derive(Debug, Deserialize)]
+struct CriterionSample {
+    iters: Vec<f64>,
+    times: Vec<f64>,
+}
+
+fn run_sdk_perf_budget_check() -> Result<()> {
+    run_sdk_bench_check()?;
+    evaluate_perf_budgets()
+}
+
+fn evaluate_perf_budgets() -> Result<()> {
+    let criterion_root = Path::new("target/criterion");
+    let mut report_lines = Vec::new();
+    report_lines.push("# SDK Perf Budget Report".to_string());
+    report_lines.push(String::new());
+    let mut failures = Vec::new();
+
+    for budget in PERF_BUDGETS {
+        let sample_path = criterion_root.join(budget.benchmark).join("new").join("sample.json");
+        let raw = fs::read_to_string(&sample_path)
+            .with_context(|| format!("read sample data {}", sample_path.display()))?;
+        let sample: CriterionSample = serde_json::from_str(&raw)
+            .with_context(|| format!("parse {}", sample_path.display()))?;
+        if sample.iters.len() != sample.times.len() || sample.iters.is_empty() {
+            bail!("invalid sample data in {}", sample_path.display());
+        }
+
+        let mut latency_ns = sample
+            .times
+            .iter()
+            .zip(sample.iters.iter())
+            .filter_map(|(time, iters)| (*iters > 0.0).then_some(*time / *iters))
+            .collect::<Vec<_>>();
+        if latency_ns.is_empty() {
+            bail!("sample data contains zero iteration counts in {}", sample_path.display());
+        }
+        latency_ns.sort_by(f64::total_cmp);
+
+        let p50 = percentile(&latency_ns, 0.50);
+        let p95 = percentile(&latency_ns, 0.95);
+        let p99 = percentile(&latency_ns, 0.99);
+        let throughput = 1_000_000_000.0 / p50.max(1.0);
+
+        report_lines.push(format!(
+            "- `{}` p50_ns={:.2} p95_ns={:.2} p99_ns={:.2} throughput_ops_per_sec={:.2}",
+            budget.benchmark, p50, p95, p99, throughput
+        ));
+
+        if p50 > budget.max_p50_ns {
+            failures.push(format!(
+                "{} exceeded p50 budget ({:.2} > {:.2})",
+                budget.benchmark, p50, budget.max_p50_ns
+            ));
+        }
+        if p95 > budget.max_p95_ns {
+            failures.push(format!(
+                "{} exceeded p95 budget ({:.2} > {:.2})",
+                budget.benchmark, p95, budget.max_p95_ns
+            ));
+        }
+        if p99 > budget.max_p99_ns {
+            failures.push(format!(
+                "{} exceeded p99 budget ({:.2} > {:.2})",
+                budget.benchmark, p99, budget.max_p99_ns
+            ));
+        }
+        if throughput < budget.min_throughput_ops_per_sec {
+            failures.push(format!(
+                "{} throughput below budget ({:.2} < {:.2})",
+                budget.benchmark, throughput, budget.min_throughput_ops_per_sec
+            ));
+        }
+    }
+
+    report_lines.push(String::new());
+    if failures.is_empty() {
+        report_lines.push("Status: PASS".to_string());
+    } else {
+        report_lines.push("Status: FAIL".to_string());
+        report_lines.extend(failures.iter().map(|entry| format!("- {entry}")));
+    }
+    fs::write(PERF_BUDGET_REPORT_PATH, report_lines.join("\n"))
+        .with_context(|| format!("write {PERF_BUDGET_REPORT_PATH}"))?;
+    println!("performance budget report written to {PERF_BUDGET_REPORT_PATH}");
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        bail!("performance budget regressions detected: {}", failures.join("; "));
+    }
+}
+
+fn percentile(values: &[f64], p: f64) -> f64 {
+    let index = ((values.len() as f64 - 1.0) * p).round() as usize;
+    values[index.min(values.len() - 1)]
 }
 
 fn write_bench_summary() -> Result<()> {

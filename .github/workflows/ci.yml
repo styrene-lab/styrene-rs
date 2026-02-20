@@ -185,6 +185,20 @@ jobs:
             target/criterion/bench-summary.txt
             target/criterion/**/estimates.json
 
+  sdk-perf-budget-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SDK performance budget gate
+        run: cargo xtask ci --stage sdk-perf-budget-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-perf-budget-report
+          path: |
+            target/criterion/bench-budget-report.txt
+            target/criterion/bench-summary.txt
+
   sdk-matrix-check:
     runs-on: ubuntu-latest
     steps:
