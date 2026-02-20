@@ -18,7 +18,7 @@ use alloc::string::String;
 use super::hdlc::Hdlc;
 use super::{Interface, InterfaceContext};
 
-// TODO: Configure via features
+// TCP packet tracing is kept off by default and gated by diagnostics env flags.
 const PACKET_TRACE: bool = false;
 
 fn tx_diag_enabled() -> bool {
