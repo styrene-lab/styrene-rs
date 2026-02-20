@@ -71,6 +71,21 @@ jobs:
       - name: Security checks
         run: cargo xtask ci --stage security
 
+  supply-chain-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SBOM + provenance metadata
+        run: cargo xtask ci --stage supply-chain-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-artifacts
+          path: |
+            target/supply-chain/sbom/cargo-metadata.sbom.json
+            target/supply-chain/provenance/artifact-provenance.json
+            target/supply-chain/provenance/artifact-provenance.sha256
+
   unused-deps:
     runs-on: ubuntu-latest
     steps:
