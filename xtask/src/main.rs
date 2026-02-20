@@ -238,6 +238,7 @@ enum XtaskCommand {
     SdkModelCheck,
     SdkRaceCheck,
     SdkReplayCheck,
+    SdkMetricsCheck,
     SdkBenchCheck,
     SdkPerfBudgetCheck,
     SdkMemoryBudgetCheck,
@@ -280,6 +281,7 @@ enum CiStage {
     SdkModelCheck,
     SdkRaceCheck,
     SdkReplayCheck,
+    SdkMetricsCheck,
     SdkBenchCheck,
     SdkPerfBudgetCheck,
     SdkMemoryBudgetCheck,
@@ -326,6 +328,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkModelCheck => run_sdk_model_check(),
         XtaskCommand::SdkRaceCheck => run_sdk_race_check(),
         XtaskCommand::SdkReplayCheck => run_sdk_replay_check(),
+        XtaskCommand::SdkMetricsCheck => run_sdk_metrics_check(),
         XtaskCommand::SdkBenchCheck => run_sdk_bench_check(),
         XtaskCommand::SdkPerfBudgetCheck => run_sdk_perf_budget_check(),
         XtaskCommand::SdkMemoryBudgetCheck => run_sdk_memory_budget_check(),
@@ -378,6 +381,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_sdk_model_check()?;
     run_sdk_race_check()?;
     run_sdk_replay_check()?;
+    run_sdk_metrics_check()?;
     run_sdk_perf_budget_check()?;
     run_sdk_memory_budget_check()?;
     run_sdk_queue_pressure_check()?;
@@ -427,6 +431,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkModelCheck => run_sdk_model_check(),
         CiStage::SdkRaceCheck => run_sdk_race_check(),
         CiStage::SdkReplayCheck => run_sdk_replay_check(),
+        CiStage::SdkMetricsCheck => run_sdk_metrics_check(),
         CiStage::SdkBenchCheck => run_sdk_bench_check(),
         CiStage::SdkPerfBudgetCheck => run_sdk_perf_budget_check(),
         CiStage::SdkMemoryBudgetCheck => run_sdk_memory_budget_check(),
@@ -1045,6 +1050,10 @@ fn run_sdk_replay_check() -> Result<()> {
             "docs/fixtures/sdk-v2/rpc/replay_known_send_cancel.v1.json",
         ],
     )
+}
+
+fn run_sdk_metrics_check() -> Result<()> {
+    run("cargo", &["test", "-p", "rns-rpc", "rpc::http::tests", "--", "--nocapture"])
 }
 
 fn run_sdk_bench_check() -> Result<()> {

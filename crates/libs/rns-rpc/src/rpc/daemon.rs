@@ -23,6 +23,7 @@ include!("daemon/sdk_auth_http.rs");
 include!("daemon/sdk_capabilities.rs");
 include!("daemon/sdk_outbound.rs");
 include!("daemon/events.rs");
+include!("daemon/metrics.rs");
 
 include!("daemon/cursor_utils.rs");
 include!("daemon/tests.rs");

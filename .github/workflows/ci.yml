@@ -246,6 +246,14 @@ jobs:
       - name: SDK replay determinism suite
         run: cargo xtask ci --stage sdk-replay-check
 
+  sdk-metrics-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SDK metrics contract and endpoint suite
+        run: cargo xtask ci --stage sdk-metrics-check
+
   sdk-bench-check:
     runs-on: ubuntu-latest
     steps:

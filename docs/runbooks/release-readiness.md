@@ -50,6 +50,7 @@ cargo run -p xtask -- sdk-memory-budget-check
 cargo run -p xtask -- sdk-queue-pressure-check
 cargo run -p xtask -- security-review-check
 cargo run -p xtask -- sdk-fuzz-check
+cargo run -p xtask -- sdk-metrics-check
 cargo run -p xtask -- sdk-docs-check
 cargo run -p xtask -- sdk-cookbook-check
 cargo run -p xtask -- sdk-ergonomics-check
