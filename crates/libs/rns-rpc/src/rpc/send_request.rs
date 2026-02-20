@@ -77,7 +77,7 @@ pub(super) fn parse_outbound_send_request(
                 include_ticket: None,
             })
         }
-        "send_message_v2" => {
+        "send_message_v2" | "sdk_send_v2" => {
             let parsed: SendMessageV2Params = serde_json::from_value(params)
                 .map_err(|err| Error::new(ErrorKind::InvalidInput, err))?;
             validate_outbound_fields_strict(parsed.fields.as_ref())?;
