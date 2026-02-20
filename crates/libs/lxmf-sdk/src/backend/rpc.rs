@@ -25,6 +25,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+use zeroize::Zeroizing;
 
 #[path = "rpc/core_impl.rs"]
 mod core_impl;
@@ -43,13 +44,12 @@ pub struct RpcBackendClient {
     session_auth: RwLock<SessionAuth>,
 }
 
-#[derive(Clone, Debug)]
 enum SessionAuth {
     LocalTrusted,
     Token {
         issuer: String,
         audience: String,
-        shared_secret: String,
+        shared_secret: Zeroizing<String>,
         ttl_secs: u64,
     },
     Mtls {
@@ -57,6 +57,13 @@ enum SessionAuth {
         client_cert_path: Option<String>,
         client_key_path: Option<String>,
     },
+}
+
+#[derive(Clone)]
+struct MtlsRequestAuth {
+    ca_bundle_path: String,
+    client_cert_path: Option<String>,
+    client_key_path: Option<String>,
 }
 
 impl RpcBackendClient {

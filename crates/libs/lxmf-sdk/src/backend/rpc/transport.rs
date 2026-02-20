@@ -11,6 +11,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::net::{IpAddr, Shutdown, TcpStream};
 use std::path::Path;
 use std::sync::Arc;
+use zeroize::{Zeroize, Zeroizing};
 
 impl RpcBackendClient {
     pub(super) fn call_rpc(
@@ -18,37 +19,40 @@ impl RpcBackendClient {
         method: &str,
         params: Option<JsonValue>,
     ) -> Result<JsonValue, SdkError> {
-        let auth = self.session_auth.read().expect("session_auth rwlock poisoned").clone();
-        let headers = self.headers_for_session_auth(&auth);
-        self.call_rpc_with_headers(method, params, &auth, &headers)
+        let (headers, mtls_auth) = {
+            let auth_guard = self.session_auth.read().expect("session_auth rwlock poisoned");
+            (self.headers_for_session_auth(&auth_guard), Self::mtls_for_session_auth(&auth_guard))
+        };
+        self.call_rpc_with_headers(method, params, mtls_auth.as_ref(), headers)
     }
 
     pub(super) fn call_rpc_with_headers(
         &self,
         method: &str,
         params: Option<JsonValue>,
-        auth: &SessionAuth,
-        headers: &[(String, String)],
+        mtls_auth: Option<&MtlsRequestAuth>,
+        mut headers: Vec<(String, String)>,
     ) -> Result<JsonValue, SdkError> {
         let request_id = self.next_request_id();
         let frame = build_rpc_frame(request_id, method, params).map_err(|err| {
             SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
         })?;
         let authority = Self::endpoint_authority(&self.endpoint)?;
-        let request = Self::build_http_post_with_headers("/rpc", authority, &frame, headers);
-        let mut response = match auth {
-            SessionAuth::Mtls { ca_bundle_path, client_cert_path, client_key_path } => self
-                .send_mtls_request(
-                    authority,
-                    request.as_slice(),
-                    ca_bundle_path.as_str(),
-                    client_cert_path.as_deref(),
-                    client_key_path.as_deref(),
-                )?,
-            SessionAuth::LocalTrusted | SessionAuth::Token { .. } => {
-                self.send_plain_request(authority, request.as_slice())?
-            }
+        let mut request =
+            Self::build_http_post_with_headers("/rpc", authority, &frame, headers.as_slice());
+        let response_result = match mtls_auth {
+            Some(mtls_auth) => self.send_mtls_request(
+                authority,
+                request.as_slice(),
+                mtls_auth.ca_bundle_path.as_str(),
+                mtls_auth.client_cert_path.as_deref(),
+                mtls_auth.client_key_path.as_deref(),
+            ),
+            None => self.send_plain_request(authority, request.as_slice()),
         };
+        request.zeroize();
+        Self::zeroize_header_values(headers.as_mut_slice());
+        let mut response = response_result?;
         let body = parse_http_response_body(response.as_mut_slice()).map_err(|err| {
             SdkError::new(code::INTERNAL, ErrorCategory::Transport, err.to_string())
         })?;
@@ -484,7 +488,7 @@ impl RpcBackendClient {
                 Ok(SessionAuth::Token {
                     issuer: token_auth.issuer.clone(),
                     audience: token_auth.audience.clone(),
-                    shared_secret: token_auth.shared_secret.clone(),
+                    shared_secret: Zeroizing::new(token_auth.shared_secret.clone()),
                     ttl_secs: (token_auth.jti_cache_ttl_ms / 1000).max(1),
                 })
             }
@@ -506,13 +510,73 @@ impl RpcBackendClient {
                 let jti = format!("sdk-jti-{}", self.next_request_id());
                 let iat = Self::now_seconds();
                 let exp = iat.saturating_add(*ttl_secs);
-                let payload = format!(
+                let payload = Zeroizing::new(format!(
                     "iss={issuer};aud={audience};jti={jti};sub=sdk-client;iat={iat};exp={exp}"
-                );
-                let sig = Self::token_signature(shared_secret, payload.as_str());
-                let token = format!("{payload};sig={sig}");
-                vec![("Authorization".to_owned(), format!("Bearer {token}"))]
+                ));
+                let sig =
+                    Zeroizing::new(Self::token_signature(shared_secret.as_str(), payload.as_str()));
+                let token = Zeroizing::new(format!("{};sig={}", payload.as_str(), sig.as_str()));
+                vec![("Authorization".to_owned(), format!("Bearer {}", token.as_str()))]
             }
         }
+    }
+
+    pub(super) fn mtls_for_session_auth(auth: &SessionAuth) -> Option<MtlsRequestAuth> {
+        match auth {
+            SessionAuth::Mtls { ca_bundle_path, client_cert_path, client_key_path } => {
+                Some(MtlsRequestAuth {
+                    ca_bundle_path: ca_bundle_path.clone(),
+                    client_cert_path: client_cert_path.clone(),
+                    client_key_path: client_key_path.clone(),
+                })
+            }
+            SessionAuth::LocalTrusted | SessionAuth::Token { .. } => None,
+        }
+    }
+
+    fn zeroize_header_values(headers: &mut [(String, String)]) {
+        for (_, value) in headers {
+            value.zeroize();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zeroize_header_values_clears_sensitive_header_contents() {
+        let mut headers = vec![
+            ("Authorization".to_string(), "Bearer super-secret-token".to_string()),
+            ("X-Correlation-Id".to_string(), "trace-123".to_string()),
+        ];
+
+        RpcBackendClient::zeroize_header_values(headers.as_mut_slice());
+
+        assert!(headers.iter().all(|(_, value)| value.is_empty()));
+    }
+
+    #[test]
+    fn mtls_for_session_auth_returns_mtls_paths_only() {
+        let mtls_auth = SessionAuth::Mtls {
+            ca_bundle_path: "/tmp/ca.pem".to_string(),
+            client_cert_path: Some("/tmp/client.pem".to_string()),
+            client_key_path: Some("/tmp/client.key".to_string()),
+        };
+        let extracted =
+            RpcBackendClient::mtls_for_session_auth(&mtls_auth).expect("mtls config expected");
+        assert_eq!(extracted.ca_bundle_path, "/tmp/ca.pem");
+        assert_eq!(extracted.client_cert_path.as_deref(), Some("/tmp/client.pem"));
+        assert_eq!(extracted.client_key_path.as_deref(), Some("/tmp/client.key"));
+
+        assert!(RpcBackendClient::mtls_for_session_auth(&SessionAuth::LocalTrusted).is_none());
+        assert!(RpcBackendClient::mtls_for_session_auth(&SessionAuth::Token {
+            issuer: "issuer".to_string(),
+            audience: "audience".to_string(),
+            shared_secret: Zeroizing::new("secret".to_string()),
+            ttl_secs: 60,
+        })
+        .is_none());
     }
 }

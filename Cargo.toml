@@ -68,6 +68,7 @@ x509-parser = "0.16.0"
 rand_core = "0.6.4"
 x25519-dalek = "2.0.1"
 thiserror = "1"
+zeroize = "1.8"
 
 [profile.dev.package.rns-core]
 opt-level = 2

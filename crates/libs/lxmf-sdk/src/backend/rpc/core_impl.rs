@@ -8,6 +8,7 @@ impl RpcBackendClient {
     ) -> Result<NegotiationResponse, SdkError> {
         let session_auth = self.session_auth_from_request(&req)?;
         let headers = self.headers_for_session_auth(&session_auth);
+        let mtls_auth = Self::mtls_for_session_auth(&session_auth);
         let rpc_backend = req.rpc_backend.as_ref().map(|config| {
             json!({
                 "listen_addr": config.listen_addr,
@@ -45,8 +46,8 @@ impl RpcBackendClient {
                     "rpc_backend": rpc_backend,
                 }
             })),
-            &session_auth,
-            &headers,
+            mtls_auth.as_ref(),
+            headers,
         )?;
 
         let runtime_id = Self::parse_required_string(&result, "runtime_id")?;
