@@ -46,6 +46,7 @@ enum XtaskCommand {
         update: bool,
     },
     E2eCompatibility,
+    MeshSim,
     SdkProfileBuild,
     SdkExamplesCheck,
     SdkApiBreak,
@@ -101,6 +102,7 @@ fn main() -> Result<()> {
         XtaskCommand::InteropCorpusCheck => run_interop_corpus_check(),
         XtaskCommand::InteropDriftCheck { update } => run_interop_drift_check(update),
         XtaskCommand::E2eCompatibility => run_e2e_compatibility(),
+        XtaskCommand::MeshSim => run_mesh_sim(),
         XtaskCommand::SdkProfileBuild => run_sdk_profile_build(),
         XtaskCommand::SdkExamplesCheck => run_sdk_examples_check(),
         XtaskCommand::SdkApiBreak => run_sdk_api_break(),
@@ -733,6 +735,25 @@ fn run_interop_corpus_check() -> Result<()> {
 
 fn run_e2e_compatibility() -> Result<()> {
     run("cargo", &["run", "-p", "rns-tools", "--bin", "rnx", "--", "e2e", "--timeout-secs", "20"])
+}
+
+fn run_mesh_sim() -> Result<()> {
+    run(
+        "cargo",
+        &[
+            "run",
+            "-p",
+            "rns-tools",
+            "--bin",
+            "rnx",
+            "--",
+            "mesh-sim",
+            "--nodes",
+            "5",
+            "--timeout-secs",
+            "60",
+        ],
+    )
 }
 
 fn run_unused_deps() -> Result<()> {
