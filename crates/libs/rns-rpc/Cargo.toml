@@ -18,6 +18,7 @@ serde_json.workspace = true
 rusqlite = { workspace = true }
 serde.workspace = true
 tokio = { workspace = true, features = ["full"] }
+zeroize.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

@@ -19,16 +19,19 @@ impl RpcDaemon {
         (per_ip, per_principal)
     }
 
-    fn sdk_token_auth_config(&self) -> Option<(String, String, u64, u64, String)> {
-        let config =
-            self.sdk_runtime_config.lock().expect("sdk_runtime_config mutex poisoned").clone();
-        let token_auth = config.get("rpc_backend")?.get("token_auth")?;
+    fn sdk_token_auth_config(
+        &self,
+    ) -> Option<(String, String, u64, u64, zeroize::Zeroizing<String>)> {
+        let config_guard =
+            self.sdk_runtime_config.lock().expect("sdk_runtime_config mutex poisoned");
+        let token_auth = config_guard.get("rpc_backend")?.get("token_auth")?;
         let issuer = token_auth.get("issuer")?.as_str()?.to_string();
         let audience = token_auth.get("audience")?.as_str()?.to_string();
         let jti_ttl_ms = token_auth.get("jti_cache_ttl_ms")?.as_u64()?;
         let clock_skew_secs =
             token_auth.get("clock_skew_ms").and_then(JsonValue::as_u64).unwrap_or(0) / 1000;
-        let shared_secret = token_auth.get("shared_secret")?.as_str()?.to_string();
+        let shared_secret =
+            zeroize::Zeroizing::new(token_auth.get("shared_secret")?.as_str()?.to_string());
         Some((issuer, audience, jti_ttl_ms, clock_skew_secs, shared_secret))
     }
 

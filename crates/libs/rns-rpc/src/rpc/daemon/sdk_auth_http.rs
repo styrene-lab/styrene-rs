@@ -24,27 +24,40 @@ impl RpcDaemon {
         peer_ip: Option<&str>,
         transport_auth: Option<&crate::rpc::http::TransportAuthContext>,
     ) -> Result<(), RpcError> {
-        let config =
-            self.sdk_runtime_config.lock().expect("sdk_runtime_config mutex poisoned").clone();
-        let trust_forwarded = config
-            .get("extensions")
-            .and_then(|value| value.get("trusted_proxy"))
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(false);
-        let trusted_proxy_ips = config
-            .get("extensions")
-            .and_then(|value| value.get("trusted_proxy_ips"))
-            .and_then(JsonValue::as_array)
-            .map(|entries| {
-                entries
-                    .iter()
-                    .filter_map(JsonValue::as_str)
-                    .map(str::trim)
-                    .filter(|entry| !entry.is_empty())
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let (trust_forwarded, trusted_proxy_ips, bind_mode, auth_mode) = {
+            let config_guard =
+                self.sdk_runtime_config.lock().expect("sdk_runtime_config mutex poisoned");
+            let trust_forwarded = config_guard
+                .get("extensions")
+                .and_then(|value| value.get("trusted_proxy"))
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false);
+            let trusted_proxy_ips = config_guard
+                .get("extensions")
+                .and_then(|value| value.get("trusted_proxy_ips"))
+                .and_then(JsonValue::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(JsonValue::as_str)
+                        .map(str::trim)
+                        .filter(|entry| !entry.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let bind_mode = config_guard
+                .get("bind_mode")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("local_only")
+                .to_string();
+            let auth_mode = config_guard
+                .get("auth_mode")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("local_trusted")
+                .to_string();
+            (trust_forwarded, trusted_proxy_ips, bind_mode, auth_mode)
+        };
         let peer_ip = peer_ip.map(str::trim).filter(|value| !value.is_empty()).map(str::to_string);
         let peer_is_trusted_proxy = peer_ip
             .as_deref()
@@ -62,17 +75,10 @@ impl RpcDaemon {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "unknown".to_string());
 
-        let bind_mode =
-            config.get("bind_mode").and_then(JsonValue::as_str).unwrap_or("local_only").to_string();
         if bind_mode == "local_only" && !Self::is_loopback_source(source_ip.as_str()) {
             return Err(RpcError::new("SDK_SECURITY_REMOTE_BIND_DISALLOWED".to_string(), "remote source is not allowed in local_only bind mode".to_string()));
         }
 
-        let auth_mode = config
-            .get("auth_mode")
-            .and_then(JsonValue::as_str)
-            .unwrap_or("local_trusted")
-            .to_string();
         let mut principal = "local".to_string();
         match auth_mode.as_str() {
             "local_trusted" => {}
@@ -105,13 +111,14 @@ impl RpcDaemon {
                     .and_then(|value| value.parse::<u64>().ok())
                     .ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token exp claim is missing or invalid".to_string()))?;
                 let signature = claims.get("sig").map(String::as_str).ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token signature is missing".to_string()))?;
-                let signed_payload = format!(
+                let signed_payload = zeroize::Zeroizing::new(format!(
                     "iss={issuer};aud={audience};jti={jti};sub={subject};iat={iat};exp={exp}"
-                );
-                let expected_signature =
+                ));
+                let expected_signature = zeroize::Zeroizing::new(
                     Self::token_signature(shared_secret.as_str(), signed_payload.as_str())
-                        .ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token signature verification failed".to_string()))?;
-                if signature != expected_signature {
+                        .ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token signature verification failed".to_string()))?,
+                );
+                if signature != expected_signature.as_str() {
                     return Err(RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token signature does not match runtime policy".to_string()));
                 }
                 if issuer != expected_issuer || audience != expected_audience {
