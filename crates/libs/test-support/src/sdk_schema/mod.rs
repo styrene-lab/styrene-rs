@@ -18,6 +18,25 @@ fn read_json(path: &Path) -> JsonValue {
         .unwrap_or_else(|err| panic!("failed to parse {}: {err}", path.display()))
 }
 
+fn collect_json_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|err| panic!("failed to read directory {}: {err}", dir.display()));
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|err| {
+                panic!("failed to read directory entry in {}: {err}", dir.display())
+            })
+            .path();
+        if path.is_dir() {
+            collect_json_files(&path, files);
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+            files.push(path);
+        }
+    }
+}
+
 fn rewrite_ref(value: &mut JsonValue, from: &str, to: &str) {
     match value {
         JsonValue::Object(object) => {
@@ -101,6 +120,17 @@ struct SchemaSet {
     voice_signaling: JSONSchema,
 }
 
+struct RpcCoreSchemaSet {
+    sdk_negotiate_v2: JSONSchema,
+    sdk_send_v2: JSONSchema,
+    sdk_status_v2: JSONSchema,
+    sdk_configure_v2: JSONSchema,
+    sdk_poll_events_v2: JSONSchema,
+    sdk_cancel_message_v2: JSONSchema,
+    sdk_snapshot_v2: JSONSchema,
+    sdk_shutdown_v2: JSONSchema,
+}
+
 fn load_schemas() -> SchemaSet {
     let root = workspace_root();
     let schema_dir = root.join("docs/schemas/sdk/v2");
@@ -134,6 +164,31 @@ fn load_schemas() -> SchemaSet {
     }
 }
 
+fn load_rpc_core_schemas() -> RpcCoreSchemaSet {
+    let root = workspace_root();
+    let schema_dir = root.join("docs/schemas/sdk/v2/rpc");
+
+    let sdk_negotiate_v2 = read_json(&schema_dir.join("sdk_negotiate_v2.schema.json"));
+    let sdk_send_v2 = read_json(&schema_dir.join("sdk_send_v2.schema.json"));
+    let sdk_status_v2 = read_json(&schema_dir.join("sdk_status_v2.schema.json"));
+    let sdk_configure_v2 = read_json(&schema_dir.join("sdk_configure_v2.schema.json"));
+    let sdk_poll_events_v2 = read_json(&schema_dir.join("sdk_poll_events_v2.schema.json"));
+    let sdk_cancel_message_v2 = read_json(&schema_dir.join("sdk_cancel_message_v2.schema.json"));
+    let sdk_snapshot_v2 = read_json(&schema_dir.join("sdk_snapshot_v2.schema.json"));
+    let sdk_shutdown_v2 = read_json(&schema_dir.join("sdk_shutdown_v2.schema.json"));
+
+    RpcCoreSchemaSet {
+        sdk_negotiate_v2: compile_schema(&sdk_negotiate_v2, "rpc/sdk_negotiate_v2"),
+        sdk_send_v2: compile_schema(&sdk_send_v2, "rpc/sdk_send_v2"),
+        sdk_status_v2: compile_schema(&sdk_status_v2, "rpc/sdk_status_v2"),
+        sdk_configure_v2: compile_schema(&sdk_configure_v2, "rpc/sdk_configure_v2"),
+        sdk_poll_events_v2: compile_schema(&sdk_poll_events_v2, "rpc/sdk_poll_events_v2"),
+        sdk_cancel_message_v2: compile_schema(&sdk_cancel_message_v2, "rpc/sdk_cancel_message_v2"),
+        sdk_snapshot_v2: compile_schema(&sdk_snapshot_v2, "rpc/sdk_snapshot_v2"),
+        sdk_shutdown_v2: compile_schema(&sdk_shutdown_v2, "rpc/sdk_shutdown_v2"),
+    }
+}
+
 fn fixture(path: &str) -> JsonValue {
     let root = workspace_root();
     read_json(&root.join(path))
@@ -142,24 +197,23 @@ fn fixture(path: &str) -> JsonValue {
 #[test]
 fn sdk_schema_documents_parse_and_compile() {
     let _schemas = load_schemas();
+    let _rpc_schemas = load_rpc_core_schemas();
 
     let root = workspace_root();
     let schema_root = root.join("docs/schemas/sdk/v2");
-    let entries = fs::read_dir(&schema_root).expect("read schema directory");
+    let mut schema_paths = Vec::new();
+    collect_json_files(&schema_root, &mut schema_paths);
     let mut schema_files = 0_usize;
-    for entry in entries {
-        let path = entry.expect("schema directory entry").path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
+    for path in schema_paths {
         let schema = read_json(&path);
         let object = schema.as_object().expect("schema root object");
         assert!(object.contains_key("$schema"), "{} missing $schema", path.display());
         assert!(object.contains_key("$id"), "{} missing $id", path.display());
         assert!(object.contains_key("title"), "{} missing title", path.display());
+        compile_schema(&schema, path.to_string_lossy().as_ref());
         schema_files += 1;
     }
-    assert!(schema_files >= 4, "expected at least 4 sdk schema files");
+    assert!(schema_files >= 12, "expected at least 12 sdk schema files");
 }
 
 #[test]
@@ -404,5 +458,137 @@ fn sdk_schema_invalid_fixtures_are_rejected() {
         &schemas.error,
         "docs/fixtures/sdk-v2/error.invalid_machine_code.invalid.json",
         &fixture("docs/fixtures/sdk-v2/error.invalid_machine_code.invalid.json"),
+    );
+}
+
+#[test]
+fn sdk_rpc_core_schema_valid_fixtures_pass_contract_checks() {
+    let schemas = load_rpc_core_schemas();
+
+    assert_schema_valid(
+        &schemas.sdk_negotiate_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_negotiate_v2.request.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_negotiate_v2.request.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_negotiate_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_negotiate_v2.response.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_negotiate_v2.response.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_send_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_send_v2.request.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_send_v2.request.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_send_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_send_v2.response.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_send_v2.response.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_status_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_status_v2.request.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_status_v2.request.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_status_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_status_v2.response.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_status_v2.response.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_configure_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_configure_v2.request.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_configure_v2.request.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_configure_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_configure_v2.response.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_configure_v2.response.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_poll_events_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_poll_events_v2.request.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_poll_events_v2.request.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_poll_events_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_poll_events_v2.response.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_poll_events_v2.response.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_cancel_message_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_cancel_message_v2.request.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_cancel_message_v2.request.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_cancel_message_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_cancel_message_v2.response.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_cancel_message_v2.response.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_snapshot_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_snapshot_v2.request.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_snapshot_v2.request.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_snapshot_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_snapshot_v2.response.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_snapshot_v2.response.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_shutdown_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_shutdown_v2.request.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_shutdown_v2.request.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.sdk_shutdown_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_shutdown_v2.response.valid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_shutdown_v2.response.valid.json"),
+    );
+}
+
+#[test]
+fn sdk_rpc_core_schema_invalid_fixtures_are_rejected() {
+    let schemas = load_rpc_core_schemas();
+
+    assert_schema_invalid(
+        &schemas.sdk_negotiate_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_negotiate_v2.request.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_negotiate_v2.request.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.sdk_send_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_send_v2.request.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_send_v2.request.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.sdk_status_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_status_v2.request.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_status_v2.request.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.sdk_configure_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_configure_v2.request.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_configure_v2.request.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.sdk_poll_events_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_poll_events_v2.request.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_poll_events_v2.request.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.sdk_cancel_message_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_cancel_message_v2.request.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_cancel_message_v2.request.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.sdk_snapshot_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_snapshot_v2.request.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_snapshot_v2.request.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.sdk_shutdown_v2,
+        "docs/fixtures/sdk-v2/rpc/sdk_shutdown_v2.request.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/rpc/sdk_shutdown_v2.request.invalid.json"),
     );
 }
