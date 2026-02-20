@@ -5,6 +5,8 @@ use std::sync::{Mutex, MutexGuard};
 #[cfg(test)]
 pub mod sdk_conformance;
 #[cfg(test)]
+pub mod sdk_migration;
+#[cfg(test)]
 pub mod sdk_schema;
 
 static LXMF_CONFIG_ROOT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();

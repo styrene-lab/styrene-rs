@@ -23,6 +23,7 @@ enum XtaskCommand {
     SdkSchemaCheck,
     SdkProfileBuild,
     SdkApiBreak,
+    SdkMigrationCheck,
 }
 
 fn main() -> Result<()> {
@@ -39,6 +40,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkSchemaCheck => run_sdk_schema_check(),
         XtaskCommand::SdkProfileBuild => run_sdk_profile_build(),
         XtaskCommand::SdkApiBreak => run_sdk_api_break(),
+        XtaskCommand::SdkMigrationCheck => run_sdk_migration_check(),
     }
 }
 
@@ -157,11 +159,50 @@ fn run_sdk_api_break() -> Result<()> {
     Ok(())
 }
 
+fn run_sdk_migration_check() -> Result<()> {
+    const CUTOVER_MAP_PATH: &str = "docs/migrations/sdk-v2.5-cutover-map.md";
+    let markdown = fs::read_to_string(CUTOVER_MAP_PATH)
+        .with_context(|| format!("missing {CUTOVER_MAP_PATH}"))?;
+    let rows = parse_cutover_rows(&markdown)?;
+    if rows.is_empty() {
+        bail!("cutover map must contain at least one consumer row");
+    }
+
+    for (idx, row) in rows.iter().enumerate() {
+        let owner = row[2].trim();
+        let classification = row[3].trim().to_ascii_lowercase();
+        let replacement = row[4].trim();
+        let removal_version = row[5].trim();
+
+        if owner.is_empty() {
+            bail!("cutover row {idx} missing owner");
+        }
+        if classification.is_empty() {
+            bail!("cutover row {idx} missing classification");
+        }
+        if replacement.is_empty() {
+            bail!("cutover row {idx} missing replacement");
+        }
+        if removal_version.is_empty() {
+            bail!("cutover row {idx} missing removal version");
+        }
+        if !matches!(classification.as_str(), "keep" | "wrap" | "deprecate") {
+            bail!("cutover row {idx} has invalid classification '{classification}'");
+        }
+        if classification == "wrap" && removal_version.eq_ignore_ascii_case("n/a") {
+            bail!("cutover row {idx} classification=wrap requires explicit removal version");
+        }
+    }
+
+    Ok(())
+}
+
 fn run_migration_checks() -> Result<()> {
     let enforce_legacy_imports =
         std::env::var("ENFORCE_LEGACY_APP_IMPORTS").unwrap_or("1".to_string());
     let enforce_legacy_shims =
         std::env::var("ENFORCE_RETM_LEGACY_SHIMS").unwrap_or("1".to_string());
+    run_sdk_migration_check()?;
     run_boundary_checks(&enforce_legacy_imports, &enforce_legacy_shims)?;
     run(
         "bash",
@@ -187,6 +228,46 @@ fn run_boundary_checks(enforce_legacy_imports: &str, enforce_legacy_shims: &str)
         "ENFORCE_LEGACY_APP_IMPORTS={enforce_legacy_imports} ENFORCE_RETM_LEGACY_SHIMS={enforce_legacy_shims} ./tools/scripts/check-boundaries.sh"
     );
     run("bash", &["-lc", &command])
+}
+
+fn parse_cutover_rows(markdown: &str) -> Result<Vec<Vec<String>>> {
+    let mut rows = Vec::new();
+    let mut in_table = false;
+
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if !in_table {
+            if trimmed.starts_with("| Surface |")
+                && trimmed.contains("| Classification |")
+                && trimmed.contains("| Removal version |")
+            {
+                in_table = true;
+            }
+            continue;
+        }
+
+        if !trimmed.starts_with('|') {
+            if !rows.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if trimmed.contains("---") {
+            continue;
+        }
+
+        let cells = trimmed
+            .trim_matches('|')
+            .split('|')
+            .map(|cell| cell.trim().to_string())
+            .collect::<Vec<_>>();
+        if cells.len() != 7 {
+            bail!("malformed cutover row '{trimmed}' (expected 7 columns, found {})", cells.len());
+        }
+        rows.push(cells);
+    }
+
+    Ok(rows)
 }
 
 fn capture_public_api(manifest: &str) -> Result<String> {

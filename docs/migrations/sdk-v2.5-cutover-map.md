@@ -1,6 +1,6 @@
 # SDK v2.5 Cutover Map
 
-Status: Draft, required before Phase 1 implementation
+Status: Active, validated by `cargo xtask sdk-migration-check`
 
 ## Purpose
 

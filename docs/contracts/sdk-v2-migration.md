@@ -1,6 +1,6 @@
 # SDK Contract v2.5 (Migration and Cutover)
 
-Status: Draft, implementation target  
+Status: Active, CI-enforced gates  
 Contract release: `v2.5`  
 Schema namespace: `v2`
 
@@ -89,10 +89,15 @@ Timeline scope clarification:
 
 Migration gate is passing only when all checks pass:
 
-1. `xtask sdk-migration-check`
+1. `cargo xtask sdk-migration-check`
 2. `cargo test -p test-support sdk_migration -- --nocapture`
-3. `cargo run -p xtask -- api-diff --contract sdk-v2.5`
-4. `cargo run -p xtask -- sdk-schema-check`
+3. `cargo xtask sdk-api-break`
+4. `cargo xtask sdk-schema-check`
+5. `cargo xtask sdk-conformance`
+
+API break baseline source of truth:
+
+- `docs/contracts/baselines/lxmf-sdk-public-api.txt`
 
 ## Release Readiness Requirements
 
