@@ -99,6 +99,14 @@ pub struct RpcDaemon {
     delivery_destination_hash: Mutex<Option<String>>,
     events: broadcast::Sender<RpcEvent>,
     event_queue: Mutex<VecDeque<RpcEvent>>,
+    sdk_event_log: Mutex<VecDeque<SequencedRpcEvent>>,
+    sdk_next_event_seq: Mutex<u64>,
+    sdk_dropped_event_count: Mutex<u64>,
+    sdk_active_contract_version: Mutex<u16>,
+    sdk_profile: Mutex<String>,
+    sdk_config_revision: Mutex<u64>,
+    sdk_effective_capabilities: Mutex<Vec<String>>,
+    sdk_stream_degraded: Mutex<bool>,
     peers: Mutex<HashMap<String, PeerRecord>>,
     interfaces: Mutex<Vec<InterfaceRecord>>,
     delivery_policy: Mutex<DeliveryPolicy>,
@@ -109,6 +117,7 @@ pub struct RpcDaemon {
     stamp_policy: Mutex<StampPolicy>,
     ticket_cache: Mutex<HashMap<String, TicketRecord>>,
     delivery_traces: Mutex<HashMap<String, Vec<DeliveryTraceEntry>>>,
+    delivery_status_lock: Mutex<()>,
     outbound_bridge: Option<Arc<dyn OutboundBridge>>,
     announce_bridge: Option<Arc<dyn AnnounceBridge>>,
 }
@@ -145,6 +154,12 @@ pub struct OutboundDeliveryOptions {
 pub struct RpcEvent {
     pub event_type: String,
     pub payload: JsonValue,
+}
+
+#[derive(Debug, Clone)]
+struct SequencedRpcEvent {
+    seq_no: u64,
+    event: RpcEvent,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -287,6 +302,42 @@ struct SetOutboundPropagationNodeParams {
 #[derive(Debug, Deserialize)]
 struct MessageDeliveryTraceParams {
     message_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkNegotiateV2Params {
+    supported_contract_versions: Vec<u16>,
+    #[serde(default)]
+    requested_capabilities: Vec<String>,
+    config: SdkRuntimeConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkPollEventsV2Params {
+    #[serde(default)]
+    cursor: Option<String>,
+    max: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkCancelMessageV2Params {
+    message_id: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct SdkSnapshotV2Params {
+    #[serde(default)]
+    include_counts: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkRuntimeConfig {
+    profile: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -553,6 +604,9 @@ fn encode_hex(bytes: impl AsRef<[u8]>) -> String {
     }
     out
 }
+
+const SDK_EVENT_LOG_CAPACITY: usize = 1024;
+const SDK_STREAM_ID: &str = "sdk-events";
 
 pub fn handle_framed_request(daemon: &RpcDaemon, bytes: &[u8]) -> Result<Vec<u8>, std::io::Error> {
     daemon.handle_framed_request(bytes)

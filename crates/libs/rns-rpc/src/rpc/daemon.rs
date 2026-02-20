@@ -9,6 +9,14 @@ impl RpcDaemon {
             delivery_destination_hash: Mutex::new(None),
             events,
             event_queue: Mutex::new(VecDeque::new()),
+            sdk_event_log: Mutex::new(VecDeque::new()),
+            sdk_next_event_seq: Mutex::new(0),
+            sdk_dropped_event_count: Mutex::new(0),
+            sdk_active_contract_version: Mutex::new(2),
+            sdk_profile: Mutex::new("desktop-full".to_string()),
+            sdk_config_revision: Mutex::new(0),
+            sdk_effective_capabilities: Mutex::new(Self::sdk_supported_capabilities()),
+            sdk_stream_degraded: Mutex::new(false),
             peers: Mutex::new(HashMap::new()),
             interfaces: Mutex::new(Vec::new()),
             delivery_policy: Mutex::new(DeliveryPolicy::default()),
@@ -19,6 +27,7 @@ impl RpcDaemon {
             stamp_policy: Mutex::new(StampPolicy::default()),
             ticket_cache: Mutex::new(HashMap::new()),
             delivery_traces: Mutex::new(HashMap::new()),
+            delivery_status_lock: Mutex::new(()),
             outbound_bridge: None,
             announce_bridge: None,
         }
@@ -36,6 +45,14 @@ impl RpcDaemon {
             delivery_destination_hash: Mutex::new(None),
             events,
             event_queue: Mutex::new(VecDeque::new()),
+            sdk_event_log: Mutex::new(VecDeque::new()),
+            sdk_next_event_seq: Mutex::new(0),
+            sdk_dropped_event_count: Mutex::new(0),
+            sdk_active_contract_version: Mutex::new(2),
+            sdk_profile: Mutex::new("desktop-full".to_string()),
+            sdk_config_revision: Mutex::new(0),
+            sdk_effective_capabilities: Mutex::new(Self::sdk_supported_capabilities()),
+            sdk_stream_degraded: Mutex::new(false),
             peers: Mutex::new(HashMap::new()),
             interfaces: Mutex::new(Vec::new()),
             delivery_policy: Mutex::new(DeliveryPolicy::default()),
@@ -46,6 +63,7 @@ impl RpcDaemon {
             stamp_policy: Mutex::new(StampPolicy::default()),
             ticket_cache: Mutex::new(HashMap::new()),
             delivery_traces: Mutex::new(HashMap::new()),
+            delivery_status_lock: Mutex::new(()),
             outbound_bridge: Some(outbound_bridge),
             announce_bridge: None,
         }
@@ -64,6 +82,14 @@ impl RpcDaemon {
             delivery_destination_hash: Mutex::new(None),
             events,
             event_queue: Mutex::new(VecDeque::new()),
+            sdk_event_log: Mutex::new(VecDeque::new()),
+            sdk_next_event_seq: Mutex::new(0),
+            sdk_dropped_event_count: Mutex::new(0),
+            sdk_active_contract_version: Mutex::new(2),
+            sdk_profile: Mutex::new("desktop-full".to_string()),
+            sdk_config_revision: Mutex::new(0),
+            sdk_effective_capabilities: Mutex::new(Self::sdk_supported_capabilities()),
+            sdk_stream_degraded: Mutex::new(false),
             peers: Mutex::new(HashMap::new()),
             interfaces: Mutex::new(Vec::new()),
             delivery_policy: Mutex::new(DeliveryPolicy::default()),
@@ -74,6 +100,7 @@ impl RpcDaemon {
             stamp_policy: Mutex::new(StampPolicy::default()),
             ticket_cache: Mutex::new(HashMap::new()),
             delivery_traces: Mutex::new(HashMap::new()),
+            delivery_status_lock: Mutex::new(()),
             outbound_bridge,
             announce_bridge,
         }
@@ -300,6 +327,383 @@ impl RpcDaemon {
         self.store_inbound_record(record)
     }
 
+    fn handle_sdk_negotiate_v2(&self, request: RpcRequest) -> Result<RpcResponse, std::io::Error> {
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkNegotiateV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+
+        let active_contract_version = parsed
+            .supported_contract_versions
+            .iter()
+            .copied()
+            .filter(|version| *version == 2)
+            .max();
+
+        let Some(active_contract_version) = active_contract_version else {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_CAPABILITY_CONTRACT_INCOMPATIBLE",
+                "no compatible contract version",
+            ));
+        };
+
+        let profile = parsed.config.profile.trim().to_ascii_lowercase();
+        if !matches!(profile.as_str(), "desktop-full" | "desktop-local-runtime") {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_CAPABILITY_CONTRACT_INCOMPATIBLE",
+                "profile is not supported by the rpc backend",
+            ));
+        }
+
+        let supported_capabilities = Self::sdk_supported_capabilities_for_profile(profile.as_str());
+        let mut effective_capabilities = Vec::new();
+        if parsed.requested_capabilities.is_empty() {
+            effective_capabilities = supported_capabilities.clone();
+        } else {
+            for requested in parsed.requested_capabilities {
+                let normalized = requested.trim().to_ascii_lowercase();
+                if normalized.is_empty() {
+                    continue;
+                }
+                if supported_capabilities.contains(&normalized)
+                    && !effective_capabilities.contains(&normalized)
+                {
+                    effective_capabilities.push(normalized);
+                }
+            }
+            if effective_capabilities.is_empty() {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_CAPABILITY_CONTRACT_INCOMPATIBLE",
+                    "no overlap between requested and supported capabilities",
+                ));
+            }
+        }
+
+        let limits = Self::sdk_effective_limits_for_profile(profile.as_str());
+
+        {
+            let mut guard = self
+                .sdk_active_contract_version
+                .lock()
+                .expect("sdk_active_contract_version mutex poisoned");
+            *guard = active_contract_version;
+        }
+        {
+            let mut guard = self.sdk_profile.lock().expect("sdk_profile mutex poisoned");
+            *guard = profile.clone();
+        }
+        {
+            let mut guard = self
+                .sdk_effective_capabilities
+                .lock()
+                .expect("sdk_effective_capabilities mutex poisoned");
+            *guard = effective_capabilities.clone();
+        }
+        {
+            let mut guard =
+                self.sdk_stream_degraded.lock().expect("sdk_stream_degraded mutex poisoned");
+            *guard = false;
+        }
+
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({
+                "runtime_id": self.identity_hash,
+                "active_contract_version": active_contract_version,
+                "effective_capabilities": effective_capabilities,
+                "effective_limits": limits,
+                "contract_release": "v2.5",
+                "schema_namespace": "v2",
+                "meta": self.response_meta(),
+            })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_poll_events_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkPollEventsV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+
+        let clear_degraded_on_success = {
+            let degraded =
+                self.sdk_stream_degraded.lock().expect("sdk_stream_degraded mutex poisoned");
+            if *degraded && parsed.cursor.is_some() {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_RUNTIME_STREAM_DEGRADED",
+                    "stream is degraded; reset cursor to recover",
+                ));
+            }
+            *degraded && parsed.cursor.is_none()
+        };
+
+        if parsed.max == 0 {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "poll max must be greater than zero",
+            ));
+        }
+
+        let max_poll_events = self.sdk_max_poll_events();
+        if parsed.max > max_poll_events {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_MAX_POLL_EVENTS_EXCEEDED",
+                "poll max exceeds supported limit",
+            ));
+        }
+
+        let cursor_seq = match self.sdk_decode_cursor(parsed.cursor.as_deref()) {
+            Ok(value) => value,
+            Err(error) => {
+                return Ok(self.sdk_error_response(request.id, &error.code, &error.message))
+            }
+        };
+
+        let log_guard = self.sdk_event_log.lock().expect("sdk_event_log mutex poisoned");
+        let dropped_count =
+            *self.sdk_dropped_event_count.lock().expect("sdk_dropped_event_count mutex poisoned");
+        let oldest_seq = log_guard.front().map(|entry| entry.seq_no);
+        let latest_seq = log_guard.back().map(|entry| entry.seq_no);
+
+        if let (Some(cursor_seq), Some(oldest_seq)) = (cursor_seq, oldest_seq) {
+            if cursor_seq.saturating_add(1) < oldest_seq {
+                let mut degraded =
+                    self.sdk_stream_degraded.lock().expect("sdk_stream_degraded mutex poisoned");
+                *degraded = true;
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_RUNTIME_CURSOR_EXPIRED",
+                    "cursor is outside retained event window",
+                ));
+            }
+        }
+
+        let start_seq = cursor_seq.map(|value| value.saturating_add(1)).or(oldest_seq).unwrap_or(0);
+        let mut event_rows = Vec::new();
+
+        if parsed.cursor.is_none() && dropped_count > 0 && event_rows.len() < parsed.max {
+            let observed_seq_no = oldest_seq.unwrap_or(0);
+            let expected_seq_no = observed_seq_no.saturating_sub(dropped_count);
+            let gap_seq_no = observed_seq_no.saturating_sub(1);
+            event_rows.push(json!({
+                "event_id": format!("gap-{}", gap_seq_no),
+                "runtime_id": self.identity_hash,
+                "stream_id": SDK_STREAM_ID,
+                "seq_no": gap_seq_no,
+                "contract_version": self.active_contract_version(),
+                "ts_ms": (now_i64().max(0) as u64) * 1000,
+                "event_type": "StreamGap",
+                "severity": "warn",
+                "source_component": "rns-rpc",
+                "payload": {
+                    "expected_seq_no": expected_seq_no,
+                    "observed_seq_no": observed_seq_no,
+                    "dropped_count": dropped_count,
+                },
+            }));
+        }
+
+        let remaining_slots = parsed.max.saturating_sub(event_rows.len());
+        for entry in
+            log_guard.iter().filter(|entry| entry.seq_no >= start_seq).take(remaining_slots)
+        {
+            event_rows.push(json!({
+                "event_id": format!("evt-{}", entry.seq_no),
+                "runtime_id": self.identity_hash,
+                "stream_id": SDK_STREAM_ID,
+                "seq_no": entry.seq_no,
+                "contract_version": self.active_contract_version(),
+                "ts_ms": (now_i64().max(0) as u64) * 1000,
+                "event_type": entry.event.event_type.clone(),
+                "severity": Self::event_severity(entry.event.event_type.as_str()),
+                "source_component": "rns-rpc",
+                "payload": entry.event.payload.clone(),
+            }));
+        }
+
+        let next_seq = event_rows
+            .iter()
+            .rev()
+            .find_map(|event| event.get("seq_no").and_then(JsonValue::as_u64))
+            .or(cursor_seq)
+            .or(latest_seq)
+            .unwrap_or(0);
+        let next_cursor = self.sdk_encode_cursor(next_seq);
+
+        if clear_degraded_on_success {
+            let mut degraded =
+                self.sdk_stream_degraded.lock().expect("sdk_stream_degraded mutex poisoned");
+            *degraded = false;
+        }
+
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({
+                "runtime_id": self.identity_hash,
+                "stream_id": SDK_STREAM_ID,
+                "events": event_rows,
+                "next_cursor": next_cursor,
+                "dropped_count": if parsed.cursor.is_none() { dropped_count } else { 0 },
+                "meta": self.response_meta(),
+            })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_cancel_message_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkCancelMessageV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let message_id = parsed.message_id.trim();
+        if message_id.is_empty() {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "message_id must not be empty",
+            ));
+        }
+
+        let _status_guard =
+            self.delivery_status_lock.lock().expect("delivery_status_lock mutex poisoned");
+        let message = self.store.get_message(message_id).map_err(std::io::Error::other)?;
+        if message.is_none() {
+            return Ok(RpcResponse {
+                id: request.id,
+                result: Some(json!({
+                    "message_id": message_id,
+                    "result": "NotFound",
+                })),
+                error: None,
+            });
+        }
+
+        let message_status = message.and_then(|record| record.receipt_status);
+
+        let transitions = self
+            .delivery_traces
+            .lock()
+            .expect("delivery traces mutex poisoned")
+            .get(message_id)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut cancel_result = "Accepted";
+        if let Some(status) = &message_status {
+            let normalized = status.trim().to_ascii_lowercase();
+            if normalized.starts_with("sent") {
+                cancel_result = "TooLateToCancel";
+            } else if matches!(
+                normalized.as_str(),
+                "cancelled" | "delivered" | "failed" | "expired" | "rejected"
+            ) {
+                cancel_result = "AlreadyTerminal";
+            }
+        }
+
+        for transition in &transitions {
+            if cancel_result != "Accepted" {
+                break;
+            }
+            let normalized = transition.status.trim().to_ascii_lowercase();
+            if normalized.starts_with("sent") {
+                cancel_result = "TooLateToCancel";
+                break;
+            }
+            if matches!(
+                normalized.as_str(),
+                "cancelled" | "delivered" | "failed" | "expired" | "rejected"
+            ) {
+                cancel_result = "AlreadyTerminal";
+                break;
+            }
+        }
+
+        if cancel_result == "Accepted" {
+            self.store
+                .update_receipt_status(message_id, "cancelled")
+                .map_err(std::io::Error::other)?;
+            self.append_delivery_trace(message_id, "cancelled".to_string());
+            let event = RpcEvent {
+                event_type: "delivery_cancelled".into(),
+                payload: json!({ "message_id": message_id, "result": "Accepted" }),
+            };
+            self.push_event(event.clone());
+            let _ = self.events.send(event);
+        }
+
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({
+                "message_id": message_id,
+                "result": cancel_result,
+            })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_snapshot_v2(&self, request: RpcRequest) -> Result<RpcResponse, std::io::Error> {
+        let params = request
+            .params
+            .map(serde_json::from_value::<SdkSnapshotV2Params>)
+            .transpose()
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?
+            .unwrap_or_default();
+        let active_contract_version = self.active_contract_version();
+        let event_stream_position = self
+            .sdk_event_log
+            .lock()
+            .expect("sdk_event_log mutex poisoned")
+            .back()
+            .map(|entry| entry.seq_no)
+            .unwrap_or(0);
+        let config_revision =
+            *self.sdk_config_revision.lock().expect("sdk_config_revision mutex poisoned");
+        let profile = self.sdk_profile.lock().expect("sdk_profile mutex poisoned").clone();
+        let effective_capabilities = self
+            .sdk_effective_capabilities
+            .lock()
+            .expect("sdk_effective_capabilities mutex poisoned")
+            .clone();
+
+        let (queued_messages, in_flight_messages) =
+            self.store.count_message_buckets().map_err(std::io::Error::other)?;
+
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({
+                "runtime_id": self.identity_hash,
+                "state": "running",
+                "active_contract_version": active_contract_version,
+                "event_stream_position": event_stream_position,
+                "config_revision": config_revision,
+                "profile": profile,
+                "effective_capabilities": effective_capabilities,
+                "queued_messages": queued_messages,
+                "in_flight_messages": in_flight_messages,
+                "counts_included": params.include_counts,
+                "meta": self.response_meta(),
+            })),
+            error: None,
+        })
+    }
+
     pub fn handle_rpc(&self, request: RpcRequest) -> Result<RpcResponse, std::io::Error> {
         match request.method.as_str() {
             "status" => Ok(RpcResponse {
@@ -311,6 +715,7 @@ impl RpcDaemon {
                 })),
                 error: None,
             }),
+            "sdk_negotiate_v2" => self.handle_sdk_negotiate_v2(request),
             "daemon_status_ex" => {
                 let peer_count = self.peers.lock().expect("peers mutex poisoned").len();
                 let interfaces = self.interfaces.lock().expect("interfaces mutex poisoned").clone();
@@ -340,6 +745,7 @@ impl RpcDaemon {
                     error: None,
                 })
             }
+            "sdk_snapshot_v2" => self.handle_sdk_snapshot_v2(request),
             "list_messages" => {
                 let items = self.store.list_messages(100, None).map_err(std::io::Error::other)?;
                 Ok(RpcResponse {
@@ -351,6 +757,7 @@ impl RpcDaemon {
                     error: None,
                 })
             }
+            "sdk_poll_events_v2" => self.handle_sdk_poll_events_v2(request),
             "list_announces" => {
                 let parsed = request
                     .params
@@ -604,6 +1011,7 @@ impl RpcDaemon {
                     error: None,
                 })
             }
+            "sdk_cancel_message_v2" => self.handle_sdk_cancel_message_v2(request),
             "message_delivery_trace" => {
                 let params = request.params.ok_or_else(|| {
                     std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
@@ -1139,11 +1547,133 @@ impl RpcDaemon {
     }
 
     fn response_meta(&self) -> JsonValue {
+        let profile = self.sdk_profile.lock().expect("sdk_profile mutex poisoned").clone();
         json!({
-            "contract_version": "v2",
-            "profile": JsonValue::Null,
+            "contract_version": format!("v{}", self.active_contract_version()),
+            "profile": profile,
             "rpc_endpoint": JsonValue::Null,
         })
+    }
+
+    fn is_terminal_receipt_status(status: &str) -> bool {
+        let normalized = status.trim().to_ascii_lowercase();
+        normalized.starts_with("sent")
+            || normalized.starts_with("failed")
+            || matches!(normalized.as_str(), "cancelled" | "delivered" | "expired" | "rejected")
+    }
+
+    fn active_contract_version(&self) -> u16 {
+        *self
+            .sdk_active_contract_version
+            .lock()
+            .expect("sdk_active_contract_version mutex poisoned")
+    }
+
+    fn sdk_supported_capabilities() -> Vec<String> {
+        vec!["sdk.capability.cursor_replay".to_string(), "sdk.capability.async_events".to_string()]
+    }
+
+    fn sdk_supported_capabilities_for_profile(profile: &str) -> Vec<String> {
+        let mut caps = Self::sdk_supported_capabilities();
+        if profile == "embedded-alloc" {
+            caps.retain(|capability| capability != "sdk.capability.async_events");
+        }
+        caps
+    }
+
+    fn sdk_effective_limits_for_profile(profile: &str) -> JsonValue {
+        match profile {
+            "desktop-local-runtime" => json!({
+                "max_poll_events": 64,
+                "max_event_bytes": 32_768,
+                "max_batch_bytes": 1_048_576,
+                "max_extension_keys": 32,
+                "idempotency_ttl_ms": 43_200_000_u64,
+            }),
+            "embedded-alloc" => json!({
+                "max_poll_events": 32,
+                "max_event_bytes": 8_192,
+                "max_batch_bytes": 262_144,
+                "max_extension_keys": 32,
+                "idempotency_ttl_ms": 7_200_000_u64,
+            }),
+            _ => json!({
+                "max_poll_events": 256,
+                "max_event_bytes": 65_536,
+                "max_batch_bytes": 1_048_576,
+                "max_extension_keys": 32,
+                "idempotency_ttl_ms": 86_400_000_u64,
+            }),
+        }
+    }
+
+    fn sdk_max_poll_events(&self) -> usize {
+        match self.sdk_profile.lock().expect("sdk_profile mutex poisoned").as_str() {
+            "desktop-local-runtime" => 64,
+            "embedded-alloc" => 32,
+            _ => 256,
+        }
+    }
+
+    fn sdk_error_response(&self, id: u64, code: &str, message: &str) -> RpcResponse {
+        RpcResponse {
+            id,
+            result: None,
+            error: Some(RpcError { code: code.to_string(), message: message.to_string() }),
+        }
+    }
+
+    fn sdk_encode_cursor(&self, seq_no: u64) -> String {
+        format!("v2:{}:{}:{}", self.identity_hash, SDK_STREAM_ID, seq_no)
+    }
+
+    fn sdk_decode_cursor(&self, cursor: Option<&str>) -> Result<Option<u64>, SdkCursorError> {
+        let Some(cursor) = cursor else {
+            return Ok(None);
+        };
+        let cursor = cursor.trim();
+        if cursor.is_empty() {
+            return Err(SdkCursorError {
+                code: "SDK_RUNTIME_INVALID_CURSOR".to_string(),
+                message: "cursor must not be empty".to_string(),
+            });
+        }
+
+        let mut parts = cursor.split(':');
+        let version = parts.next();
+        let runtime_id = parts.next();
+        let stream_id = parts.next();
+        let seq = parts.next();
+        let has_extra = parts.next().is_some();
+        if version != Some("v2")
+            || runtime_id != Some(self.identity_hash.as_str())
+            || stream_id != Some(SDK_STREAM_ID)
+            || has_extra
+        {
+            return Err(SdkCursorError {
+                code: "SDK_RUNTIME_INVALID_CURSOR".to_string(),
+                message: "cursor scope does not match runtime".to_string(),
+            });
+        }
+
+        let seq =
+            seq.and_then(|value| value.parse::<u64>().ok()).ok_or_else(|| SdkCursorError {
+                code: "SDK_RUNTIME_INVALID_CURSOR".to_string(),
+                message: "cursor sequence is invalid".to_string(),
+            })?;
+        Ok(Some(seq))
+    }
+
+    fn event_severity(event_type: &str) -> &'static str {
+        if event_type.eq_ignore_ascii_case("StreamGap") {
+            return "warn";
+        }
+        if event_type.eq_ignore_ascii_case("error")
+            || event_type.eq_ignore_ascii_case("delivery_failed")
+        {
+            return "error";
+        }
+        "info"
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1185,10 +1715,25 @@ impl RpcDaemon {
         };
         if let Err(err) = deliver_result {
             let status = format!("failed: {err}");
-            let _ = self.store.update_receipt_status(&id, &status);
-            record.receipt_status = Some(status);
-            let resolved_status = record.receipt_status.clone().unwrap_or_default();
-            self.append_delivery_trace(&id, resolved_status.clone());
+            let resolved_status = {
+                let _status_guard =
+                    self.delivery_status_lock.lock().expect("delivery_status_lock mutex poisoned");
+                let existing_status = self
+                    .store
+                    .get_message(&id)
+                    .map_err(std::io::Error::other)?
+                    .and_then(|message| message.receipt_status);
+                if existing_status.as_deref().is_some_and(Self::is_terminal_receipt_status) {
+                    existing_status.unwrap_or(status.clone())
+                } else {
+                    self.store
+                        .update_receipt_status(&id, &status)
+                        .map_err(std::io::Error::other)?;
+                    self.append_delivery_trace(&id, status.clone());
+                    status.clone()
+                }
+            };
+            record.receipt_status = Some(resolved_status.clone());
             let reason_code = delivery_reason_code(&resolved_status);
             let event = RpcEvent {
                 event_type: "outbound".into(),
@@ -1208,13 +1753,31 @@ impl RpcDaemon {
             });
         }
         let sent_status = format!("sent: {}", method.as_deref().unwrap_or("direct"));
-        self.append_delivery_trace(&id, sent_status.clone());
+        let resolved_status = {
+            let _status_guard =
+                self.delivery_status_lock.lock().expect("delivery_status_lock mutex poisoned");
+            let existing_status = self
+                .store
+                .get_message(&id)
+                .map_err(std::io::Error::other)?
+                .and_then(|message| message.receipt_status);
+            if existing_status.as_deref().is_some_and(Self::is_terminal_receipt_status) {
+                existing_status.unwrap_or(sent_status.clone())
+            } else {
+                self.store
+                    .update_receipt_status(&id, &sent_status)
+                    .map_err(std::io::Error::other)?;
+                self.append_delivery_trace(&id, sent_status.clone());
+                sent_status.clone()
+            }
+        };
+        record.receipt_status = Some(resolved_status.clone());
         let event = RpcEvent {
             event_type: "outbound".into(),
             payload: json!({
                 "message": record,
                 "method": method,
-                "reason_code": delivery_reason_code(&sent_status),
+                "reason_code": delivery_reason_code(&resolved_status),
             }),
         };
         self.push_event(event.clone());
@@ -1240,6 +1803,10 @@ impl RpcDaemon {
             "list_peers",
             "send_message",
             "send_message_v2",
+            "sdk_negotiate_v2",
+            "sdk_poll_events_v2",
+            "sdk_cancel_message_v2",
+            "sdk_snapshot_v2",
             "announce_now",
             "list_interfaces",
             "set_interfaces",
@@ -1280,11 +1847,30 @@ impl RpcDaemon {
     }
 
     pub fn push_event(&self, event: RpcEvent) {
-        let mut guard = self.event_queue.lock().expect("event_queue mutex poisoned");
-        if guard.len() >= 32 {
-            guard.pop_front();
+        {
+            let mut guard = self.event_queue.lock().expect("event_queue mutex poisoned");
+            if guard.len() >= 32 {
+                guard.pop_front();
+            }
+            guard.push_back(event.clone());
         }
-        guard.push_back(event);
+
+        let seq_no = {
+            let mut seq_guard =
+                self.sdk_next_event_seq.lock().expect("sdk_next_event_seq mutex poisoned");
+            *seq_guard = seq_guard.saturating_add(1);
+            *seq_guard
+        };
+        let mut log_guard = self.sdk_event_log.lock().expect("sdk_event_log mutex poisoned");
+        if log_guard.len() >= SDK_EVENT_LOG_CAPACITY {
+            log_guard.pop_front();
+            let mut dropped = self
+                .sdk_dropped_event_count
+                .lock()
+                .expect("sdk_dropped_event_count mutex poisoned");
+            *dropped = dropped.saturating_add(1);
+        }
+        log_guard.push_back(SequencedRpcEvent { seq_no, event });
     }
 
     pub fn emit_event(&self, event: RpcEvent) {
@@ -1365,6 +1951,12 @@ impl RpcDaemon {
     }
 }
 
+#[derive(Debug)]
+struct SdkCursorError {
+    code: String,
+    message: String,
+}
+
 fn parse_announce_cursor(cursor: Option<&str>) -> Option<(Option<i64>, Option<String>)> {
     let raw = cursor?.trim();
     if raw.is_empty() {
@@ -1402,4 +1994,258 @@ fn delivery_reason_code(status: &str) -> Option<&'static str> {
         return Some("retry_budget_exhausted");
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rpc_request(id: u64, method: &str, params: JsonValue) -> RpcRequest {
+        RpcRequest { id, method: method.to_string(), params: Some(params) }
+    }
+
+    #[test]
+    fn sdk_negotiate_v2_selects_contract_and_profile_limits() {
+        let daemon = RpcDaemon::test_instance();
+        let response = daemon
+            .handle_rpc(rpc_request(
+                1,
+                "sdk_negotiate_v2",
+                json!({
+                    "supported_contract_versions": [1, 2],
+                    "requested_capabilities": [
+                        "sdk.capability.cursor_replay",
+                        "sdk.capability.async_events"
+                    ],
+                    "config": {
+                        "profile": "desktop-local-runtime"
+                    }
+                }),
+            ))
+            .expect("negotiate should succeed");
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert_eq!(result["active_contract_version"], json!(2));
+        assert_eq!(result["contract_release"], json!("v2.5"));
+        assert_eq!(result["effective_limits"]["max_poll_events"], json!(64));
+    }
+
+    #[test]
+    fn sdk_negotiate_v2_fails_on_capability_overlap_miss() {
+        let daemon = RpcDaemon::test_instance();
+        let response = daemon
+            .handle_rpc(rpc_request(
+                2,
+                "sdk_negotiate_v2",
+                json!({
+                    "supported_contract_versions": [2],
+                    "requested_capabilities": ["sdk.capability.not-real"],
+                    "config": { "profile": "desktop-full" }
+                }),
+            ))
+            .expect("rpc call");
+        let error = response.error.expect("must fail");
+        assert_eq!(error.code, "SDK_CAPABILITY_CONTRACT_INCOMPATIBLE");
+    }
+
+    #[test]
+    fn sdk_negotiate_v2_rejects_embedded_alloc_profile() {
+        let daemon = RpcDaemon::test_instance();
+        let response = daemon
+            .handle_rpc(rpc_request(
+                20,
+                "sdk_negotiate_v2",
+                json!({
+                    "supported_contract_versions": [2],
+                    "requested_capabilities": [],
+                    "config": { "profile": "embedded-alloc" }
+                }),
+            ))
+            .expect("rpc call");
+        let error = response.error.expect("must fail");
+        assert_eq!(error.code, "SDK_CAPABILITY_CONTRACT_INCOMPATIBLE");
+    }
+
+    #[test]
+    fn sdk_poll_events_v2_validates_cursor_and_expires_stale_tokens() {
+        let daemon = RpcDaemon::test_instance();
+        daemon.emit_event(RpcEvent {
+            event_type: "inbound".to_string(),
+            payload: json!({ "message_id": "m-1" }),
+        });
+        let first = daemon
+            .handle_rpc(rpc_request(
+                3,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": null,
+                    "max": 4
+                }),
+            ))
+            .expect("poll");
+        let first_result = first.result.expect("result");
+        let cursor = first_result["next_cursor"].as_str().expect("cursor").to_string();
+        assert!(first_result["events"].as_array().is_some_and(|events| !events.is_empty()));
+
+        let invalid = daemon
+            .handle_rpc(rpc_request(
+                4,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": "bad-cursor",
+                    "max": 4
+                }),
+            ))
+            .expect("invalid poll should still return response");
+        assert_eq!(invalid.error.expect("error").code, "SDK_RUNTIME_INVALID_CURSOR");
+
+        for idx in 0..(SDK_EVENT_LOG_CAPACITY + 8) {
+            daemon.emit_event(RpcEvent {
+                event_type: "inbound".to_string(),
+                payload: json!({ "message_id": format!("overflow-{idx}") }),
+            });
+        }
+
+        let expired = daemon
+            .handle_rpc(rpc_request(
+                5,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": cursor,
+                    "max": 2
+                }),
+            ))
+            .expect("expired poll should return response");
+        assert_eq!(expired.error.expect("error").code, "SDK_RUNTIME_CURSOR_EXPIRED");
+    }
+
+    #[test]
+    fn sdk_poll_events_v2_requires_successful_reset_after_degraded_state() {
+        let daemon = RpcDaemon::test_instance();
+        daemon.emit_event(RpcEvent { event_type: "inbound".to_string(), payload: json!({}) });
+        let first = daemon
+            .handle_rpc(rpc_request(
+                30,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": null,
+                    "max": 1
+                }),
+            ))
+            .expect("initial poll");
+        let cursor =
+            first.result.expect("result")["next_cursor"].as_str().expect("cursor").to_string();
+
+        for idx in 0..(SDK_EVENT_LOG_CAPACITY + 4) {
+            daemon.emit_event(RpcEvent {
+                event_type: "inbound".to_string(),
+                payload: json!({ "idx": idx }),
+            });
+        }
+
+        let expired = daemon
+            .handle_rpc(rpc_request(
+                31,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": cursor,
+                    "max": 1
+                }),
+            ))
+            .expect("expired");
+        assert_eq!(expired.error.expect("error").code, "SDK_RUNTIME_CURSOR_EXPIRED");
+
+        let invalid_reset = daemon
+            .handle_rpc(rpc_request(
+                32,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": null,
+                    "max": 0
+                }),
+            ))
+            .expect("invalid reset");
+        assert_eq!(invalid_reset.error.expect("error").code, "SDK_VALIDATION_INVALID_ARGUMENT");
+
+        let still_degraded = daemon
+            .handle_rpc(rpc_request(
+                33,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": "v2:test-identity:sdk-events:999999",
+                    "max": 1
+                }),
+            ))
+            .expect("still degraded");
+        assert_eq!(still_degraded.error.expect("error").code, "SDK_RUNTIME_STREAM_DEGRADED");
+
+        let reset_ok = daemon
+            .handle_rpc(rpc_request(
+                34,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": null,
+                    "max": 1
+                }),
+            ))
+            .expect("reset");
+        assert!(reset_ok.error.is_none());
+    }
+
+    #[test]
+    fn sdk_cancel_message_v2_distinguishes_not_found_and_too_late() {
+        let daemon = RpcDaemon::test_instance();
+
+        let not_found = daemon
+            .handle_rpc(rpc_request(6, "sdk_cancel_message_v2", json!({ "message_id": "missing" })))
+            .expect("cancel missing");
+        assert_eq!(not_found.result.expect("result")["result"], json!("NotFound"));
+
+        let send = daemon
+            .handle_rpc(rpc_request(
+                7,
+                "send_message_v2",
+                json!({
+                    "id": "outbound-1",
+                    "source": "src",
+                    "destination": "dst",
+                    "title": "",
+                    "content": "hello"
+                }),
+            ))
+            .expect("send");
+        assert!(send.error.is_none());
+
+        let too_late = daemon
+            .handle_rpc(rpc_request(
+                8,
+                "sdk_cancel_message_v2",
+                json!({ "message_id": "outbound-1" }),
+            ))
+            .expect("cancel");
+        assert_eq!(too_late.result.expect("result")["result"], json!("TooLateToCancel"));
+    }
+
+    #[test]
+    fn sdk_snapshot_v2_returns_runtime_summary() {
+        let daemon = RpcDaemon::test_instance();
+        let _ = daemon.handle_rpc(rpc_request(
+            9,
+            "sdk_negotiate_v2",
+            json!({
+                "supported_contract_versions": [2],
+                "requested_capabilities": [],
+                "config": { "profile": "desktop-full" }
+            }),
+        ));
+
+        let snapshot = daemon
+            .handle_rpc(rpc_request(10, "sdk_snapshot_v2", json!({ "include_counts": true })))
+            .expect("snapshot");
+        assert!(snapshot.error.is_none());
+        let result = snapshot.result.expect("result");
+        assert_eq!(result["runtime_id"], json!("test-identity"));
+        assert_eq!(result["state"], json!("running"));
+        assert!(result.get("event_stream_position").is_some());
+    }
 }
