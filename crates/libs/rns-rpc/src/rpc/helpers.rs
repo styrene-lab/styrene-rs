@@ -266,5 +266,6 @@ fn encode_hex(bytes: impl AsRef<[u8]>) -> String {
     out
 }
 
+const LEGACY_EVENT_QUEUE_CAPACITY: usize = 32;
 const SDK_EVENT_LOG_CAPACITY: usize = 1024;
 const SDK_STREAM_ID: &str = "sdk-events";

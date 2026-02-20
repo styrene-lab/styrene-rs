@@ -207,6 +207,14 @@ jobs:
       - name: SDK memory budget gate
         run: cargo xtask ci --stage sdk-memory-budget-check
 
+  sdk-queue-pressure-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SDK queue pressure gate
+        run: cargo xtask ci --stage sdk-queue-pressure-check
+
   sdk-matrix-check:
     runs-on: ubuntu-latest
     steps:

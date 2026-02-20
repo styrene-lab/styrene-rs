@@ -443,6 +443,49 @@
     }
 
     #[test]
+    fn sdk_event_queues_remain_bounded_under_sustained_load() {
+        let daemon = RpcDaemon::test_instance();
+        let configure = daemon
+            .handle_rpc(rpc_request(
+                94,
+                "sdk_configure_v2",
+                json!({
+                    "expected_revision": 0,
+                    "patch": {
+                        "overflow_policy": "drop_oldest",
+                        "event_stream": { "max_poll_events": 4096 }
+                    }
+                }),
+            ))
+            .expect("configure");
+        assert!(configure.error.is_none());
+
+        for idx in 0..(SDK_EVENT_LOG_CAPACITY * 8) {
+            daemon.emit_event(RpcEvent {
+                event_type: "queue_pressure".to_string(),
+                payload: json!({ "idx": idx }),
+            });
+        }
+
+        let legacy_len = daemon.event_queue.lock().expect("event_queue mutex poisoned").len();
+        let sdk_len = daemon.sdk_event_log.lock().expect("sdk_event_log mutex poisoned").len();
+        let dropped = *daemon
+            .sdk_dropped_event_count
+            .lock()
+            .expect("sdk_dropped_event_count mutex poisoned");
+
+        assert!(
+            legacy_len <= LEGACY_EVENT_QUEUE_CAPACITY,
+            "legacy queue must stay bounded under load"
+        );
+        assert_eq!(
+            sdk_len, SDK_EVENT_LOG_CAPACITY,
+            "sdk event log must remain capped under load"
+        );
+        assert!(dropped > 0, "drop_oldest policy should report dropped events under pressure");
+    }
+
+    #[test]
     fn sdk_property_cursor_monotonicity_randomized_poll_batches() {
         let daemon = RpcDaemon::test_instance();
         let total_events = 240_u64;

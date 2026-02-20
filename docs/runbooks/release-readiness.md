@@ -47,6 +47,7 @@ cargo run -p rns-tools --bin rnx -- replay --trace docs/fixtures/sdk-v2/rpc/repl
 cargo run -p xtask -- sdk-bench-check
 cargo run -p xtask -- sdk-perf-budget-check
 cargo run -p xtask -- sdk-memory-budget-check
+cargo run -p xtask -- sdk-queue-pressure-check
 ```
 
 Optional soak:
@@ -64,6 +65,10 @@ Nightly mesh simulation (3-10 node ring):
 cargo run -p rns-tools --bin rnx -- mesh-sim --nodes 5 --timeout-secs 60
 ./tools/scripts/mesh-sim-rnx.sh
 ```
+
+Queue pressure tuning and overflow policy guidance:
+
+- `docs/runbooks/queue-pressure-tuning.md`
 
 ## 6. Release metadata
 

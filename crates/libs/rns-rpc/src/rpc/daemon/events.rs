@@ -31,7 +31,6 @@ impl RpcDaemon {
         policy: &str,
         block_timeout_ms: u64,
     ) -> bool {
-        const LEGACY_EVENT_QUEUE_CAPACITY: usize = 32;
         match policy {
             "reject" => {
                 let mut guard = self.event_queue.lock().expect("event_queue mutex poisoned");
