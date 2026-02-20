@@ -251,13 +251,88 @@ fn sdk_schema_valid_fixtures_pass_contract_checks() {
     );
     assert_schema_valid(
         &schemas.command,
+        "docs/fixtures/sdk-v2/command.topic_create.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.topic_create.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.topic_list.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.topic_list.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.topic_subscribe.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.topic_subscribe.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.topic_unsubscribe.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.topic_unsubscribe.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.topic_publish.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.topic_publish.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.telemetry_query.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.telemetry_query.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.telemetry_subscribe.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.telemetry_subscribe.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
         "docs/fixtures/sdk-v2/command.attachment_store.valid.json",
         &fixture("docs/fixtures/sdk-v2/command.attachment_store.valid.json"),
     );
     assert_schema_valid(
         &schemas.command,
+        "docs/fixtures/sdk-v2/command.attachment_get.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.attachment_get.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.attachment_list.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.attachment_list.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.attachment_delete.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.attachment_delete.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.attachment_download.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.attachment_download.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
         "docs/fixtures/sdk-v2/command.attachment_associate_topic.valid.json",
         &fixture("docs/fixtures/sdk-v2/command.attachment_associate_topic.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.marker_create.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.marker_create.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.marker_list.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.marker_list.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.marker_update_position.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.marker_update_position.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.marker_delete.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.marker_delete.valid.json"),
     );
     assert_schema_valid(
         &schemas.command,
@@ -391,8 +466,88 @@ fn sdk_schema_invalid_fixtures_are_rejected() {
     );
     assert_schema_invalid(
         &schemas.command,
+        "docs/fixtures/sdk-v2/command.topic_create.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.topic_create.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.topic_list.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.topic_list.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.topic_subscribe.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.topic_subscribe.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.topic_unsubscribe.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.topic_unsubscribe.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.topic_publish.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.topic_publish.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.telemetry_query.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.telemetry_query.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.telemetry_subscribe.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.telemetry_subscribe.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.attachment_store.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.attachment_store.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.attachment_get.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.attachment_get.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.attachment_list.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.attachment_list.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.attachment_delete.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.attachment_delete.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.attachment_download.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.attachment_download.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
         "docs/fixtures/sdk-v2/command.attachment_associate_topic.invalid.json",
         &fixture("docs/fixtures/sdk-v2/command.attachment_associate_topic.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.marker_create.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.marker_create.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.marker_list.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.marker_list.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.marker_update_position.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.marker_update_position.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.marker_delete.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.marker_delete.invalid.json"),
     );
     assert_schema_invalid(
         &schemas.command,
