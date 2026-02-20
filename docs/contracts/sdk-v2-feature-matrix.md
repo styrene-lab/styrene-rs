@@ -74,6 +74,25 @@ Legend:
 | Field redaction policy | required | required | required |
 | Break-glass diagnostics with audit trail | optional | optional | unsupported |
 
+## Performance Budget Matrix
+
+All budgets are enforced from Criterion sample data via `cargo run -p xtask -- sdk-perf-budget-check`.
+Budgets are expressed as maximum latency (`p50`/`p95`/`p99` in nanoseconds) and minimum throughput (`ops/s`).
+
+| Benchmark | p50 max (ns) | p95 max (ns) | p99 max (ns) | throughput min (ops/s) |
+| --- | --- | --- | --- | --- |
+| `lxmf_core/message_from_wire` | 1,500 | 2,500 | 3,500 | 500,000 |
+| `lxmf_core/decode_inbound_message` | 5,000 | 9,000 | 12,000 | 150,000 |
+| `lxmf_core/message_to_wire` | 2,000 | 3,000 | 4,000 | 350,000 |
+| `lxmf_sdk/start` | 15,000 | 25,000 | 35,000 | 30,000 |
+| `lxmf_sdk/send` | 2,000 | 3,000 | 4,500 | 350,000 |
+| `lxmf_sdk/poll_events` | 300 | 450 | 650 | 20,000,000 |
+| `lxmf_sdk/snapshot` | 1,500 | 2,000 | 2,500 | 600,000 |
+| `rns_rpc/send_message_v2` | 100,000 | 150,000 | 220,000 | 25,000 |
+| `rns_rpc/sdk_poll_events_v2` | 15,000 | 20,000 | 25,000 | 90,000 |
+| `rns_rpc/sdk_snapshot_v2` | 25,000 | 35,000 | 45,000 | 45,000 |
+| `rns_rpc/sdk_topic_create_v2` | 70,000 | 95,000 | 130,000 | 14,000 |
+
 ## CI Mapping Matrix
 
 | Gate | Status |
@@ -83,6 +102,7 @@ Legend:
 | `sdk-property-check` | required |
 | `sdk-api-break` | required |
 | `sdk-security-check` | required |
+| `sdk-perf-budget-check` | required |
 | `sdk-migration-check` | required |
 | `sdk-matrix-check` | required |
 | `embedded-alloc` profile build | required |
