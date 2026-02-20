@@ -23,6 +23,9 @@
 - `lxmf-core` must not directly depend on `tokio`, `clap`, `ureq`, or `serde_json`.
 - `rns-core` must not directly depend on `tokio` or `clap`.
 - CLI/daemon concerns live in `crates/apps/*`.
+- Module size policy and exception registry:
+  - `docs/architecture/module-size-policy.md`
+  - `docs/architecture/module-size-allowlist.txt`
 
 ## Security Architecture
 - Threat model source of truth: `docs/adr/0004-sdk-v25-threat-model.md`.

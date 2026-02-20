@@ -1665,7 +1665,8 @@ fn run_migration_checks() -> Result<()> {
 }
 
 fn run_architecture_checks() -> Result<()> {
-    run_forbidden_deps()
+    run_forbidden_deps()?;
+    run_module_size_check()
 }
 
 fn run_forbidden_deps() -> Result<()> {
@@ -1681,6 +1682,10 @@ fn run_boundary_checks(enforce_legacy_imports: &str, enforce_legacy_shims: &str)
         "ENFORCE_LEGACY_APP_IMPORTS={enforce_legacy_imports} ENFORCE_RETM_LEGACY_SHIMS={enforce_legacy_shims} ./tools/scripts/check-boundaries.sh"
     );
     run("bash", &["-lc", &command])
+}
+
+fn run_module_size_check() -> Result<()> {
+    run("bash", &["tools/scripts/check-module-size.sh"])
 }
 
 fn parse_cutover_rows(markdown: &str) -> Result<Vec<Vec<String>>> {
