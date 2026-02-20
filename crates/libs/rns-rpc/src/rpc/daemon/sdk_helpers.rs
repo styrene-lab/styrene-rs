@@ -349,4 +349,206 @@ impl RpcDaemon {
         }
     }
 
+    fn parse_domain_sequence(id: &str) -> Option<u64> {
+        let (_, suffix) = id.rsplit_once('-')?;
+        if suffix.len() != 16 {
+            return None;
+        }
+        u64::from_str_radix(suffix, 16).ok()
+    }
+
+    fn infer_snapshot_domain_sequence(snapshot: &SdkDomainSnapshotV1) -> u64 {
+        let mut max_seq = snapshot.next_domain_seq;
+        for id in snapshot.topics.keys() {
+            max_seq = max_seq.max(Self::parse_domain_sequence(id).unwrap_or(0));
+        }
+        for id in snapshot.attachments.keys() {
+            max_seq = max_seq.max(Self::parse_domain_sequence(id).unwrap_or(0));
+        }
+        for id in snapshot.markers.keys() {
+            max_seq = max_seq.max(Self::parse_domain_sequence(id).unwrap_or(0));
+        }
+        for id in snapshot.remote_commands.iter() {
+            max_seq = max_seq.max(Self::parse_domain_sequence(id).unwrap_or(0));
+        }
+        for id in snapshot.voice_sessions.keys() {
+            max_seq = max_seq.max(Self::parse_domain_sequence(id).unwrap_or(0));
+        }
+        max_seq
+    }
+
+    fn default_identity_map(&self) -> HashMap<String, SdkIdentityBundle> {
+        let mut identities = HashMap::new();
+        identities.insert(
+            self.identity_hash.clone(),
+            Self::default_sdk_identity(self.identity_hash.as_str()),
+        );
+        identities
+    }
+
+    fn build_sdk_domain_snapshot(&self) -> SdkDomainSnapshotV1 {
+        let next_domain_seq =
+            *self.sdk_next_domain_seq.lock().expect("sdk_next_domain_seq mutex poisoned");
+        let topics = self.sdk_topics.lock().expect("sdk_topics mutex poisoned").clone();
+        let topic_order =
+            self.sdk_topic_order.lock().expect("sdk_topic_order mutex poisoned").clone();
+        let topic_subscriptions = self
+            .sdk_topic_subscriptions
+            .lock()
+            .expect("sdk_topic_subscriptions mutex poisoned")
+            .clone();
+        let telemetry_points = self
+            .sdk_telemetry_points
+            .lock()
+            .expect("sdk_telemetry_points mutex poisoned")
+            .clone();
+        let attachments =
+            self.sdk_attachments.lock().expect("sdk_attachments mutex poisoned").clone();
+        let attachment_payloads = self
+            .sdk_attachment_payloads
+            .lock()
+            .expect("sdk_attachment_payloads mutex poisoned")
+            .clone();
+        let attachment_order = self
+            .sdk_attachment_order
+            .lock()
+            .expect("sdk_attachment_order mutex poisoned")
+            .clone();
+        let markers = self.sdk_markers.lock().expect("sdk_markers mutex poisoned").clone();
+        let marker_order =
+            self.sdk_marker_order.lock().expect("sdk_marker_order mutex poisoned").clone();
+        let identities =
+            self.sdk_identities.lock().expect("sdk_identities mutex poisoned").clone();
+        let active_identity = self
+            .sdk_active_identity
+            .lock()
+            .expect("sdk_active_identity mutex poisoned")
+            .clone();
+        let remote_commands = self
+            .sdk_remote_commands
+            .lock()
+            .expect("sdk_remote_commands mutex poisoned")
+            .clone();
+        let voice_sessions = self
+            .sdk_voice_sessions
+            .lock()
+            .expect("sdk_voice_sessions mutex poisoned")
+            .clone();
+
+        SdkDomainSnapshotV1 {
+            next_domain_seq,
+            topics,
+            topic_order,
+            topic_subscriptions,
+            telemetry_points,
+            attachments,
+            attachment_payloads,
+            attachment_order,
+            markers,
+            marker_order,
+            identities,
+            active_identity,
+            remote_commands,
+            voice_sessions,
+        }
+    }
+
+    fn normalize_sdk_domain_snapshot(
+        &self,
+        mut snapshot: SdkDomainSnapshotV1,
+    ) -> SdkDomainSnapshotV1 {
+        snapshot.topic_order.retain(|topic_id| snapshot.topics.contains_key(topic_id));
+        snapshot
+            .topic_subscriptions
+            .retain(|topic_id| snapshot.topics.contains_key(topic_id));
+        snapshot
+            .attachment_order
+            .retain(|attachment_id| snapshot.attachments.contains_key(attachment_id));
+        snapshot.marker_order.retain(|marker_id| snapshot.markers.contains_key(marker_id));
+        snapshot.attachment_payloads.retain(|attachment_id, _| {
+            snapshot.attachments.contains_key(attachment_id)
+        });
+
+        if snapshot.identities.is_empty() {
+            snapshot.identities = self.default_identity_map();
+        }
+        snapshot
+            .identities
+            .entry(self.identity_hash.clone())
+            .or_insert_with(|| Self::default_sdk_identity(self.identity_hash.as_str()));
+        let active_identity_valid = snapshot.active_identity.as_ref().is_some_and(|value| {
+            snapshot.identities.contains_key(value)
+        });
+        if !active_identity_valid {
+            let mut identities = snapshot.identities.keys().cloned().collect::<Vec<_>>();
+            identities.sort();
+            snapshot.active_identity = identities
+                .into_iter()
+                .find(|identity| identity == self.identity_hash.as_str())
+                .or_else(|| snapshot.identities.keys().min().cloned());
+        }
+        snapshot.next_domain_seq = Self::infer_snapshot_domain_sequence(&snapshot);
+        snapshot
+    }
+
+    fn restore_sdk_domain_snapshot(&self) -> Result<(), std::io::Error> {
+        let snapshot = self
+            .store
+            .get_sdk_domain_snapshot()
+            .map_err(std::io::Error::other)?;
+        let Some(snapshot) = snapshot else {
+            return Ok(());
+        };
+        let parsed: SdkDomainSnapshotV1 =
+            serde_json::from_value(snapshot).map_err(std::io::Error::other)?;
+        let parsed = self.normalize_sdk_domain_snapshot(parsed);
+
+        *self.sdk_next_domain_seq.lock().expect("sdk_next_domain_seq mutex poisoned") =
+            parsed.next_domain_seq;
+        *self.sdk_topics.lock().expect("sdk_topics mutex poisoned") = parsed.topics;
+        *self.sdk_topic_order.lock().expect("sdk_topic_order mutex poisoned") = parsed.topic_order;
+        *self
+            .sdk_topic_subscriptions
+            .lock()
+            .expect("sdk_topic_subscriptions mutex poisoned") = parsed.topic_subscriptions;
+        *self
+            .sdk_telemetry_points
+            .lock()
+            .expect("sdk_telemetry_points mutex poisoned") = parsed.telemetry_points;
+        *self.sdk_attachments.lock().expect("sdk_attachments mutex poisoned") = parsed.attachments;
+        *self
+            .sdk_attachment_payloads
+            .lock()
+            .expect("sdk_attachment_payloads mutex poisoned") = parsed.attachment_payloads;
+        *self
+            .sdk_attachment_order
+            .lock()
+            .expect("sdk_attachment_order mutex poisoned") = parsed.attachment_order;
+        *self.sdk_markers.lock().expect("sdk_markers mutex poisoned") = parsed.markers;
+        *self.sdk_marker_order.lock().expect("sdk_marker_order mutex poisoned") = parsed.marker_order;
+        *self.sdk_identities.lock().expect("sdk_identities mutex poisoned") = parsed.identities;
+        *self
+            .sdk_active_identity
+            .lock()
+            .expect("sdk_active_identity mutex poisoned") = parsed.active_identity;
+        *self
+            .sdk_remote_commands
+            .lock()
+            .expect("sdk_remote_commands mutex poisoned") = parsed.remote_commands;
+        *self
+            .sdk_voice_sessions
+            .lock()
+            .expect("sdk_voice_sessions mutex poisoned") = parsed.voice_sessions;
+        Ok(())
+    }
+
+    fn persist_sdk_domain_snapshot(&self) -> Result<(), std::io::Error> {
+        let snapshot = self.build_sdk_domain_snapshot();
+        let value = serde_json::to_value(&snapshot).map_err(std::io::Error::other)?;
+        self.store
+            .put_sdk_domain_snapshot(&value)
+            .map_err(std::io::Error::other)?;
+        Ok(())
+    }
+
 }

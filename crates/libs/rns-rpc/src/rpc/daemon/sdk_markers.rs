@@ -57,6 +57,7 @@ impl RpcDaemon {
             .expect("sdk_markers mutex poisoned")
             .insert(marker_id.clone(), record.clone());
         self.sdk_marker_order.lock().expect("sdk_marker_order mutex poisoned").push(marker_id);
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse { id: request.id, result: Some(json!({ "marker": record })), error: None })
     }
 
@@ -155,20 +156,24 @@ impl RpcDaemon {
                 "marker coordinates are out of range",
             ));
         }
-        let mut markers = self.sdk_markers.lock().expect("sdk_markers mutex poisoned");
-        let Some(record) = markers.get_mut(marker_id.as_str()) else {
-            return Ok(self.sdk_error_response(
-                request.id,
-                "SDK_RUNTIME_NOT_FOUND",
-                "marker not found",
-            ));
+        let marker = {
+            let mut markers = self.sdk_markers.lock().expect("sdk_markers mutex poisoned");
+            let Some(record) = markers.get_mut(marker_id.as_str()) else {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_RUNTIME_NOT_FOUND",
+                    "marker not found",
+                ));
+            };
+            record.position = parsed.position;
+            record.updated_ts_ms = now_millis_u64();
+            record.extensions = parsed.extensions;
+            record.clone()
         };
-        record.position = parsed.position;
-        record.updated_ts_ms = now_millis_u64();
-        record.extensions = parsed.extensions;
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,
-            result: Some(json!({ "marker": record.clone() })),
+            result: Some(json!({ "marker": marker })),
             error: None,
         })
     }
@@ -210,6 +215,7 @@ impl RpcDaemon {
             .lock()
             .expect("sdk_marker_order mutex poisoned")
             .retain(|current| current != marker_id.as_str());
+        self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,
             result: Some(json!({ "accepted": removed, "marker_id": marker_id })),

@@ -38,6 +38,8 @@ pub struct MessagesStore {
 }
 
 impl MessagesStore {
+    const SDK_DOMAIN_SNAPSHOT_KEY: &'static str = "sdk_domains.v1";
+
     pub fn in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
         let store = Self { conn };
@@ -272,6 +274,43 @@ impl MessagesStore {
         Ok(())
     }
 
+    pub fn put_sdk_domain_snapshot(&self, snapshot: &JsonValue) -> rusqlite::Result<()> {
+        let snapshot_json = serde_json::to_string(snapshot)
+            .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
+        self.conn.execute(
+            "INSERT INTO sdk_domain_state (domain, state_json) VALUES (?1, ?2)
+             ON CONFLICT(domain) DO UPDATE SET state_json = excluded.state_json",
+            params![Self::SDK_DOMAIN_SNAPSHOT_KEY, snapshot_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_sdk_domain_snapshot(&self) -> rusqlite::Result<Option<JsonValue>> {
+        let snapshot_json: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT state_json FROM sdk_domain_state WHERE domain = ?1 LIMIT 1",
+                params![Self::SDK_DOMAIN_SNAPSHOT_KEY],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(snapshot_json) = snapshot_json else {
+            return Ok(None);
+        };
+        let parsed = serde_json::from_str(snapshot_json.as_str()).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err))
+        })?;
+        Ok(Some(parsed))
+    }
+
+    pub fn clear_sdk_domain_snapshot(&self) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "DELETE FROM sdk_domain_state WHERE domain = ?1",
+            params![Self::SDK_DOMAIN_SNAPSHOT_KEY],
+        )?;
+        Ok(())
+    }
+
     fn init_schema(&self) -> rusqlite::Result<()> {
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS messages (
@@ -300,6 +339,10 @@ impl MessagesStore {
                 q REAL,
                 stamp_cost_flexibility INTEGER,
                 peering_cost INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS sdk_domain_state (
+                domain TEXT PRIMARY KEY,
+                state_json TEXT NOT NULL
             );",
         )?;
         let _ = self.conn.execute("ALTER TABLE messages ADD COLUMN title TEXT", []);
@@ -320,5 +363,39 @@ impl MessagesStore {
             .execute("ALTER TABLE announces ADD COLUMN stamp_cost_flexibility INTEGER", []);
         let _ = self.conn.execute("ALTER TABLE announces ADD COLUMN peering_cost INTEGER", []);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn sdk_domain_snapshot_roundtrip() {
+        let store = MessagesStore::in_memory().expect("in-memory store");
+        let initial = store.get_sdk_domain_snapshot().expect("query snapshot");
+        assert!(initial.is_none(), "snapshot should be absent before first write");
+
+        let snapshot = json!({
+            "topics": [{ "topic_id": "topic-1" }],
+            "attachments": [],
+            "markers": [],
+        });
+        store.put_sdk_domain_snapshot(&snapshot).expect("persist snapshot");
+
+        let loaded = store.get_sdk_domain_snapshot().expect("load snapshot");
+        assert_eq!(loaded, Some(snapshot));
+    }
+
+    #[test]
+    fn sdk_domain_snapshot_clear_removes_record() {
+        let store = MessagesStore::in_memory().expect("in-memory store");
+        store
+            .put_sdk_domain_snapshot(&json!({ "voice_sessions": [{ "session_id": "voice-1" }] }))
+            .expect("persist snapshot");
+        store.clear_sdk_domain_snapshot().expect("clear snapshot");
+        let loaded = store.get_sdk_domain_snapshot().expect("load snapshot");
+        assert!(loaded.is_none(), "snapshot should be removed after clear");
     }
 }

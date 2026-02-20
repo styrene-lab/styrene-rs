@@ -5,7 +5,7 @@ impl RpcDaemon {
         let mut sdk_identities = HashMap::new();
         sdk_identities
             .insert(identity_hash.clone(), Self::default_sdk_identity(identity_hash.as_str()));
-        Self {
+        let daemon = Self {
             store,
             identity_hash,
             delivery_destination_hash: Mutex::new(None),
@@ -52,7 +52,9 @@ impl RpcDaemon {
             delivery_status_lock: Mutex::new(()),
             outbound_bridge: None,
             announce_bridge: None,
-        }
+        };
+        let _ = daemon.restore_sdk_domain_snapshot();
+        daemon
     }
 
     pub fn with_store_and_bridge(
@@ -65,7 +67,7 @@ impl RpcDaemon {
         let mut sdk_identities = HashMap::new();
         sdk_identities
             .insert(identity_hash.clone(), Self::default_sdk_identity(identity_hash.as_str()));
-        Self {
+        let daemon = Self {
             store,
             identity_hash,
             delivery_destination_hash: Mutex::new(None),
@@ -112,7 +114,9 @@ impl RpcDaemon {
             delivery_status_lock: Mutex::new(()),
             outbound_bridge: Some(outbound_bridge),
             announce_bridge: None,
-        }
+        };
+        let _ = daemon.restore_sdk_domain_snapshot();
+        daemon
     }
 
     pub fn with_store_and_bridges(
@@ -126,7 +130,7 @@ impl RpcDaemon {
         let mut sdk_identities = HashMap::new();
         sdk_identities
             .insert(identity_hash.clone(), Self::default_sdk_identity(identity_hash.as_str()));
-        Self {
+        let daemon = Self {
             store,
             identity_hash,
             delivery_destination_hash: Mutex::new(None),
@@ -173,7 +177,9 @@ impl RpcDaemon {
             delivery_status_lock: Mutex::new(()),
             outbound_bridge,
             announce_bridge,
-        }
+        };
+        let _ = daemon.restore_sdk_domain_snapshot();
+        daemon
     }
 
     pub fn test_instance() -> Self {

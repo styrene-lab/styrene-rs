@@ -373,3 +373,253 @@
         assert_eq!(voice_close.result.expect("result")["accepted"], json!(true));
     }
 
+    #[test]
+    fn sdk_domain_state_survives_restart() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let run_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir()
+            .join(format!("lxmf-rs-sdk-domain-{run_id}-{}.sqlite", std::process::id()));
+
+        let topic_id: String;
+        let attachment_id: String;
+        let marker_id: String;
+        let correlation_id: String;
+        let session_id: String;
+
+        {
+            let store = MessagesStore::open(db_path.as_path()).expect("open sqlite store");
+            let daemon = RpcDaemon::with_store(store, "persist-node".to_string());
+
+            let topic = daemon
+                .handle_rpc(rpc_request(200, "sdk_topic_create_v2", json!({ "topic_path": "ops/persist" })))
+                .expect("topic create");
+            assert!(topic.error.is_none());
+            topic_id = topic.result.expect("topic result")["topic"]["topic_id"]
+                .as_str()
+                .expect("topic id")
+                .to_string();
+
+            let subscribe = daemon
+                .handle_rpc(rpc_request(
+                    201,
+                    "sdk_topic_subscribe_v2",
+                    json!({ "topic_id": topic_id.clone() }),
+                ))
+                .expect("topic subscribe");
+            assert!(subscribe.error.is_none());
+
+            let publish = daemon
+                .handle_rpc(rpc_request(
+                    202,
+                    "sdk_topic_publish_v2",
+                    json!({
+                        "topic_id": topic_id.clone(),
+                        "payload": { "message": "persist me" },
+                    }),
+                ))
+                .expect("topic publish");
+            assert!(publish.error.is_none());
+
+            let attachment = daemon
+                .handle_rpc(rpc_request(
+                    203,
+                    "sdk_attachment_store_v2",
+                    json!({
+                        "name": "persist.bin",
+                        "content_type": "application/octet-stream",
+                        "bytes_base64": "AQID",
+                        "topic_ids": [topic_id.clone()],
+                    }),
+                ))
+                .expect("attachment store");
+            assert!(attachment.error.is_none());
+            attachment_id = attachment.result.expect("attachment result")["attachment"]["attachment_id"]
+                .as_str()
+                .expect("attachment id")
+                .to_string();
+
+            let marker = daemon
+                .handle_rpc(rpc_request(
+                    204,
+                    "sdk_marker_create_v2",
+                    json!({
+                        "label": "Persist Marker",
+                        "position": { "lat": 10.0, "lon": 10.0, "alt_m": null },
+                        "topic_id": topic_id.clone(),
+                    }),
+                ))
+                .expect("marker create");
+            assert!(marker.error.is_none());
+            marker_id = marker.result.expect("marker result")["marker"]["marker_id"]
+                .as_str()
+                .expect("marker id")
+                .to_string();
+
+            let identity_bundle = json!({
+                "identity": "persist-imported",
+                "public_key": "persist-imported-pub",
+                "display_name": "Persist Imported",
+                "capabilities": ["ops"],
+                "extensions": {},
+            });
+            let identity_import = daemon
+                .handle_rpc(rpc_request(
+                    205,
+                    "sdk_identity_import_v2",
+                    json!({
+                        "bundle_base64": BASE64_STANDARD.encode(identity_bundle.to_string().as_bytes()),
+                    }),
+                ))
+                .expect("identity import");
+            assert!(identity_import.error.is_none());
+
+            let identity_activate = daemon
+                .handle_rpc(rpc_request(
+                    206,
+                    "sdk_identity_activate_v2",
+                    json!({ "identity": "persist-imported" }),
+                ))
+                .expect("identity activate");
+            assert!(identity_activate.error.is_none());
+
+            let command = daemon
+                .handle_rpc(rpc_request(
+                    207,
+                    "sdk_command_invoke_v2",
+                    json!({
+                        "command": "ping",
+                        "target": "persist-imported",
+                        "payload": { "hello": "world" },
+                    }),
+                ))
+                .expect("command invoke");
+            assert!(command.error.is_none());
+            correlation_id = command.result.expect("command result")["response"]["payload"]
+                ["correlation_id"]
+                .as_str()
+                .expect("correlation_id")
+                .to_string();
+
+            let voice_open = daemon
+                .handle_rpc(rpc_request(
+                    208,
+                    "sdk_voice_session_open_v2",
+                    json!({ "peer_id": "persist-imported", "codec_hint": "opus" }),
+                ))
+                .expect("voice open");
+            assert!(voice_open.error.is_none());
+            session_id = voice_open.result.expect("voice open result")["session_id"]
+                .as_str()
+                .expect("session_id")
+                .to_string();
+
+            let voice_update = daemon
+                .handle_rpc(rpc_request(
+                    209,
+                    "sdk_voice_session_update_v2",
+                    json!({ "session_id": session_id.clone(), "state": "active" }),
+                ))
+                .expect("voice update");
+            assert!(voice_update.error.is_none());
+        }
+
+        {
+            let store = MessagesStore::open(db_path.as_path()).expect("reopen sqlite store");
+            let daemon = RpcDaemon::with_store(store, "persist-node".to_string());
+
+            let topic_get = daemon
+                .handle_rpc(rpc_request(
+                    210,
+                    "sdk_topic_get_v2",
+                    json!({ "topic_id": topic_id.clone() }),
+                ))
+                .expect("topic get after restart");
+            assert!(topic_get.error.is_none());
+            assert_eq!(topic_get.result.expect("result")["topic"]["topic_id"], json!(topic_id.clone()));
+
+            let telemetry = daemon
+                .handle_rpc(rpc_request(
+                    211,
+                    "sdk_telemetry_query_v2",
+                    json!({ "topic_id": topic_id.clone() }),
+                ))
+                .expect("telemetry after restart");
+            assert!(telemetry.error.is_none());
+            assert!(!telemetry.result.expect("result")["points"]
+                .as_array()
+                .expect("points array")
+                .is_empty());
+
+            let attachment_download = daemon
+                .handle_rpc(rpc_request(
+                    212,
+                    "sdk_attachment_download_v2",
+                    json!({ "attachment_id": attachment_id.clone() }),
+                ))
+                .expect("attachment download after restart");
+            assert!(attachment_download.error.is_none());
+            assert_eq!(
+                attachment_download.result.expect("result")["bytes_base64"],
+                json!("AQID")
+            );
+
+            let marker_list = daemon
+                .handle_rpc(rpc_request(
+                    213,
+                    "sdk_marker_list_v2",
+                    json!({ "topic_id": topic_id.clone() }),
+                ))
+                .expect("marker list after restart");
+            assert!(marker_list.error.is_none());
+            let marker_result = marker_list.result.expect("result");
+            let marker_rows = marker_result["markers"].as_array().expect("marker rows");
+            assert!(marker_rows.iter().any(|row| row["marker_id"] == json!(marker_id.clone())));
+
+            let identity_export = daemon
+                .handle_rpc(rpc_request(
+                    214,
+                    "sdk_identity_export_v2",
+                    json!({ "identity": "persist-imported" }),
+                ))
+                .expect("identity export after restart");
+            assert!(identity_export.error.is_none());
+
+            let command_reply = daemon
+                .handle_rpc(rpc_request(
+                    215,
+                    "sdk_command_reply_v2",
+                    json!({
+                        "correlation_id": correlation_id.clone(),
+                        "accepted": true,
+                        "payload": { "reply": "pong" },
+                    }),
+                ))
+                .expect("command reply after restart");
+            assert!(command_reply.error.is_none());
+
+            let voice_close = daemon
+                .handle_rpc(rpc_request(
+                    216,
+                    "sdk_voice_session_close_v2",
+                    json!({ "session_id": session_id.clone() }),
+                ))
+                .expect("voice close after restart");
+            assert!(voice_close.error.is_none());
+
+            let topic_2 = daemon
+                .handle_rpc(rpc_request(217, "sdk_topic_create_v2", json!({ "topic_path": "ops/persist-2" })))
+                .expect("second topic create");
+            assert!(topic_2.error.is_none());
+            let topic_2_id = topic_2.result.expect("topic2 result")["topic"]["topic_id"]
+                .as_str()
+                .expect("topic2 id")
+                .to_string();
+            assert_ne!(topic_2_id, topic_id);
+        }
+
+        let _ = std::fs::remove_file(&db_path);
+    }
