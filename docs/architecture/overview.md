@@ -47,10 +47,15 @@
 - Generated scorecard artifacts:
   - `target/release-scorecard/release-scorecard.md`
   - `target/release-scorecard/release-scorecard.json`
+- Leader certification artifact:
+  - `target/release-readiness/leader-grade-readiness.md`
 - Generation command:
   - `cargo run -p xtask -- release-scorecard-check`
+- Full leader readiness command:
+  - `cargo run -p xtask -- leader-readiness-check`
 - CI gate:
   - `release-scorecard-check` job in `.github/workflows/ci.yml`
+  - `leader-readiness-check` job in `.github/workflows/leader-readiness.yml`
 - Inputs for scorecard generation:
   - perf budget report (`target/criterion/bench-budget-report.txt`)
   - soak/chaos report (`target/soak/soak-report.json`)

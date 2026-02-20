@@ -35,6 +35,7 @@ Optional longer soak:
 - `CI / api-surface-check`
 - `CI / release-scorecard-check`
 - `CI / extension-registry-check`
+- `Leader Readiness Audit / leader-readiness-check` (tag or manual workflow)
 
 ## 4. RC tagging
 
@@ -53,4 +54,5 @@ Record the following in release notes or a tracking issue:
 - CI run URL(s).
 - Local gate command outputs.
 - Release scorecard artifact (`target/release-scorecard/release-scorecard.md`).
+- Leader readiness certification (`target/release-readiness/leader-grade-readiness.md`).
 - Known risks or deferred items.
