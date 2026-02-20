@@ -1,7 +1,12 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+const INTEROP_BASELINE_PATH: &str = "docs/contracts/baselines/interop-artifacts-manifest.json";
 
 #[derive(Parser)]
 #[command(name = "xtask")]
@@ -24,6 +29,10 @@ enum XtaskCommand {
     ForbiddenDeps,
     SdkConformance,
     SdkSchemaCheck,
+    InteropArtifacts {
+        #[arg(long)]
+        update: bool,
+    },
     SdkProfileBuild,
     SdkExamplesCheck,
     SdkApiBreak,
@@ -45,6 +54,7 @@ enum CiStage {
     ApiSurfaceCheck,
     SdkConformance,
     SdkSchemaCheck,
+    InteropArtifacts,
     SdkProfileBuild,
     SdkExamplesCheck,
     SdkApiBreak,
@@ -69,6 +79,7 @@ fn main() -> Result<()> {
         XtaskCommand::ForbiddenDeps => run_forbidden_deps(),
         XtaskCommand::SdkConformance => run_sdk_conformance(),
         XtaskCommand::SdkSchemaCheck => run_sdk_schema_check(),
+        XtaskCommand::InteropArtifacts { update } => run_interop_artifacts(update),
         XtaskCommand::SdkProfileBuild => run_sdk_profile_build(),
         XtaskCommand::SdkExamplesCheck => run_sdk_examples_check(),
         XtaskCommand::SdkApiBreak => run_sdk_api_break(),
@@ -101,6 +112,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run("cargo", &["test", "--workspace"])?;
     run("cargo", &["doc", "--workspace", "--no-deps"])?;
     run_sdk_schema_check()?;
+    run_interop_artifacts(false)?;
     run_sdk_conformance()?;
     run_sdk_profile_build()?;
     run_sdk_examples_check()?;
@@ -129,6 +141,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::ApiSurfaceCheck => run_api_diff(),
         CiStage::SdkConformance => run_sdk_conformance(),
         CiStage::SdkSchemaCheck => run_sdk_schema_check(),
+        CiStage::InteropArtifacts => run_interop_artifacts(false),
         CiStage::SdkProfileBuild => run_sdk_profile_build(),
         CiStage::SdkExamplesCheck => run_sdk_examples_check(),
         CiStage::SdkApiBreak => run_sdk_api_break(),
@@ -176,6 +189,101 @@ fn run_sdk_conformance() -> Result<()> {
 
 fn run_sdk_schema_check() -> Result<()> {
     run("cargo", &["test", "-p", "test-support", "sdk_schema", "--", "--nocapture"])
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct InteropArtifactsManifest {
+    version: u32,
+    files: Vec<InteropArtifactEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct InteropArtifactEntry {
+    path: String,
+    bytes: u64,
+    sha256: String,
+}
+
+fn run_interop_artifacts(update: bool) -> Result<()> {
+    let manifest = build_interop_artifacts_manifest()?;
+    if update {
+        let serialized = serde_json::to_string_pretty(&manifest)
+            .context("serialize interop artifacts manifest")?;
+        fs::write(INTEROP_BASELINE_PATH, format!("{serialized}\n"))
+            .with_context(|| format!("write {INTEROP_BASELINE_PATH}"))?;
+        return Ok(());
+    }
+
+    let baseline_raw = fs::read_to_string(INTEROP_BASELINE_PATH).with_context(|| {
+        format!(
+            "missing interop artifact baseline at {INTEROP_BASELINE_PATH}; run `cargo run -p xtask -- interop-artifacts --update`"
+        )
+    })?;
+    let baseline: InteropArtifactsManifest =
+        serde_json::from_str(&baseline_raw).context("parse interop artifact baseline")?;
+    if baseline != manifest {
+        bail!(
+            "interop artifacts drift detected; run `cargo run -p xtask -- interop-artifacts --update` and review {INTEROP_BASELINE_PATH}"
+        );
+    }
+    Ok(())
+}
+
+fn build_interop_artifacts_manifest() -> Result<InteropArtifactsManifest> {
+    let mut files = Vec::new();
+    for root in ["docs/contracts", "docs/schemas", "docs/fixtures"] {
+        let root_path = Path::new(root);
+        if !root_path.exists() {
+            continue;
+        }
+        collect_files(root_path, &mut files)?;
+    }
+
+    files.sort();
+    files.dedup();
+    let mut entries = Vec::with_capacity(files.len());
+    for path in files {
+        if path == Path::new(INTEROP_BASELINE_PATH) {
+            continue;
+        }
+        let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        let sha256 = hex::encode(hasher.finalize());
+        let relative = path
+            .strip_prefix(Path::new("."))
+            .unwrap_or(path.as_path())
+            .to_string_lossy()
+            .replace('\\', "/");
+        entries.push(InteropArtifactEntry {
+            path: relative,
+            bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            sha256,
+        });
+    }
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+
+    Ok(InteropArtifactsManifest { version: 1, files: entries })
+}
+
+fn collect_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    if root.is_file() {
+        files.push(root.to_path_buf());
+        return Ok(());
+    }
+    let mut children = fs::read_dir(root)
+        .with_context(|| format!("read dir {}", root.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect::<Vec<_>>();
+    children.sort();
+    for path in children {
+        if path.is_dir() {
+            collect_files(path.as_path(), files)?;
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+    Ok(())
 }
 
 fn run_sdk_profile_build() -> Result<()> {
