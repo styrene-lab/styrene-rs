@@ -27,6 +27,10 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+x509-parser = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

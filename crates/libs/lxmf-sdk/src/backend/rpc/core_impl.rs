@@ -26,6 +26,8 @@ impl RpcBackendClient {
                     "ca_bundle_path": mtls.ca_bundle_path,
                     "require_client_cert": mtls.require_client_cert,
                     "allowed_san": mtls.allowed_san,
+                    "client_cert_path": mtls.client_cert_path,
+                    "client_key_path": mtls.client_key_path,
                 })),
             })
         });
@@ -43,6 +45,7 @@ impl RpcBackendClient {
                     "rpc_backend": rpc_backend,
                 }
             })),
+            &session_auth,
             &headers,
         )?;
 

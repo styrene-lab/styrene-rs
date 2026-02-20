@@ -81,6 +81,8 @@ pub struct MtlsAuthConfig {
     pub ca_bundle_path: String,
     pub require_client_cert: bool,
     pub allowed_san: Option<String>,
+    pub client_cert_path: Option<String>,
+    pub client_key_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -198,11 +200,47 @@ impl SdkConfig {
             AuthMode::Mtls => {
                 let mtls_auth =
                     self.rpc_backend.as_ref().and_then(|backend| backend.mtls_auth.as_ref());
-                if mtls_auth.is_none() {
+                let Some(mtls_auth) = mtls_auth else {
                     return Err(SdkError::new(
                         code::SECURITY_AUTH_REQUIRED,
                         ErrorCategory::Security,
                         "mtls auth mode requires rpc_backend.mtls_auth configuration",
+                    )
+                    .with_user_actionable(true));
+                };
+                if mtls_auth.ca_bundle_path.trim().is_empty() {
+                    return Err(SdkError::new(
+                        code::VALIDATION_INVALID_ARGUMENT,
+                        ErrorCategory::Validation,
+                        "mtls auth mode requires non-empty rpc_backend.mtls_auth.ca_bundle_path",
+                    )
+                    .with_user_actionable(true));
+                }
+                let client_cert_path = mtls_auth
+                    .client_cert_path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let client_key_path = mtls_auth
+                    .client_key_path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if client_cert_path.is_some() ^ client_key_path.is_some() {
+                    return Err(SdkError::new(
+                        code::VALIDATION_INVALID_ARGUMENT,
+                        ErrorCategory::Validation,
+                        "mtls client certificate and key paths must be configured together",
+                    )
+                    .with_user_actionable(true));
+                }
+                if mtls_auth.require_client_cert
+                    && (client_cert_path.is_none() || client_key_path.is_none())
+                {
+                    return Err(SdkError::new(
+                        code::SECURITY_AUTH_REQUIRED,
+                        ErrorCategory::Security,
+                        "mtls auth mode with require_client_cert=true requires client_cert_path and client_key_path",
                     )
                     .with_user_actionable(true));
                 }

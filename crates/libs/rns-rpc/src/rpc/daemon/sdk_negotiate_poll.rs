@@ -148,6 +148,32 @@ impl RpcDaemon {
                         "mtls auth configuration requires ca_bundle_path",
                     ));
                 }
+                let client_cert_path = mtls_auth
+                    .client_cert_path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let client_key_path = mtls_auth
+                    .client_key_path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if client_cert_path.is_some() ^ client_key_path.is_some() {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "mtls client certificate and key paths must be configured together",
+                    ));
+                }
+                if mtls_auth.require_client_cert
+                    && (client_cert_path.is_none() || client_key_path.is_none())
+                {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        "SDK_SECURITY_AUTH_REQUIRED",
+                        "mtls auth configuration requires client_cert_path and client_key_path when require_client_cert=true",
+                    ));
+                }
             }
             _ => {}
         }
@@ -222,6 +248,8 @@ impl RpcDaemon {
                             "ca_bundle_path": mtls.ca_bundle_path,
                             "require_client_cert": mtls.require_client_cert,
                             "allowed_san": mtls.allowed_san,
+                            "client_cert_path": mtls.client_cert_path,
+                            "client_key_path": mtls.client_key_path,
                         })),
                     })
                 });

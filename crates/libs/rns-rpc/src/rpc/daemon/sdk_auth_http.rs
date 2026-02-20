@@ -13,6 +13,15 @@ impl RpcDaemon {
         headers: &[(String, String)],
         peer_ip: Option<&str>,
     ) -> Result<(), RpcError> {
+        self.authorize_http_request_with_transport(headers, peer_ip, None)
+    }
+
+    pub fn authorize_http_request_with_transport(
+        &self,
+        headers: &[(String, String)],
+        peer_ip: Option<&str>,
+        transport_auth: Option<&crate::rpc::http::TransportAuthContext>,
+    ) -> Result<(), RpcError> {
         let config =
             self.sdk_runtime_config.lock().expect("sdk_runtime_config mutex poisoned").clone();
         let trust_forwarded = config
@@ -175,16 +184,16 @@ impl RpcDaemon {
                 replay_cache.insert(jti, now.saturating_add(jti_ttl_ms.max(1)));
             }
             "mtls" => {
+                let transport_auth = transport_auth.ok_or_else(|| RpcError {
+                    code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
+                    message: "mtls auth mode requires tls transport context".to_string(),
+                })?;
                 let (require_client_cert, allowed_san) =
                     self.sdk_mtls_auth_config().ok_or_else(|| RpcError {
                         code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
                         message: "mtls auth mode requires mtls auth configuration".to_string(),
                     })?;
-                let cert_present = Self::header_value(headers, "x-client-cert-present")
-                    .map(|value| {
-                        value.eq_ignore_ascii_case("1") || value.eq_ignore_ascii_case("true")
-                    })
-                    .unwrap_or(false);
+                let cert_present = transport_auth.client_cert_present;
                 if require_client_cert && !cert_present {
                     return Err(RpcError {
                         code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
@@ -192,22 +201,21 @@ impl RpcDaemon {
                     });
                 }
                 if let Some(expected_san) = allowed_san {
-                    let observed_san = Self::header_value(headers, "x-client-san")
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .ok_or_else(|| RpcError {
-                            code: "SDK_SECURITY_AUTHZ_DENIED".to_string(),
-                            message: "client SAN header is required for configured mtls policy"
-                                .to_string(),
-                        })?;
-                    if observed_san != expected_san {
+                    let san_matches = transport_auth
+                        .client_sans
+                        .iter()
+                        .map(|san| san.trim())
+                        .any(|san| !san.is_empty() && san == expected_san);
+                    if !san_matches {
                         return Err(RpcError {
                             code: "SDK_SECURITY_AUTHZ_DENIED".to_string(),
                             message: "client SAN is not authorized by mtls policy".to_string(),
                         });
                     }
                 }
-                principal = Self::header_value(headers, "x-client-subject")
+                principal = transport_auth
+                    .client_subject
+                    .as_deref()
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .unwrap_or("mtls-client")

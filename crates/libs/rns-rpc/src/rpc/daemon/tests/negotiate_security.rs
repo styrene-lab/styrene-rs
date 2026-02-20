@@ -280,7 +280,9 @@
                             "mtls_auth": {
                                 "ca_bundle_path": "/tmp/test-ca.pem",
                                 "require_client_cert": true,
-                                "allowed_san": "urn:test-san"
+                                "allowed_san": "urn:test-san",
+                                "client_cert_path": "/tmp/test-client.pem",
+                                "client_key_path": "/tmp/test-client.key"
                             }
                         }
                     }
@@ -298,7 +300,7 @@
     }
 
     #[test]
-    fn sdk_security_authorize_http_request_enforces_mtls_headers_and_policy() {
+    fn sdk_security_authorize_http_request_enforces_mtls_transport_context_and_policy() {
         let daemon = RpcDaemon::test_instance();
         let response = daemon
             .handle_rpc(rpc_request(
@@ -315,7 +317,9 @@
                             "mtls_auth": {
                                 "ca_bundle_path": "/tmp/test-ca.pem",
                                 "require_client_cert": true,
-                                "allowed_san": "urn:test-san"
+                                "allowed_san": "urn:test-san",
+                                "client_cert_path": "/tmp/test-client.pem",
+                                "client_key_path": "/tmp/test-client.key"
                             }
                         }
                     }
@@ -324,28 +328,48 @@
             .expect("negotiate");
         assert!(response.error.is_none());
 
+        let spoofed_headers = vec![
+            ("x-client-cert-present".to_string(), "1".to_string()),
+            ("x-client-san".to_string(), "urn:test-san".to_string()),
+        ];
+        let spoofed = daemon
+            .authorize_http_request(&spoofed_headers, Some("10.5.6.7"))
+            .expect_err("legacy mtls headers must not bypass transport-auth checks");
+        assert_eq!(spoofed.code, "SDK_SECURITY_AUTH_REQUIRED");
+
+        let missing_transport_context = daemon
+            .authorize_http_request_with_transport(&[], Some("10.5.6.7"), None)
+            .expect_err("missing tls transport context should be rejected");
+        assert_eq!(missing_transport_context.code, "SDK_SECURITY_AUTH_REQUIRED");
+
+        let missing_cert_context = crate::rpc::http::TransportAuthContext::default();
         let missing_cert = daemon
-            .authorize_http_request(&[], Some("10.5.6.7"))
-            .expect_err("missing mtls cert header should be rejected");
+            .authorize_http_request_with_transport(
+                &[],
+                Some("10.5.6.7"),
+                Some(&missing_cert_context),
+            )
+            .expect_err("missing mtls cert in transport context should be rejected");
         assert_eq!(missing_cert.code, "SDK_SECURITY_AUTH_REQUIRED");
 
-        let wrong_san_headers = vec![
-            ("x-client-cert-present".to_string(), "1".to_string()),
-            ("x-client-san".to_string(), "urn:wrong-san".to_string()),
-        ];
+        let wrong_san_context = crate::rpc::http::TransportAuthContext {
+            client_cert_present: true,
+            client_subject: Some("sdk-client-mtls".to_string()),
+            client_sans: vec!["urn:wrong-san".to_string()],
+        };
         let wrong_san = daemon
-            .authorize_http_request(&wrong_san_headers, Some("10.5.6.7"))
+            .authorize_http_request_with_transport(&[], Some("10.5.6.7"), Some(&wrong_san_context))
             .expect_err("non-matching mtls SAN should be rejected");
         assert_eq!(wrong_san.code, "SDK_SECURITY_AUTHZ_DENIED");
 
-        let valid_headers = vec![
-            ("x-client-cert-present".to_string(), "1".to_string()),
-            ("x-client-san".to_string(), "urn:test-san".to_string()),
-            ("x-client-subject".to_string(), "sdk-client-mtls".to_string()),
-        ];
+        let valid_context = crate::rpc::http::TransportAuthContext {
+            client_cert_present: true,
+            client_subject: Some("sdk-client-mtls".to_string()),
+            client_sans: vec!["urn:test-san".to_string()],
+        };
         daemon
-            .authorize_http_request(&valid_headers, Some("10.5.6.7"))
-            .expect("valid mtls headers should authorize request");
+            .authorize_http_request_with_transport(&[], Some("10.5.6.7"), Some(&valid_context))
+            .expect("valid mtls transport context should authorize request");
     }
 
     #[test]

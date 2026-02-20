@@ -53,6 +53,10 @@ pub struct MtlsAuthPatch {
     pub require_client_cert: Option<Option<bool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_san: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_cert_path: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_key_path: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
