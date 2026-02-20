@@ -147,6 +147,14 @@ jobs:
       - name: SDK profile build matrix
         run: cargo xtask ci --stage sdk-profile-build
 
+  sdk-examples-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SDK example compile gate
+        run: cargo xtask ci --stage sdk-examples-check
+
   sdk-api-break:
     runs-on: ubuntu-latest
     env:
