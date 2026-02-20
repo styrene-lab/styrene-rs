@@ -14,6 +14,8 @@ Core guarantees:
 - event semantics consistency
 - no storage model leakage in public API
 
+Core RPC request/response contracts live under `docs/schemas/sdk/v2/rpc/` and are CI-validated fixtures.
+
 ## Core Backend Trait
 
 The core backend contract must support:
