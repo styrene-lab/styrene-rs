@@ -88,16 +88,57 @@ jobs:
 
   api-surface-check:
     runs-on: ubuntu-latest
+    env:
+      SDK_API_BREAK_TOOLCHAIN: nightly-2026-02-15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install nightly toolchain (for cargo-public-api)
-        run: rustup toolchain install nightly --profile minimal
+      - name: Install pinned nightly toolchain (for cargo-public-api)
+        run: rustup toolchain install nightly-2026-02-15 --profile minimal
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-public-api
+          tool: cargo-public-api@0.50.2
       - name: API surface
         run: cargo xtask api-diff
+
+  sdk-schema-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SDK schema fixtures
+        run: cargo xtask sdk-schema-check
+
+  sdk-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SDK conformance suite
+        run: cargo xtask sdk-conformance
+
+  sdk-profile-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SDK profile build matrix
+        run: cargo xtask sdk-profile-build
+
+  sdk-api-break:
+    runs-on: ubuntu-latest
+    env:
+      SDK_API_BREAK_TOOLCHAIN: nightly-2026-02-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned nightly toolchain (for cargo-public-api)
+        run: rustup toolchain install nightly-2026-02-15 --profile minimal
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-public-api@0.50.2
+      - name: SDK API break gate
+        run: cargo xtask sdk-api-break
 
   forbidden-deps:
     runs-on: ubuntu-latest

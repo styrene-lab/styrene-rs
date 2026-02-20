@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use std::fs;
 use std::process::Command;
 
 #[derive(Parser)]
@@ -18,6 +19,10 @@ enum XtaskCommand {
     MigrationChecks,
     ArchitectureChecks,
     ForbiddenDeps,
+    SdkConformance,
+    SdkSchemaCheck,
+    SdkProfileBuild,
+    SdkApiBreak,
 }
 
 fn main() -> Result<()> {
@@ -30,6 +35,10 @@ fn main() -> Result<()> {
         XtaskCommand::MigrationChecks => run_migration_checks(),
         XtaskCommand::ArchitectureChecks => run_architecture_checks(),
         XtaskCommand::ForbiddenDeps => run_forbidden_deps(),
+        XtaskCommand::SdkConformance => run_sdk_conformance(),
+        XtaskCommand::SdkSchemaCheck => run_sdk_schema_check(),
+        XtaskCommand::SdkProfileBuild => run_sdk_profile_build(),
+        XtaskCommand::SdkApiBreak => run_sdk_api_break(),
     }
 }
 
@@ -50,6 +59,9 @@ fn run_ci() -> Result<()> {
     )?;
     run("cargo", &["test", "--workspace"])?;
     run("cargo", &["doc", "--workspace", "--no-deps"])?;
+    run_sdk_schema_check()?;
+    run_sdk_conformance()?;
+    run_sdk_profile_build()?;
     run_migration_checks()?;
     run_architecture_checks()?;
     Ok(())
@@ -57,21 +69,23 @@ fn run_ci() -> Result<()> {
 
 fn run_release_check() -> Result<()> {
     run_ci()?;
+    run_sdk_api_break()?;
     run("cargo", &["deny", "check"])?;
     run("cargo", &["audit"])?;
     Ok(())
 }
 
 fn run_api_diff() -> Result<()> {
+    let toolchain = public_api_toolchain();
     for manifest in [
         "crates/libs/lxmf-core/Cargo.toml",
-        "crates/libs/lxmf-runtime/Cargo.toml",
+        "crates/libs/lxmf-sdk/Cargo.toml",
         "crates/libs/rns-core/Cargo.toml",
         "crates/libs/rns-transport/Cargo.toml",
         "crates/libs/rns-rpc/Cargo.toml",
     ] {
         let command = format!(
-            "RUSTUP_TOOLCHAIN=nightly RUSTC=\"$(rustup which --toolchain nightly rustc)\" RUSTDOC=\"$(rustup which --toolchain nightly rustdoc)\" cargo public-api --manifest-path {manifest}"
+            "RUSTUP_TOOLCHAIN={toolchain} RUSTC=\"$(rustup which --toolchain {toolchain} rustc)\" RUSTDOC=\"$(rustup which --toolchain {toolchain} rustdoc)\" cargo public-api --manifest-path {manifest} -sss --color never"
         );
         run("bash", &["-lc", &command])?;
     }
@@ -80,6 +94,67 @@ fn run_api_diff() -> Result<()> {
 
 fn run_licenses() -> Result<()> {
     run("cargo", &["deny", "check", "licenses"])
+}
+
+fn run_sdk_conformance() -> Result<()> {
+    run("cargo", &["test", "-p", "test-support", "sdk_conformance", "--", "--nocapture"])
+}
+
+fn run_sdk_schema_check() -> Result<()> {
+    run("cargo", &["test", "-p", "test-support", "sdk_schema", "--", "--nocapture"])
+}
+
+fn run_sdk_profile_build() -> Result<()> {
+    run(
+        "cargo",
+        &[
+            "check",
+            "-p",
+            "lxmf-sdk",
+            "--no-default-features",
+            "--features",
+            "std,rpc-backend,sdk-async",
+        ],
+    )?;
+    run(
+        "cargo",
+        &["check", "-p", "lxmf-sdk", "--no-default-features", "--features", "std,rpc-backend"],
+    )?;
+    run(
+        "cargo",
+        &[
+            "check",
+            "-p",
+            "lxmf-sdk",
+            "--no-default-features",
+            "--features",
+            "std,rpc-backend,embedded-alloc",
+        ],
+    )?;
+    Ok(())
+}
+
+fn run_sdk_api_break() -> Result<()> {
+    const BASELINE_PATH: &str = "docs/contracts/baselines/lxmf-sdk-public-api.txt";
+    const MANIFEST_PATH: &str = "crates/libs/lxmf-sdk/Cargo.toml";
+
+    let baseline = fs::read_to_string(BASELINE_PATH).with_context(|| {
+        format!(
+            "missing SDK API baseline at {BASELINE_PATH}; add baseline before enabling sdk-api-break"
+        )
+    })?;
+    let current = capture_public_api(MANIFEST_PATH)?;
+
+    let baseline_normalized = normalize_public_api(&baseline);
+    let current_normalized = normalize_public_api(&current);
+
+    if baseline_normalized != current_normalized {
+        bail!(
+            "sdk public API drift detected for {MANIFEST_PATH}; review and refresh {BASELINE_PATH}"
+        );
+    }
+
+    Ok(())
 }
 
 fn run_migration_checks() -> Result<()> {
@@ -112,6 +187,36 @@ fn run_boundary_checks(enforce_legacy_imports: &str, enforce_legacy_shims: &str)
         "ENFORCE_LEGACY_APP_IMPORTS={enforce_legacy_imports} ENFORCE_RETM_LEGACY_SHIMS={enforce_legacy_shims} ./tools/scripts/check-boundaries.sh"
     );
     run("bash", &["-lc", &command])
+}
+
+fn capture_public_api(manifest: &str) -> Result<String> {
+    let toolchain = public_api_toolchain();
+    let command = format!(
+        "RUSTUP_TOOLCHAIN={toolchain} RUSTC=\"$(rustup which --toolchain {toolchain} rustc)\" RUSTDOC=\"$(rustup which --toolchain {toolchain} rustdoc)\" cargo public-api --manifest-path {manifest} -sss --color never"
+    );
+    let output = Command::new("bash")
+        .args(["-lc", &command])
+        .output()
+        .with_context(|| format!("failed to spawn cargo public-api for {manifest}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("cargo public-api failed for {manifest}: {stderr}");
+    }
+    String::from_utf8(output.stdout)
+        .with_context(|| format!("cargo public-api output was not valid utf-8 for {manifest}"))
+}
+
+fn public_api_toolchain() -> String {
+    std::env::var("SDK_API_BREAK_TOOLCHAIN").unwrap_or_else(|_| "nightly".to_string())
+}
+
+fn normalize_public_api(raw: &str) -> String {
+    raw.lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !line.starts_with("warning:"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn run(cmd: &str, args: &[&str]) -> Result<()> {

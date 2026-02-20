@@ -1,0 +1,790 @@
+pub mod lxmf_sdk
+pub mod lxmf_sdk::api
+pub trait lxmf_sdk::api::LxmfSdk
+pub fn lxmf_sdk::api::LxmfSdk::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::api::LxmfSdk::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::api::LxmfSdk::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::api::LxmfSdk::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::api::LxmfSdk::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::api::LxmfSdk::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::api::LxmfSdk::start(&self, req: lxmf_sdk::types::StartRequest) -> core::result::Result<lxmf_sdk::types::ClientHandle, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::api::LxmfSdk::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+impl<B: lxmf_sdk::backend::SdkBackend> lxmf_sdk::api::LxmfSdk for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::start(&self, req: lxmf_sdk::types::StartRequest) -> core::result::Result<lxmf_sdk::types::ClientHandle, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+pub trait lxmf_sdk::api::LxmfSdkAsync
+pub fn lxmf_sdk::api::LxmfSdkAsync::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+impl<B: lxmf_sdk::backend::SdkBackendAsyncEvents> lxmf_sdk::api::LxmfSdkAsync for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+pub trait lxmf_sdk::api::LxmfSdkManualTick
+pub fn lxmf_sdk::api::LxmfSdkManualTick::tick(&self, budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+impl<B: lxmf_sdk::backend::SdkBackend> lxmf_sdk::api::LxmfSdkManualTick for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::tick(&self, budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+pub mod lxmf_sdk::backend
+pub mod lxmf_sdk::backend::rpc
+pub struct lxmf_sdk::backend::rpc::RpcBackendClient
+impl lxmf_sdk::backend::rpc::RpcBackendClient
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::new(endpoint: impl core::convert::Into<alloc::string::String>) -> Self
+impl lxmf_sdk::backend::SdkBackend for lxmf_sdk::backend::rpc::RpcBackendClient
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::negotiate(&self, req: lxmf_sdk::capability::NegotiationRequest) -> core::result::Result<lxmf_sdk::capability::NegotiationResponse, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::tick(&self, _budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+impl lxmf_sdk::backend::SdkBackendAsyncEvents for lxmf_sdk::backend::rpc::RpcBackendClient
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+pub trait lxmf_sdk::backend::SdkBackend: core::marker::Send + core::marker::Sync
+pub fn lxmf_sdk::backend::SdkBackend::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::SdkBackend::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::SdkBackend::negotiate(&self, req: lxmf_sdk::capability::NegotiationRequest) -> core::result::Result<lxmf_sdk::capability::NegotiationResponse, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::SdkBackend::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::SdkBackend::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::SdkBackend::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::SdkBackend::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::SdkBackend::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::SdkBackend::tick(&self, _budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+impl lxmf_sdk::backend::SdkBackend for lxmf_sdk::backend::rpc::RpcBackendClient
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::negotiate(&self, req: lxmf_sdk::capability::NegotiationRequest) -> core::result::Result<lxmf_sdk::capability::NegotiationResponse, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::tick(&self, _budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+pub trait lxmf_sdk::backend::SdkBackendAsyncEvents: lxmf_sdk::backend::SdkBackend
+pub fn lxmf_sdk::backend::SdkBackendAsyncEvents::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+impl lxmf_sdk::backend::SdkBackendAsyncEvents for lxmf_sdk::backend::rpc::RpcBackendClient
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+pub mod lxmf_sdk::capability
+#[non_exhaustive] pub enum lxmf_sdk::capability::CapabilityState
+pub lxmf_sdk::capability::CapabilityState::Deprecated
+pub lxmf_sdk::capability::CapabilityState::Disabled
+pub lxmf_sdk::capability::CapabilityState::Enabled
+pub lxmf_sdk::capability::CapabilityState::Experimental
+#[non_exhaustive] pub struct lxmf_sdk::capability::CapabilityDescriptor
+pub lxmf_sdk::capability::CapabilityDescriptor::deprecated_after_contract: core::option::Option<alloc::string::String>
+pub lxmf_sdk::capability::CapabilityDescriptor::id: alloc::string::String
+pub lxmf_sdk::capability::CapabilityDescriptor::since_contract: alloc::string::String
+pub lxmf_sdk::capability::CapabilityDescriptor::state: lxmf_sdk::capability::CapabilityState
+pub lxmf_sdk::capability::CapabilityDescriptor::version: u16
+#[non_exhaustive] pub struct lxmf_sdk::capability::EffectiveLimits
+pub lxmf_sdk::capability::EffectiveLimits::idempotency_ttl_ms: u64
+pub lxmf_sdk::capability::EffectiveLimits::max_batch_bytes: usize
+pub lxmf_sdk::capability::EffectiveLimits::max_event_bytes: usize
+pub lxmf_sdk::capability::EffectiveLimits::max_extension_keys: usize
+pub lxmf_sdk::capability::EffectiveLimits::max_poll_events: usize
+#[non_exhaustive] pub struct lxmf_sdk::capability::NegotiationRequest
+pub lxmf_sdk::capability::NegotiationRequest::profile: lxmf_sdk::types::Profile
+pub lxmf_sdk::capability::NegotiationRequest::requested_capabilities: alloc::vec::Vec<alloc::string::String>
+pub lxmf_sdk::capability::NegotiationRequest::supported_contract_versions: alloc::vec::Vec<u16>
+#[non_exhaustive] pub struct lxmf_sdk::capability::NegotiationResponse
+pub lxmf_sdk::capability::NegotiationResponse::active_contract_version: u16
+pub lxmf_sdk::capability::NegotiationResponse::contract_release: alloc::string::String
+pub lxmf_sdk::capability::NegotiationResponse::effective_capabilities: alloc::vec::Vec<alloc::string::String>
+pub lxmf_sdk::capability::NegotiationResponse::effective_limits: lxmf_sdk::capability::EffectiveLimits
+pub lxmf_sdk::capability::NegotiationResponse::runtime_id: alloc::string::String
+pub lxmf_sdk::capability::NegotiationResponse::schema_namespace: alloc::string::String
+pub fn lxmf_sdk::capability::effective_capabilities_for_profile(profile: lxmf_sdk::types::Profile) -> alloc::vec::Vec<alloc::string::String>
+pub fn lxmf_sdk::capability::negotiate_contract_version(client_supported: &[u16], backend_supported: &[u16]) -> core::option::Option<u16>
+pub mod lxmf_sdk::client
+pub struct lxmf_sdk::client::Client<B: lxmf_sdk::backend::SdkBackend>
+impl<B: lxmf_sdk::backend::SdkBackend> lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::backend(&self) -> &B
+pub fn lxmf_sdk::client::Client<B>::new(backend: B) -> Self
+impl<B: lxmf_sdk::backend::SdkBackend> lxmf_sdk::api::LxmfSdk for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::start(&self, req: lxmf_sdk::types::StartRequest) -> core::result::Result<lxmf_sdk::types::ClientHandle, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+impl<B: lxmf_sdk::backend::SdkBackend> lxmf_sdk::api::LxmfSdkManualTick for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::tick(&self, budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+impl<B: lxmf_sdk::backend::SdkBackendAsyncEvents> lxmf_sdk::api::LxmfSdkAsync for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+pub mod lxmf_sdk::error
+pub mod lxmf_sdk::error::code
+pub const lxmf_sdk::error::code::CAPABILITY_CONTRACT_INCOMPATIBLE: &str
+pub const lxmf_sdk::error::code::CAPABILITY_DISABLED: &str
+pub const lxmf_sdk::error::code::CONFIG_CONFLICT: &str
+pub const lxmf_sdk::error::code::CONFIG_UNKNOWN_KEY: &str
+pub const lxmf_sdk::error::code::INTERNAL: &str
+pub const lxmf_sdk::error::code::RUNTIME_ALREADY_RUNNING_WITH_DIFFERENT_CONFIG: &str
+pub const lxmf_sdk::error::code::RUNTIME_ALREADY_TERMINAL: &str
+pub const lxmf_sdk::error::code::RUNTIME_CURSOR_EXPIRED: &str
+pub const lxmf_sdk::error::code::RUNTIME_INVALID_CURSOR: &str
+pub const lxmf_sdk::error::code::RUNTIME_INVALID_STATE: &str
+pub const lxmf_sdk::error::code::RUNTIME_STREAM_DEGRADED: &str
+pub const lxmf_sdk::error::code::SECURITY_AUTHZ_DENIED: &str
+pub const lxmf_sdk::error::code::SECURITY_AUTH_REQUIRED: &str
+pub const lxmf_sdk::error::code::SECURITY_RATE_LIMITED: &str
+pub const lxmf_sdk::error::code::SECURITY_REMOTE_BIND_DISALLOWED: &str
+pub const lxmf_sdk::error::code::SECURITY_TOKEN_INVALID: &str
+pub const lxmf_sdk::error::code::SECURITY_TOKEN_REPLAYED: &str
+pub const lxmf_sdk::error::code::VALIDATION_BATCH_TOO_LARGE: &str
+pub const lxmf_sdk::error::code::VALIDATION_EVENT_TOO_LARGE: &str
+pub const lxmf_sdk::error::code::VALIDATION_IDEMPOTENCY_CONFLICT: &str
+pub const lxmf_sdk::error::code::VALIDATION_INVALID_ARGUMENT: &str
+pub const lxmf_sdk::error::code::VALIDATION_MAX_EXTENSION_KEYS_EXCEEDED: &str
+pub const lxmf_sdk::error::code::VALIDATION_MAX_POLL_EVENTS_EXCEEDED: &str
+pub const lxmf_sdk::error::code::VALIDATION_UNKNOWN_FIELD: &str
+#[non_exhaustive] pub enum lxmf_sdk::error::ErrorCategory
+pub lxmf_sdk::error::ErrorCategory::Capability
+pub lxmf_sdk::error::ErrorCategory::Config
+pub lxmf_sdk::error::ErrorCategory::Crypto
+pub lxmf_sdk::error::ErrorCategory::Internal
+pub lxmf_sdk::error::ErrorCategory::Policy
+pub lxmf_sdk::error::ErrorCategory::Runtime
+pub lxmf_sdk::error::ErrorCategory::Security
+pub lxmf_sdk::error::ErrorCategory::Storage
+pub lxmf_sdk::error::ErrorCategory::Timeout
+pub lxmf_sdk::error::ErrorCategory::Transport
+pub lxmf_sdk::error::ErrorCategory::Validation
+#[non_exhaustive] pub struct lxmf_sdk::error::SdkError
+pub lxmf_sdk::error::SdkError::category: lxmf_sdk::error::ErrorCategory
+pub lxmf_sdk::error::SdkError::cause_code: core::option::Option<alloc::string::String>
+pub lxmf_sdk::error::SdkError::details: lxmf_sdk::error::ErrorDetails
+pub lxmf_sdk::error::SdkError::extensions: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub lxmf_sdk::error::SdkError::is_user_actionable: bool
+pub lxmf_sdk::error::SdkError::machine_code: alloc::string::String
+pub lxmf_sdk::error::SdkError::message: alloc::string::String
+pub lxmf_sdk::error::SdkError::retryable: bool
+impl lxmf_sdk::error::SdkError
+pub fn lxmf_sdk::error::SdkError::capability_disabled(capability_id: &str) -> Self
+pub fn lxmf_sdk::error::SdkError::config_conflict(expected_revision: u64, observed_revision: u64) -> Self
+pub fn lxmf_sdk::error::SdkError::invalid_state(method: &'static str, state: &'static str) -> Self
+pub fn lxmf_sdk::error::SdkError::new(machine_code: impl core::convert::Into<alloc::string::String>, category: lxmf_sdk::error::ErrorCategory, message: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn lxmf_sdk::error::SdkError::with_cause_code(self, cause_code: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn lxmf_sdk::error::SdkError::with_detail(self, key: impl core::convert::Into<alloc::string::String>, value: serde_json::value::Value) -> Self
+pub fn lxmf_sdk::error::SdkError::with_retryable(self, retryable: bool) -> Self
+pub fn lxmf_sdk::error::SdkError::with_user_actionable(self, is_user_actionable: bool) -> Self
+pub type lxmf_sdk::error::ErrorDetails = alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub mod lxmf_sdk::error_code
+pub const lxmf_sdk::error_code::CAPABILITY_CONTRACT_INCOMPATIBLE: &str
+pub const lxmf_sdk::error_code::CAPABILITY_DISABLED: &str
+pub const lxmf_sdk::error_code::CONFIG_CONFLICT: &str
+pub const lxmf_sdk::error_code::CONFIG_UNKNOWN_KEY: &str
+pub const lxmf_sdk::error_code::INTERNAL: &str
+pub const lxmf_sdk::error_code::RUNTIME_ALREADY_RUNNING_WITH_DIFFERENT_CONFIG: &str
+pub const lxmf_sdk::error_code::RUNTIME_ALREADY_TERMINAL: &str
+pub const lxmf_sdk::error_code::RUNTIME_CURSOR_EXPIRED: &str
+pub const lxmf_sdk::error_code::RUNTIME_INVALID_CURSOR: &str
+pub const lxmf_sdk::error_code::RUNTIME_INVALID_STATE: &str
+pub const lxmf_sdk::error_code::RUNTIME_STREAM_DEGRADED: &str
+pub const lxmf_sdk::error_code::SECURITY_AUTHZ_DENIED: &str
+pub const lxmf_sdk::error_code::SECURITY_AUTH_REQUIRED: &str
+pub const lxmf_sdk::error_code::SECURITY_RATE_LIMITED: &str
+pub const lxmf_sdk::error_code::SECURITY_REMOTE_BIND_DISALLOWED: &str
+pub const lxmf_sdk::error_code::SECURITY_TOKEN_INVALID: &str
+pub const lxmf_sdk::error_code::SECURITY_TOKEN_REPLAYED: &str
+pub const lxmf_sdk::error_code::VALIDATION_BATCH_TOO_LARGE: &str
+pub const lxmf_sdk::error_code::VALIDATION_EVENT_TOO_LARGE: &str
+pub const lxmf_sdk::error_code::VALIDATION_IDEMPOTENCY_CONFLICT: &str
+pub const lxmf_sdk::error_code::VALIDATION_INVALID_ARGUMENT: &str
+pub const lxmf_sdk::error_code::VALIDATION_MAX_EXTENSION_KEYS_EXCEEDED: &str
+pub const lxmf_sdk::error_code::VALIDATION_MAX_POLL_EVENTS_EXCEEDED: &str
+pub const lxmf_sdk::error_code::VALIDATION_UNKNOWN_FIELD: &str
+pub mod lxmf_sdk::event
+#[non_exhaustive] pub enum lxmf_sdk::event::Severity
+pub lxmf_sdk::event::Severity::Critical
+pub lxmf_sdk::event::Severity::Debug
+pub lxmf_sdk::event::Severity::Error
+pub lxmf_sdk::event::Severity::Info
+pub lxmf_sdk::event::Severity::Warn
+#[non_exhaustive] pub enum lxmf_sdk::event::SubscriptionStart
+pub lxmf_sdk::event::SubscriptionStart::Head
+pub lxmf_sdk::event::SubscriptionStart::Snapshot
+pub lxmf_sdk::event::SubscriptionStart::Tail
+#[non_exhaustive] pub struct lxmf_sdk::event::EventBatch
+pub lxmf_sdk::event::EventBatch::dropped_count: u64
+pub lxmf_sdk::event::EventBatch::events: alloc::vec::Vec<lxmf_sdk::event::SdkEvent>
+pub lxmf_sdk::event::EventBatch::extensions: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub lxmf_sdk::event::EventBatch::next_cursor: lxmf_sdk::event::EventCursor
+pub lxmf_sdk::event::EventBatch::snapshot_high_watermark_seq_no: core::option::Option<u64>
+impl lxmf_sdk::event::EventBatch
+pub fn lxmf_sdk::event::EventBatch::empty(next_cursor: lxmf_sdk::event::EventCursor) -> Self
+pub struct lxmf_sdk::event::EventCursor(pub alloc::string::String)
+impl core::convert::From<alloc::string::String> for lxmf_sdk::event::EventCursor
+pub fn lxmf_sdk::event::EventCursor::from(value: alloc::string::String) -> Self
+#[non_exhaustive] pub struct lxmf_sdk::event::EventSubscription
+pub lxmf_sdk::event::EventSubscription::cursor: core::option::Option<lxmf_sdk::event::EventCursor>
+pub lxmf_sdk::event::EventSubscription::start: lxmf_sdk::event::SubscriptionStart
+#[non_exhaustive] pub struct lxmf_sdk::event::SdkEvent
+pub lxmf_sdk::event::SdkEvent::contract_version: u16
+pub lxmf_sdk::event::SdkEvent::correlation_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::event::SdkEvent::event_id: alloc::string::String
+pub lxmf_sdk::event::SdkEvent::event_type: alloc::string::String
+pub lxmf_sdk::event::SdkEvent::extensions: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub lxmf_sdk::event::SdkEvent::message_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::event::SdkEvent::operation_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::event::SdkEvent::payload: serde_json::value::Value
+pub lxmf_sdk::event::SdkEvent::peer_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::event::SdkEvent::runtime_id: alloc::string::String
+pub lxmf_sdk::event::SdkEvent::seq_no: u64
+pub lxmf_sdk::event::SdkEvent::severity: lxmf_sdk::event::Severity
+pub lxmf_sdk::event::SdkEvent::source_component: alloc::string::String
+pub lxmf_sdk::event::SdkEvent::stream_id: alloc::string::String
+pub lxmf_sdk::event::SdkEvent::trace_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::event::SdkEvent::ts_ms: u64
+pub mod lxmf_sdk::lifecycle
+#[non_exhaustive] pub enum lxmf_sdk::lifecycle::SdkMethod
+pub lxmf_sdk::lifecycle::SdkMethod::Cancel
+pub lxmf_sdk::lifecycle::SdkMethod::Configure
+pub lxmf_sdk::lifecycle::SdkMethod::PollEvents
+pub lxmf_sdk::lifecycle::SdkMethod::Send
+pub lxmf_sdk::lifecycle::SdkMethod::Shutdown
+pub lxmf_sdk::lifecycle::SdkMethod::Snapshot
+pub lxmf_sdk::lifecycle::SdkMethod::Start
+pub lxmf_sdk::lifecycle::SdkMethod::Status
+pub lxmf_sdk::lifecycle::SdkMethod::SubscribeEvents
+pub lxmf_sdk::lifecycle::SdkMethod::Tick
+impl lxmf_sdk::lifecycle::SdkMethod
+pub fn lxmf_sdk::lifecycle::SdkMethod::as_str(self) -> &'static str
+pub struct lxmf_sdk::lifecycle::Lifecycle
+impl lxmf_sdk::lifecycle::Lifecycle
+pub fn lxmf_sdk::lifecycle::Lifecycle::check_start_reentry(&self, req: &lxmf_sdk::types::StartRequest) -> core::result::Result<bool, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::lifecycle::Lifecycle::ensure_method_legal(&self, method: lxmf_sdk::lifecycle::SdkMethod) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::lifecycle::Lifecycle::mark_draining(&mut self) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::lifecycle::Lifecycle::mark_failed(&mut self)
+pub fn lxmf_sdk::lifecycle::Lifecycle::mark_running(&mut self, req: lxmf_sdk::types::StartRequest) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::lifecycle::Lifecycle::mark_starting(&mut self) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::lifecycle::Lifecycle::mark_stopped(&mut self)
+pub fn lxmf_sdk::lifecycle::Lifecycle::reset_to_new(&mut self)
+pub fn lxmf_sdk::lifecycle::Lifecycle::state(&self) -> lxmf_sdk::types::RuntimeState
+impl core::default::Default for lxmf_sdk::lifecycle::Lifecycle
+pub fn lxmf_sdk::lifecycle::Lifecycle::default() -> Self
+pub mod lxmf_sdk::profiles
+pub fn lxmf_sdk::profiles::default_effective_limits(profile: lxmf_sdk::types::Profile) -> lxmf_sdk::capability::EffectiveLimits
+pub fn lxmf_sdk::profiles::is_profile_method_required(profile: lxmf_sdk::types::Profile, method: &str) -> bool
+pub fn lxmf_sdk::profiles::is_profile_method_supported(profile: lxmf_sdk::types::Profile, method: &str) -> bool
+pub fn lxmf_sdk::profiles::required_capabilities(profile: lxmf_sdk::types::Profile) -> &'static [&'static str]
+pub fn lxmf_sdk::profiles::supports_capability(profile: lxmf_sdk::types::Profile, capability_id: &str) -> bool
+pub mod lxmf_sdk::types
+#[non_exhaustive] pub enum lxmf_sdk::types::AuthMode
+pub lxmf_sdk::types::AuthMode::LocalTrusted
+pub lxmf_sdk::types::AuthMode::Mtls
+pub lxmf_sdk::types::AuthMode::Token
+#[non_exhaustive] pub enum lxmf_sdk::types::BindMode
+pub lxmf_sdk::types::BindMode::LocalOnly
+pub lxmf_sdk::types::BindMode::Remote
+#[non_exhaustive] pub enum lxmf_sdk::types::CancelResult
+pub lxmf_sdk::types::CancelResult::Accepted
+pub lxmf_sdk::types::CancelResult::AlreadyTerminal
+pub lxmf_sdk::types::CancelResult::NotFound
+pub lxmf_sdk::types::CancelResult::TooLateToCancel
+pub lxmf_sdk::types::CancelResult::Unsupported
+#[non_exhaustive] pub enum lxmf_sdk::types::DeliveryState
+pub lxmf_sdk::types::DeliveryState::Cancelled
+pub lxmf_sdk::types::DeliveryState::Delivered
+pub lxmf_sdk::types::DeliveryState::Dispatching
+pub lxmf_sdk::types::DeliveryState::Expired
+pub lxmf_sdk::types::DeliveryState::Failed
+pub lxmf_sdk::types::DeliveryState::InFlight
+pub lxmf_sdk::types::DeliveryState::Queued
+pub lxmf_sdk::types::DeliveryState::Rejected
+pub lxmf_sdk::types::DeliveryState::Sent
+#[non_exhaustive] pub enum lxmf_sdk::types::OverflowPolicy
+pub lxmf_sdk::types::OverflowPolicy::Block
+pub lxmf_sdk::types::OverflowPolicy::DropOldest
+pub lxmf_sdk::types::OverflowPolicy::Reject
+#[non_exhaustive] pub enum lxmf_sdk::types::Profile
+pub lxmf_sdk::types::Profile::DesktopFull
+pub lxmf_sdk::types::Profile::DesktopLocalRuntime
+pub lxmf_sdk::types::Profile::EmbeddedAlloc
+#[non_exhaustive] pub enum lxmf_sdk::types::RedactionTransform
+pub lxmf_sdk::types::RedactionTransform::Hash
+pub lxmf_sdk::types::RedactionTransform::Redact
+pub lxmf_sdk::types::RedactionTransform::Truncate
+#[non_exhaustive] pub enum lxmf_sdk::types::RuntimeState
+pub lxmf_sdk::types::RuntimeState::Draining
+pub lxmf_sdk::types::RuntimeState::Failed
+pub lxmf_sdk::types::RuntimeState::New
+pub lxmf_sdk::types::RuntimeState::Running
+pub lxmf_sdk::types::RuntimeState::Starting
+pub lxmf_sdk::types::RuntimeState::Stopped
+#[non_exhaustive] pub enum lxmf_sdk::types::ShutdownMode
+pub lxmf_sdk::types::ShutdownMode::Graceful
+pub lxmf_sdk::types::ShutdownMode::Immediate
+#[non_exhaustive] pub struct lxmf_sdk::types::Ack
+pub lxmf_sdk::types::Ack::accepted: bool
+pub lxmf_sdk::types::Ack::revision: core::option::Option<u64>
+#[non_exhaustive] pub struct lxmf_sdk::types::ClientHandle
+pub lxmf_sdk::types::ClientHandle::active_contract_version: u16
+pub lxmf_sdk::types::ClientHandle::effective_capabilities: alloc::vec::Vec<alloc::string::String>
+pub lxmf_sdk::types::ClientHandle::effective_limits: lxmf_sdk::capability::EffectiveLimits
+pub lxmf_sdk::types::ClientHandle::runtime_id: alloc::string::String
+#[non_exhaustive] pub struct lxmf_sdk::types::ConfigPatch
+pub lxmf_sdk::types::ConfigPatch::block_timeout_ms: core::option::Option<core::option::Option<u64>>
+pub lxmf_sdk::types::ConfigPatch::event_stream: core::option::Option<core::option::Option<lxmf_sdk::types::EventStreamPatch>>
+pub lxmf_sdk::types::ConfigPatch::extensions: core::option::Option<core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>>>
+pub lxmf_sdk::types::ConfigPatch::idempotency_ttl_ms: core::option::Option<core::option::Option<u64>>
+pub lxmf_sdk::types::ConfigPatch::overflow_policy: core::option::Option<core::option::Option<lxmf_sdk::types::OverflowPolicy>>
+pub lxmf_sdk::types::ConfigPatch::redaction: core::option::Option<core::option::Option<lxmf_sdk::types::RedactionPatch>>
+pub lxmf_sdk::types::ConfigPatch::rpc_backend: core::option::Option<core::option::Option<lxmf_sdk::types::RpcBackendPatch>>
+impl lxmf_sdk::types::ConfigPatch
+pub fn lxmf_sdk::types::ConfigPatch::is_empty(&self) -> bool
+#[non_exhaustive] pub struct lxmf_sdk::types::DeliverySnapshot
+pub lxmf_sdk::types::DeliverySnapshot::attempts: u32
+pub lxmf_sdk::types::DeliverySnapshot::last_updated_ms: u64
+pub lxmf_sdk::types::DeliverySnapshot::message_id: lxmf_sdk::types::MessageId
+pub lxmf_sdk::types::DeliverySnapshot::reason_code: core::option::Option<alloc::string::String>
+pub lxmf_sdk::types::DeliverySnapshot::state: lxmf_sdk::types::DeliveryState
+pub lxmf_sdk::types::DeliverySnapshot::terminal: bool
+#[non_exhaustive] pub struct lxmf_sdk::types::EventStreamConfig
+pub lxmf_sdk::types::EventStreamConfig::max_batch_bytes: usize
+pub lxmf_sdk::types::EventStreamConfig::max_event_bytes: usize
+pub lxmf_sdk::types::EventStreamConfig::max_extension_keys: usize
+pub lxmf_sdk::types::EventStreamConfig::max_poll_events: usize
+#[non_exhaustive] pub struct lxmf_sdk::types::EventStreamPatch
+pub lxmf_sdk::types::EventStreamPatch::max_batch_bytes: core::option::Option<core::option::Option<usize>>
+pub lxmf_sdk::types::EventStreamPatch::max_event_bytes: core::option::Option<core::option::Option<usize>>
+pub lxmf_sdk::types::EventStreamPatch::max_extension_keys: core::option::Option<core::option::Option<usize>>
+pub lxmf_sdk::types::EventStreamPatch::max_poll_events: core::option::Option<core::option::Option<usize>>
+pub struct lxmf_sdk::types::MessageId(pub alloc::string::String)
+impl core::convert::From<&str> for lxmf_sdk::types::MessageId
+pub fn lxmf_sdk::types::MessageId::from(value: &str) -> Self
+impl core::convert::From<alloc::string::String> for lxmf_sdk::types::MessageId
+pub fn lxmf_sdk::types::MessageId::from(value: alloc::string::String) -> Self
+#[non_exhaustive] pub struct lxmf_sdk::types::MtlsAuthConfig
+pub lxmf_sdk::types::MtlsAuthConfig::allowed_san: core::option::Option<alloc::string::String>
+pub lxmf_sdk::types::MtlsAuthConfig::ca_bundle_path: alloc::string::String
+pub lxmf_sdk::types::MtlsAuthConfig::require_client_cert: bool
+#[non_exhaustive] pub struct lxmf_sdk::types::MtlsAuthPatch
+pub lxmf_sdk::types::MtlsAuthPatch::allowed_san: core::option::Option<core::option::Option<alloc::string::String>>
+pub lxmf_sdk::types::MtlsAuthPatch::ca_bundle_path: core::option::Option<core::option::Option<alloc::string::String>>
+pub lxmf_sdk::types::MtlsAuthPatch::require_client_cert: core::option::Option<core::option::Option<bool>>
+#[non_exhaustive] pub struct lxmf_sdk::types::RedactionConfig
+pub lxmf_sdk::types::RedactionConfig::break_glass_allowed: bool
+pub lxmf_sdk::types::RedactionConfig::break_glass_ttl_ms: core::option::Option<u64>
+pub lxmf_sdk::types::RedactionConfig::enabled: bool
+pub lxmf_sdk::types::RedactionConfig::sensitive_transform: lxmf_sdk::types::RedactionTransform
+#[non_exhaustive] pub struct lxmf_sdk::types::RedactionPatch
+pub lxmf_sdk::types::RedactionPatch::break_glass_allowed: core::option::Option<core::option::Option<bool>>
+pub lxmf_sdk::types::RedactionPatch::break_glass_ttl_ms: core::option::Option<core::option::Option<u64>>
+pub lxmf_sdk::types::RedactionPatch::enabled: core::option::Option<core::option::Option<bool>>
+pub lxmf_sdk::types::RedactionPatch::sensitive_transform: core::option::Option<core::option::Option<lxmf_sdk::types::RedactionTransform>>
+#[non_exhaustive] pub struct lxmf_sdk::types::RpcBackendConfig
+pub lxmf_sdk::types::RpcBackendConfig::listen_addr: alloc::string::String
+pub lxmf_sdk::types::RpcBackendConfig::max_body_bytes: usize
+pub lxmf_sdk::types::RpcBackendConfig::max_header_bytes: usize
+pub lxmf_sdk::types::RpcBackendConfig::mtls_auth: core::option::Option<lxmf_sdk::types::MtlsAuthConfig>
+pub lxmf_sdk::types::RpcBackendConfig::read_timeout_ms: u64
+pub lxmf_sdk::types::RpcBackendConfig::token_auth: core::option::Option<lxmf_sdk::types::TokenAuthConfig>
+pub lxmf_sdk::types::RpcBackendConfig::write_timeout_ms: u64
+#[non_exhaustive] pub struct lxmf_sdk::types::RpcBackendPatch
+pub lxmf_sdk::types::RpcBackendPatch::listen_addr: core::option::Option<core::option::Option<alloc::string::String>>
+pub lxmf_sdk::types::RpcBackendPatch::max_body_bytes: core::option::Option<core::option::Option<usize>>
+pub lxmf_sdk::types::RpcBackendPatch::max_header_bytes: core::option::Option<core::option::Option<usize>>
+pub lxmf_sdk::types::RpcBackendPatch::mtls_auth: core::option::Option<core::option::Option<lxmf_sdk::types::MtlsAuthPatch>>
+pub lxmf_sdk::types::RpcBackendPatch::read_timeout_ms: core::option::Option<core::option::Option<u64>>
+pub lxmf_sdk::types::RpcBackendPatch::token_auth: core::option::Option<core::option::Option<lxmf_sdk::types::TokenAuthPatch>>
+pub lxmf_sdk::types::RpcBackendPatch::write_timeout_ms: core::option::Option<core::option::Option<u64>>
+#[non_exhaustive] pub struct lxmf_sdk::types::RuntimeSnapshot
+pub lxmf_sdk::types::RuntimeSnapshot::active_contract_version: u16
+pub lxmf_sdk::types::RuntimeSnapshot::config_revision: u64
+pub lxmf_sdk::types::RuntimeSnapshot::event_stream_position: u64
+pub lxmf_sdk::types::RuntimeSnapshot::in_flight_messages: u64
+pub lxmf_sdk::types::RuntimeSnapshot::queued_messages: u64
+pub lxmf_sdk::types::RuntimeSnapshot::runtime_id: alloc::string::String
+pub lxmf_sdk::types::RuntimeSnapshot::state: lxmf_sdk::types::RuntimeState
+#[non_exhaustive] pub struct lxmf_sdk::types::SdkConfig
+pub lxmf_sdk::types::SdkConfig::auth_mode: lxmf_sdk::types::AuthMode
+pub lxmf_sdk::types::SdkConfig::bind_mode: lxmf_sdk::types::BindMode
+pub lxmf_sdk::types::SdkConfig::block_timeout_ms: core::option::Option<u64>
+pub lxmf_sdk::types::SdkConfig::event_stream: lxmf_sdk::types::EventStreamConfig
+pub lxmf_sdk::types::SdkConfig::extensions: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub lxmf_sdk::types::SdkConfig::idempotency_ttl_ms: u64
+pub lxmf_sdk::types::SdkConfig::overflow_policy: lxmf_sdk::types::OverflowPolicy
+pub lxmf_sdk::types::SdkConfig::profile: lxmf_sdk::types::Profile
+pub lxmf_sdk::types::SdkConfig::redaction: lxmf_sdk::types::RedactionConfig
+pub lxmf_sdk::types::SdkConfig::rpc_backend: core::option::Option<lxmf_sdk::types::RpcBackendConfig>
+impl lxmf_sdk::types::SdkConfig
+pub fn lxmf_sdk::types::SdkConfig::validate(&self) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+#[non_exhaustive] pub struct lxmf_sdk::types::SendRequest
+pub lxmf_sdk::types::SendRequest::correlation_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::types::SendRequest::destination: alloc::string::String
+pub lxmf_sdk::types::SendRequest::extensions: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub lxmf_sdk::types::SendRequest::idempotency_key: core::option::Option<alloc::string::String>
+pub lxmf_sdk::types::SendRequest::payload: serde_json::value::Value
+pub lxmf_sdk::types::SendRequest::source: alloc::string::String
+pub lxmf_sdk::types::SendRequest::ttl_ms: core::option::Option<u64>
+#[non_exhaustive] pub struct lxmf_sdk::types::StartRequest
+pub lxmf_sdk::types::StartRequest::config: lxmf_sdk::types::SdkConfig
+pub lxmf_sdk::types::StartRequest::requested_capabilities: alloc::vec::Vec<alloc::string::String>
+pub lxmf_sdk::types::StartRequest::supported_contract_versions: alloc::vec::Vec<u16>
+impl lxmf_sdk::types::StartRequest
+pub fn lxmf_sdk::types::StartRequest::validate(&self) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+#[non_exhaustive] pub struct lxmf_sdk::types::TickBudget
+pub lxmf_sdk::types::TickBudget::max_duration_ms: core::option::Option<u64>
+pub lxmf_sdk::types::TickBudget::max_work_items: usize
+#[non_exhaustive] pub struct lxmf_sdk::types::TickResult
+pub lxmf_sdk::types::TickResult::next_recommended_delay_ms: core::option::Option<u64>
+pub lxmf_sdk::types::TickResult::processed_items: usize
+pub lxmf_sdk::types::TickResult::yielded: bool
+#[non_exhaustive] pub struct lxmf_sdk::types::TokenAuthConfig
+pub lxmf_sdk::types::TokenAuthConfig::audience: alloc::string::String
+pub lxmf_sdk::types::TokenAuthConfig::clock_skew_ms: u64
+pub lxmf_sdk::types::TokenAuthConfig::issuer: alloc::string::String
+pub lxmf_sdk::types::TokenAuthConfig::jti_cache_ttl_ms: u64
+#[non_exhaustive] pub struct lxmf_sdk::types::TokenAuthPatch
+pub lxmf_sdk::types::TokenAuthPatch::audience: core::option::Option<core::option::Option<alloc::string::String>>
+pub lxmf_sdk::types::TokenAuthPatch::clock_skew_ms: core::option::Option<core::option::Option<u64>>
+pub lxmf_sdk::types::TokenAuthPatch::issuer: core::option::Option<core::option::Option<alloc::string::String>>
+pub lxmf_sdk::types::TokenAuthPatch::jti_cache_ttl_ms: core::option::Option<core::option::Option<u64>>
+#[non_exhaustive] pub enum lxmf_sdk::AuthMode
+pub lxmf_sdk::AuthMode::LocalTrusted
+pub lxmf_sdk::AuthMode::Mtls
+pub lxmf_sdk::AuthMode::Token
+#[non_exhaustive] pub enum lxmf_sdk::CancelResult
+pub lxmf_sdk::CancelResult::Accepted
+pub lxmf_sdk::CancelResult::AlreadyTerminal
+pub lxmf_sdk::CancelResult::NotFound
+pub lxmf_sdk::CancelResult::TooLateToCancel
+pub lxmf_sdk::CancelResult::Unsupported
+#[non_exhaustive] pub enum lxmf_sdk::CapabilityState
+pub lxmf_sdk::CapabilityState::Deprecated
+pub lxmf_sdk::CapabilityState::Disabled
+pub lxmf_sdk::CapabilityState::Enabled
+pub lxmf_sdk::CapabilityState::Experimental
+#[non_exhaustive] pub enum lxmf_sdk::DeliveryState
+pub lxmf_sdk::DeliveryState::Cancelled
+pub lxmf_sdk::DeliveryState::Delivered
+pub lxmf_sdk::DeliveryState::Dispatching
+pub lxmf_sdk::DeliveryState::Expired
+pub lxmf_sdk::DeliveryState::Failed
+pub lxmf_sdk::DeliveryState::InFlight
+pub lxmf_sdk::DeliveryState::Queued
+pub lxmf_sdk::DeliveryState::Rejected
+pub lxmf_sdk::DeliveryState::Sent
+#[non_exhaustive] pub enum lxmf_sdk::ErrorCategory
+pub lxmf_sdk::ErrorCategory::Capability
+pub lxmf_sdk::ErrorCategory::Config
+pub lxmf_sdk::ErrorCategory::Crypto
+pub lxmf_sdk::ErrorCategory::Internal
+pub lxmf_sdk::ErrorCategory::Policy
+pub lxmf_sdk::ErrorCategory::Runtime
+pub lxmf_sdk::ErrorCategory::Security
+pub lxmf_sdk::ErrorCategory::Storage
+pub lxmf_sdk::ErrorCategory::Timeout
+pub lxmf_sdk::ErrorCategory::Transport
+pub lxmf_sdk::ErrorCategory::Validation
+#[non_exhaustive] pub enum lxmf_sdk::Profile
+pub lxmf_sdk::Profile::DesktopFull
+pub lxmf_sdk::Profile::DesktopLocalRuntime
+pub lxmf_sdk::Profile::EmbeddedAlloc
+#[non_exhaustive] pub enum lxmf_sdk::RedactionTransform
+pub lxmf_sdk::RedactionTransform::Hash
+pub lxmf_sdk::RedactionTransform::Redact
+pub lxmf_sdk::RedactionTransform::Truncate
+#[non_exhaustive] pub enum lxmf_sdk::RuntimeState
+pub lxmf_sdk::RuntimeState::Draining
+pub lxmf_sdk::RuntimeState::Failed
+pub lxmf_sdk::RuntimeState::New
+pub lxmf_sdk::RuntimeState::Running
+pub lxmf_sdk::RuntimeState::Starting
+pub lxmf_sdk::RuntimeState::Stopped
+#[non_exhaustive] pub enum lxmf_sdk::SdkMethod
+pub lxmf_sdk::SdkMethod::Cancel
+pub lxmf_sdk::SdkMethod::Configure
+pub lxmf_sdk::SdkMethod::PollEvents
+pub lxmf_sdk::SdkMethod::Send
+pub lxmf_sdk::SdkMethod::Shutdown
+pub lxmf_sdk::SdkMethod::Snapshot
+pub lxmf_sdk::SdkMethod::Start
+pub lxmf_sdk::SdkMethod::Status
+pub lxmf_sdk::SdkMethod::SubscribeEvents
+pub lxmf_sdk::SdkMethod::Tick
+impl lxmf_sdk::lifecycle::SdkMethod
+pub fn lxmf_sdk::lifecycle::SdkMethod::as_str(self) -> &'static str
+#[non_exhaustive] pub enum lxmf_sdk::Severity
+pub lxmf_sdk::Severity::Critical
+pub lxmf_sdk::Severity::Debug
+pub lxmf_sdk::Severity::Error
+pub lxmf_sdk::Severity::Info
+pub lxmf_sdk::Severity::Warn
+#[non_exhaustive] pub enum lxmf_sdk::ShutdownMode
+pub lxmf_sdk::ShutdownMode::Graceful
+pub lxmf_sdk::ShutdownMode::Immediate
+#[non_exhaustive] pub enum lxmf_sdk::SubscriptionStart
+pub lxmf_sdk::SubscriptionStart::Head
+pub lxmf_sdk::SubscriptionStart::Snapshot
+pub lxmf_sdk::SubscriptionStart::Tail
+#[non_exhaustive] pub struct lxmf_sdk::Ack
+pub lxmf_sdk::Ack::accepted: bool
+pub lxmf_sdk::Ack::revision: core::option::Option<u64>
+#[non_exhaustive] pub struct lxmf_sdk::CapabilityDescriptor
+pub lxmf_sdk::CapabilityDescriptor::deprecated_after_contract: core::option::Option<alloc::string::String>
+pub lxmf_sdk::CapabilityDescriptor::id: alloc::string::String
+pub lxmf_sdk::CapabilityDescriptor::since_contract: alloc::string::String
+pub lxmf_sdk::CapabilityDescriptor::state: lxmf_sdk::capability::CapabilityState
+pub lxmf_sdk::CapabilityDescriptor::version: u16
+pub struct lxmf_sdk::Client<B: lxmf_sdk::backend::SdkBackend>
+impl<B: lxmf_sdk::backend::SdkBackend> lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::backend(&self) -> &B
+pub fn lxmf_sdk::client::Client<B>::new(backend: B) -> Self
+impl<B: lxmf_sdk::backend::SdkBackend> lxmf_sdk::api::LxmfSdk for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::start(&self, req: lxmf_sdk::types::StartRequest) -> core::result::Result<lxmf_sdk::types::ClientHandle, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+impl<B: lxmf_sdk::backend::SdkBackend> lxmf_sdk::api::LxmfSdkManualTick for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::tick(&self, budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+impl<B: lxmf_sdk::backend::SdkBackendAsyncEvents> lxmf_sdk::api::LxmfSdkAsync for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+#[non_exhaustive] pub struct lxmf_sdk::ClientHandle
+pub lxmf_sdk::ClientHandle::active_contract_version: u16
+pub lxmf_sdk::ClientHandle::effective_capabilities: alloc::vec::Vec<alloc::string::String>
+pub lxmf_sdk::ClientHandle::effective_limits: lxmf_sdk::capability::EffectiveLimits
+pub lxmf_sdk::ClientHandle::runtime_id: alloc::string::String
+#[non_exhaustive] pub struct lxmf_sdk::ConfigPatch
+pub lxmf_sdk::ConfigPatch::block_timeout_ms: core::option::Option<core::option::Option<u64>>
+pub lxmf_sdk::ConfigPatch::event_stream: core::option::Option<core::option::Option<lxmf_sdk::types::EventStreamPatch>>
+pub lxmf_sdk::ConfigPatch::extensions: core::option::Option<core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>>>
+pub lxmf_sdk::ConfigPatch::idempotency_ttl_ms: core::option::Option<core::option::Option<u64>>
+pub lxmf_sdk::ConfigPatch::overflow_policy: core::option::Option<core::option::Option<lxmf_sdk::types::OverflowPolicy>>
+pub lxmf_sdk::ConfigPatch::redaction: core::option::Option<core::option::Option<lxmf_sdk::types::RedactionPatch>>
+pub lxmf_sdk::ConfigPatch::rpc_backend: core::option::Option<core::option::Option<lxmf_sdk::types::RpcBackendPatch>>
+impl lxmf_sdk::types::ConfigPatch
+pub fn lxmf_sdk::types::ConfigPatch::is_empty(&self) -> bool
+#[non_exhaustive] pub struct lxmf_sdk::DeliverySnapshot
+pub lxmf_sdk::DeliverySnapshot::attempts: u32
+pub lxmf_sdk::DeliverySnapshot::last_updated_ms: u64
+pub lxmf_sdk::DeliverySnapshot::message_id: lxmf_sdk::types::MessageId
+pub lxmf_sdk::DeliverySnapshot::reason_code: core::option::Option<alloc::string::String>
+pub lxmf_sdk::DeliverySnapshot::state: lxmf_sdk::types::DeliveryState
+pub lxmf_sdk::DeliverySnapshot::terminal: bool
+#[non_exhaustive] pub struct lxmf_sdk::EffectiveLimits
+pub lxmf_sdk::EffectiveLimits::idempotency_ttl_ms: u64
+pub lxmf_sdk::EffectiveLimits::max_batch_bytes: usize
+pub lxmf_sdk::EffectiveLimits::max_event_bytes: usize
+pub lxmf_sdk::EffectiveLimits::max_extension_keys: usize
+pub lxmf_sdk::EffectiveLimits::max_poll_events: usize
+#[non_exhaustive] pub struct lxmf_sdk::EventBatch
+pub lxmf_sdk::EventBatch::dropped_count: u64
+pub lxmf_sdk::EventBatch::events: alloc::vec::Vec<lxmf_sdk::event::SdkEvent>
+pub lxmf_sdk::EventBatch::extensions: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub lxmf_sdk::EventBatch::next_cursor: lxmf_sdk::event::EventCursor
+pub lxmf_sdk::EventBatch::snapshot_high_watermark_seq_no: core::option::Option<u64>
+impl lxmf_sdk::event::EventBatch
+pub fn lxmf_sdk::event::EventBatch::empty(next_cursor: lxmf_sdk::event::EventCursor) -> Self
+pub struct lxmf_sdk::EventCursor(pub alloc::string::String)
+impl core::convert::From<alloc::string::String> for lxmf_sdk::event::EventCursor
+pub fn lxmf_sdk::event::EventCursor::from(value: alloc::string::String) -> Self
+#[non_exhaustive] pub struct lxmf_sdk::EventStreamConfig
+pub lxmf_sdk::EventStreamConfig::max_batch_bytes: usize
+pub lxmf_sdk::EventStreamConfig::max_event_bytes: usize
+pub lxmf_sdk::EventStreamConfig::max_extension_keys: usize
+pub lxmf_sdk::EventStreamConfig::max_poll_events: usize
+#[non_exhaustive] pub struct lxmf_sdk::EventSubscription
+pub lxmf_sdk::EventSubscription::cursor: core::option::Option<lxmf_sdk::event::EventCursor>
+pub lxmf_sdk::EventSubscription::start: lxmf_sdk::event::SubscriptionStart
+pub struct lxmf_sdk::Lifecycle
+impl lxmf_sdk::lifecycle::Lifecycle
+pub fn lxmf_sdk::lifecycle::Lifecycle::check_start_reentry(&self, req: &lxmf_sdk::types::StartRequest) -> core::result::Result<bool, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::lifecycle::Lifecycle::ensure_method_legal(&self, method: lxmf_sdk::lifecycle::SdkMethod) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::lifecycle::Lifecycle::mark_draining(&mut self) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::lifecycle::Lifecycle::mark_failed(&mut self)
+pub fn lxmf_sdk::lifecycle::Lifecycle::mark_running(&mut self, req: lxmf_sdk::types::StartRequest) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::lifecycle::Lifecycle::mark_starting(&mut self) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::lifecycle::Lifecycle::mark_stopped(&mut self)
+pub fn lxmf_sdk::lifecycle::Lifecycle::reset_to_new(&mut self)
+pub fn lxmf_sdk::lifecycle::Lifecycle::state(&self) -> lxmf_sdk::types::RuntimeState
+impl core::default::Default for lxmf_sdk::lifecycle::Lifecycle
+pub fn lxmf_sdk::lifecycle::Lifecycle::default() -> Self
+pub struct lxmf_sdk::MessageId(pub alloc::string::String)
+impl core::convert::From<&str> for lxmf_sdk::types::MessageId
+pub fn lxmf_sdk::types::MessageId::from(value: &str) -> Self
+impl core::convert::From<alloc::string::String> for lxmf_sdk::types::MessageId
+pub fn lxmf_sdk::types::MessageId::from(value: alloc::string::String) -> Self
+#[non_exhaustive] pub struct lxmf_sdk::NegotiationRequest
+pub lxmf_sdk::NegotiationRequest::profile: lxmf_sdk::types::Profile
+pub lxmf_sdk::NegotiationRequest::requested_capabilities: alloc::vec::Vec<alloc::string::String>
+pub lxmf_sdk::NegotiationRequest::supported_contract_versions: alloc::vec::Vec<u16>
+#[non_exhaustive] pub struct lxmf_sdk::NegotiationResponse
+pub lxmf_sdk::NegotiationResponse::active_contract_version: u16
+pub lxmf_sdk::NegotiationResponse::contract_release: alloc::string::String
+pub lxmf_sdk::NegotiationResponse::effective_capabilities: alloc::vec::Vec<alloc::string::String>
+pub lxmf_sdk::NegotiationResponse::effective_limits: lxmf_sdk::capability::EffectiveLimits
+pub lxmf_sdk::NegotiationResponse::runtime_id: alloc::string::String
+pub lxmf_sdk::NegotiationResponse::schema_namespace: alloc::string::String
+#[non_exhaustive] pub struct lxmf_sdk::RedactionConfig
+pub lxmf_sdk::RedactionConfig::break_glass_allowed: bool
+pub lxmf_sdk::RedactionConfig::break_glass_ttl_ms: core::option::Option<u64>
+pub lxmf_sdk::RedactionConfig::enabled: bool
+pub lxmf_sdk::RedactionConfig::sensitive_transform: lxmf_sdk::types::RedactionTransform
+pub struct lxmf_sdk::RpcBackendClient
+impl lxmf_sdk::backend::rpc::RpcBackendClient
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::new(endpoint: impl core::convert::Into<alloc::string::String>) -> Self
+impl lxmf_sdk::backend::SdkBackend for lxmf_sdk::backend::rpc::RpcBackendClient
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::negotiate(&self, req: lxmf_sdk::capability::NegotiationRequest) -> core::result::Result<lxmf_sdk::capability::NegotiationResponse, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::tick(&self, _budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+impl lxmf_sdk::backend::SdkBackendAsyncEvents for lxmf_sdk::backend::rpc::RpcBackendClient
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+#[non_exhaustive] pub struct lxmf_sdk::RpcBackendConfig
+pub lxmf_sdk::RpcBackendConfig::listen_addr: alloc::string::String
+pub lxmf_sdk::RpcBackendConfig::max_body_bytes: usize
+pub lxmf_sdk::RpcBackendConfig::max_header_bytes: usize
+pub lxmf_sdk::RpcBackendConfig::mtls_auth: core::option::Option<lxmf_sdk::types::MtlsAuthConfig>
+pub lxmf_sdk::RpcBackendConfig::read_timeout_ms: u64
+pub lxmf_sdk::RpcBackendConfig::token_auth: core::option::Option<lxmf_sdk::types::TokenAuthConfig>
+pub lxmf_sdk::RpcBackendConfig::write_timeout_ms: u64
+#[non_exhaustive] pub struct lxmf_sdk::RuntimeSnapshot
+pub lxmf_sdk::RuntimeSnapshot::active_contract_version: u16
+pub lxmf_sdk::RuntimeSnapshot::config_revision: u64
+pub lxmf_sdk::RuntimeSnapshot::event_stream_position: u64
+pub lxmf_sdk::RuntimeSnapshot::in_flight_messages: u64
+pub lxmf_sdk::RuntimeSnapshot::queued_messages: u64
+pub lxmf_sdk::RuntimeSnapshot::runtime_id: alloc::string::String
+pub lxmf_sdk::RuntimeSnapshot::state: lxmf_sdk::types::RuntimeState
+#[non_exhaustive] pub struct lxmf_sdk::SdkConfig
+pub lxmf_sdk::SdkConfig::auth_mode: lxmf_sdk::types::AuthMode
+pub lxmf_sdk::SdkConfig::bind_mode: lxmf_sdk::types::BindMode
+pub lxmf_sdk::SdkConfig::block_timeout_ms: core::option::Option<u64>
+pub lxmf_sdk::SdkConfig::event_stream: lxmf_sdk::types::EventStreamConfig
+pub lxmf_sdk::SdkConfig::extensions: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub lxmf_sdk::SdkConfig::idempotency_ttl_ms: u64
+pub lxmf_sdk::SdkConfig::overflow_policy: lxmf_sdk::types::OverflowPolicy
+pub lxmf_sdk::SdkConfig::profile: lxmf_sdk::types::Profile
+pub lxmf_sdk::SdkConfig::redaction: lxmf_sdk::types::RedactionConfig
+pub lxmf_sdk::SdkConfig::rpc_backend: core::option::Option<lxmf_sdk::types::RpcBackendConfig>
+impl lxmf_sdk::types::SdkConfig
+pub fn lxmf_sdk::types::SdkConfig::validate(&self) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+#[non_exhaustive] pub struct lxmf_sdk::SdkError
+pub lxmf_sdk::SdkError::category: lxmf_sdk::error::ErrorCategory
+pub lxmf_sdk::SdkError::cause_code: core::option::Option<alloc::string::String>
+pub lxmf_sdk::SdkError::details: lxmf_sdk::error::ErrorDetails
+pub lxmf_sdk::SdkError::extensions: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub lxmf_sdk::SdkError::is_user_actionable: bool
+pub lxmf_sdk::SdkError::machine_code: alloc::string::String
+pub lxmf_sdk::SdkError::message: alloc::string::String
+pub lxmf_sdk::SdkError::retryable: bool
+impl lxmf_sdk::error::SdkError
+pub fn lxmf_sdk::error::SdkError::capability_disabled(capability_id: &str) -> Self
+pub fn lxmf_sdk::error::SdkError::config_conflict(expected_revision: u64, observed_revision: u64) -> Self
+pub fn lxmf_sdk::error::SdkError::invalid_state(method: &'static str, state: &'static str) -> Self
+pub fn lxmf_sdk::error::SdkError::new(machine_code: impl core::convert::Into<alloc::string::String>, category: lxmf_sdk::error::ErrorCategory, message: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn lxmf_sdk::error::SdkError::with_cause_code(self, cause_code: impl core::convert::Into<alloc::string::String>) -> Self
+pub fn lxmf_sdk::error::SdkError::with_detail(self, key: impl core::convert::Into<alloc::string::String>, value: serde_json::value::Value) -> Self
+pub fn lxmf_sdk::error::SdkError::with_retryable(self, retryable: bool) -> Self
+pub fn lxmf_sdk::error::SdkError::with_user_actionable(self, is_user_actionable: bool) -> Self
+#[non_exhaustive] pub struct lxmf_sdk::SdkEvent
+pub lxmf_sdk::SdkEvent::contract_version: u16
+pub lxmf_sdk::SdkEvent::correlation_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::SdkEvent::event_id: alloc::string::String
+pub lxmf_sdk::SdkEvent::event_type: alloc::string::String
+pub lxmf_sdk::SdkEvent::extensions: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub lxmf_sdk::SdkEvent::message_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::SdkEvent::operation_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::SdkEvent::payload: serde_json::value::Value
+pub lxmf_sdk::SdkEvent::peer_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::SdkEvent::runtime_id: alloc::string::String
+pub lxmf_sdk::SdkEvent::seq_no: u64
+pub lxmf_sdk::SdkEvent::severity: lxmf_sdk::event::Severity
+pub lxmf_sdk::SdkEvent::source_component: alloc::string::String
+pub lxmf_sdk::SdkEvent::stream_id: alloc::string::String
+pub lxmf_sdk::SdkEvent::trace_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::SdkEvent::ts_ms: u64
+#[non_exhaustive] pub struct lxmf_sdk::SendRequest
+pub lxmf_sdk::SendRequest::correlation_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::SendRequest::destination: alloc::string::String
+pub lxmf_sdk::SendRequest::extensions: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub lxmf_sdk::SendRequest::idempotency_key: core::option::Option<alloc::string::String>
+pub lxmf_sdk::SendRequest::payload: serde_json::value::Value
+pub lxmf_sdk::SendRequest::source: alloc::string::String
+pub lxmf_sdk::SendRequest::ttl_ms: core::option::Option<u64>
+#[non_exhaustive] pub struct lxmf_sdk::StartRequest
+pub lxmf_sdk::StartRequest::config: lxmf_sdk::types::SdkConfig
+pub lxmf_sdk::StartRequest::requested_capabilities: alloc::vec::Vec<alloc::string::String>
+pub lxmf_sdk::StartRequest::supported_contract_versions: alloc::vec::Vec<u16>
+impl lxmf_sdk::types::StartRequest
+pub fn lxmf_sdk::types::StartRequest::validate(&self) -> core::result::Result<(), lxmf_sdk::error::SdkError>
+#[non_exhaustive] pub struct lxmf_sdk::TickBudget
+pub lxmf_sdk::TickBudget::max_duration_ms: core::option::Option<u64>
+pub lxmf_sdk::TickBudget::max_work_items: usize
+#[non_exhaustive] pub struct lxmf_sdk::TickResult
+pub lxmf_sdk::TickResult::next_recommended_delay_ms: core::option::Option<u64>
+pub lxmf_sdk::TickResult::processed_items: usize
+pub lxmf_sdk::TickResult::yielded: bool
+pub const lxmf_sdk::CONTRACT_RELEASE: &str
+pub const lxmf_sdk::SCHEMA_NAMESPACE: &str
+pub trait lxmf_sdk::LxmfSdk
+pub fn lxmf_sdk::LxmfSdk::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::LxmfSdk::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::LxmfSdk::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::LxmfSdk::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::LxmfSdk::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::LxmfSdk::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::LxmfSdk::start(&self, req: lxmf_sdk::types::StartRequest) -> core::result::Result<lxmf_sdk::types::ClientHandle, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::LxmfSdk::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+impl<B: lxmf_sdk::backend::SdkBackend> lxmf_sdk::api::LxmfSdk for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::start(&self, req: lxmf_sdk::types::StartRequest) -> core::result::Result<lxmf_sdk::types::ClientHandle, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::client::Client<B>::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+pub trait lxmf_sdk::LxmfSdkAsync
+pub fn lxmf_sdk::LxmfSdkAsync::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+impl<B: lxmf_sdk::backend::SdkBackendAsyncEvents> lxmf_sdk::api::LxmfSdkAsync for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+pub trait lxmf_sdk::LxmfSdkManualTick
+pub fn lxmf_sdk::LxmfSdkManualTick::tick(&self, budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+impl<B: lxmf_sdk::backend::SdkBackend> lxmf_sdk::api::LxmfSdkManualTick for lxmf_sdk::client::Client<B>
+pub fn lxmf_sdk::client::Client<B>::tick(&self, budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+pub trait lxmf_sdk::SdkBackend: core::marker::Send + core::marker::Sync
+pub fn lxmf_sdk::SdkBackend::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::SdkBackend::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::SdkBackend::negotiate(&self, req: lxmf_sdk::capability::NegotiationRequest) -> core::result::Result<lxmf_sdk::capability::NegotiationResponse, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::SdkBackend::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::SdkBackend::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::SdkBackend::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::SdkBackend::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::SdkBackend::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::SdkBackend::tick(&self, _budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+impl lxmf_sdk::backend::SdkBackend for lxmf_sdk::backend::rpc::RpcBackendClient
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::cancel(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<lxmf_sdk::types::CancelResult, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::configure(&self, expected_revision: u64, patch: lxmf_sdk::types::ConfigPatch) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::negotiate(&self, req: lxmf_sdk::capability::NegotiationRequest) -> core::result::Result<lxmf_sdk::capability::NegotiationResponse, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::poll_events(&self, cursor: core::option::Option<lxmf_sdk::event::EventCursor>, max: usize) -> core::result::Result<lxmf_sdk::event::EventBatch, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::send(&self, req: lxmf_sdk::types::SendRequest) -> core::result::Result<lxmf_sdk::types::MessageId, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::shutdown(&self, mode: lxmf_sdk::types::ShutdownMode) -> core::result::Result<lxmf_sdk::types::Ack, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::snapshot(&self) -> core::result::Result<lxmf_sdk::types::RuntimeSnapshot, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::status(&self, id: lxmf_sdk::types::MessageId) -> core::result::Result<core::option::Option<lxmf_sdk::types::DeliverySnapshot>, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::tick(&self, _budget: lxmf_sdk::types::TickBudget) -> core::result::Result<lxmf_sdk::types::TickResult, lxmf_sdk::error::SdkError>
+pub trait lxmf_sdk::SdkBackendAsyncEvents: lxmf_sdk::backend::SdkBackend
+pub fn lxmf_sdk::SdkBackendAsyncEvents::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+impl lxmf_sdk::backend::SdkBackendAsyncEvents for lxmf_sdk::backend::rpc::RpcBackendClient
+pub fn lxmf_sdk::backend::rpc::RpcBackendClient::subscribe_events(&self, start: lxmf_sdk::event::SubscriptionStart) -> core::result::Result<lxmf_sdk::event::EventSubscription, lxmf_sdk::error::SdkError>
+pub fn lxmf_sdk::default_effective_limits(profile: lxmf_sdk::types::Profile) -> lxmf_sdk::capability::EffectiveLimits
+pub fn lxmf_sdk::effective_capabilities_for_profile(profile: lxmf_sdk::types::Profile) -> alloc::vec::Vec<alloc::string::String>
+pub fn lxmf_sdk::negotiate_contract_version(client_supported: &[u16], backend_supported: &[u16]) -> core::option::Option<u16>
+pub fn lxmf_sdk::required_capabilities(profile: lxmf_sdk::types::Profile) -> &'static [&'static str]
+pub fn lxmf_sdk::supports_capability(profile: lxmf_sdk::types::Profile, capability_id: &str) -> bool
+pub type lxmf_sdk::ErrorDetails = alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>

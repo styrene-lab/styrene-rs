@@ -1,9 +1,11 @@
-use crate::backend::{SdkBackend, SdkBackendAsyncEvents};
+use crate::backend::SdkBackend;
+#[cfg(feature = "sdk-async")]
+use crate::backend::SdkBackendAsyncEvents;
 use crate::capability::{EffectiveLimits, NegotiationRequest, NegotiationResponse};
 use crate::error::{code, ErrorCategory, SdkError};
-use crate::event::{
-    EventBatch, EventCursor, EventSubscription, SdkEvent, Severity, SubscriptionStart,
-};
+use crate::event::{EventBatch, EventCursor, SdkEvent, Severity};
+#[cfg(feature = "sdk-async")]
+use crate::event::{EventSubscription, SubscriptionStart};
 use crate::types::{
     Ack, CancelResult, ConfigPatch, DeliverySnapshot, DeliveryState, MessageId, RuntimeSnapshot,
     RuntimeState, SendRequest, ShutdownMode, TickBudget, TickResult,
