@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value as JsonValue;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -124,6 +124,51 @@ impl MessagesStore {
             }
         }
         Ok(records)
+    }
+
+    pub fn get_message(&self, message_id: &str) -> rusqlite::Result<Option<MessageRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status FROM messages WHERE id = ?1 LIMIT 1",
+        )?;
+        stmt.query_row(params![message_id], |row| {
+            let fields_json: Option<String> = row.get(7)?;
+            let fields = fields_json.as_ref().and_then(|value| serde_json::from_str(value).ok());
+            let receipt_status: Option<String> = row.get(8)?;
+            Ok(MessageRecord {
+                id: row.get(0)?,
+                source: row.get(1)?,
+                destination: row.get(2)?,
+                title: row.get(3)?,
+                content: row.get(4)?,
+                timestamp: row.get(5)?,
+                direction: row.get(6)?,
+                fields,
+                receipt_status,
+            })
+        })
+        .optional()
+    }
+
+    pub fn count_message_buckets(&self) -> rusqlite::Result<(u64, u64)> {
+        let mut stmt = self.conn.prepare(
+            "SELECT
+                COALESCE(SUM(CASE
+                    WHEN receipt_status IS NULL OR TRIM(receipt_status) = '' THEN 1
+                    ELSE 0
+                END), 0) AS queued_count,
+                COALESCE(SUM(CASE
+                    WHEN receipt_status IS NOT NULL
+                        AND TRIM(receipt_status) <> ''
+                        AND LOWER(receipt_status) NOT LIKE 'sent%'
+                        AND LOWER(receipt_status) NOT IN ('cancelled', 'delivered', 'failed', 'expired', 'rejected')
+                    THEN 1
+                    ELSE 0
+                END), 0) AS in_flight_count
+             FROM messages",
+        )?;
+        let (queued, in_flight): (i64, i64) =
+            stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok((queued.max(0) as u64, in_flight.max(0) as u64))
     }
 
     pub fn update_receipt_status(&self, message_id: &str, status: &str) -> rusqlite::Result<()> {
