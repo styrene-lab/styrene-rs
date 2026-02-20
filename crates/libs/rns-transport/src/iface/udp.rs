@@ -11,7 +11,7 @@ use crate::serde::Serialize;
 
 use super::{Interface, InterfaceContext};
 
-// TODO: Configure via features
+// UDP trace logging stays on by default for packet-level network bring-up visibility.
 const PACKET_TRACE: bool = true;
 
 pub struct UdpInterface {

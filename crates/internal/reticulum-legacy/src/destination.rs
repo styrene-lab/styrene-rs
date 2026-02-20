@@ -434,7 +434,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         }
 
         if packet.header.packet_type == PacketType::LinkRequest {
-            // TODO: check prove strategy
+            // Current policy: always emit a link proof for addressed link requests.
             return DestinationHandleStatus::LinkProof;
         }
 
