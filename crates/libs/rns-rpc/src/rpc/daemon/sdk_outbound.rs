@@ -71,7 +71,7 @@ impl RpcDaemon {
             return Ok(RpcResponse {
                 id: request_id,
                 result: None,
-                error: Some(RpcError { code: "DELIVERY_FAILED".into(), message: err.to_string() }),
+                error: Some(RpcError::new("DELIVERY_FAILED", err.to_string())),
             });
         }
         let sent_status = format!("sent: {}", method.as_deref().unwrap_or("direct"));

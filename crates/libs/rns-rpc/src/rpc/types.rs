@@ -12,10 +12,87 @@ pub struct RpcResponse {
     pub error: Option<RpcError>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct RpcError {
     pub code: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_user_actionable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Box<JsonMap<String, JsonValue>>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<Box<JsonMap<String, JsonValue>>>,
+}
+
+impl RpcError {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        let code = code.into();
+        let message = message.into();
+        let category = Self::category_for_code(code.as_str());
+        let retryable = category
+            .as_deref()
+            .is_some_and(|value| value == "Transport" || value == "Timeout");
+        let is_user_actionable = category.as_deref().is_some_and(|value| {
+            matches!(value, "Validation" | "Capability" | "Config" | "Policy" | "Security")
+        });
+        let machine_code = code.starts_with("SDK_").then_some(code.clone());
+        Self {
+            code,
+            message,
+            machine_code,
+            category,
+            retryable: Some(retryable),
+            is_user_actionable: Some(is_user_actionable),
+            details: None,
+            cause_code: None,
+            extensions: None,
+        }
+    }
+
+    fn category_for_code(code: &str) -> Option<String> {
+        if code.contains("_VALIDATION_") {
+            return Some("Validation".to_string());
+        }
+        if code.contains("_CAPABILITY_") {
+            return Some("Capability".to_string());
+        }
+        if code.contains("_CONFIG_") {
+            return Some("Config".to_string());
+        }
+        if code.contains("_POLICY_") {
+            return Some("Policy".to_string());
+        }
+        if code.contains("_TRANSPORT_") {
+            return Some("Transport".to_string());
+        }
+        if code.contains("_STORAGE_") {
+            return Some("Storage".to_string());
+        }
+        if code.contains("_CRYPTO_") {
+            return Some("Crypto".to_string());
+        }
+        if code.contains("_TIMEOUT_") {
+            return Some("Timeout".to_string());
+        }
+        if code.contains("_RUNTIME_") {
+            return Some("Runtime".to_string());
+        }
+        if code.contains("_SECURITY_") {
+            return Some("Security".to_string());
+        }
+        if code.contains("INTERNAL") {
+            return Some("Internal".to_string());
+        }
+        None
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

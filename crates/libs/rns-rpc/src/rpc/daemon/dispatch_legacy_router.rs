@@ -8,10 +8,7 @@ impl RpcDaemon {
             _ => Ok(RpcResponse {
                 id: request.id,
                 result: None,
-                error: Some(RpcError {
-                    code: "NOT_IMPLEMENTED".into(),
-                    message: "method not implemented".into(),
-                }),
+                error: Some(RpcError::new("NOT_IMPLEMENTED", "method not implemented")),
             }),
         }
     }

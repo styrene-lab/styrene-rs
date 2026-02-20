@@ -284,8 +284,39 @@ impl RpcBackendClient {
     }
 
     pub(super) fn map_rpc_error(error: RpcError) -> SdkError {
-        let category = Self::map_category(error.code.as_str());
-        SdkError::new(error.code, category, error.message)
+        let machine_code = error
+            .machine_code
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| error.code.clone());
+        let category = error
+            .category
+            .as_deref()
+            .and_then(Self::parse_error_category)
+            .unwrap_or_else(|| Self::map_category(machine_code.as_str()));
+        let mut sdk_error = SdkError::new(machine_code, category, error.message);
+        if let Some(retryable) = error.retryable {
+            sdk_error = sdk_error.with_retryable(retryable);
+        }
+        if let Some(is_user_actionable) = error.is_user_actionable {
+            sdk_error = sdk_error.with_user_actionable(is_user_actionable);
+        }
+        if let Some(cause_code) = error.cause_code {
+            sdk_error = sdk_error.with_cause_code(cause_code);
+        }
+        if let Some(details) = error.details {
+            for (key, value) in *details {
+                sdk_error = sdk_error.with_detail(key, value);
+            }
+        }
+        if let Some(extensions) = error.extensions {
+            for (key, value) in *extensions {
+                sdk_error.extensions.insert(key, value);
+            }
+        }
+        sdk_error
     }
 
     pub(super) fn map_category(code: &str) -> ErrorCategory {
@@ -320,6 +351,23 @@ impl RpcBackendClient {
             return ErrorCategory::Security;
         }
         ErrorCategory::Internal
+    }
+
+    fn parse_error_category(raw: &str) -> Option<ErrorCategory> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "validation" => Some(ErrorCategory::Validation),
+            "capability" => Some(ErrorCategory::Capability),
+            "config" => Some(ErrorCategory::Config),
+            "policy" => Some(ErrorCategory::Policy),
+            "transport" => Some(ErrorCategory::Transport),
+            "storage" => Some(ErrorCategory::Storage),
+            "crypto" => Some(ErrorCategory::Crypto),
+            "timeout" => Some(ErrorCategory::Timeout),
+            "runtime" => Some(ErrorCategory::Runtime),
+            "security" => Some(ErrorCategory::Security),
+            "internal" => Some(ErrorCategory::Internal),
+            _ => None,
+        }
     }
 
     pub(super) fn profile_to_wire(profile: crate::types::Profile) -> &'static str {

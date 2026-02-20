@@ -27,6 +27,10 @@ All SDK errors must expose:
 
 - `SDK_<CATEGORY>_<NAME>`
 
+## RPC Transport Compatibility
+
+`rns-rpc` responses keep legacy `code`/`message` fields for wire compatibility and may include additive envelope fields (`machine_code`, `category`, `retryable`, `is_user_actionable`, `details`, `cause_code`, `extensions`).
+
 ## Categories
 
 - `Validation`
