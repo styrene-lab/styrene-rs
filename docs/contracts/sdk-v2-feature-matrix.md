@@ -113,6 +113,18 @@ Queue overflow behavior is release-gated with `cargo run -p xtask -- sdk-queue-p
 | SDK event log (`sdk_event_log`) | 1024 events | `reject`, `drop_oldest`, `block` |
 | Runtime broadcast channel | 64 events | bounded channel drop behavior |
 
+## Operability Metrics Matrix
+
+Metrics export is available at `GET /metrics` and covered by `cargo run -p xtask -- sdk-metrics-check`.
+
+| Metric Surface | Export |
+| --- | --- |
+| SDK send/poll/cancel counters | required |
+| SDK auth failures counter | required |
+| SDK event-drop counters | required |
+| SDK send/poll/auth latency histograms | required |
+| HTTP/RPC method counters | required |
+
 ## CI Mapping Matrix
 
 | Gate | Status |
@@ -123,6 +135,7 @@ Queue overflow behavior is release-gated with `cargo run -p xtask -- sdk-queue-p
 | `sdk-api-break` | required |
 | `sdk-security-check` | required |
 | `sdk-fuzz-check` | required |
+| `sdk-metrics-check` | required |
 | `sdk-perf-budget-check` | required |
 | `sdk-memory-budget-check` | required |
 | `sdk-queue-pressure-check` | required |

@@ -10,7 +10,7 @@ use serde_json::{json, Map as JsonMap, Value as JsonValue};
 
 use crate::storage::messages::{AnnounceRecord, MessageRecord, MessagesStore};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use tokio::time::Duration;

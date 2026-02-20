@@ -51,6 +51,7 @@ impl RpcDaemon {
             ticket_cache: Mutex::new(HashMap::new()),
             delivery_traces: Mutex::new(HashMap::new()),
             delivery_status_lock: Mutex::new(()),
+            sdk_metrics: Mutex::new(RpcMetrics::default()),
             outbound_bridge: None,
             announce_bridge: None,
         };
@@ -114,6 +115,7 @@ impl RpcDaemon {
             ticket_cache: Mutex::new(HashMap::new()),
             delivery_traces: Mutex::new(HashMap::new()),
             delivery_status_lock: Mutex::new(()),
+            sdk_metrics: Mutex::new(RpcMetrics::default()),
             outbound_bridge: Some(outbound_bridge),
             announce_bridge: None,
         };
@@ -178,6 +180,7 @@ impl RpcDaemon {
             ticket_cache: Mutex::new(HashMap::new()),
             delivery_traces: Mutex::new(HashMap::new()),
             delivery_status_lock: Mutex::new(()),
+            sdk_metrics: Mutex::new(RpcMetrics::default()),
             outbound_bridge,
             announce_bridge,
         };

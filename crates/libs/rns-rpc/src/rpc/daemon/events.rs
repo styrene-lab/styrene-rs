@@ -113,6 +113,7 @@ impl RpcDaemon {
                         .lock()
                         .expect("sdk_dropped_event_count mutex poisoned");
                     *dropped = dropped.saturating_add(1);
+                    self.metrics_record_event_drop();
                 }
                 log_guard.push_back(sequenced_event);
                 true
@@ -262,6 +263,7 @@ impl RpcDaemon {
                 .lock()
                 .expect("sdk_dropped_event_count mutex poisoned");
             *dropped = dropped.saturating_add(1);
+            self.metrics_record_event_drop();
         }
         event
     }

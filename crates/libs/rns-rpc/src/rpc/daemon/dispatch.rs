@@ -2,6 +2,8 @@ impl RpcDaemon {
     pub fn handle_rpc(&self, request: RpcRequest) -> Result<RpcResponse, std::io::Error> {
         let request_id = request.id;
         let method = request.method.clone();
+        let metrics_started = std::time::Instant::now();
+        self.metrics_record_rpc_request(method.as_str());
         let is_sdk_method = method.starts_with("sdk_");
         let trace_lifecycle = Self::should_trace_sdk_lifecycle(method.as_str());
         let lifecycle_trace_id =
@@ -99,6 +101,8 @@ impl RpcDaemon {
 
         match response {
             Ok(response) => {
+                let elapsed_ms = metrics_started.elapsed().as_millis() as u64;
+                self.metrics_record_rpc_response(method.as_str(), elapsed_ms, &response);
                 if let Some(trace_id) = lifecycle_trace_id.as_deref() {
                     let details = Self::sdk_lifecycle_details(method.as_str(), &response);
                     let outcome = if response.error.is_some() { "error" } else { "ok" };
@@ -122,6 +126,8 @@ impl RpcDaemon {
                     ("SDK_VALIDATION_INVALID_ARGUMENT", message.as_str())
                 };
                 let mapped = self.sdk_error_response(request_id, code, message);
+                let elapsed_ms = metrics_started.elapsed().as_millis() as u64;
+                self.metrics_record_rpc_response(method.as_str(), elapsed_ms, &mapped);
                 if let Some(trace_id) = lifecycle_trace_id.as_deref() {
                     let mut details = Self::sdk_lifecycle_details(method.as_str(), &mapped);
                     details
@@ -138,6 +144,8 @@ impl RpcDaemon {
                 Ok(mapped)
             }
             Err(error) => {
+                let elapsed_ms = metrics_started.elapsed().as_millis() as u64;
+                self.metrics_record_rpc_io_error(method.as_str(), elapsed_ms);
                 if let Some(trace_id) = lifecycle_trace_id.as_deref() {
                     let mut details = JsonMap::new();
                     details.insert(

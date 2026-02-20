@@ -153,6 +153,93 @@ pub struct DeliveryTraceEntry {
     pub reason_code: Option<String>,
 }
 
+const RPC_METRIC_LATENCY_BUCKETS_MS: [u64; 10] = [1, 5, 10, 25, 50, 100, 250, 500, 1_000, 5_000];
+
+#[derive(Debug, Clone)]
+struct RpcLatencyHistogram {
+    bucket_counts: [u64; RPC_METRIC_LATENCY_BUCKETS_MS.len()],
+    overflow_count: u64,
+    count: u64,
+    sum_ms: u64,
+    max_ms: u64,
+}
+
+impl Default for RpcLatencyHistogram {
+    fn default() -> Self {
+        Self {
+            bucket_counts: [0; RPC_METRIC_LATENCY_BUCKETS_MS.len()],
+            overflow_count: 0,
+            count: 0,
+            sum_ms: 0,
+            max_ms: 0,
+        }
+    }
+}
+
+impl RpcLatencyHistogram {
+    fn observe(&mut self, value_ms: u64) {
+        self.count = self.count.saturating_add(1);
+        self.sum_ms = self.sum_ms.saturating_add(value_ms);
+        self.max_ms = self.max_ms.max(value_ms);
+        if let Some((idx, _)) = RPC_METRIC_LATENCY_BUCKETS_MS
+            .iter()
+            .enumerate()
+            .find(|(_, bound_ms)| value_ms <= **bound_ms)
+        {
+            self.bucket_counts[idx] = self.bucket_counts[idx].saturating_add(1);
+            return;
+        }
+        self.overflow_count = self.overflow_count.saturating_add(1);
+    }
+
+    fn as_json(&self) -> JsonValue {
+        let buckets = RPC_METRIC_LATENCY_BUCKETS_MS
+            .iter()
+            .enumerate()
+            .map(|(idx, bound_ms)| {
+                json!({
+                    "le_ms": bound_ms,
+                    "count": self.bucket_counts[idx],
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "count": self.count,
+            "sum_ms": self.sum_ms,
+            "max_ms": self.max_ms,
+            "overflow_count": self.overflow_count,
+            "buckets": buckets,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct RpcMetrics {
+    http_requests_total: u64,
+    http_request_errors_total: u64,
+    rpc_requests_total: u64,
+    rpc_errors_total: u64,
+    sdk_send_total: u64,
+    sdk_send_success_total: u64,
+    sdk_send_error_total: u64,
+    sdk_poll_total: u64,
+    sdk_poll_events_total: u64,
+    sdk_poll_batches_with_gap_total: u64,
+    sdk_cancel_total: u64,
+    sdk_cancel_accepted_total: u64,
+    sdk_cancel_too_late_total: u64,
+    sdk_cancel_not_found_total: u64,
+    sdk_cancel_already_terminal_total: u64,
+    sdk_event_drops_total: u64,
+    sdk_auth_failures_total: u64,
+    http_requests_by_route: BTreeMap<String, u64>,
+    rpc_requests_by_method: BTreeMap<String, u64>,
+    rpc_errors_by_method: BTreeMap<String, u64>,
+    sdk_send_latency_ms: RpcLatencyHistogram,
+    sdk_poll_latency_ms: RpcLatencyHistogram,
+    sdk_auth_latency_ms: RpcLatencyHistogram,
+}
+
 pub struct RpcDaemon {
     store: MessagesStore,
     identity_hash: String,
@@ -199,6 +286,7 @@ pub struct RpcDaemon {
     ticket_cache: Mutex<HashMap<String, TicketRecord>>,
     delivery_traces: Mutex<HashMap<String, Vec<DeliveryTraceEntry>>>,
     delivery_status_lock: Mutex<()>,
+    sdk_metrics: Mutex<RpcMetrics>,
     outbound_bridge: Option<Arc<dyn OutboundBridge>>,
     announce_bridge: Option<Arc<dyn AnnounceBridge>>,
 }
