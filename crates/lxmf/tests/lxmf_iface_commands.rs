@@ -7,7 +7,7 @@ use lxmf::cli::profile::{init_profile, load_profile_settings, profile_paths};
 use lxmf::cli::rpc_client::RpcClient;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -114,6 +114,7 @@ fn iface_apply_restart_preserves_external_mode() {
 fn spawn_apply_rpc_server() -> (String, thread::JoinHandle<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).expect("set nonblocking");
 
     let worker = thread::spawn(move || {
         let mut paths = Vec::new();
@@ -139,6 +140,9 @@ fn spawn_apply_rpc_server() -> (String, thread::JoinHandle<Vec<String>>) {
                     let response =
                         RpcResponse { id: paths.len() as u64, result: Some(result), error: None };
                     write_http_response(&mut stream, 200, &encode_frame(&response));
+                }
+                Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
                 }
                 Err(err) => panic!("accept failed: {err}"),
             }
