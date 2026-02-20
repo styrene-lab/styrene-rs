@@ -31,6 +31,25 @@ rust-version = "1.75"
 license = "MIT"
 repository = "https://github.com/FreeTAKTeam/LXMF-rs"
 
+[workspace.metadata.boundaries]
+# Exact workspace-local dependency edges allowed between crates.
+# `tools/scripts/check-boundaries.sh` treats this as a strict allowlist.
+allowed_library_edges = [
+  "lxmf-core->rns-core",
+  "lxmf-sdk->rns-rpc",
+  "rns-transport->rns-core",
+  "test-support->lxmf-sdk",
+  "test-support->rns-rpc",
+]
+allowed_app_edges = [
+  "lxmf-cli->lxmf-sdk",
+  "reticulumd->lxmf-core",
+  "reticulumd->rns-core",
+  "reticulumd->rns-rpc",
+  "reticulumd->rns-transport",
+  "rns-tools->rns-rpc",
+]
+
 [workspace.dependencies]
 anyhow = "1"
 clap = { version = "4.5.29", features = ["derive"] }
