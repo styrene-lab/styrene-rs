@@ -60,6 +60,21 @@ impl RpcBackendClient {
         self.call_rpc_with_headers(method, params, &headers)
     }
 
+    fn call_rpc_with_fallback(
+        &self,
+        primary_method: &str,
+        fallback_method: &str,
+        params: Option<JsonValue>,
+    ) -> Result<JsonValue, SdkError> {
+        match self.call_rpc(primary_method, params.clone()) {
+            Ok(result) => Ok(result),
+            Err(err) if err.machine_code == "NOT_IMPLEMENTED" => {
+                self.call_rpc(fallback_method, params)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     fn call_rpc_with_headers(
         &self,
         method: &str,
@@ -506,7 +521,8 @@ impl SdkBackend for RpcBackendClient {
             }
         }
 
-        let result = self.call_rpc(
+        let result = self.call_rpc_with_fallback(
+            "sdk_send_v2",
             "send_message_v2",
             Some(json!({
                 "id": rpc_message_id,

@@ -1250,7 +1250,7 @@ impl RpcDaemon {
                     error: None,
                 })
             }
-            "send_message" | "send_message_v2" => {
+            "send_message" | "send_message_v2" | "sdk_send_v2" => {
                 let params = request.params.ok_or_else(|| {
                     std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
                 })?;
@@ -2495,6 +2495,7 @@ impl RpcDaemon {
             "list_peers",
             "send_message",
             "send_message_v2",
+            "sdk_send_v2",
             "sdk_negotiate_v2",
             "sdk_status_v2",
             "sdk_configure_v2",
@@ -3128,6 +3129,26 @@ mod tests {
             ))
             .expect("reset");
         assert!(reset_ok.error.is_none());
+    }
+
+    #[test]
+    fn sdk_send_v2_persists_outbound_message() {
+        let daemon = RpcDaemon::test_instance();
+        let response = daemon
+            .handle_rpc(rpc_request(
+                5,
+                "sdk_send_v2",
+                json!({
+                    "id": "sdk-send-1",
+                    "source": "src",
+                    "destination": "dst",
+                    "title": "",
+                    "content": "hello"
+                }),
+            ))
+            .expect("sdk_send_v2");
+        assert!(response.error.is_none());
+        assert_eq!(response.result.expect("result")["message_id"], json!("sdk-send-1"));
     }
 
     #[test]
