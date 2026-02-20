@@ -13,8 +13,8 @@
     },
     {
       "path": "docs/contracts/compatibility-matrix.md",
-      "bytes": 1122,
-      "sha256": "c54946431a9960d8490fa32d39dbe4bfe81695b05df19eac630dac9e1418e77f"
+      "bytes": 3421,
+      "sha256": "ab5ba0de9d617f87fd606e3eb3f65b543da5605a6f66acfa0c5b5abcdf0fd573"
     },
     {
       "path": "docs/contracts/interop-revision-lock.example.json",
@@ -28,13 +28,13 @@
     },
     {
       "path": "docs/contracts/payload-contract.md",
-      "bytes": 3593,
-      "sha256": "6db716a7b5c2ecec9b4939d32c20c7f1c2fd5cdace4215a9311260056f64cab9"
+      "bytes": 3744,
+      "sha256": "6b28c335d4f345c54e0c94088021d79f7b65fbea3ad30340e8004706bfee4ad7"
     },
     {
       "path": "docs/contracts/rpc-contract.md",
-      "bytes": 3078,
-      "sha256": "0326315e78aac4e1e2d1ebf711baccecedffd8118771c686f1613b92fd1fd184"
+      "bytes": 3255,
+      "sha256": "9cdbe6c36ee64167565cee93c39d8f97e6882b83256b6647697b5b7619bb0631"
     },
     {
       "path": "docs/contracts/sdk-v2-attachments.md",
