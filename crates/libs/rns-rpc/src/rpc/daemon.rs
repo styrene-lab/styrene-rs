@@ -556,22 +556,25 @@ impl RpcDaemon {
         }
 
         let supported_capabilities = Self::sdk_supported_capabilities_for_profile(profile.as_str());
-        let mut effective_capabilities = Vec::new();
+        let required_capabilities = Self::sdk_required_capabilities_for_profile(profile.as_str());
+        let mut effective_capabilities = required_capabilities.clone();
         if parsed.requested_capabilities.is_empty() {
             effective_capabilities = supported_capabilities.clone();
         } else {
+            let mut requested_overlap = 0_usize;
             for requested in parsed.requested_capabilities {
                 let normalized = requested.trim().to_ascii_lowercase();
                 if normalized.is_empty() {
                     continue;
                 }
-                if supported_capabilities.contains(&normalized)
-                    && !effective_capabilities.contains(&normalized)
-                {
-                    effective_capabilities.push(normalized);
+                if supported_capabilities.contains(&normalized) {
+                    requested_overlap = requested_overlap.saturating_add(1);
+                    if !effective_capabilities.contains(&normalized) {
+                        effective_capabilities.push(normalized);
+                    }
                 }
             }
-            if effective_capabilities.is_empty() {
+            if requested_overlap == 0 {
                 return Ok(self.sdk_error_response(
                     request.id,
                     "SDK_CAPABILITY_CONTRACT_INCOMPATIBLE",
@@ -4109,6 +4112,24 @@ impl RpcDaemon {
         caps
     }
 
+    fn sdk_required_capabilities_for_profile(profile: &str) -> Vec<String> {
+        match profile {
+            "desktop-local-runtime" => vec![
+                "sdk.capability.cursor_replay".to_string(),
+                "sdk.capability.receipt_terminality".to_string(),
+                "sdk.capability.config_revision_cas".to_string(),
+                "sdk.capability.idempotency_ttl".to_string(),
+            ],
+            _ => vec![
+                "sdk.capability.cursor_replay".to_string(),
+                "sdk.capability.async_events".to_string(),
+                "sdk.capability.receipt_terminality".to_string(),
+                "sdk.capability.config_revision_cas".to_string(),
+                "sdk.capability.idempotency_ttl".to_string(),
+            ],
+        }
+    }
+
     fn sdk_effective_limits_for_profile(profile: &str) -> JsonValue {
         match profile {
             "desktop-local-runtime" => json!({
@@ -4658,6 +4679,42 @@ mod tests {
             .expect("rpc call");
         let error = response.error.expect("must fail");
         assert_eq!(error.code, "SDK_CAPABILITY_CONTRACT_INCOMPATIBLE");
+    }
+
+    #[test]
+    fn sdk_negotiate_v2_keeps_required_capabilities_when_optional_subset_is_requested() {
+        let daemon = RpcDaemon::test_instance();
+        let response = daemon
+            .handle_rpc(rpc_request(
+                19,
+                "sdk_negotiate_v2",
+                json!({
+                    "supported_contract_versions": [2],
+                    "requested_capabilities": ["sdk.capability.shared_instance_rpc_auth"],
+                    "config": { "profile": "desktop-full" }
+                }),
+            ))
+            .expect("rpc call");
+        assert!(response.error.is_none(), "negotiation should succeed");
+        let capabilities = response
+            .result
+            .expect("result")
+            .get("effective_capabilities")
+            .and_then(JsonValue::as_array)
+            .cloned()
+            .expect("effective capabilities");
+        assert!(
+            capabilities.iter().any(|value| value == "sdk.capability.shared_instance_rpc_auth"),
+            "requested optional capability must be present"
+        );
+        assert!(
+            capabilities.iter().any(|value| value == "sdk.capability.cursor_replay"),
+            "required capability cursor_replay must remain present"
+        );
+        assert!(
+            capabilities.iter().any(|value| value == "sdk.capability.config_revision_cas"),
+            "required capability config_revision_cas must remain present"
+        );
     }
 
     #[test]

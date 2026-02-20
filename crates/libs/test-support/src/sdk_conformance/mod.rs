@@ -238,6 +238,44 @@ fn token_remote_start_request() -> StartRequest {
     .expect("deserialize token remote start request")
 }
 
+fn mtls_remote_start_request() -> StartRequest {
+    serde_json::from_value(json!({
+        "supported_contract_versions": [2],
+        "requested_capabilities": [],
+        "config": {
+            "profile": "desktop-full",
+            "bind_mode": "remote",
+            "auth_mode": "mtls",
+            "overflow_policy": "reject",
+            "event_stream": {
+                "max_poll_events": 256,
+                "max_event_bytes": 65536,
+                "max_batch_bytes": 1048576,
+                "max_extension_keys": 32
+            },
+            "idempotency_ttl_ms": 86400000,
+            "redaction": {
+                "enabled": true,
+                "sensitive_transform": "hash",
+                "break_glass_allowed": false
+            },
+            "rpc_backend": {
+                "listen_addr": "127.0.0.1:0",
+                "read_timeout_ms": 2000,
+                "write_timeout_ms": 2000,
+                "max_header_bytes": 8192,
+                "max_body_bytes": 1048576,
+                "mtls_auth": {
+                    "ca_bundle_path": "/tmp/sdk-ca.pem",
+                    "require_client_cert": true,
+                    "allowed_san": "urn:test-san"
+                }
+            }
+        }
+    }))
+    .expect("deserialize mtls remote start request")
+}
+
 fn send_request(payload_content: &str, idempotency_key: Option<&str>) -> SendRequest {
     serde_json::from_value(json!({
         "source": "source.test",
@@ -451,6 +489,34 @@ fn sdk_conformance_token_mode_supports_multiple_authenticated_rpc_calls() {
     let first = client.snapshot().expect("first snapshot");
     let second = client.snapshot().expect("second snapshot");
     assert_eq!(first.runtime_id, second.runtime_id);
+}
+
+#[test]
+fn sdk_conformance_mtls_mode_supports_authenticated_rpc_calls() {
+    let harness = RpcHarness::new();
+    let client = harness.client();
+    client.start(mtls_remote_start_request()).expect("mtls-mode start with config should succeed");
+
+    let first = client.snapshot().expect("first snapshot");
+    let second = client.snapshot().expect("second snapshot");
+    assert_eq!(first.runtime_id, second.runtime_id);
+}
+
+#[test]
+fn sdk_conformance_shared_instance_capability_is_negotiated_when_requested() {
+    let harness = RpcHarness::new();
+    let client = harness.client();
+    let mut request = token_remote_start_request();
+    request.requested_capabilities = vec!["sdk.capability.shared_instance_rpc_auth".to_string()];
+
+    let handle = client.start(request).expect("start with shared-instance capability request");
+    assert!(
+        handle
+            .effective_capabilities
+            .iter()
+            .any(|capability| capability == "sdk.capability.shared_instance_rpc_auth"),
+        "shared-instance auth capability should be present in effective capability set"
+    );
 }
 
 #[test]
