@@ -196,6 +196,58 @@ impl RpcDaemon {
         }
     }
 
+    fn sdk_max_event_bytes(&self) -> usize {
+        if let Some(value) = self
+            .sdk_runtime_config
+            .lock()
+            .expect("sdk_runtime_config mutex poisoned")
+            .get("event_stream")
+            .and_then(|value| value.get("max_event_bytes"))
+            .and_then(JsonValue::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+        {
+            return value;
+        }
+        match self.sdk_profile.lock().expect("sdk_profile mutex poisoned").as_str() {
+            "desktop-local-runtime" => 32_768,
+            "embedded-alloc" => 8_192,
+            _ => 65_536,
+        }
+    }
+
+    fn sdk_max_batch_bytes(&self) -> usize {
+        if let Some(value) = self
+            .sdk_runtime_config
+            .lock()
+            .expect("sdk_runtime_config mutex poisoned")
+            .get("event_stream")
+            .and_then(|value| value.get("max_batch_bytes"))
+            .and_then(JsonValue::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+        {
+            return value;
+        }
+        match self.sdk_profile.lock().expect("sdk_profile mutex poisoned").as_str() {
+            "embedded-alloc" => 262_144,
+            _ => 1_048_576,
+        }
+    }
+
+    fn sdk_max_extension_keys(&self) -> usize {
+        if let Some(value) = self
+            .sdk_runtime_config
+            .lock()
+            .expect("sdk_runtime_config mutex poisoned")
+            .get("event_stream")
+            .and_then(|value| value.get("max_extension_keys"))
+            .and_then(JsonValue::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+        {
+            return value;
+        }
+        32
+    }
+
     fn sdk_error_response(&self, id: u64, code: &str, message: &str) -> RpcResponse {
         RpcResponse {
             id,

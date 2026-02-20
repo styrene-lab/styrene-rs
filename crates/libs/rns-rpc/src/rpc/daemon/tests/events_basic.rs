@@ -145,6 +145,168 @@
     }
 
     #[test]
+    fn sdk_poll_events_v2_rejects_oversized_event_payload() {
+        let daemon = RpcDaemon::test_instance();
+        let configure = daemon
+            .handle_rpc(rpc_request(
+                40,
+                "sdk_configure_v2",
+                json!({
+                    "expected_revision": 0,
+                    "patch": { "event_stream": { "max_event_bytes": 16_384 } }
+                }),
+            ))
+            .expect("configure");
+        assert!(configure.error.is_none());
+        let first_poll = daemon
+            .handle_rpc(rpc_request(
+                41,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": null,
+                    "max": 8
+                }),
+            ))
+            .expect("poll");
+        let cursor =
+            first_poll.result.expect("result")["next_cursor"].as_str().map(ToOwned::to_owned);
+
+        daemon.emit_event(RpcEvent {
+            event_type: "inbound".to_string(),
+            payload: json!({
+                "message_id": "too-large",
+                "blob": "x".repeat(17_000),
+            }),
+        });
+
+        let response = daemon
+            .handle_rpc(rpc_request(
+                42,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": cursor,
+                    "max": 1
+                }),
+            ))
+            .expect("poll");
+        assert_eq!(response.error.expect("error").code, "SDK_VALIDATION_EVENT_TOO_LARGE");
+    }
+
+    #[test]
+    fn sdk_poll_events_v2_rejects_oversized_batch() {
+        let daemon = RpcDaemon::test_instance();
+        let configure = daemon
+            .handle_rpc(rpc_request(
+                50,
+                "sdk_configure_v2",
+                json!({
+                    "expected_revision": 0,
+                    "patch": {
+                        "event_stream": {
+                            "max_event_bytes": 900,
+                            "max_batch_bytes": 1_024
+                        }
+                    }
+                }),
+            ))
+            .expect("configure");
+        assert!(configure.error.is_none());
+        let first_poll = daemon
+            .handle_rpc(rpc_request(
+                51,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": null,
+                    "max": 8
+                }),
+            ))
+            .expect("poll");
+        let cursor =
+            first_poll.result.expect("result")["next_cursor"].as_str().map(ToOwned::to_owned);
+
+        daemon.emit_event(RpcEvent {
+            event_type: "inbound".to_string(),
+            payload: json!({
+                "message_id": "m-batch-1",
+                "blob": "x".repeat(768),
+            }),
+        });
+        daemon.emit_event(RpcEvent {
+            event_type: "inbound".to_string(),
+            payload: json!({
+                "message_id": "m-batch-2",
+                "blob": "y".repeat(768),
+            }),
+        });
+
+        let response = daemon
+            .handle_rpc(rpc_request(
+                52,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": cursor,
+                    "max": 2
+                }),
+            ))
+            .expect("poll");
+        assert_eq!(response.error.expect("error").code, "SDK_VALIDATION_BATCH_TOO_LARGE");
+    }
+
+    #[test]
+    fn sdk_poll_events_v2_rejects_event_with_too_many_extension_keys() {
+        let daemon = RpcDaemon::test_instance();
+        let configure = daemon
+            .handle_rpc(rpc_request(
+                60,
+                "sdk_configure_v2",
+                json!({
+                    "expected_revision": 0,
+                    "patch": { "event_stream": { "max_extension_keys": 1 } }
+                }),
+            ))
+            .expect("configure");
+        assert!(configure.error.is_none());
+        let first_poll = daemon
+            .handle_rpc(rpc_request(
+                61,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": null,
+                    "max": 8
+                }),
+            ))
+            .expect("poll");
+        let cursor =
+            first_poll.result.expect("result")["next_cursor"].as_str().map(ToOwned::to_owned);
+
+        daemon.emit_event(RpcEvent {
+            event_type: "inbound".to_string(),
+            payload: json!({
+                "message_id": "m-ext",
+                "extensions": {
+                    "k1": true,
+                    "k2": false
+                }
+            }),
+        });
+
+        let response = daemon
+            .handle_rpc(rpc_request(
+                62,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": cursor,
+                    "max": 1
+                }),
+            ))
+            .expect("poll");
+        assert_eq!(
+            response.error.expect("error").code,
+            "SDK_VALIDATION_MAX_EXTENSION_KEYS_EXCEEDED"
+        );
+    }
+
+    #[test]
     fn sdk_domain_methods_respect_capability_gating_when_removed() {
         let daemon = RpcDaemon::test_instance();
         {
@@ -165,4 +327,3 @@
         assert_eq!(error.code, "SDK_CAPABILITY_DISABLED");
         assert!(error.message.contains("sdk_topic_create_v2"));
     }
-
