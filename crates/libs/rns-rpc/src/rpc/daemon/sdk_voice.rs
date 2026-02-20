@@ -10,6 +10,7 @@ impl RpcDaemon {
                 "sdk.capability.voice_signaling",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
         })?;
@@ -56,6 +57,7 @@ impl RpcDaemon {
                 "sdk.capability.voice_signaling",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
         })?;
@@ -127,6 +129,7 @@ impl RpcDaemon {
                 "sdk.capability.voice_signaling",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
         })?;

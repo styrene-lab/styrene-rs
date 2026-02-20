@@ -10,6 +10,7 @@ impl RpcDaemon {
                 "sdk.capability.topics",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
         let parsed: SdkTopicCreateV2Params = serde_json::from_value(params)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
@@ -61,6 +62,7 @@ impl RpcDaemon {
                 "sdk.capability.topics",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
         })?;
@@ -94,6 +96,7 @@ impl RpcDaemon {
                 "sdk.capability.topics",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
         let parsed: SdkTopicListV2Params = serde_json::from_value(params)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
@@ -147,6 +150,7 @@ impl RpcDaemon {
                 "sdk.capability.topic_subscriptions",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
         })?;
@@ -199,6 +203,7 @@ impl RpcDaemon {
                 "sdk.capability.topic_subscriptions",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
         })?;
@@ -238,6 +243,7 @@ impl RpcDaemon {
                 "sdk.capability.topic_fanout",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
         })?;
@@ -307,6 +313,7 @@ impl RpcDaemon {
                 "sdk.capability.telemetry_query",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
         let parsed: SdkTelemetryQueryV2Params = serde_json::from_value(params)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
@@ -348,6 +355,7 @@ impl RpcDaemon {
                 "sdk.capability.telemetry_stream",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
         let parsed: SdkTelemetryQueryV2Params = serde_json::from_value(params)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;

@@ -10,6 +10,7 @@ impl RpcDaemon {
                 "sdk.capability.identity_multi",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
         let parsed: SdkIdentityListV2Params = serde_json::from_value(params)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
@@ -40,6 +41,7 @@ impl RpcDaemon {
                 "sdk.capability.identity_multi",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
         })?;
@@ -89,6 +91,7 @@ impl RpcDaemon {
                 "sdk.capability.identity_import_export",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
         })?;
@@ -146,6 +149,7 @@ impl RpcDaemon {
                 "sdk.capability.identity_import_export",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
         })?;
@@ -201,6 +205,7 @@ impl RpcDaemon {
                 "sdk.capability.identity_hash_resolution",
             ));
         }
+        let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
         let params = request.params.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
         })?;

@@ -623,3 +623,108 @@
 
         let _ = std::fs::remove_file(&db_path);
     }
+
+    #[test]
+    fn sdk_domain_state_is_storage_authoritative_across_live_daemons() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let run_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir()
+            .join(format!("lxmf-rs-sdk-authority-{run_id}-{}.sqlite", std::process::id()));
+
+        let store_a = MessagesStore::open(db_path.as_path()).expect("open sqlite store A");
+        let daemon_a = RpcDaemon::with_store(store_a, "authority-node".to_string());
+        let store_b = MessagesStore::open(db_path.as_path()).expect("open sqlite store B");
+        let daemon_b = RpcDaemon::with_store(store_b, "authority-node".to_string());
+
+        let topic = daemon_a
+            .handle_rpc(rpc_request(
+                300,
+                "sdk_topic_create_v2",
+                json!({ "topic_path": "ops/shared" }),
+            ))
+            .expect("topic create");
+        assert!(topic.error.is_none());
+        let topic_id = topic.result.expect("topic result")["topic"]["topic_id"]
+            .as_str()
+            .expect("topic id")
+            .to_string();
+
+        let topic_get_from_b = daemon_b
+            .handle_rpc(rpc_request(
+                301,
+                "sdk_topic_get_v2",
+                json!({ "topic_id": topic_id.clone() }),
+            ))
+            .expect("topic get from daemon B");
+        assert!(topic_get_from_b.error.is_none());
+        assert_eq!(
+            topic_get_from_b.result.expect("result")["topic"]["topic_id"],
+            json!(topic_id.clone())
+        );
+
+        let marker = daemon_b
+            .handle_rpc(rpc_request(
+                302,
+                "sdk_marker_create_v2",
+                json!({
+                    "label": "Shared Marker",
+                    "position": { "lat": 12.0, "lon": 12.0, "alt_m": null },
+                    "topic_id": topic_id.clone(),
+                }),
+            ))
+            .expect("marker create on daemon B");
+        assert!(marker.error.is_none());
+        let marker_id = marker.result.expect("marker result")["marker"]["marker_id"]
+            .as_str()
+            .expect("marker id")
+            .to_string();
+
+        let marker_list_from_a = daemon_a
+            .handle_rpc(rpc_request(
+                303,
+                "sdk_marker_list_v2",
+                json!({ "topic_id": topic_id.clone() }),
+            ))
+            .expect("marker list from daemon A");
+        assert!(marker_list_from_a.error.is_none());
+        let marker_result = marker_list_from_a.result.expect("result");
+        let marker_rows = marker_result["markers"].as_array().expect("marker rows");
+        assert!(marker_rows.iter().any(|row| row["marker_id"] == json!(marker_id)));
+
+        let command = daemon_a
+            .handle_rpc(rpc_request(
+                304,
+                "sdk_command_invoke_v2",
+                json!({
+                    "command": "sync",
+                    "target": "peer-a",
+                    "payload": { "mode": "live" },
+                }),
+            ))
+            .expect("command invoke on daemon A");
+        assert!(command.error.is_none());
+        let correlation_id = command.result.expect("command result")["response"]["payload"]
+            ["correlation_id"]
+            .as_str()
+            .expect("correlation_id")
+            .to_string();
+
+        let command_reply_from_b = daemon_b
+            .handle_rpc(rpc_request(
+                305,
+                "sdk_command_reply_v2",
+                json!({
+                    "correlation_id": correlation_id,
+                    "accepted": true,
+                    "payload": { "reply": "ok" },
+                }),
+            ))
+            .expect("command reply on daemon B");
+        assert!(command_reply_from_b.error.is_none());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
