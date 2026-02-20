@@ -2,6 +2,11 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::{Mutex, MutexGuard};
 
+#[cfg(test)]
+pub mod sdk_conformance;
+#[cfg(test)]
+pub mod sdk_schema;
+
 static LXMF_CONFIG_ROOT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn config_root_lock() -> &'static Mutex<()> {

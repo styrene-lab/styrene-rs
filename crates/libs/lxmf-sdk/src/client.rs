@@ -1,8 +1,14 @@
-use crate::api::{LxmfSdk, LxmfSdkAsync, LxmfSdkManualTick};
-use crate::backend::{SdkBackend, SdkBackendAsyncEvents};
+#[cfg(feature = "sdk-async")]
+use crate::api::LxmfSdkAsync;
+use crate::api::{LxmfSdk, LxmfSdkManualTick};
+use crate::backend::SdkBackend;
+#[cfg(feature = "sdk-async")]
+use crate::backend::SdkBackendAsyncEvents;
 use crate::capability::{NegotiationRequest, NegotiationResponse};
 use crate::error::{code, ErrorCategory, SdkError};
-use crate::event::{EventBatch, EventCursor, EventSubscription, SubscriptionStart};
+use crate::event::{EventBatch, EventCursor};
+#[cfg(feature = "sdk-async")]
+use crate::event::{EventSubscription, SubscriptionStart};
 use crate::lifecycle::{Lifecycle, SdkMethod};
 use crate::profiles::required_capabilities;
 use crate::types::{
