@@ -117,6 +117,14 @@ jobs:
       - name: SDK conformance suite
         run: cargo xtask sdk-conformance
 
+  sdk-security-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SDK security suite
+        run: cargo xtask sdk-security-check
+
   sdk-profile-build:
     runs-on: ubuntu-latest
     steps:

@@ -1,4 +1,5 @@
 use super::*;
+use hmac::Mac;
 
 impl RpcDaemon {
     pub fn with_store(store: MessagesStore, identity_hash: String) -> Self {
@@ -19,6 +20,10 @@ impl RpcDaemon {
             sdk_config_apply_lock: Mutex::new(()),
             sdk_effective_capabilities: Mutex::new(Self::sdk_supported_capabilities()),
             sdk_stream_degraded: Mutex::new(false),
+            sdk_seen_jti: Mutex::new(HashMap::new()),
+            sdk_rate_window_started_ms: Mutex::new(0),
+            sdk_rate_ip_counts: Mutex::new(HashMap::new()),
+            sdk_rate_principal_counts: Mutex::new(HashMap::new()),
             peers: Mutex::new(HashMap::new()),
             interfaces: Mutex::new(Vec::new()),
             delivery_policy: Mutex::new(DeliveryPolicy::default()),
@@ -57,6 +62,10 @@ impl RpcDaemon {
             sdk_config_apply_lock: Mutex::new(()),
             sdk_effective_capabilities: Mutex::new(Self::sdk_supported_capabilities()),
             sdk_stream_degraded: Mutex::new(false),
+            sdk_seen_jti: Mutex::new(HashMap::new()),
+            sdk_rate_window_started_ms: Mutex::new(0),
+            sdk_rate_ip_counts: Mutex::new(HashMap::new()),
+            sdk_rate_principal_counts: Mutex::new(HashMap::new()),
             peers: Mutex::new(HashMap::new()),
             interfaces: Mutex::new(Vec::new()),
             delivery_policy: Mutex::new(DeliveryPolicy::default()),
@@ -96,6 +105,10 @@ impl RpcDaemon {
             sdk_config_apply_lock: Mutex::new(()),
             sdk_effective_capabilities: Mutex::new(Self::sdk_supported_capabilities()),
             sdk_stream_degraded: Mutex::new(false),
+            sdk_seen_jti: Mutex::new(HashMap::new()),
+            sdk_rate_window_started_ms: Mutex::new(0),
+            sdk_rate_ip_counts: Mutex::new(HashMap::new()),
+            sdk_rate_principal_counts: Mutex::new(HashMap::new()),
             peers: Mutex::new(HashMap::new()),
             interfaces: Mutex::new(Vec::new()),
             delivery_policy: Mutex::new(DeliveryPolicy::default()),
@@ -364,6 +377,114 @@ impl RpcDaemon {
             ));
         }
 
+        let bind_mode =
+            parsed.config.bind_mode.as_deref().unwrap_or("local_only").trim().to_ascii_lowercase();
+        if !matches!(bind_mode.as_str(), "local_only" | "remote") {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "bind_mode must be local_only or remote",
+            ));
+        }
+
+        let auth_mode = parsed
+            .config
+            .auth_mode
+            .as_deref()
+            .unwrap_or("local_trusted")
+            .trim()
+            .to_ascii_lowercase();
+        if !matches!(auth_mode.as_str(), "local_trusted" | "token" | "mtls") {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "auth_mode must be local_trusted, token, or mtls",
+            ));
+        }
+        if bind_mode == "remote" && !matches!(auth_mode.as_str(), "token" | "mtls") {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_SECURITY_REMOTE_BIND_DISALLOWED",
+                "remote bind mode requires token or mtls auth mode",
+            ));
+        }
+        if bind_mode == "local_only" && auth_mode != "local_trusted" {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_SECURITY_AUTH_REQUIRED",
+                "local_only bind mode requires local_trusted auth mode",
+            ));
+        }
+
+        let overflow_policy = parsed
+            .config
+            .overflow_policy
+            .as_deref()
+            .unwrap_or("reject")
+            .trim()
+            .to_ascii_lowercase();
+        if !matches!(overflow_policy.as_str(), "reject" | "drop_oldest" | "block") {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "overflow_policy must be reject, drop_oldest, or block",
+            ));
+        }
+        if overflow_policy == "block" && parsed.config.block_timeout_ms.is_none() {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "overflow_policy=block requires block_timeout_ms",
+            ));
+        }
+
+        match auth_mode.as_str() {
+            "token" => {
+                let Some(token_auth) = parsed
+                    .config
+                    .rpc_backend
+                    .as_ref()
+                    .and_then(|backend| backend.token_auth.as_ref())
+                else {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        "SDK_SECURITY_AUTH_REQUIRED",
+                        "token auth mode requires rpc_backend.token_auth configuration",
+                    ));
+                };
+                if token_auth.issuer.trim().is_empty() || token_auth.audience.trim().is_empty() {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "token auth configuration requires issuer and audience",
+                    ));
+                }
+                if token_auth.jti_cache_ttl_ms == 0 {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "token auth jti_cache_ttl_ms must be greater than zero",
+                    ));
+                }
+                if token_auth.shared_secret.trim().is_empty() {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        "SDK_SECURITY_AUTH_REQUIRED",
+                        "token auth shared_secret must be configured",
+                    ));
+                }
+                let _clock_skew_ms = token_auth.clock_skew_ms.unwrap_or(0);
+            }
+            "mtls" => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_CAPABILITY_DISABLED",
+                    "mtls auth mode is not available until transport-bound certificate verification is implemented",
+                ));
+            }
+            _ => {}
+        }
+
         let supported_capabilities = Self::sdk_supported_capabilities_for_profile(profile.as_str());
         let mut effective_capabilities = Vec::new();
         if parsed.requested_capabilities.is_empty() {
@@ -412,8 +533,35 @@ impl RpcDaemon {
         {
             let mut guard =
                 self.sdk_runtime_config.lock().expect("sdk_runtime_config mutex poisoned");
+            let rpc_backend =
+                parsed.config.rpc_backend.as_ref().map_or(JsonValue::Null, |backend| {
+                    json!({
+                        "listen_addr": backend.listen_addr,
+                        "read_timeout_ms": backend.read_timeout_ms,
+                        "write_timeout_ms": backend.write_timeout_ms,
+                        "max_header_bytes": backend.max_header_bytes,
+                        "max_body_bytes": backend.max_body_bytes,
+                        "token_auth": backend.token_auth.as_ref().map(|token| json!({
+                            "issuer": token.issuer,
+                            "audience": token.audience,
+                            "jti_cache_ttl_ms": token.jti_cache_ttl_ms,
+                            "clock_skew_ms": token.clock_skew_ms.unwrap_or(0),
+                            "shared_secret": token.shared_secret,
+                        })),
+                        "mtls_auth": backend.mtls_auth.as_ref().map(|mtls| json!({
+                            "ca_bundle_path": mtls.ca_bundle_path,
+                            "require_client_cert": mtls.require_client_cert,
+                            "allowed_san": mtls.allowed_san,
+                        })),
+                    })
+                });
             *guard = json!({
                 "profile": profile,
+                "bind_mode": bind_mode,
+                "auth_mode": auth_mode,
+                "overflow_policy": overflow_policy,
+                "block_timeout_ms": parsed.config.block_timeout_ms,
+                "rpc_backend": rpc_backend,
                 "event_stream": {
                     "max_poll_events": limits.get("max_poll_events").and_then(JsonValue::as_u64).unwrap_or(256),
                     "max_event_bytes": limits.get("max_event_bytes").and_then(JsonValue::as_u64).unwrap_or(65_536),
@@ -421,12 +569,30 @@ impl RpcDaemon {
                     "max_extension_keys": limits.get("max_extension_keys").and_then(JsonValue::as_u64).unwrap_or(32),
                 },
                 "idempotency_ttl_ms": limits.get("idempotency_ttl_ms").and_then(JsonValue::as_u64).unwrap_or(86_400_000_u64),
+                "extensions": {
+                    "rate_limits": {
+                        "per_ip_per_minute": 120,
+                        "per_principal_per_minute": 120,
+                    }
+                }
             });
         }
         {
             let mut guard =
                 self.sdk_stream_degraded.lock().expect("sdk_stream_degraded mutex poisoned");
             *guard = false;
+        }
+        {
+            self.sdk_seen_jti.lock().expect("sdk_seen_jti mutex poisoned").clear();
+            *self
+                .sdk_rate_window_started_ms
+                .lock()
+                .expect("sdk_rate_window_started_ms mutex poisoned") = 0;
+            self.sdk_rate_ip_counts.lock().expect("sdk_rate_ip_counts mutex poisoned").clear();
+            self.sdk_rate_principal_counts
+                .lock()
+                .expect("sdk_rate_principal_counts mutex poisoned")
+                .clear();
         }
 
         Ok(RpcResponse {
@@ -1706,6 +1872,340 @@ impl RpcDaemon {
         })
     }
 
+    pub fn authorize_http_request(
+        &self,
+        headers: &[(String, String)],
+        peer_ip: Option<&str>,
+    ) -> Result<(), RpcError> {
+        let config =
+            self.sdk_runtime_config.lock().expect("sdk_runtime_config mutex poisoned").clone();
+        let trust_forwarded = config
+            .get("extensions")
+            .and_then(|value| value.get("trusted_proxy"))
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false);
+        let trusted_proxy_ips = config
+            .get("extensions")
+            .and_then(|value| value.get("trusted_proxy_ips"))
+            .and_then(JsonValue::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(JsonValue::as_str)
+                    .map(str::trim)
+                    .filter(|entry| !entry.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let peer_ip = peer_ip.map(str::trim).filter(|value| !value.is_empty()).map(str::to_string);
+        let peer_is_trusted_proxy = peer_ip
+            .as_deref()
+            .is_some_and(|ip| trusted_proxy_ips.iter().any(|trusted| trusted == ip));
+        let allow_forwarded = trust_forwarded && peer_is_trusted_proxy;
+
+        let source_ip = if allow_forwarded {
+            Self::header_value(headers, "x-forwarded-for")
+                .or_else(|| Self::header_value(headers, "x-real-ip"))
+                .or(peer_ip.as_deref())
+                .map(|value| value.split(',').next().unwrap_or(value).trim().to_string())
+        } else {
+            peer_ip.clone()
+        }
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+
+        let bind_mode =
+            config.get("bind_mode").and_then(JsonValue::as_str).unwrap_or("local_only").to_string();
+        if bind_mode == "local_only" && !Self::is_loopback_source(source_ip.as_str()) {
+            return Err(RpcError {
+                code: "SDK_SECURITY_REMOTE_BIND_DISALLOWED".to_string(),
+                message: "remote source is not allowed in local_only bind mode".to_string(),
+            });
+        }
+
+        let auth_mode = config
+            .get("auth_mode")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("local_trusted")
+            .to_string();
+        let mut principal = "local".to_string();
+        match auth_mode.as_str() {
+            "local_trusted" => {}
+            "token" => {
+                let auth_header =
+                    Self::header_value(headers, "authorization").ok_or_else(|| RpcError {
+                        code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
+                        message: "authorization header is required".to_string(),
+                    })?;
+                let token = auth_header
+                    .strip_prefix("Bearer ")
+                    .or_else(|| auth_header.strip_prefix("bearer "))
+                    .ok_or_else(|| RpcError {
+                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                        message: "authorization header must use Bearer token format".to_string(),
+                    })?;
+                let claims = Self::parse_token_claims(token).ok_or_else(|| RpcError {
+                    code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                    message: "token claims are malformed".to_string(),
+                })?;
+                let (
+                    expected_issuer,
+                    expected_audience,
+                    jti_ttl_ms,
+                    clock_skew_secs,
+                    shared_secret,
+                ) = self.sdk_token_auth_config().ok_or_else(|| RpcError {
+                    code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
+                    message: "token auth mode requires token auth configuration".to_string(),
+                })?;
+                let issuer = claims.get("iss").map(String::as_str).ok_or_else(|| RpcError {
+                    code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                    message: "token issuer claim is missing".to_string(),
+                })?;
+                let audience = claims.get("aud").map(String::as_str).ok_or_else(|| RpcError {
+                    code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                    message: "token audience claim is missing".to_string(),
+                })?;
+                let jti = claims.get("jti").cloned().ok_or_else(|| RpcError {
+                    code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                    message: "token jti claim is missing".to_string(),
+                })?;
+                let subject =
+                    claims.get("sub").cloned().unwrap_or_else(|| "sdk-client".to_string());
+                let iat = claims
+                    .get("iat")
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .ok_or_else(|| RpcError {
+                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                        message: "token iat claim is missing or invalid".to_string(),
+                    })?;
+                let exp = claims
+                    .get("exp")
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .ok_or_else(|| RpcError {
+                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                        message: "token exp claim is missing or invalid".to_string(),
+                    })?;
+                let signature = claims.get("sig").map(String::as_str).ok_or_else(|| RpcError {
+                    code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                    message: "token signature is missing".to_string(),
+                })?;
+                let signed_payload = format!(
+                    "iss={issuer};aud={audience};jti={jti};sub={subject};iat={iat};exp={exp}"
+                );
+                let expected_signature =
+                    Self::token_signature(shared_secret.as_str(), signed_payload.as_str())
+                        .ok_or_else(|| RpcError {
+                            code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                            message: "token signature verification failed".to_string(),
+                        })?;
+                if signature != expected_signature {
+                    return Err(RpcError {
+                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                        message: "token signature does not match runtime policy".to_string(),
+                    });
+                }
+                if issuer != expected_issuer || audience != expected_audience {
+                    return Err(RpcError {
+                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                        message: "token issuer/audience does not match runtime policy".to_string(),
+                    });
+                }
+                let now_seconds = now_seconds_u64();
+                if iat > now_seconds.saturating_add(clock_skew_secs) {
+                    return Err(RpcError {
+                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                        message: "token iat is outside accepted clock skew".to_string(),
+                    });
+                }
+                if exp.saturating_add(clock_skew_secs) < now_seconds {
+                    return Err(RpcError {
+                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
+                        message: "token has expired".to_string(),
+                    });
+                }
+                principal = subject;
+                let now = now_millis_u64();
+                let mut replay_cache =
+                    self.sdk_seen_jti.lock().expect("sdk_seen_jti mutex poisoned");
+                replay_cache.retain(|_, expires_at| *expires_at > now);
+                if replay_cache.contains_key(jti.as_str()) {
+                    return Err(RpcError {
+                        code: "SDK_SECURITY_TOKEN_REPLAYED".to_string(),
+                        message: "token jti has already been used".to_string(),
+                    });
+                }
+                replay_cache.insert(jti, now.saturating_add(jti_ttl_ms.max(1)));
+            }
+            "mtls" => {
+                return Err(RpcError {
+                    code: "SDK_CAPABILITY_DISABLED".to_string(),
+                    message:
+                        "mtls auth mode is not available until transport-bound certificate verification is implemented"
+                            .to_string(),
+                });
+            }
+            _ => {
+                return Err(RpcError {
+                    code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
+                    message: "unknown auth mode".to_string(),
+                })
+            }
+        }
+
+        self.enforce_rate_limits(source_ip.as_str(), principal.as_str())
+    }
+
+    fn enforce_rate_limits(&self, source_ip: &str, principal: &str) -> Result<(), RpcError> {
+        let (per_ip_limit, per_principal_limit) = self.sdk_rate_limits();
+        if per_ip_limit == 0 && per_principal_limit == 0 {
+            return Ok(());
+        }
+
+        let now = now_millis_u64();
+        {
+            let mut window_started = self
+                .sdk_rate_window_started_ms
+                .lock()
+                .expect("sdk_rate_window_started_ms mutex poisoned");
+            if *window_started == 0 || now.saturating_sub(*window_started) >= 60_000 {
+                *window_started = now;
+                self.sdk_rate_ip_counts.lock().expect("sdk_rate_ip_counts mutex poisoned").clear();
+                self.sdk_rate_principal_counts
+                    .lock()
+                    .expect("sdk_rate_principal_counts mutex poisoned")
+                    .clear();
+            }
+        }
+
+        if per_ip_limit > 0 {
+            let mut counts =
+                self.sdk_rate_ip_counts.lock().expect("sdk_rate_ip_counts mutex poisoned");
+            let count = counts.entry(source_ip.to_string()).or_insert(0);
+            *count = count.saturating_add(1);
+            if *count > per_ip_limit {
+                let event = RpcEvent {
+                    event_type: "sdk_security_rate_limited".to_string(),
+                    payload: json!({
+                        "scope": "ip",
+                        "source_ip": source_ip,
+                        "principal": principal,
+                        "limit": per_ip_limit,
+                        "count": *count,
+                    }),
+                };
+                self.push_event(event.clone());
+                let _ = self.events.send(event);
+                return Err(RpcError {
+                    code: "SDK_SECURITY_RATE_LIMITED".to_string(),
+                    message: "per-ip request rate limit exceeded".to_string(),
+                });
+            }
+        }
+
+        if per_principal_limit > 0 {
+            let mut counts = self
+                .sdk_rate_principal_counts
+                .lock()
+                .expect("sdk_rate_principal_counts mutex poisoned");
+            let count = counts.entry(principal.to_string()).or_insert(0);
+            *count = count.saturating_add(1);
+            if *count > per_principal_limit {
+                let event = RpcEvent {
+                    event_type: "sdk_security_rate_limited".to_string(),
+                    payload: json!({
+                        "scope": "principal",
+                        "source_ip": source_ip,
+                        "principal": principal,
+                        "limit": per_principal_limit,
+                        "count": *count,
+                    }),
+                };
+                self.push_event(event.clone());
+                let _ = self.events.send(event);
+                return Err(RpcError {
+                    code: "SDK_SECURITY_RATE_LIMITED".to_string(),
+                    message: "per-principal request rate limit exceeded".to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn sdk_rate_limits(&self) -> (u32, u32) {
+        let config =
+            self.sdk_runtime_config.lock().expect("sdk_runtime_config mutex poisoned").clone();
+        let per_ip = config
+            .get("extensions")
+            .and_then(|value| value.get("rate_limits"))
+            .and_then(|value| value.get("per_ip_per_minute"))
+            .and_then(JsonValue::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(120);
+        let per_principal = config
+            .get("extensions")
+            .and_then(|value| value.get("rate_limits"))
+            .and_then(|value| value.get("per_principal_per_minute"))
+            .and_then(JsonValue::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(120);
+        (per_ip, per_principal)
+    }
+
+    fn sdk_token_auth_config(&self) -> Option<(String, String, u64, u64, String)> {
+        let config =
+            self.sdk_runtime_config.lock().expect("sdk_runtime_config mutex poisoned").clone();
+        let token_auth = config.get("rpc_backend")?.get("token_auth")?;
+        let issuer = token_auth.get("issuer")?.as_str()?.to_string();
+        let audience = token_auth.get("audience")?.as_str()?.to_string();
+        let jti_ttl_ms = token_auth.get("jti_cache_ttl_ms")?.as_u64()?;
+        let clock_skew_secs =
+            token_auth.get("clock_skew_ms").and_then(JsonValue::as_u64).unwrap_or(0) / 1000;
+        let shared_secret = token_auth.get("shared_secret")?.as_str()?.to_string();
+        Some((issuer, audience, jti_ttl_ms, clock_skew_secs, shared_secret))
+    }
+
+    fn header_value<'a>(headers: &'a [(String, String)], key: &str) -> Option<&'a str> {
+        headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(key))
+            .map(|(_, value)| value.as_str())
+    }
+
+    fn parse_token_claims(token: &str) -> Option<HashMap<String, String>> {
+        let mut claims = HashMap::new();
+        for part in token.split(';') {
+            let (key, value) = part.split_once('=')?;
+            let key = key.trim();
+            let value = value.trim();
+            if key.is_empty() || value.is_empty() {
+                return None;
+            }
+            claims.insert(key.to_string(), value.to_string());
+        }
+        if claims.is_empty() {
+            return None;
+        }
+        Some(claims)
+    }
+
+    fn token_signature(secret: &str, payload: &str) -> Option<String> {
+        let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()).ok()?;
+        mac.update(payload.as_bytes());
+        Some(hex::encode(mac.finalize().into_bytes()))
+    }
+
+    fn is_loopback_source(source: &str) -> bool {
+        let normalized = source.trim().to_ascii_lowercase();
+        normalized == "127.0.0.1"
+            || normalized == "::1"
+            || normalized == "[::1]"
+            || normalized == "localhost"
+            || normalized.starts_with("127.")
+    }
+
     fn is_terminal_receipt_status(status: &str) -> bool {
         let normalized = status.trim().to_ascii_lowercase();
         normalized.starts_with("failed")
@@ -2260,6 +2760,223 @@ mod tests {
             .expect("rpc call");
         let error = response.error.expect("must fail");
         assert_eq!(error.code, "SDK_CAPABILITY_CONTRACT_INCOMPATIBLE");
+    }
+
+    #[test]
+    fn sdk_security_authorize_http_request_blocks_remote_source_in_local_only_mode() {
+        let daemon = RpcDaemon::test_instance();
+        let _ = daemon.handle_rpc(rpc_request(
+            21,
+            "sdk_negotiate_v2",
+            json!({
+                "supported_contract_versions": [2],
+                "requested_capabilities": [],
+                "config": {
+                    "profile": "desktop-full",
+                    "bind_mode": "local_only",
+                    "auth_mode": "local_trusted"
+                }
+            }),
+        ));
+
+        let err = daemon
+            .authorize_http_request(&[], Some("10.1.2.3"))
+            .expect_err("remote source should be rejected in local_only mode");
+        assert_eq!(err.code, "SDK_SECURITY_REMOTE_BIND_DISALLOWED");
+    }
+
+    #[test]
+    fn sdk_security_forwarded_headers_require_trusted_proxy_allowlist() {
+        let daemon = RpcDaemon::test_instance();
+        let _ = daemon.handle_rpc(rpc_request(
+            21,
+            "sdk_negotiate_v2",
+            json!({
+                "supported_contract_versions": [2],
+                "requested_capabilities": [],
+                "config": {
+                    "profile": "desktop-full",
+                    "bind_mode": "local_only",
+                    "auth_mode": "local_trusted"
+                }
+            }),
+        ));
+        let _ = daemon.handle_rpc(rpc_request(
+            22,
+            "sdk_configure_v2",
+            json!({
+                "expected_revision": 0,
+                "patch": {
+                    "extensions": {
+                        "trusted_proxy": true,
+                        "trusted_proxy_ips": ["127.0.0.1"]
+                    }
+                }
+            }),
+        ));
+
+        let forwarded = vec![("x-forwarded-for".to_string(), "127.0.0.1".to_string())];
+        let err = daemon
+            .authorize_http_request(&forwarded, Some("10.9.8.7"))
+            .expect_err("untrusted proxy peer must not be able to spoof forwarded headers");
+        assert_eq!(err.code, "SDK_SECURITY_REMOTE_BIND_DISALLOWED");
+
+        daemon
+            .authorize_http_request(&forwarded, Some("127.0.0.1"))
+            .expect("allowlisted proxy may forward loopback source");
+    }
+
+    #[test]
+    fn sdk_security_authorize_http_request_rejects_replayed_token_jti() {
+        let daemon = RpcDaemon::test_instance();
+        let response = daemon
+            .handle_rpc(rpc_request(
+                22,
+                "sdk_negotiate_v2",
+                json!({
+                    "supported_contract_versions": [2],
+                    "requested_capabilities": [],
+                    "config": {
+                        "profile": "desktop-full",
+                        "bind_mode": "remote",
+                        "auth_mode": "token",
+                        "rpc_backend": {
+                            "token_auth": {
+                                "issuer": "test-issuer",
+                                "audience": "test-audience",
+                                "jti_cache_ttl_ms": 30_000,
+                                "clock_skew_ms": 0,
+                                "shared_secret": "test-secret"
+                            }
+                        }
+                    }
+                }),
+            ))
+            .expect("negotiate");
+        assert!(response.error.is_none());
+
+        let iat = now_seconds_u64();
+        let exp = iat.saturating_add(60);
+        let payload =
+            format!("iss=test-issuer;aud=test-audience;jti=token-1;sub=cli;iat={iat};exp={exp}");
+        let signature =
+            RpcDaemon::token_signature("test-secret", payload.as_str()).expect("token signature");
+        let token = format!("{payload};sig={signature}");
+        let headers = vec![("authorization".to_string(), format!("Bearer {token}"))];
+        daemon.authorize_http_request(&headers, Some("10.5.6.7")).expect("first token should pass");
+        let replay = daemon
+            .authorize_http_request(&headers, Some("10.5.6.7"))
+            .expect_err("replayed token jti should be rejected");
+        assert_eq!(replay.code, "SDK_SECURITY_TOKEN_REPLAYED");
+    }
+
+    #[test]
+    fn sdk_security_authorize_http_request_rejects_invalid_token_signature_and_expiry() {
+        let daemon = RpcDaemon::test_instance();
+        let response = daemon
+            .handle_rpc(rpc_request(
+                23,
+                "sdk_negotiate_v2",
+                json!({
+                    "supported_contract_versions": [2],
+                    "requested_capabilities": [],
+                    "config": {
+                        "profile": "desktop-full",
+                        "bind_mode": "remote",
+                        "auth_mode": "token",
+                        "rpc_backend": {
+                            "token_auth": {
+                                "issuer": "test-issuer",
+                                "audience": "test-audience",
+                                "jti_cache_ttl_ms": 30_000,
+                                "clock_skew_ms": 0,
+                                "shared_secret": "test-secret"
+                            }
+                        }
+                    }
+                }),
+            ))
+            .expect("negotiate");
+        assert!(response.error.is_none());
+
+        let now = now_seconds_u64();
+        let expired_payload = format!(
+            "iss=test-issuer;aud=test-audience;jti=expired-1;sub=cli;iat={};exp={}",
+            now.saturating_sub(120),
+            now.saturating_sub(60)
+        );
+        let expired_sig = RpcDaemon::token_signature("test-secret", expired_payload.as_str())
+            .expect("token signature");
+        let expired_headers = vec![(
+            "authorization".to_string(),
+            format!("Bearer {expired_payload};sig={expired_sig}"),
+        )];
+        let expired = daemon
+            .authorize_http_request(&expired_headers, Some("10.5.6.7"))
+            .expect_err("expired token should be rejected");
+        assert_eq!(expired.code, "SDK_SECURITY_TOKEN_INVALID");
+
+        let valid_payload = format!(
+            "iss=test-issuer;aud=test-audience;jti=tampered-1;sub=cli;iat={now};exp={}",
+            now.saturating_add(60)
+        );
+        let tampered_headers =
+            vec![("authorization".to_string(), format!("Bearer {valid_payload};sig=deadbeef"))];
+        let tampered = daemon
+            .authorize_http_request(&tampered_headers, Some("10.5.6.7"))
+            .expect_err("tampered signature should be rejected");
+        assert_eq!(tampered.code, "SDK_SECURITY_TOKEN_INVALID");
+    }
+
+    #[test]
+    fn sdk_security_authorize_http_request_enforces_rate_limits_and_emits_event() {
+        let daemon = RpcDaemon::test_instance();
+        let _ = daemon.handle_rpc(rpc_request(
+            23,
+            "sdk_negotiate_v2",
+            json!({
+                "supported_contract_versions": [2],
+                "requested_capabilities": [],
+                "config": {
+                    "profile": "desktop-full",
+                    "bind_mode": "local_only",
+                    "auth_mode": "local_trusted"
+                }
+            }),
+        ));
+        let _ = daemon.handle_rpc(rpc_request(
+            24,
+            "sdk_configure_v2",
+            json!({
+                "expected_revision": 0,
+                "patch": {
+                    "extensions": {
+                        "rate_limits": {
+                            "per_ip_per_minute": 1,
+                            "per_principal_per_minute": 1
+                        }
+                    }
+                }
+            }),
+        ));
+
+        daemon.authorize_http_request(&[], Some("127.0.0.1")).expect("first request should pass");
+        let limited = daemon
+            .authorize_http_request(&[], Some("127.0.0.1"))
+            .expect_err("second request should be rate limited");
+        assert_eq!(limited.code, "SDK_SECURITY_RATE_LIMITED");
+
+        let mut found_security_event = false;
+        for _ in 0..8 {
+            let Some(event) = daemon.take_event() else {
+                break;
+            };
+            if event.event_type == "sdk_security_rate_limited" {
+                found_security_event = true;
+                break;
+            }
+        }
+        assert!(found_security_event, "rate-limit violations should emit security event");
     }
 
     #[test]

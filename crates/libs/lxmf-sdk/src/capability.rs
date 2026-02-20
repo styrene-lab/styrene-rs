@@ -1,5 +1,5 @@
 use crate::profiles::required_capabilities;
-use crate::types::Profile;
+use crate::types::{AuthMode, BindMode, OverflowPolicy, Profile, RpcBackendConfig};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -38,6 +38,11 @@ pub struct NegotiationRequest {
     pub supported_contract_versions: Vec<u16>,
     pub requested_capabilities: Vec<String>,
     pub profile: Profile,
+    pub bind_mode: BindMode,
+    pub auth_mode: AuthMode,
+    pub overflow_policy: OverflowPolicy,
+    pub block_timeout_ms: Option<u64>,
+    pub rpc_backend: Option<RpcBackendConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

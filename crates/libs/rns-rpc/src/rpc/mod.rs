@@ -109,6 +109,10 @@ pub struct RpcDaemon {
     sdk_config_apply_lock: Mutex<()>,
     sdk_effective_capabilities: Mutex<Vec<String>>,
     sdk_stream_degraded: Mutex<bool>,
+    sdk_seen_jti: Mutex<HashMap<String, u64>>,
+    sdk_rate_window_started_ms: Mutex<u64>,
+    sdk_rate_ip_counts: Mutex<HashMap<String, u32>>,
+    sdk_rate_principal_counts: Mutex<HashMap<String, u32>>,
     peers: Mutex<HashMap<String, PeerRecord>>,
     interfaces: Mutex<Vec<InterfaceRecord>>,
     delivery_policy: Mutex<DeliveryPolicy>,
@@ -361,6 +365,55 @@ struct SdkShutdownV2Params {
 #[serde(deny_unknown_fields)]
 struct SdkRuntimeConfig {
     profile: String,
+    #[serde(default)]
+    bind_mode: Option<String>,
+    #[serde(default)]
+    auth_mode: Option<String>,
+    #[serde(default)]
+    overflow_policy: Option<String>,
+    #[serde(default)]
+    block_timeout_ms: Option<u64>,
+    #[serde(default)]
+    rpc_backend: Option<SdkRpcBackendConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkRpcBackendConfig {
+    #[serde(default)]
+    listen_addr: Option<String>,
+    #[serde(default)]
+    read_timeout_ms: Option<u64>,
+    #[serde(default)]
+    write_timeout_ms: Option<u64>,
+    #[serde(default)]
+    max_header_bytes: Option<usize>,
+    #[serde(default)]
+    max_body_bytes: Option<usize>,
+    #[serde(default)]
+    token_auth: Option<SdkTokenAuthConfig>,
+    #[serde(default)]
+    mtls_auth: Option<SdkMtlsAuthConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkTokenAuthConfig {
+    issuer: String,
+    audience: String,
+    jti_cache_ttl_ms: u64,
+    #[serde(default)]
+    clock_skew_ms: Option<u64>,
+    shared_secret: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkMtlsAuthConfig {
+    ca_bundle_path: String,
+    require_client_cert: bool,
+    #[serde(default)]
+    allowed_san: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -414,6 +467,20 @@ fn now_i64() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn now_millis_u64() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn now_seconds_u64() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs())
         .unwrap_or(0)
 }
 

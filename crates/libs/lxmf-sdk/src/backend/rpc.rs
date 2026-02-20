@@ -7,24 +7,33 @@ use crate::event::{EventBatch, EventCursor, SdkEvent, Severity};
 #[cfg(feature = "sdk-async")]
 use crate::event::{EventSubscription, SubscriptionStart};
 use crate::types::{
-    Ack, CancelResult, ConfigPatch, DeliverySnapshot, DeliveryState, MessageId, RuntimeSnapshot,
-    RuntimeState, SendRequest, ShutdownMode, TickBudget, TickResult,
+    Ack, AuthMode, CancelResult, ConfigPatch, DeliverySnapshot, DeliveryState, MessageId,
+    RuntimeSnapshot, RuntimeState, SendRequest, ShutdownMode, TickBudget, TickResult,
 };
-use rns_rpc::e2e_harness::{
-    build_http_post, build_rpc_frame, parse_http_response_body, parse_rpc_frame,
-};
+use hmac::{Hmac, Mac};
+use rns_rpc::e2e_harness::{build_rpc_frame, parse_http_response_body, parse_rpc_frame};
 use rns_rpc::RpcError;
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
+use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct RpcBackendClient {
     endpoint: String,
     next_request_id: AtomicU64,
     negotiated_capabilities: RwLock<Vec<String>>,
+    session_auth: RwLock<SessionAuth>,
+}
+
+#[derive(Clone, Debug)]
+enum SessionAuth {
+    LocalTrusted,
+    Token { issuer: String, audience: String, shared_secret: String, ttl_secs: u64 },
+    Mtls,
 }
 
 impl RpcBackendClient {
@@ -33,6 +42,7 @@ impl RpcBackendClient {
             endpoint: endpoint.into(),
             next_request_id: AtomicU64::new(1),
             negotiated_capabilities: RwLock::new(Vec::new()),
+            session_auth: RwLock::new(SessionAuth::LocalTrusted),
         }
     }
 
@@ -40,12 +50,27 @@ impl RpcBackendClient {
         self.next_request_id.fetch_add(1, Ordering::Relaxed)
     }
 
+    fn now_seconds() -> u64 {
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_secs()).unwrap_or(0)
+    }
+
     fn call_rpc(&self, method: &str, params: Option<JsonValue>) -> Result<JsonValue, SdkError> {
+        let auth = self.session_auth.read().expect("session_auth rwlock poisoned").clone();
+        let headers = self.headers_for_session_auth(&auth);
+        self.call_rpc_with_headers(method, params, &headers)
+    }
+
+    fn call_rpc_with_headers(
+        &self,
+        method: &str,
+        params: Option<JsonValue>,
+        headers: &[(String, String)],
+    ) -> Result<JsonValue, SdkError> {
         let request_id = self.next_request_id();
         let frame = build_rpc_frame(request_id, method, params).map_err(|err| {
             SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
         })?;
-        let request = build_http_post("/rpc", &self.endpoint, &frame);
+        let request = Self::build_http_post_with_headers("/rpc", &self.endpoint, &frame, headers);
         let mut stream = TcpStream::connect(&self.endpoint).map_err(|err| {
             SdkError::new(code::INTERNAL, ErrorCategory::Transport, err.to_string())
         })?;
@@ -69,6 +94,25 @@ impl RpcBackendClient {
             return Err(Self::map_rpc_error(error));
         }
         Ok(rpc_response.result.unwrap_or(JsonValue::Null))
+    }
+
+    fn build_http_post_with_headers(
+        path: &str,
+        host: &str,
+        body: &[u8],
+        headers: &[(String, String)],
+    ) -> Vec<u8> {
+        let mut request = Vec::new();
+        request.extend_from_slice(format!("POST {path} HTTP/1.1\r\n").as_bytes());
+        request.extend_from_slice(format!("Host: {host}\r\n").as_bytes());
+        request.extend_from_slice(b"Content-Type: application/msgpack\r\n");
+        for (name, value) in headers {
+            request.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
+        }
+        request.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
+        request.extend_from_slice(b"\r\n");
+        request.extend_from_slice(body);
+        request
     }
 
     fn map_rpc_error(error: RpcError) -> SdkError {
@@ -115,6 +159,87 @@ impl RpcBackendClient {
             crate::types::Profile::DesktopFull => "desktop-full",
             crate::types::Profile::DesktopLocalRuntime => "desktop-local-runtime",
             crate::types::Profile::EmbeddedAlloc => "embedded-alloc",
+        }
+    }
+
+    fn bind_mode_to_wire(bind_mode: crate::types::BindMode) -> &'static str {
+        match bind_mode {
+            crate::types::BindMode::LocalOnly => "local_only",
+            crate::types::BindMode::Remote => "remote",
+        }
+    }
+
+    fn auth_mode_to_wire(auth_mode: crate::types::AuthMode) -> &'static str {
+        match auth_mode {
+            crate::types::AuthMode::LocalTrusted => "local_trusted",
+            crate::types::AuthMode::Token => "token",
+            crate::types::AuthMode::Mtls => "mtls",
+        }
+    }
+
+    fn overflow_policy_to_wire(overflow_policy: crate::types::OverflowPolicy) -> &'static str {
+        match overflow_policy {
+            crate::types::OverflowPolicy::Reject => "reject",
+            crate::types::OverflowPolicy::DropOldest => "drop_oldest",
+            crate::types::OverflowPolicy::Block => "block",
+        }
+    }
+
+    fn session_auth_from_request(&self, req: &NegotiationRequest) -> Result<SessionAuth, SdkError> {
+        match req.auth_mode {
+            AuthMode::LocalTrusted => Ok(SessionAuth::LocalTrusted),
+            AuthMode::Mtls => Ok(SessionAuth::Mtls),
+            AuthMode::Token => {
+                let token_auth = req
+                    .rpc_backend
+                    .as_ref()
+                    .and_then(|config| config.token_auth.as_ref())
+                    .ok_or_else(|| {
+                        SdkError::new(
+                            code::SECURITY_AUTH_REQUIRED,
+                            ErrorCategory::Security,
+                            "token auth mode requires rpc_backend.token_auth",
+                        )
+                    })?;
+                if token_auth.shared_secret.trim().is_empty() {
+                    return Err(SdkError::new(
+                        code::SECURITY_AUTH_REQUIRED,
+                        ErrorCategory::Security,
+                        "token auth shared_secret must be configured",
+                    ));
+                }
+                Ok(SessionAuth::Token {
+                    issuer: token_auth.issuer.clone(),
+                    audience: token_auth.audience.clone(),
+                    shared_secret: token_auth.shared_secret.clone(),
+                    ttl_secs: (token_auth.jti_cache_ttl_ms / 1000).max(1),
+                })
+            }
+        }
+    }
+
+    fn token_signature(secret: &str, payload: &str) -> String {
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+            .expect("token shared secret must be non-empty");
+        mac.update(payload.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
+    fn headers_for_session_auth(&self, auth: &SessionAuth) -> Vec<(String, String)> {
+        match auth {
+            SessionAuth::LocalTrusted => Vec::new(),
+            SessionAuth::Mtls => vec![("X-Client-Cert-Present".to_owned(), "1".to_owned())],
+            SessionAuth::Token { issuer, audience, shared_secret, ttl_secs } => {
+                let jti = format!("sdk-jti-{}", self.next_request_id());
+                let iat = Self::now_seconds();
+                let exp = iat.saturating_add(*ttl_secs);
+                let payload = format!(
+                    "iss={issuer};aud={audience};jti={jti};sub=sdk-client;iat={iat};exp={exp}"
+                );
+                let sig = Self::token_signature(shared_secret, payload.as_str());
+                let token = format!("{payload};sig={sig}");
+                vec![("Authorization".to_owned(), format!("Bearer {token}"))]
+            }
         }
     }
 
@@ -257,15 +382,44 @@ impl RpcBackendClient {
 
 impl SdkBackend for RpcBackendClient {
     fn negotiate(&self, req: NegotiationRequest) -> Result<NegotiationResponse, SdkError> {
-        let result = self.call_rpc(
+        let session_auth = self.session_auth_from_request(&req)?;
+        let headers = self.headers_for_session_auth(&session_auth);
+        let rpc_backend = req.rpc_backend.as_ref().map(|config| {
+            json!({
+                "listen_addr": config.listen_addr,
+                "read_timeout_ms": config.read_timeout_ms,
+                "write_timeout_ms": config.write_timeout_ms,
+                "max_header_bytes": config.max_header_bytes,
+                "max_body_bytes": config.max_body_bytes,
+                "token_auth": config.token_auth.as_ref().map(|token| json!({
+                    "issuer": token.issuer,
+                    "audience": token.audience,
+                    "jti_cache_ttl_ms": token.jti_cache_ttl_ms,
+                    "clock_skew_ms": token.clock_skew_ms,
+                    "shared_secret": token.shared_secret,
+                })),
+                "mtls_auth": config.mtls_auth.as_ref().map(|mtls| json!({
+                    "ca_bundle_path": mtls.ca_bundle_path,
+                    "require_client_cert": mtls.require_client_cert,
+                    "allowed_san": mtls.allowed_san,
+                })),
+            })
+        });
+        let result = self.call_rpc_with_headers(
             "sdk_negotiate_v2",
             Some(json!({
                 "supported_contract_versions": req.supported_contract_versions,
                 "requested_capabilities": req.requested_capabilities,
                 "config": {
                     "profile": Self::profile_to_wire(req.profile),
+                    "bind_mode": Self::bind_mode_to_wire(req.bind_mode),
+                    "auth_mode": Self::auth_mode_to_wire(req.auth_mode),
+                    "overflow_policy": Self::overflow_policy_to_wire(req.overflow_policy),
+                    "block_timeout_ms": req.block_timeout_ms,
+                    "rpc_backend": rpc_backend,
                 }
             })),
+            &headers,
         )?;
 
         let runtime_id = Self::parse_required_string(&result, "runtime_id")?;
@@ -293,6 +447,10 @@ impl SdkBackend for RpcBackendClient {
                 .write()
                 .expect("negotiated_capabilities rwlock poisoned");
             *guard = effective_capabilities.clone();
+        }
+        {
+            let mut guard = self.session_auth.write().expect("session_auth rwlock poisoned");
+            *guard = session_auth;
         }
 
         Ok(NegotiationResponse {

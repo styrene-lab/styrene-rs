@@ -11,6 +11,9 @@ rns-rpc = { path = "../rns-rpc", optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+hex.workspace = true
 
 [features]
 default = ["std", "sdk-async", "rpc-backend"]

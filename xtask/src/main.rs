@@ -24,6 +24,7 @@ enum XtaskCommand {
     SdkProfileBuild,
     SdkApiBreak,
     SdkMigrationCheck,
+    SdkSecurityCheck,
 }
 
 fn main() -> Result<()> {
@@ -41,6 +42,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkProfileBuild => run_sdk_profile_build(),
         XtaskCommand::SdkApiBreak => run_sdk_api_break(),
         XtaskCommand::SdkMigrationCheck => run_sdk_migration_check(),
+        XtaskCommand::SdkSecurityCheck => run_sdk_security_check(),
     }
 }
 
@@ -64,6 +66,7 @@ fn run_ci() -> Result<()> {
     run_sdk_schema_check()?;
     run_sdk_conformance()?;
     run_sdk_profile_build()?;
+    run_sdk_security_check()?;
     run_migration_checks()?;
     run_architecture_checks()?;
     Ok(())
@@ -195,6 +198,10 @@ fn run_sdk_migration_check() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn run_sdk_security_check() -> Result<()> {
+    run("cargo", &["test", "-p", "rns-rpc", "sdk_security", "--", "--nocapture"])
 }
 
 fn run_migration_checks() -> Result<()> {

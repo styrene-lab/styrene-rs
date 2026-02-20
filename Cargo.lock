@@ -968,9 +968,12 @@ dependencies = [
 name = "lxmf-sdk"
 version = "0.1.0"
 dependencies = [
+ "hex",
+ "hmac",
  "rns-rpc",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
 ]
 
@@ -1354,6 +1357,7 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
+ "hmac",
  "rand_core",
  "rmp-serde",
  "rmpv",

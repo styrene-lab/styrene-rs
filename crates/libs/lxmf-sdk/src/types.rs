@@ -73,6 +73,7 @@ pub struct TokenAuthConfig {
     pub audience: String,
     pub jti_cache_ttl_ms: u64,
     pub clock_skew_ms: u64,
+    pub shared_secret: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -162,11 +163,35 @@ impl SdkConfig {
             AuthMode::Token => {
                 let token_auth =
                     self.rpc_backend.as_ref().and_then(|backend| backend.token_auth.as_ref());
-                if token_auth.is_none() {
+                let Some(token_auth) = token_auth else {
                     return Err(SdkError::new(
                         code::SECURITY_AUTH_REQUIRED,
                         ErrorCategory::Security,
                         "token auth mode requires rpc_backend.token_auth configuration",
+                    )
+                    .with_user_actionable(true));
+                };
+                if token_auth.issuer.trim().is_empty() || token_auth.audience.trim().is_empty() {
+                    return Err(SdkError::new(
+                        code::VALIDATION_INVALID_ARGUMENT,
+                        ErrorCategory::Validation,
+                        "token auth configuration requires issuer and audience",
+                    )
+                    .with_user_actionable(true));
+                }
+                if token_auth.jti_cache_ttl_ms == 0 {
+                    return Err(SdkError::new(
+                        code::VALIDATION_INVALID_ARGUMENT,
+                        ErrorCategory::Validation,
+                        "token auth jti_cache_ttl_ms must be greater than zero",
+                    )
+                    .with_user_actionable(true));
+                }
+                if token_auth.shared_secret.trim().is_empty() {
+                    return Err(SdkError::new(
+                        code::SECURITY_AUTH_REQUIRED,
+                        ErrorCategory::Security,
+                        "token auth shared_secret must be configured",
                     )
                     .with_user_actionable(true));
                 }
@@ -226,6 +251,8 @@ pub struct TokenAuthPatch {
     pub jti_cache_ttl_ms: Option<Option<u64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clock_skew_ms: Option<Option<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shared_secret: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

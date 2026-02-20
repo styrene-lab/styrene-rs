@@ -43,7 +43,7 @@ impl RpcHarness {
         let join = thread::spawn(move || {
             while !stop_for_thread.load(Ordering::Relaxed) {
                 match listener.accept() {
-                    Ok((mut stream, _addr)) => {
+                    Ok((mut stream, addr)) => {
                         let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
                         let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
                         let mut request = Vec::new();
@@ -55,7 +55,7 @@ impl RpcHarness {
                         }
                         let response = {
                             let guard = daemon_for_thread.lock().expect("rpc daemon lock poisoned");
-                            http::handle_http_request(&guard, &request)
+                            http::handle_http_request_with_peer(&guard, &request, Some(addr))
                         }
                         .unwrap_or_else(|_| {
                             b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n".to_vec()
@@ -188,6 +188,46 @@ fn token_without_config_start_request() -> StartRequest {
         }
     }))
     .expect("deserialize token-mode start request")
+}
+
+fn token_remote_start_request() -> StartRequest {
+    serde_json::from_value(json!({
+        "supported_contract_versions": [2],
+        "requested_capabilities": [],
+        "config": {
+            "profile": "desktop-full",
+            "bind_mode": "remote",
+            "auth_mode": "token",
+            "overflow_policy": "reject",
+            "event_stream": {
+                "max_poll_events": 256,
+                "max_event_bytes": 65536,
+                "max_batch_bytes": 1048576,
+                "max_extension_keys": 32
+            },
+            "idempotency_ttl_ms": 86400000,
+            "redaction": {
+                "enabled": true,
+                "sensitive_transform": "hash",
+                "break_glass_allowed": false
+            },
+            "rpc_backend": {
+                "listen_addr": "127.0.0.1:0",
+                "read_timeout_ms": 2000,
+                "write_timeout_ms": 2000,
+                "max_header_bytes": 8192,
+                "max_body_bytes": 1048576,
+                "token_auth": {
+                    "issuer": "sdk-test",
+                    "audience": "rns-rpc",
+                    "jti_cache_ttl_ms": 60000,
+                    "clock_skew_ms": 0,
+                    "shared_secret": "sdk-shared-secret"
+                }
+            }
+        }
+    }))
+    .expect("deserialize token remote start request")
 }
 
 fn send_request(payload_content: &str, idempotency_key: Option<&str>) -> SendRequest {
@@ -390,6 +430,19 @@ fn sdk_conformance_token_mode_requires_token_config() {
         .start(token_without_config_start_request())
         .expect_err("token mode requires token config");
     assert_eq!(err.machine_code, "SDK_SECURITY_AUTH_REQUIRED");
+}
+
+#[test]
+fn sdk_conformance_token_mode_supports_multiple_authenticated_rpc_calls() {
+    let harness = RpcHarness::new();
+    let client = harness.client();
+    client
+        .start(token_remote_start_request())
+        .expect("token-mode start with config should succeed");
+
+    let first = client.snapshot().expect("first snapshot");
+    let second = client.snapshot().expect("second snapshot");
+    assert_eq!(first.runtime_id, second.runtime_id);
 }
 
 #[test]
