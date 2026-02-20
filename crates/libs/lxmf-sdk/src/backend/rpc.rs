@@ -2,6 +2,15 @@ use crate::backend::SdkBackend;
 #[cfg(feature = "sdk-async")]
 use crate::backend::SdkBackendAsyncEvents;
 use crate::capability::{EffectiveLimits, NegotiationRequest, NegotiationResponse};
+use crate::domain::{
+    AttachmentId, AttachmentListRequest, AttachmentListResult, AttachmentMeta,
+    AttachmentStoreRequest, IdentityBundle, IdentityImportRequest, IdentityRef,
+    IdentityResolveRequest, MarkerCreateRequest, MarkerId, MarkerListRequest, MarkerListResult,
+    MarkerRecord, MarkerUpdatePositionRequest, PaperMessageEnvelope, RemoteCommandRequest,
+    RemoteCommandResponse, TelemetryPoint, TelemetryQuery, TopicCreateRequest, TopicId,
+    TopicListRequest, TopicListResult, TopicPublishRequest, TopicRecord, TopicSubscriptionRequest,
+    VoiceSessionId, VoiceSessionOpenRequest, VoiceSessionState, VoiceSessionUpdateRequest,
+};
 use crate::error::{code, ErrorCategory, SdkError};
 use crate::event::{EventBatch, EventCursor, SdkEvent, Severity};
 #[cfg(feature = "sdk-async")]
@@ -13,6 +22,7 @@ use crate::types::{
 use hmac::{Hmac, Mac};
 use rns_rpc::e2e_harness::{build_rpc_frame, parse_http_response_body, parse_rpc_frame};
 use rns_rpc::RpcError;
+use serde::de::DeserializeOwned;
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use sha2::Sha256;
 use std::collections::BTreeMap;
@@ -366,6 +376,52 @@ impl RpcBackendClient {
             return RuntimeState::Failed;
         }
         RuntimeState::Running
+    }
+
+    fn decode_value<T: DeserializeOwned>(value: JsonValue, context: &str) -> Result<T, SdkError> {
+        serde_json::from_value(value).map_err(|err| {
+            SdkError::new(
+                code::INTERNAL,
+                ErrorCategory::Internal,
+                format!("failed to decode {context}: {err}"),
+            )
+        })
+    }
+
+    fn decode_field_or_root<T: DeserializeOwned>(
+        result: &JsonValue,
+        field: &str,
+        context: &str,
+    ) -> Result<T, SdkError> {
+        let value = result.get(field).cloned().unwrap_or_else(|| result.clone());
+        Self::decode_value(value, context)
+    }
+
+    fn decode_optional_field<T: DeserializeOwned>(
+        result: &JsonValue,
+        field: &str,
+        context: &str,
+    ) -> Result<Option<T>, SdkError> {
+        let Some(value) = result.get(field) else {
+            return Ok(None);
+        };
+        if value.is_null() {
+            return Ok(None);
+        }
+        Self::decode_value(value.clone(), context).map(Some)
+    }
+
+    fn parse_ack(result: &JsonValue) -> Ack {
+        let accepted = result
+            .get("accepted")
+            .and_then(JsonValue::as_bool)
+            .or_else(|| {
+                result.get("ack").and_then(JsonValue::as_str).map(|ack| {
+                    ack.eq_ignore_ascii_case("ok") || ack.eq_ignore_ascii_case("accepted")
+                })
+            })
+            .unwrap_or(true);
+        Ack { accepted, revision: result.get("revision").and_then(JsonValue::as_u64) }
     }
 
     fn parse_delivery_state(receipt_status: Option<&str>) -> DeliveryState {
@@ -722,6 +778,328 @@ impl SdkBackend for RpcBackendClient {
             accepted: result.get("accepted").and_then(JsonValue::as_bool).unwrap_or(false),
             revision: None,
         })
+    }
+
+    fn topic_create(&self, req: TopicCreateRequest) -> Result<TopicRecord, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_topic_create_v2", Some(params))?;
+        Self::decode_field_or_root(&result, "topic", "topic_create response")
+    }
+
+    fn topic_get(&self, topic_id: TopicId) -> Result<Option<TopicRecord>, SdkError> {
+        let result = self.call_rpc(
+            "sdk_topic_get_v2",
+            Some(json!({
+                "topic_id": topic_id.0,
+            })),
+        )?;
+        if result.get("topic").is_some() {
+            return Self::decode_optional_field(&result, "topic", "topic_get response");
+        }
+        if result.is_null() {
+            return Ok(None);
+        }
+        Self::decode_value(result, "topic_get response").map(Some)
+    }
+
+    fn topic_list(&self, req: TopicListRequest) -> Result<TopicListResult, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_topic_list_v2", Some(params))?;
+        Self::decode_field_or_root(&result, "topic_list", "topic_list response")
+    }
+
+    fn topic_subscribe(&self, req: TopicSubscriptionRequest) -> Result<Ack, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_topic_subscribe_v2", Some(params))?;
+        Ok(Self::parse_ack(&result))
+    }
+
+    fn topic_unsubscribe(&self, topic_id: TopicId) -> Result<Ack, SdkError> {
+        let result = self.call_rpc(
+            "sdk_topic_unsubscribe_v2",
+            Some(json!({
+                "topic_id": topic_id.0,
+            })),
+        )?;
+        Ok(Self::parse_ack(&result))
+    }
+
+    fn topic_publish(&self, req: TopicPublishRequest) -> Result<Ack, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_topic_publish_v2", Some(params))?;
+        Ok(Self::parse_ack(&result))
+    }
+
+    fn telemetry_query(&self, query: TelemetryQuery) -> Result<Vec<TelemetryPoint>, SdkError> {
+        let params = serde_json::to_value(query).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_telemetry_query_v2", Some(params))?;
+        if let Some(points) = result.get("points") {
+            return Self::decode_value(points.clone(), "telemetry_query points");
+        }
+        Self::decode_value(result, "telemetry_query points")
+    }
+
+    fn telemetry_subscribe(&self, query: TelemetryQuery) -> Result<Ack, SdkError> {
+        let params = serde_json::to_value(query).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_telemetry_subscribe_v2", Some(params))?;
+        Ok(Self::parse_ack(&result))
+    }
+
+    fn attachment_store(&self, req: AttachmentStoreRequest) -> Result<AttachmentMeta, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_attachment_store_v2", Some(params))?;
+        Self::decode_field_or_root(&result, "attachment", "attachment_store response")
+    }
+
+    fn attachment_get(
+        &self,
+        attachment_id: AttachmentId,
+    ) -> Result<Option<AttachmentMeta>, SdkError> {
+        let result = self.call_rpc(
+            "sdk_attachment_get_v2",
+            Some(json!({
+                "attachment_id": attachment_id.0,
+            })),
+        )?;
+        if result.get("attachment").is_some() {
+            return Self::decode_optional_field(&result, "attachment", "attachment_get response");
+        }
+        if result.is_null() {
+            return Ok(None);
+        }
+        Self::decode_value(result, "attachment_get response").map(Some)
+    }
+
+    fn attachment_list(
+        &self,
+        req: AttachmentListRequest,
+    ) -> Result<AttachmentListResult, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_attachment_list_v2", Some(params))?;
+        Self::decode_field_or_root(&result, "attachment_list", "attachment_list response")
+    }
+
+    fn attachment_delete(&self, attachment_id: AttachmentId) -> Result<Ack, SdkError> {
+        let result = self.call_rpc(
+            "sdk_attachment_delete_v2",
+            Some(json!({
+                "attachment_id": attachment_id.0,
+            })),
+        )?;
+        Ok(Self::parse_ack(&result))
+    }
+
+    fn attachment_download(&self, attachment_id: AttachmentId) -> Result<Ack, SdkError> {
+        let result = self.call_rpc(
+            "sdk_attachment_download_v2",
+            Some(json!({
+                "attachment_id": attachment_id.0,
+            })),
+        )?;
+        Ok(Self::parse_ack(&result))
+    }
+
+    fn attachment_associate_topic(
+        &self,
+        attachment_id: AttachmentId,
+        topic_id: TopicId,
+    ) -> Result<Ack, SdkError> {
+        let result = self.call_rpc(
+            "sdk_attachment_associate_topic_v2",
+            Some(json!({
+                "attachment_id": attachment_id.0,
+                "topic_id": topic_id.0,
+            })),
+        )?;
+        Ok(Self::parse_ack(&result))
+    }
+
+    fn marker_create(&self, req: MarkerCreateRequest) -> Result<MarkerRecord, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_marker_create_v2", Some(params))?;
+        Self::decode_field_or_root(&result, "marker", "marker_create response")
+    }
+
+    fn marker_list(&self, req: MarkerListRequest) -> Result<MarkerListResult, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_marker_list_v2", Some(params))?;
+        Self::decode_field_or_root(&result, "marker_list", "marker_list response")
+    }
+
+    fn marker_update_position(
+        &self,
+        req: MarkerUpdatePositionRequest,
+    ) -> Result<MarkerRecord, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_marker_update_position_v2", Some(params))?;
+        Self::decode_field_or_root(&result, "marker", "marker_update_position response")
+    }
+
+    fn marker_delete(&self, marker_id: MarkerId) -> Result<Ack, SdkError> {
+        let result = self.call_rpc(
+            "sdk_marker_delete_v2",
+            Some(json!({
+                "marker_id": marker_id.0,
+            })),
+        )?;
+        Ok(Self::parse_ack(&result))
+    }
+
+    fn identity_list(&self) -> Result<Vec<IdentityBundle>, SdkError> {
+        let result = self.call_rpc("sdk_identity_list_v2", Some(json!({})))?;
+        if let Some(identities) = result.get("identities") {
+            return Self::decode_value(identities.clone(), "identity_list response");
+        }
+        Self::decode_value(result, "identity_list response")
+    }
+
+    fn identity_activate(&self, identity: IdentityRef) -> Result<Ack, SdkError> {
+        let result = self.call_rpc(
+            "sdk_identity_activate_v2",
+            Some(json!({
+                "identity": identity.0,
+            })),
+        )?;
+        Ok(Self::parse_ack(&result))
+    }
+
+    fn identity_import(&self, req: IdentityImportRequest) -> Result<IdentityBundle, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_identity_import_v2", Some(params))?;
+        Self::decode_field_or_root(&result, "identity", "identity_import response")
+    }
+
+    fn identity_export(&self, identity: IdentityRef) -> Result<IdentityImportRequest, SdkError> {
+        let result = self.call_rpc(
+            "sdk_identity_export_v2",
+            Some(json!({
+                "identity": identity.0,
+            })),
+        )?;
+        Self::decode_field_or_root(&result, "bundle", "identity_export response")
+    }
+
+    fn identity_resolve(
+        &self,
+        req: IdentityResolveRequest,
+    ) -> Result<Option<IdentityRef>, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_identity_resolve_v2", Some(params))?;
+        if result.get("identity").is_some() {
+            return Self::decode_optional_field(&result, "identity", "identity_resolve response");
+        }
+        if result.is_null() {
+            return Ok(None);
+        }
+        Self::decode_value(result, "identity_resolve response").map(Some)
+    }
+
+    fn paper_encode(&self, message_id: MessageId) -> Result<PaperMessageEnvelope, SdkError> {
+        let result = self.call_rpc(
+            "sdk_paper_encode_v2",
+            Some(json!({
+                "message_id": message_id.0,
+            })),
+        )?;
+        Self::decode_field_or_root(&result, "envelope", "paper_encode response")
+    }
+
+    fn paper_decode(&self, envelope: PaperMessageEnvelope) -> Result<Ack, SdkError> {
+        let params = serde_json::to_value(envelope).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_paper_decode_v2", Some(params))?;
+        Ok(Self::parse_ack(&result))
+    }
+
+    fn command_invoke(&self, req: RemoteCommandRequest) -> Result<RemoteCommandResponse, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_command_invoke_v2", Some(params))?;
+        Self::decode_field_or_root(&result, "response", "command_invoke response")
+    }
+
+    fn command_reply(
+        &self,
+        correlation_id: String,
+        reply: RemoteCommandResponse,
+    ) -> Result<Ack, SdkError> {
+        let mut params = serde_json::to_value(reply).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        if let Some(object) = params.as_object_mut() {
+            object.insert("correlation_id".to_owned(), JsonValue::String(correlation_id));
+        } else {
+            return Err(SdkError::new(
+                code::INTERNAL,
+                ErrorCategory::Internal,
+                "command_reply payload serialization did not produce an object",
+            ));
+        }
+        let result = self.call_rpc("sdk_command_reply_v2", Some(params))?;
+        Ok(Self::parse_ack(&result))
+    }
+
+    fn voice_session_open(&self, req: VoiceSessionOpenRequest) -> Result<VoiceSessionId, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_voice_session_open_v2", Some(params))?;
+        if let Some(session_id) = result.get("session_id").and_then(JsonValue::as_str) {
+            return Ok(VoiceSessionId(session_id.to_owned()));
+        }
+        Self::decode_value(result, "voice_session_open response")
+    }
+
+    fn voice_session_update(
+        &self,
+        req: VoiceSessionUpdateRequest,
+    ) -> Result<VoiceSessionState, SdkError> {
+        let params = serde_json::to_value(req).map_err(|err| {
+            SdkError::new(code::INTERNAL, ErrorCategory::Internal, err.to_string())
+        })?;
+        let result = self.call_rpc("sdk_voice_session_update_v2", Some(params))?;
+        if let Some(state) = result.get("state") {
+            return Self::decode_value(state.clone(), "voice_session_update response");
+        }
+        Self::decode_value(result, "voice_session_update response")
+    }
+
+    fn voice_session_close(&self, session_id: VoiceSessionId) -> Result<Ack, SdkError> {
+        let result = self.call_rpc(
+            "sdk_voice_session_close_v2",
+            Some(json!({
+                "session_id": session_id.0,
+            })),
+        )?;
+        Ok(Self::parse_ack(&result))
     }
 
     fn tick(&self, _budget: TickBudget) -> Result<TickResult, SdkError> {
