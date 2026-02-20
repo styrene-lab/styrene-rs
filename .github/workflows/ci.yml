@@ -140,6 +140,14 @@ jobs:
       - name: SDK API break gate
         run: cargo xtask sdk-api-break
 
+  sdk-migration-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: SDK migration gate
+        run: cargo xtask sdk-migration-check
+
   forbidden-deps:
     runs-on: ubuntu-latest
     steps:
