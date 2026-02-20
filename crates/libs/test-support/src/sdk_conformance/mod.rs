@@ -1,6 +1,6 @@
 use lxmf_sdk::{
-    CancelResult, Client, ConfigPatch, EventCursor, LxmfSdk, MessageId, RpcBackendClient,
-    SendRequest, StartRequest,
+    CancelResult, Client, ConfigPatch, EventCursor, LxmfSdk, LxmfSdkAsync, MessageId,
+    RpcBackendClient, SendRequest, StartRequest, SubscriptionStart,
 };
 use rns_rpc::e2e_harness::{
     build_http_post, build_rpc_frame, parse_http_response_body, parse_rpc_frame,
@@ -19,6 +19,60 @@ mod auth_mode_tests;
 mod release_bc_tests;
 
 const EVENT_LOG_OVERFLOW_TRIGGER: usize = 1_100;
+const RPC_IO_TIMEOUT_SECS: u64 = 10;
+
+fn find_header_end(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(4).position(|window| window == b"\r\n\r\n").map(|idx| idx + 4)
+}
+
+fn parse_content_length(header_bytes: &[u8]) -> Option<usize> {
+    let headers = std::str::from_utf8(header_bytes).ok()?;
+    headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        if name.trim().eq_ignore_ascii_case("content-length") {
+            value.trim().parse::<usize>().ok()
+        } else {
+            None
+        }
+    })
+}
+
+fn read_http_request(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+    let mut request = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    let mut target_len: Option<usize> = None;
+
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                request.extend_from_slice(&chunk[..n]);
+                if target_len.is_none() {
+                    if let Some(header_end) = find_header_end(&request) {
+                        let content_len = parse_content_length(&request[..header_end]).unwrap_or(0);
+                        target_len = Some(header_end + content_len);
+                    }
+                }
+                if let Some(target_len) = target_len {
+                    if request.len() >= target_len {
+                        break;
+                    }
+                }
+            }
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(request)
+}
 
 struct RpcHarness {
     endpoint: String,
@@ -47,12 +101,14 @@ impl RpcHarness {
             while !stop_for_thread.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, addr)) => {
-                        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                        let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-                        let mut request = Vec::new();
-                        if stream.read_to_end(&mut request).is_err() {
-                            continue;
-                        }
+                        let _ =
+                            stream.set_read_timeout(Some(Duration::from_secs(RPC_IO_TIMEOUT_SECS)));
+                        let _ = stream
+                            .set_write_timeout(Some(Duration::from_secs(RPC_IO_TIMEOUT_SECS)));
+                        let request = match read_http_request(&mut stream) {
+                            Ok(request) => request,
+                            Err(_) => continue,
+                        };
                         if request.is_empty() {
                             continue;
                         }
@@ -93,8 +149,12 @@ impl RpcHarness {
         let request = build_http_post("/rpc", &self.endpoint, &frame);
 
         let mut stream = TcpStream::connect(&self.endpoint).expect("connect harness endpoint");
-        stream.set_read_timeout(Some(Duration::from_secs(2))).expect("set rpc read timeout");
-        stream.set_write_timeout(Some(Duration::from_secs(2))).expect("set rpc write timeout");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(RPC_IO_TIMEOUT_SECS)))
+            .expect("set rpc read timeout");
+        stream
+            .set_write_timeout(Some(Duration::from_secs(RPC_IO_TIMEOUT_SECS)))
+            .expect("set rpc write timeout");
         stream.write_all(&request).expect("write rpc request");
         stream.shutdown(std::net::Shutdown::Write).expect("shutdown write side");
 
@@ -375,6 +435,32 @@ fn sdk_conformance_stream_gap_is_emitted_after_log_overflow() {
         "batch should contain StreamGap"
     );
     assert!(batch.dropped_count > 0, "dropped_count should report overflow");
+}
+
+#[test]
+fn sdk_conformance_subscribe_events_tail_starts_from_current_end() {
+    let harness = RpcHarness::new();
+    let client = harness.client();
+    client.start(base_start_request()).expect("start");
+
+    harness.emit_event("seed_event", json!({ "idx": 1 }));
+    harness.emit_event("seed_event", json!({ "idx": 2 }));
+
+    let subscription =
+        client.subscribe_events(SubscriptionStart::Tail).expect("subscribe with tail start");
+    let first =
+        client.poll_events(subscription.cursor.clone(), 16).expect("poll using tail cursor");
+    assert!(
+        first.events.iter().all(|event| event.event_type != "seed_event"),
+        "tail subscription should skip backlog events"
+    );
+
+    harness.emit_event("live_event", json!({ "idx": 3 }));
+    let second = client.poll_events(Some(first.next_cursor.clone()), 16).expect("poll live events");
+    assert!(
+        second.events.iter().any(|event| event.event_type == "live_event"),
+        "tail cursor should include events emitted after subscription"
+    );
 }
 
 #[test]

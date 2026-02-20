@@ -5,8 +5,21 @@ use rns_rpc::RpcError;
 use sha2::Sha256;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::sync::OnceLock;
 
 impl RpcBackendClient {
+    pub(super) fn legacy_send_fallback_enabled(&self) -> bool {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        *ENABLED.get_or_init(|| {
+            std::env::var("LXMF_SDK_ALLOW_LEGACY_SEND_FALLBACK")
+                .ok()
+                .map(|raw| {
+                    matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+                })
+                .unwrap_or(false)
+        })
+    }
+
     pub(super) fn call_rpc(
         &self,
         method: &str,
