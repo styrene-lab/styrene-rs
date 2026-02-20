@@ -103,6 +103,9 @@ impl RpcBackendClient {
         if value.eq_ignore_ascii_case("starting") {
             return RuntimeState::Starting;
         }
+        if value.eq_ignore_ascii_case("running") {
+            return RuntimeState::Running;
+        }
         if value.eq_ignore_ascii_case("draining") {
             return RuntimeState::Draining;
         }
@@ -208,6 +211,14 @@ mod tests {
         assert_eq!(
             RpcBackendClient::parse_runtime_state("migrating"),
             crate::types::RuntimeState::Unknown
+        );
+    }
+
+    #[test]
+    fn parse_runtime_state_running_maps_to_running_variant() {
+        assert_eq!(
+            RpcBackendClient::parse_runtime_state("running"),
+            crate::types::RuntimeState::Running
         );
     }
 
