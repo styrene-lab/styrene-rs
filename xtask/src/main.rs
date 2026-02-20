@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::fs;
 use std::process::Command;
 
@@ -12,7 +12,10 @@ struct Xtask {
 
 #[derive(Subcommand)]
 enum XtaskCommand {
-    Ci,
+    Ci {
+        #[arg(long)]
+        stage: Option<CiStage>,
+    },
     ReleaseCheck,
     ApiDiff,
     Licenses,
@@ -29,10 +32,33 @@ enum XtaskCommand {
     SdkMatrixCheck,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum CiStage {
+    LintFormat,
+    BuildMatrix,
+    TestNextestUnit,
+    TestIntegration,
+    Doc,
+    Security,
+    UnusedDeps,
+    ApiSurfaceCheck,
+    SdkConformance,
+    SdkSchemaCheck,
+    SdkProfileBuild,
+    SdkApiBreak,
+    SdkMigrationCheck,
+    SdkSecurityCheck,
+    SdkPropertyCheck,
+    SdkMatrixCheck,
+    MigrationChecks,
+    ArchitectureChecks,
+    ForbiddenDeps,
+}
+
 fn main() -> Result<()> {
     let xtask = Xtask::parse();
     match xtask.command {
-        XtaskCommand::Ci => run_ci(),
+        XtaskCommand::Ci { stage } => run_ci(stage),
         XtaskCommand::ReleaseCheck => run_release_check(),
         XtaskCommand::ApiDiff => run_api_diff(),
         XtaskCommand::Licenses => run_licenses(),
@@ -50,7 +76,11 @@ fn main() -> Result<()> {
     }
 }
 
-fn run_ci() -> Result<()> {
+fn run_ci(stage: Option<CiStage>) -> Result<()> {
+    if let Some(stage) = stage {
+        return run_ci_stage(stage);
+    }
+
     run("cargo", &["fmt", "--all", "--", "--check"])?;
     run(
         "cargo",
@@ -78,8 +108,37 @@ fn run_ci() -> Result<()> {
     Ok(())
 }
 
+fn run_ci_stage(stage: CiStage) -> Result<()> {
+    match stage {
+        CiStage::LintFormat => run("cargo", &["fmt", "--all", "--", "--check"]),
+        CiStage::BuildMatrix => run("cargo", &["build", "--workspace", "--all-targets"]),
+        CiStage::TestNextestUnit => {
+            run("cargo", &["nextest", "run", "--workspace", "--lib", "--bins"])
+        }
+        CiStage::TestIntegration => run("cargo", &["test", "--workspace", "--tests"]),
+        CiStage::Doc => run("cargo", &["doc", "--workspace", "--no-deps"]),
+        CiStage::Security => {
+            run("cargo", &["deny", "check"])?;
+            run("cargo", &["audit"])
+        }
+        CiStage::UnusedDeps => run("cargo", &["+nightly", "udeps", "--workspace", "--all-targets"]),
+        CiStage::ApiSurfaceCheck => run_api_diff(),
+        CiStage::SdkConformance => run_sdk_conformance(),
+        CiStage::SdkSchemaCheck => run_sdk_schema_check(),
+        CiStage::SdkProfileBuild => run_sdk_profile_build(),
+        CiStage::SdkApiBreak => run_sdk_api_break(),
+        CiStage::SdkMigrationCheck => run_sdk_migration_check(),
+        CiStage::SdkSecurityCheck => run_sdk_security_check(),
+        CiStage::SdkPropertyCheck => run_sdk_property_check(),
+        CiStage::SdkMatrixCheck => run_sdk_matrix_check(),
+        CiStage::MigrationChecks => run_migration_checks(),
+        CiStage::ArchitectureChecks => run_architecture_checks(),
+        CiStage::ForbiddenDeps => run_forbidden_deps(),
+    }
+}
+
 fn run_release_check() -> Result<()> {
-    run_ci()?;
+    run_ci(None)?;
     run_sdk_api_break()?;
     run("cargo", &["deny", "check"])?;
     run("cargo", &["audit"])?;
