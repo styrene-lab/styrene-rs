@@ -22,6 +22,8 @@ const SUPPLY_CHAIN_PROVENANCE_PATH: &str =
     "target/supply-chain/provenance/artifact-provenance.json";
 const SUPPLY_CHAIN_SIGNATURE_PATH: &str =
     "target/supply-chain/provenance/artifact-provenance.sha256";
+const REPRODUCIBLE_BUILD_REPORT_PATH: &str =
+    "target/supply-chain/reproducible/reproducible-build-report.txt";
 
 const RELEASE_BINARIES: &[&str] = &[
     "lxmf-cli",
@@ -176,6 +178,7 @@ enum XtaskCommand {
     SdkMemoryBudgetCheck,
     SdkQueuePressureCheck,
     SupplyChainCheck,
+    ReproducibleBuildCheck,
     SdkMatrixCheck,
 }
 
@@ -212,6 +215,7 @@ enum CiStage {
     SdkMemoryBudgetCheck,
     SdkQueuePressureCheck,
     SupplyChainCheck,
+    ReproducibleBuildCheck,
     SdkMatrixCheck,
     MigrationChecks,
     ArchitectureChecks,
@@ -252,6 +256,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkMemoryBudgetCheck => run_sdk_memory_budget_check(),
         XtaskCommand::SdkQueuePressureCheck => run_sdk_queue_pressure_check(),
         XtaskCommand::SupplyChainCheck => run_supply_chain_check(),
+        XtaskCommand::ReproducibleBuildCheck => run_reproducible_build_check(),
         XtaskCommand::SdkMatrixCheck => run_sdk_matrix_check(),
     }
 }
@@ -296,6 +301,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_sdk_perf_budget_check()?;
     run_sdk_memory_budget_check()?;
     run_sdk_queue_pressure_check()?;
+    run_reproducible_build_check()?;
     run_sdk_matrix_check()?;
     run_migration_checks()?;
     run_architecture_checks()?;
@@ -341,6 +347,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkMemoryBudgetCheck => run_sdk_memory_budget_check(),
         CiStage::SdkQueuePressureCheck => run_sdk_queue_pressure_check(),
         CiStage::SupplyChainCheck => run_supply_chain_check(),
+        CiStage::ReproducibleBuildCheck => run_reproducible_build_check(),
         CiStage::SdkMatrixCheck => run_sdk_matrix_check(),
         CiStage::MigrationChecks => run_migration_checks(),
         CiStage::ArchitectureChecks => run_architecture_checks(),
@@ -1239,6 +1246,14 @@ fn run_supply_chain_check() -> Result<()> {
         })?;
     let signature_payload = format!("{digest}  {provenance_name}\n");
     write_bytes(SUPPLY_CHAIN_SIGNATURE_PATH, signature_payload.as_bytes())?;
+    Ok(())
+}
+
+fn run_reproducible_build_check() -> Result<()> {
+    run("bash", &["tools/scripts/reproducible-build-check.sh"])?;
+    if !Path::new(REPRODUCIBLE_BUILD_REPORT_PATH).exists() {
+        bail!("reproducible build report is missing at {REPRODUCIBLE_BUILD_REPORT_PATH}");
+    }
     Ok(())
 }
 
