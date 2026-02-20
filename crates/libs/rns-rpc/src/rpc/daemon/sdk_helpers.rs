@@ -1,8 +1,9 @@
 impl RpcDaemon {
     fn sdk_config_error(code: &str, message: &str) -> RpcError {
-        RpcError { code: code.to_string(), message: message.to_string() }
+        RpcError::new(code, message)
     }
 
+    #[allow(clippy::result_large_err)]
     fn validate_sdk_runtime_config(&self, config: &JsonValue) -> Result<(), RpcError> {
         let profile = config
             .get("profile")

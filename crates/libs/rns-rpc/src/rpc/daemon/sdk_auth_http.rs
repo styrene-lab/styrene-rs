@@ -8,6 +8,7 @@ impl RpcDaemon {
         })
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn authorize_http_request(
         &self,
         headers: &[(String, String)],
@@ -16,6 +17,7 @@ impl RpcDaemon {
         self.authorize_http_request_with_transport(headers, peer_ip, None)
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn authorize_http_request_with_transport(
         &self,
         headers: &[(String, String)],
@@ -63,10 +65,7 @@ impl RpcDaemon {
         let bind_mode =
             config.get("bind_mode").and_then(JsonValue::as_str).unwrap_or("local_only").to_string();
         if bind_mode == "local_only" && !Self::is_loopback_source(source_ip.as_str()) {
-            return Err(RpcError {
-                code: "SDK_SECURITY_REMOTE_BIND_DISALLOWED".to_string(),
-                message: "remote source is not allowed in local_only bind mode".to_string(),
-            });
+            return Err(RpcError::new("SDK_SECURITY_REMOTE_BIND_DISALLOWED".to_string(), "remote source is not allowed in local_only bind mode".to_string()));
         }
 
         let auth_mode = config
@@ -79,96 +78,51 @@ impl RpcDaemon {
             "local_trusted" => {}
             "token" => {
                 let auth_header =
-                    Self::header_value(headers, "authorization").ok_or_else(|| RpcError {
-                        code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
-                        message: "authorization header is required".to_string(),
-                    })?;
+                    Self::header_value(headers, "authorization").ok_or_else(|| RpcError::new("SDK_SECURITY_AUTH_REQUIRED".to_string(), "authorization header is required".to_string()))?;
                 let token = auth_header
                     .strip_prefix("Bearer ")
                     .or_else(|| auth_header.strip_prefix("bearer "))
-                    .ok_or_else(|| RpcError {
-                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                        message: "authorization header must use Bearer token format".to_string(),
-                    })?;
-                let claims = Self::parse_token_claims(token).ok_or_else(|| RpcError {
-                    code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                    message: "token claims are malformed".to_string(),
-                })?;
+                    .ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "authorization header must use Bearer token format".to_string()))?;
+                let claims = Self::parse_token_claims(token).ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token claims are malformed".to_string()))?;
                 let (
                     expected_issuer,
                     expected_audience,
                     jti_ttl_ms,
                     clock_skew_secs,
                     shared_secret,
-                ) = self.sdk_token_auth_config().ok_or_else(|| RpcError {
-                    code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
-                    message: "token auth mode requires token auth configuration".to_string(),
-                })?;
-                let issuer = claims.get("iss").map(String::as_str).ok_or_else(|| RpcError {
-                    code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                    message: "token issuer claim is missing".to_string(),
-                })?;
-                let audience = claims.get("aud").map(String::as_str).ok_or_else(|| RpcError {
-                    code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                    message: "token audience claim is missing".to_string(),
-                })?;
-                let jti = claims.get("jti").cloned().ok_or_else(|| RpcError {
-                    code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                    message: "token jti claim is missing".to_string(),
-                })?;
+                ) = self.sdk_token_auth_config().ok_or_else(|| RpcError::new("SDK_SECURITY_AUTH_REQUIRED".to_string(), "token auth mode requires token auth configuration".to_string()))?;
+                let issuer = claims.get("iss").map(String::as_str).ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token issuer claim is missing".to_string()))?;
+                let audience = claims.get("aud").map(String::as_str).ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token audience claim is missing".to_string()))?;
+                let jti = claims.get("jti").cloned().ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token jti claim is missing".to_string()))?;
                 let subject =
                     claims.get("sub").cloned().unwrap_or_else(|| "sdk-client".to_string());
                 let iat = claims
                     .get("iat")
                     .and_then(|value| value.parse::<u64>().ok())
-                    .ok_or_else(|| RpcError {
-                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                        message: "token iat claim is missing or invalid".to_string(),
-                    })?;
+                    .ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token iat claim is missing or invalid".to_string()))?;
                 let exp = claims
                     .get("exp")
                     .and_then(|value| value.parse::<u64>().ok())
-                    .ok_or_else(|| RpcError {
-                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                        message: "token exp claim is missing or invalid".to_string(),
-                    })?;
-                let signature = claims.get("sig").map(String::as_str).ok_or_else(|| RpcError {
-                    code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                    message: "token signature is missing".to_string(),
-                })?;
+                    .ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token exp claim is missing or invalid".to_string()))?;
+                let signature = claims.get("sig").map(String::as_str).ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token signature is missing".to_string()))?;
                 let signed_payload = format!(
                     "iss={issuer};aud={audience};jti={jti};sub={subject};iat={iat};exp={exp}"
                 );
                 let expected_signature =
                     Self::token_signature(shared_secret.as_str(), signed_payload.as_str())
-                        .ok_or_else(|| RpcError {
-                            code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                            message: "token signature verification failed".to_string(),
-                        })?;
+                        .ok_or_else(|| RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token signature verification failed".to_string()))?;
                 if signature != expected_signature {
-                    return Err(RpcError {
-                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                        message: "token signature does not match runtime policy".to_string(),
-                    });
+                    return Err(RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token signature does not match runtime policy".to_string()));
                 }
                 if issuer != expected_issuer || audience != expected_audience {
-                    return Err(RpcError {
-                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                        message: "token issuer/audience does not match runtime policy".to_string(),
-                    });
+                    return Err(RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token issuer/audience does not match runtime policy".to_string()));
                 }
                 let now_seconds = now_seconds_u64();
                 if iat > now_seconds.saturating_add(clock_skew_secs) {
-                    return Err(RpcError {
-                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                        message: "token iat is outside accepted clock skew".to_string(),
-                    });
+                    return Err(RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token iat is outside accepted clock skew".to_string()));
                 }
                 if exp.saturating_add(clock_skew_secs) < now_seconds {
-                    return Err(RpcError {
-                        code: "SDK_SECURITY_TOKEN_INVALID".to_string(),
-                        message: "token has expired".to_string(),
-                    });
+                    return Err(RpcError::new("SDK_SECURITY_TOKEN_INVALID".to_string(), "token has expired".to_string()));
                 }
                 principal = subject;
                 let now = now_millis_u64();
@@ -176,29 +130,17 @@ impl RpcDaemon {
                     self.sdk_seen_jti.lock().expect("sdk_seen_jti mutex poisoned");
                 replay_cache.retain(|_, expires_at| *expires_at > now);
                 if replay_cache.contains_key(jti.as_str()) {
-                    return Err(RpcError {
-                        code: "SDK_SECURITY_TOKEN_REPLAYED".to_string(),
-                        message: "token jti has already been used".to_string(),
-                    });
+                    return Err(RpcError::new("SDK_SECURITY_TOKEN_REPLAYED".to_string(), "token jti has already been used".to_string()));
                 }
                 replay_cache.insert(jti, now.saturating_add(jti_ttl_ms.max(1)));
             }
             "mtls" => {
-                let transport_auth = transport_auth.ok_or_else(|| RpcError {
-                    code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
-                    message: "mtls auth mode requires tls transport context".to_string(),
-                })?;
+                let transport_auth = transport_auth.ok_or_else(|| RpcError::new("SDK_SECURITY_AUTH_REQUIRED".to_string(), "mtls auth mode requires tls transport context".to_string()))?;
                 let (require_client_cert, allowed_san) =
-                    self.sdk_mtls_auth_config().ok_or_else(|| RpcError {
-                        code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
-                        message: "mtls auth mode requires mtls auth configuration".to_string(),
-                    })?;
+                    self.sdk_mtls_auth_config().ok_or_else(|| RpcError::new("SDK_SECURITY_AUTH_REQUIRED".to_string(), "mtls auth mode requires mtls auth configuration".to_string()))?;
                 let cert_present = transport_auth.client_cert_present;
                 if require_client_cert && !cert_present {
-                    return Err(RpcError {
-                        code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
-                        message: "client certificate is required for mtls auth mode".to_string(),
-                    });
+                    return Err(RpcError::new("SDK_SECURITY_AUTH_REQUIRED".to_string(), "client certificate is required for mtls auth mode".to_string()));
                 }
                 if let Some(expected_san) = allowed_san {
                     let san_matches = transport_auth
@@ -207,10 +149,7 @@ impl RpcDaemon {
                         .map(|san| san.trim())
                         .any(|san| !san.is_empty() && san == expected_san);
                     if !san_matches {
-                        return Err(RpcError {
-                            code: "SDK_SECURITY_AUTHZ_DENIED".to_string(),
-                            message: "client SAN is not authorized by mtls policy".to_string(),
-                        });
+                        return Err(RpcError::new("SDK_SECURITY_AUTHZ_DENIED".to_string(), "client SAN is not authorized by mtls policy".to_string()));
                     }
                 }
                 principal = transport_auth
@@ -222,16 +161,14 @@ impl RpcDaemon {
                     .to_string();
             }
             _ => {
-                return Err(RpcError {
-                    code: "SDK_SECURITY_AUTH_REQUIRED".to_string(),
-                    message: "unknown auth mode".to_string(),
-                })
+                return Err(RpcError::new("SDK_SECURITY_AUTH_REQUIRED".to_string(), "unknown auth mode".to_string()))
             }
         }
 
         self.enforce_rate_limits(source_ip.as_str(), principal.as_str())
     }
 
+    #[allow(clippy::result_large_err)]
     fn enforce_rate_limits(&self, source_ip: &str, principal: &str) -> Result<(), RpcError> {
         let (per_ip_limit, per_principal_limit) = self.sdk_rate_limits();
         if per_ip_limit == 0 && per_principal_limit == 0 {
@@ -271,10 +208,7 @@ impl RpcDaemon {
                     }),
                 };
                 self.publish_event(event);
-                return Err(RpcError {
-                    code: "SDK_SECURITY_RATE_LIMITED".to_string(),
-                    message: "per-ip request rate limit exceeded".to_string(),
-                });
+                return Err(RpcError::new("SDK_SECURITY_RATE_LIMITED".to_string(), "per-ip request rate limit exceeded".to_string()));
             }
         }
 
@@ -297,10 +231,7 @@ impl RpcDaemon {
                     }),
                 };
                 self.publish_event(event);
-                return Err(RpcError {
-                    code: "SDK_SECURITY_RATE_LIMITED".to_string(),
-                    message: "per-principal request rate limit exceeded".to_string(),
-                });
+                return Err(RpcError::new("SDK_SECURITY_RATE_LIMITED".to_string(), "per-principal request rate limit exceeded".to_string()));
             }
         }
 

@@ -249,11 +249,7 @@ impl RpcDaemon {
     }
 
     fn sdk_error_response(&self, id: u64, code: &str, message: &str) -> RpcResponse {
-        RpcResponse {
-            id,
-            result: None,
-            error: Some(RpcError { code: code.to_string(), message: message.to_string() }),
-        }
+        RpcResponse { id, result: None, error: Some(RpcError::new(code, message)) }
     }
 
     fn sdk_capability_disabled_response(
