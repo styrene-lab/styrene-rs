@@ -30,6 +30,33 @@ pub fn handle_http_request_with_peer(
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid request line"))?;
     let (path_only, query) = split_path_and_query(path.as_str());
     match (method.as_str(), path_only) {
+        ("GET", "/healthz") => {
+            let body = serde_json::to_vec(&json!({
+                "ok": true,
+                "service": "reticulumd-rpc",
+                "status": "healthy",
+            }))
+            .map_err(io::Error::other)?;
+            Ok(build_json_response(StatusCode::Ok, &body))
+        }
+        ("GET", "/readyz") => {
+            let body = serde_json::to_vec(&json!({
+                "ok": true,
+                "service": "reticulumd-rpc",
+                "status": "ready",
+            }))
+            .map_err(io::Error::other)?;
+            Ok(build_json_response(StatusCode::Ok, &body))
+        }
+        ("GET", "/livez") => {
+            let body = serde_json::to_vec(&json!({
+                "ok": true,
+                "service": "reticulumd-rpc",
+                "status": "alive",
+            }))
+            .map_err(io::Error::other)?;
+            Ok(build_json_response(StatusCode::Ok, &body))
+        }
         ("GET", "/events") if query.is_empty() => {
             if let Err(error) = daemon.authorize_http_request(&parsed_headers, peer_ip.as_deref()) {
                 return build_rpc_error_response(0, error);
@@ -181,6 +208,18 @@ enum StatusCode {
 }
 
 fn build_response(status: StatusCode, body: &[u8]) -> Vec<u8> {
+    build_response_with_content_type(status, body, "application/msgpack")
+}
+
+fn build_json_response(status: StatusCode, body: &[u8]) -> Vec<u8> {
+    build_response_with_content_type(status, body, "application/json")
+}
+
+fn build_response_with_content_type(
+    status: StatusCode,
+    body: &[u8],
+    content_type: &str,
+) -> Vec<u8> {
     let status_line = match status {
         StatusCode::Ok => "HTTP/1.1 200 OK",
         StatusCode::NoContent => "HTTP/1.1 204 No Content",
@@ -188,7 +227,7 @@ fn build_response(status: StatusCode, body: &[u8]) -> Vec<u8> {
     };
     let mut response = Vec::new();
     response.extend_from_slice(status_line.as_bytes());
-    response.extend_from_slice(b"\r\nContent-Type: application/msgpack\r\n");
+    response.extend_from_slice(format!("\r\nContent-Type: {content_type}\r\n").as_bytes());
     response.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
     response.extend_from_slice(b"\r\n");
     response.extend_from_slice(body);
@@ -204,4 +243,38 @@ fn build_rpc_error_response(id: u64, error: crate::rpc::RpcError) -> io::Result<
 pub fn build_error_response(message: &str) -> Vec<u8> {
     let body = message.as_bytes();
     build_response(StatusCode::BadRequest, body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rpc::RpcDaemon;
+
+    fn parse_status_line(response: &[u8]) -> &str {
+        std::str::from_utf8(response).expect("utf8 response").lines().next().expect("status line")
+    }
+
+    fn parse_json_body(response: &[u8]) -> serde_json::Value {
+        let header_end = find_header_end(response).expect("header end");
+        let body = &response[header_end + HEADER_END.len()..];
+        serde_json::from_slice(body).expect("json body")
+    }
+
+    #[test]
+    fn health_endpoints_return_http_200_with_json_status() {
+        let daemon = RpcDaemon::test_instance();
+        for path in ["/healthz", "/readyz", "/livez"] {
+            let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            let response = handle_http_request_with_peer(
+                &daemon,
+                request.as_bytes(),
+                Some("127.0.0.1:1".parse().expect("socket")),
+            )
+            .expect("health endpoint response");
+            assert_eq!(parse_status_line(&response), "HTTP/1.1 200 OK");
+            let body = parse_json_body(&response);
+            assert_eq!(body["ok"], json!(true));
+            assert_eq!(body["service"], json!("reticulumd-rpc"));
+        }
+    }
 }
