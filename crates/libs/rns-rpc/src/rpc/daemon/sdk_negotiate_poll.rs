@@ -22,7 +22,10 @@ impl RpcDaemon {
         };
 
         let profile = parsed.config.profile.trim().to_ascii_lowercase();
-        if !matches!(profile.as_str(), "desktop-full" | "desktop-local-runtime") {
+        if !matches!(
+            profile.as_str(),
+            "desktop-full" | "desktop-local-runtime" | "embedded-alloc"
+        ) {
             return Ok(self.sdk_error_response(
                 request.id,
                 "SDK_CAPABILITY_CONTRACT_INCOMPATIBLE",
@@ -66,6 +69,13 @@ impl RpcDaemon {
                 request.id,
                 "SDK_SECURITY_AUTH_REQUIRED",
                 "local_only bind mode requires local_trusted auth mode",
+            ));
+        }
+        if profile == "embedded-alloc" && auth_mode == "mtls" {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "embedded-alloc profile does not support mtls auth mode",
             ));
         }
 

@@ -4,6 +4,22 @@ impl RpcDaemon {
     }
 
     fn validate_sdk_runtime_config(&self, config: &JsonValue) -> Result<(), RpcError> {
+        let profile = config
+            .get("profile")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("desktop-full")
+            .trim()
+            .to_ascii_lowercase();
+        if !matches!(
+            profile.as_str(),
+            "desktop-full" | "desktop-local-runtime" | "embedded-alloc"
+        ) {
+            return Err(Self::sdk_config_error(
+                "SDK_CAPABILITY_CONTRACT_INCOMPATIBLE",
+                "profile is not supported by the rpc backend",
+            ));
+        }
+
         let bind_mode = config
             .get("bind_mode")
             .and_then(JsonValue::as_str)
@@ -39,6 +55,12 @@ impl RpcDaemon {
             return Err(Self::sdk_config_error(
                 "SDK_SECURITY_AUTH_REQUIRED",
                 "local_only bind mode requires local_trusted auth mode",
+            ));
+        }
+        if profile == "embedded-alloc" && auth_mode == "mtls" {
+            return Err(Self::sdk_config_error(
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "embedded-alloc profile does not support mtls auth mode",
             ));
         }
 

@@ -198,6 +198,14 @@ impl SdkConfig {
                 }
             }
             AuthMode::Mtls => {
+                if self.profile == Profile::EmbeddedAlloc {
+                    return Err(SdkError::new(
+                        code::VALIDATION_INVALID_ARGUMENT,
+                        ErrorCategory::Validation,
+                        "embedded-alloc profile does not support mtls auth mode",
+                    )
+                    .with_user_actionable(true));
+                }
                 let mtls_auth =
                     self.rpc_backend.as_ref().and_then(|backend| backend.mtls_auth.as_ref());
                 let Some(mtls_auth) = mtls_auth else {
