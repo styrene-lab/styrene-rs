@@ -43,6 +43,11 @@ Compatibility window:
 
 - Legacy switch support is allowed in `N` only.
 
+Support-policy alignment:
+
+- Release support windows and LTS expectations are governed by `docs/contracts/support-policy.md`.
+- Migration plans must declare whether a release is `Current`, `Maintenance`, or `LTS` at cutover time.
+
 1. Runtime switch:
 - `sdk_v25_enabled`
 - env override `LXMF_SDK_V25_ENABLED`
@@ -108,3 +113,4 @@ Must pass:
 - API-break gate
 - migration compatibility gate
 - security dependency gates
+- support policy gate (`cargo run -p xtask -- support-policy-check`)

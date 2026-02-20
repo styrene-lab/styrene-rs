@@ -389,6 +389,14 @@ jobs:
       - name: Governance ownership and PR policy simulation
         run: cargo xtask ci --stage governance-check
 
+  support-policy-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Support and LTS policy gate
+        run: cargo xtask ci --stage support-policy-check
+
   forbidden-deps:
     runs-on: ubuntu-latest
     steps:

@@ -10,6 +10,7 @@ use std::process::Command;
 const INTEROP_BASELINE_PATH: &str = "docs/contracts/baselines/interop-artifacts-manifest.json";
 const INTEROP_DRIFT_BASELINE_PATH: &str = "docs/contracts/baselines/interop-drift-baseline.json";
 const INTEROP_MATRIX_PATH: &str = "docs/contracts/compatibility-matrix.md";
+const SUPPORT_POLICY_PATH: &str = "docs/contracts/support-policy.md";
 const INTEROP_CORPUS_PATH: &str = "docs/fixtures/interop/v1/golden-corpus.json";
 const RPC_CONTRACT_PATH: &str = "docs/contracts/rpc-contract.md";
 const PAYLOAD_CONTRACT_PATH: &str = "docs/contracts/payload-contract.md";
@@ -265,6 +266,7 @@ enum XtaskCommand {
     SdkApiBreak,
     SdkMigrationCheck,
     GovernanceCheck,
+    SupportPolicyCheck,
     SecurityReviewCheck,
     SdkSecurityCheck,
     SdkFuzzCheck,
@@ -313,6 +315,7 @@ enum CiStage {
     SdkApiBreak,
     SdkMigrationCheck,
     GovernanceCheck,
+    SupportPolicyCheck,
     SecurityReviewCheck,
     SdkSecurityCheck,
     SdkFuzzCheck,
@@ -365,6 +368,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkApiBreak => run_sdk_api_break(),
         XtaskCommand::SdkMigrationCheck => run_sdk_migration_check(),
         XtaskCommand::GovernanceCheck => run_governance_check(),
+        XtaskCommand::SupportPolicyCheck => run_support_policy_check(),
         XtaskCommand::SecurityReviewCheck => run_security_review_check(),
         XtaskCommand::SdkSecurityCheck => run_sdk_security_check(),
         XtaskCommand::SdkFuzzCheck => run_sdk_fuzz_check(),
@@ -423,6 +427,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_sdk_profile_build()?;
     run_sdk_examples_check()?;
     run_governance_check()?;
+    run_support_policy_check()?;
     run_security_review_check()?;
     run_sdk_security_check()?;
     run_sdk_fuzz_check()?;
@@ -478,6 +483,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkApiBreak => run_sdk_api_break(),
         CiStage::SdkMigrationCheck => run_sdk_migration_check(),
         CiStage::GovernanceCheck => run_governance_check(),
+        CiStage::SupportPolicyCheck => run_support_policy_check(),
         CiStage::SecurityReviewCheck => run_security_review_check(),
         CiStage::SdkSecurityCheck => run_sdk_security_check(),
         CiStage::SdkFuzzCheck => run_sdk_fuzz_check(),
@@ -505,6 +511,7 @@ fn run_release_check() -> Result<()> {
     run_interop_corpus_check()?;
     run_interop_drift_check(false)?;
     run_compat_kit_check()?;
+    run_support_policy_check()?;
     run_sdk_api_break()?;
     run_supply_chain_check()?;
     run("cargo", &["deny", "check"])?;
@@ -1094,6 +1101,54 @@ fn run_governance_check() -> Result<()> {
     }
     if !workflow.contains("cargo xtask ci --stage governance-check") {
         bail!("ci workflow must execute `cargo xtask ci --stage governance-check`");
+    }
+
+    Ok(())
+}
+
+fn run_support_policy_check() -> Result<()> {
+    let support_policy = fs::read_to_string(SUPPORT_POLICY_PATH)
+        .with_context(|| format!("missing {SUPPORT_POLICY_PATH}"))?;
+    for marker in [
+        "# Version Support and LTS Policy",
+        "## Release Channels",
+        "## LTS Selection Rules",
+        "## Deprecation and Removal Policy",
+        "## Compliance Gates",
+        "| `Current (N)` |",
+        "| `Maintenance (N-1)` |",
+        "| `LTS` |",
+        "| `EOL` |",
+    ] {
+        if !support_policy.contains(marker) {
+            bail!("support policy missing required marker '{marker}' in {SUPPORT_POLICY_PATH}");
+        }
+    }
+
+    let readme = fs::read_to_string("README.md").context("missing README.md")?;
+    if !readme.contains("docs/contracts/support-policy.md") {
+        bail!("README.md must reference docs/contracts/support-policy.md");
+    }
+
+    let migration = fs::read_to_string("docs/contracts/sdk-v2-migration.md")
+        .context("missing docs/contracts/sdk-v2-migration.md")?;
+    if !migration.contains("docs/contracts/support-policy.md") {
+        bail!("sdk-v2 migration contract must reference docs/contracts/support-policy.md");
+    }
+
+    let release_readiness = fs::read_to_string("docs/runbooks/release-readiness.md")
+        .context("missing docs/runbooks/release-readiness.md")?;
+    if !release_readiness.contains("support-policy-check") {
+        bail!("release readiness checklist must include support-policy-check gate");
+    }
+
+    let workflow = fs::read_to_string(CI_WORKFLOW_PATH)
+        .with_context(|| format!("missing {CI_WORKFLOW_PATH}"))?;
+    if !workflow.contains("support-policy-check:") {
+        bail!("ci workflow must include a 'support-policy-check' job");
+    }
+    if !workflow.contains("cargo xtask ci --stage support-policy-check") {
+        bail!("ci workflow must execute `cargo xtask ci --stage support-policy-check`");
     }
 
     Ok(())
