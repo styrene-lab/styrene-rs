@@ -71,6 +71,56 @@ metadata_deps() {
   jq -r '.packages[] | select(.manifest_path | contains("/crates/libs/")) | .name as $from | .dependencies[]? | "\($from)\t\(.name)"' "$METADATA_FILE"
 }
 
+normalize_lines() {
+  sed '/^[[:space:]]*$/d' | sort -u
+}
+
+load_allowlisted_edges() {
+  local key="$1"
+  jq -r --arg key "$key" '
+    ((.workspace_metadata.boundaries[$key] // .metadata.boundaries[$key]) // [])[]?
+    | gsub("->"; "\t")
+  ' "$METADATA_FILE" | normalize_lines
+}
+
+metadata_lib_workspace_edges() {
+  jq -r '
+    .packages[]
+    | select(.manifest_path | contains("/crates/libs/"))
+    | .name as $from
+    | .dependencies[]?
+    | select(.path != null and (.path | contains("/crates/libs/")))
+    | "\($from)\t\(.name)"
+  ' "$METADATA_FILE" | normalize_lines
+}
+
+metadata_app_workspace_edges() {
+  jq -r '
+    .packages[]
+    | select(.manifest_path | contains("/crates/apps/"))
+    | .name as $from
+    | .dependencies[]?
+    | select(.path != null and ((.path | contains("/crates/libs/")) or (.path | contains("/crates/apps/"))))
+    | "\($from)\t\(.name)"
+  ' "$METADATA_FILE" | normalize_lines
+}
+
+check_edge_set_matches_allowlist() {
+  local scope="$1"
+  local actual="$2"
+  local allowed="$3"
+
+  if [ -z "$allowed" ]; then
+    fail "workspace.metadata.boundaries.${scope} allowlist is missing or empty"
+  fi
+
+  if [ "$actual" != "$allowed" ]; then
+    echo "boundary check failed: ${scope} dependency edges diverged from workspace allowlist" >&2
+    diff -u <(printf '%s\n' "$allowed") <(printf '%s\n' "$actual") >&2 || true
+    fail "${scope} dependency edge policy mismatch"
+  fi
+}
+
 METADATA_FILE="$(mktemp)"
 trap 'rm -f "${METADATA_FILE}"' EXIT
 ENFORCE_RETM_LEGACY_SHIMS="${ENFORCE_RETM_LEGACY_SHIMS:-0}"
@@ -98,11 +148,21 @@ fi
 # 1) Core dependency constraints (hard policy).
 check_forbidden_dependency "lxmf-core" "tokio" "clap" "ureq"
 check_forbidden_dependency "rns-core" "tokio" "clap"
+check_forbidden_dependency "rns-transport" "clap"
+check_forbidden_dependency "rns-rpc" "clap"
 check_no_app_dependencies "lxmf-core" "lxmf-cli" "rns-tools" "reticulumd"
+check_no_app_dependencies "lxmf-sdk" "lxmf-cli" "rns-tools" "reticulumd"
 check_no_app_dependencies "rns-core" "lxmf-cli" "rns-tools" "reticulumd"
 check_no_app_dependencies "rns-transport" "lxmf-cli" "rns-tools" "reticulumd"
 check_no_app_dependencies "rns-rpc" "lxmf-cli" "rns-tools" "reticulumd"
 check_no_app_dependencies "test-support" "lxmf-cli" "rns-tools" "reticulumd"
+
+allowed_library_edges="$(load_allowlisted_edges "allowed_library_edges")"
+allowed_app_edges="$(load_allowlisted_edges "allowed_app_edges")"
+actual_library_edges="$(metadata_lib_workspace_edges)"
+actual_app_edges="$(metadata_app_workspace_edges)"
+check_edge_set_matches_allowlist "library" "$actual_library_edges" "$allowed_library_edges"
+check_edge_set_matches_allowlist "app" "$actual_app_edges" "$allowed_app_edges"
 
 # 2) Explicit manifest-pattern checks for accidental legacy wiring.
 for manifest in crates/libs/*/Cargo.toml; do
