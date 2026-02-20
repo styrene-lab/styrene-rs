@@ -15,6 +15,10 @@ The mirrored frontend copy is:
 
 - Contract version: `v2`
 - Scope: desktop runtime only (Tauri embedded runtime, no sidecar)
+- Compatibility slice:
+  - `slice_id`: `payload_v2`
+  - Matrix source: `docs/contracts/compatibility-matrix.md`
+  - Support windows: `N`, `N+1`, `N+2`
 
 ## Canonical Field Coverage
 

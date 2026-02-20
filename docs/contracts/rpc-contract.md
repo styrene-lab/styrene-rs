@@ -8,6 +8,11 @@ Scope:
 - Stability target: this method set and parameter shapes are considered stable for `0.1.x`.
 - Message field-level payload IDs and structures are documented in `docs/contracts/payload-contract.md`.
 
+Compatibility slice:
+- `slice_id`: `rpc_v2`
+- Matrix source: `docs/contracts/compatibility-matrix.md`
+- Support windows: `N`, `N+1`, `N+2` with additive-only method evolution.
+
 Reference tests:
 - In-repo contract coverage: `cargo xtask release-check` and `cargo test -p rns-tools`.
 - External interoperability contract checks are executed from the dedicated interop repository.

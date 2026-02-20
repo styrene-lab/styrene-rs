@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const INTEROP_BASELINE_PATH: &str = "docs/contracts/baselines/interop-artifacts-manifest.json";
+const INTEROP_MATRIX_PATH: &str = "docs/contracts/compatibility-matrix.md";
+const RPC_CONTRACT_PATH: &str = "docs/contracts/rpc-contract.md";
+const PAYLOAD_CONTRACT_PATH: &str = "docs/contracts/payload-contract.md";
 
 #[derive(Parser)]
 #[command(name = "xtask")]
@@ -33,6 +36,7 @@ enum XtaskCommand {
         #[arg(long)]
         update: bool,
     },
+    InteropMatrixCheck,
     SdkProfileBuild,
     SdkExamplesCheck,
     SdkApiBreak,
@@ -55,6 +59,7 @@ enum CiStage {
     SdkConformance,
     SdkSchemaCheck,
     InteropArtifacts,
+    InteropMatrixCheck,
     SdkProfileBuild,
     SdkExamplesCheck,
     SdkApiBreak,
@@ -80,6 +85,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkConformance => run_sdk_conformance(),
         XtaskCommand::SdkSchemaCheck => run_sdk_schema_check(),
         XtaskCommand::InteropArtifacts { update } => run_interop_artifacts(update),
+        XtaskCommand::InteropMatrixCheck => run_interop_matrix_check(),
         XtaskCommand::SdkProfileBuild => run_sdk_profile_build(),
         XtaskCommand::SdkExamplesCheck => run_sdk_examples_check(),
         XtaskCommand::SdkApiBreak => run_sdk_api_break(),
@@ -113,6 +119,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run("cargo", &["doc", "--workspace", "--no-deps"])?;
     run_sdk_schema_check()?;
     run_interop_artifacts(false)?;
+    run_interop_matrix_check()?;
     run_sdk_conformance()?;
     run_sdk_profile_build()?;
     run_sdk_examples_check()?;
@@ -142,6 +149,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkConformance => run_sdk_conformance(),
         CiStage::SdkSchemaCheck => run_sdk_schema_check(),
         CiStage::InteropArtifacts => run_interop_artifacts(false),
+        CiStage::InteropMatrixCheck => run_interop_matrix_check(),
         CiStage::SdkProfileBuild => run_sdk_profile_build(),
         CiStage::SdkExamplesCheck => run_sdk_examples_check(),
         CiStage::SdkApiBreak => run_sdk_api_break(),
@@ -157,6 +165,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
 
 fn run_release_check() -> Result<()> {
     run_ci(None)?;
+    run_interop_matrix_check()?;
     run_sdk_api_break()?;
     run("cargo", &["deny", "check"])?;
     run("cargo", &["audit"])?;
@@ -393,6 +402,103 @@ fn run_sdk_matrix_check() -> Result<()> {
     run("cargo", &["test", "-p", "test-support", "sdk_matrix", "--", "--nocapture"])
 }
 
+fn run_interop_matrix_check() -> Result<()> {
+    let matrix = fs::read_to_string(INTEROP_MATRIX_PATH)
+        .with_context(|| format!("missing {INTEROP_MATRIX_PATH}"))?;
+    for required_section in [
+        "## Matrix Version",
+        "## Protocol Slice Definitions",
+        "## Client Matrix (v1)",
+        "## Support Windows",
+    ] {
+        if !matrix.contains(required_section) {
+            bail!("interop matrix missing required section '{required_section}'");
+        }
+    }
+
+    let client_rows = parse_markdown_table_rows(
+        &matrix,
+        &[
+            "Client",
+            "Version window",
+            "RPC v2",
+            "Payload v2",
+            "Event Cursor v2",
+            "Release B Domains",
+            "Release C Domains",
+            "Auth Token",
+            "Auth mTLS",
+            "Delivery Modes",
+        ],
+    )?;
+    if client_rows.is_empty() {
+        bail!("interop matrix client table must contain at least one row");
+    }
+
+    let required_clients = ["lxmf-sdk", "reticulumd", "sideband", "rch", "columba"];
+    for required_client in required_clients {
+        if !client_rows.iter().any(|row| {
+            row.first()
+                .map(|cell| cell.to_ascii_lowercase().contains(required_client))
+                .unwrap_or(false)
+        }) {
+            bail!("interop matrix missing required client row containing '{required_client}'");
+        }
+    }
+
+    for row in &client_rows {
+        if row.len() != 10 {
+            bail!("interop matrix row must have 10 columns, found {} in '{row:?}'", row.len());
+        }
+        if row[1].trim().is_empty() {
+            bail!("interop matrix row '{}' has empty version window", row[0].trim());
+        }
+        for (column_name, value) in [
+            ("RPC v2", row[2].trim()),
+            ("Payload v2", row[3].trim()),
+            ("Event Cursor v2", row[4].trim()),
+            ("Release B Domains", row[5].trim()),
+            ("Release C Domains", row[6].trim()),
+            ("Auth Token", row[7].trim()),
+            ("Auth mTLS", row[8].trim()),
+            ("Delivery Modes", row[9].trim()),
+        ] {
+            let status_token = value
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches(|ch: char| ch == ',' || ch == ';')
+                .to_ascii_lowercase();
+            if !matches!(status_token.as_str(), "required" | "optional" | "planned" | "n/a") {
+                bail!(
+                    "interop matrix row '{}' has invalid status '{value}' in column '{column_name}'",
+                    row[0].trim()
+                );
+            }
+        }
+    }
+
+    let rpc_contract = fs::read_to_string(RPC_CONTRACT_PATH)
+        .with_context(|| format!("missing {RPC_CONTRACT_PATH}"))?;
+    if !rpc_contract.contains("`slice_id`: `rpc_v2`")
+        || !rpc_contract.contains("docs/contracts/compatibility-matrix.md")
+    {
+        bail!("rpc contract must declare `slice_id`: `rpc_v2` and reference compatibility matrix");
+    }
+
+    let payload_contract = fs::read_to_string(PAYLOAD_CONTRACT_PATH)
+        .with_context(|| format!("missing {PAYLOAD_CONTRACT_PATH}"))?;
+    if !payload_contract.contains("`slice_id`: `payload_v2`")
+        || !payload_contract.contains("docs/contracts/compatibility-matrix.md")
+    {
+        bail!(
+            "payload contract must declare `slice_id`: `payload_v2` and reference compatibility matrix"
+        );
+    }
+
+    Ok(())
+}
+
 fn run_unused_deps() -> Result<()> {
     let rustup_available = Command::new("rustup")
         .arg("--version")
@@ -475,6 +581,42 @@ fn parse_cutover_rows(markdown: &str) -> Result<Vec<Vec<String>>> {
         if cells.len() != 7 {
             bail!("malformed cutover row '{trimmed}' (expected 7 columns, found {})", cells.len());
         }
+        rows.push(cells);
+    }
+
+    Ok(rows)
+}
+
+fn parse_markdown_table_rows(markdown: &str, header_cells: &[&str]) -> Result<Vec<Vec<String>>> {
+    let mut rows = Vec::new();
+    let mut in_table = false;
+
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if !in_table {
+            if trimmed.starts_with('|')
+                && header_cells.iter().all(|header_cell| trimmed.contains(header_cell))
+            {
+                in_table = true;
+            }
+            continue;
+        }
+
+        if !trimmed.starts_with('|') {
+            if !rows.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if trimmed.contains("---") {
+            continue;
+        }
+
+        let cells = trimmed
+            .trim_matches('|')
+            .split('|')
+            .map(|cell| cell.trim().to_string())
+            .collect::<Vec<_>>();
         rows.push(cells);
     }
 
