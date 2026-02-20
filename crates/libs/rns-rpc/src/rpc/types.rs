@@ -173,6 +173,7 @@ pub struct RpcDaemon {
     sdk_rate_window_started_ms: Mutex<u64>,
     sdk_rate_ip_counts: Mutex<HashMap<String, u32>>,
     sdk_rate_principal_counts: Mutex<HashMap<String, u32>>,
+    sdk_domain_state_lock: Mutex<()>,
     sdk_next_domain_seq: Mutex<u64>,
     sdk_topics: Mutex<HashMap<String, SdkTopicRecord>>,
     sdk_topic_order: Mutex<Vec<String>>,

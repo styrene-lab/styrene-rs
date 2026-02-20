@@ -542,6 +542,17 @@ impl RpcDaemon {
         Ok(())
     }
 
+    fn lock_and_restore_sdk_domain_snapshot(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, ()>, std::io::Error> {
+        let guard = self
+            .sdk_domain_state_lock
+            .lock()
+            .expect("sdk_domain_state_lock mutex poisoned");
+        self.restore_sdk_domain_snapshot()?;
+        Ok(guard)
+    }
+
     fn persist_sdk_domain_snapshot(&self) -> Result<(), std::io::Error> {
         let snapshot = self.build_sdk_domain_snapshot();
         let value = serde_json::to_value(&snapshot).map_err(std::io::Error::other)?;

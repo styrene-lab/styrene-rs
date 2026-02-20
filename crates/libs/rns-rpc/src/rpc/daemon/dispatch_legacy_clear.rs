@@ -10,6 +10,7 @@ impl RpcDaemon {
                 })
             }
             "clear_resources" => {
+                let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
                 self.sdk_attachments.lock().expect("sdk_attachments mutex poisoned").clear();
                 self.sdk_attachment_payloads
                     .lock()
@@ -47,6 +48,7 @@ impl RpcDaemon {
                 })
             }
             "clear_all" => {
+                let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
                 self.store.clear_messages().map_err(std::io::Error::other)?;
                 self.store.clear_announces().map_err(std::io::Error::other)?;
                 {
