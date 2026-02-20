@@ -47,6 +47,7 @@ Overflow behavior:
 Operational tuning guidance:
 
 - `docs/runbooks/queue-pressure-tuning.md`
+- `docs/runbooks/sdk-config-cookbook.md`
 
 ## Mutable vs Immutable Config Fields
 

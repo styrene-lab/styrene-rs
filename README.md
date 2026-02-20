@@ -86,6 +86,7 @@ cargo run -p rns-tools --bin rnx -- e2e --timeout-secs 20
 - Guide index: `docs/sdk/README.md`
 - Quickstart: `docs/sdk/quickstart.md`
 - Profiles/configuration: `docs/sdk/configuration-profiles.md`
+- Config cookbook: `docs/runbooks/sdk-config-cookbook.md`
 - Lifecycle/events: `docs/sdk/lifecycle-and-events.md`
 - Advanced embedding: `docs/sdk/advanced-embedding.md`
 
