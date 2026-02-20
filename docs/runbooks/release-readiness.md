@@ -51,6 +51,16 @@ Optional soak:
 ./tools/scripts/soak-rnx.sh
 ```
 
+Nightly mesh simulation (3-10 node ring):
+
+- Scheduled workflow: `.github/workflows/nightly-mesh.yml`
+- Local dry-run command:
+
+```bash
+cargo run -p rns-tools --bin rnx -- mesh-sim --nodes 5 --timeout-secs 60
+./tools/scripts/mesh-sim-rnx.sh
+```
+
 ## 6. Release metadata
 
 - Workspace versions bumped intentionally.
