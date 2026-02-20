@@ -135,7 +135,7 @@ impl RpcDaemon {
 
     fn sdk_required_capabilities_for_profile(profile: &str) -> Vec<String> {
         match profile {
-            "desktop-local-runtime" => vec![
+            "desktop-local-runtime" | "embedded-alloc" => vec![
                 "sdk.capability.cursor_replay".to_string(),
                 "sdk.capability.receipt_terminality".to_string(),
                 "sdk.capability.config_revision_cas".to_string(),

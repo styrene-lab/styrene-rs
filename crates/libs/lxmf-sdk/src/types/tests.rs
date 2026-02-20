@@ -53,6 +53,55 @@ fn config_accepts_local_trusted_profile() {
 }
 
 #[test]
+fn config_rejects_embedded_profile_with_mtls_auth_mode() {
+    let mut config = base_config();
+    config.profile = Profile::EmbeddedAlloc;
+    config.bind_mode = BindMode::Remote;
+    config.auth_mode = AuthMode::Mtls;
+    config.rpc_backend = Some(RpcBackendConfig {
+        listen_addr: "127.0.0.1:4243".to_string(),
+        read_timeout_ms: 1_000,
+        write_timeout_ms: 1_000,
+        max_header_bytes: 8_192,
+        max_body_bytes: 65_536,
+        token_auth: None,
+        mtls_auth: Some(MtlsAuthConfig {
+            ca_bundle_path: "/tmp/ca.pem".to_string(),
+            require_client_cert: true,
+            allowed_san: Some("urn:test-san".to_string()),
+            client_cert_path: Some("/tmp/client.pem".to_string()),
+            client_key_path: Some("/tmp/client.key".to_string()),
+        }),
+    });
+    let err = config.validate().expect_err("embedded profile must reject mtls");
+    assert_eq!(err.machine_code, crate::error::code::VALIDATION_INVALID_ARGUMENT);
+}
+
+#[test]
+fn config_rejects_mtls_without_client_cert_material_when_required() {
+    let mut config = base_config();
+    config.bind_mode = BindMode::Remote;
+    config.auth_mode = AuthMode::Mtls;
+    config.rpc_backend = Some(RpcBackendConfig {
+        listen_addr: "127.0.0.1:4243".to_string(),
+        read_timeout_ms: 1_000,
+        write_timeout_ms: 1_000,
+        max_header_bytes: 8_192,
+        max_body_bytes: 65_536,
+        token_auth: None,
+        mtls_auth: Some(MtlsAuthConfig {
+            ca_bundle_path: "/tmp/ca.pem".to_string(),
+            require_client_cert: true,
+            allowed_san: Some("urn:test-san".to_string()),
+            client_cert_path: None,
+            client_key_path: None,
+        }),
+    });
+    let err = config.validate().expect_err("required mtls client cert paths must be provided");
+    assert_eq!(err.machine_code, crate::error::code::SECURITY_AUTH_REQUIRED);
+}
+
+#[test]
 fn config_patch_serialization_preserves_absent_vs_null() {
     let absent_patch = ConfigPatch {
         overflow_policy: None,

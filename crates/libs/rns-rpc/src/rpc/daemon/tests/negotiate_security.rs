@@ -79,7 +79,7 @@
     }
 
     #[test]
-    fn sdk_negotiate_v2_rejects_embedded_alloc_profile() {
+    fn sdk_negotiate_v2_accepts_embedded_alloc_profile_with_reduced_limits() {
         let daemon = RpcDaemon::test_instance();
         let response = daemon
             .handle_rpc(rpc_request(
@@ -92,8 +92,43 @@
                 }),
             ))
             .expect("rpc call");
+        assert!(response.error.is_none(), "embedded profile should negotiate");
+        let result = response.result.expect("result");
+        assert_eq!(result["effective_limits"]["max_poll_events"], json!(32));
+        let capabilities =
+            result["effective_capabilities"].as_array().expect("effective_capabilities");
+        assert!(
+            !capabilities.iter().any(|capability| capability == "sdk.capability.async_events"),
+            "embedded profile must not advertise async_events"
+        );
+    }
+
+    #[test]
+    fn sdk_negotiate_v2_rejects_mtls_for_embedded_alloc_profile() {
+        let daemon = RpcDaemon::test_instance();
+        let response = daemon
+            .handle_rpc(rpc_request(
+                20,
+                "sdk_negotiate_v2",
+                json!({
+                    "supported_contract_versions": [2],
+                    "requested_capabilities": [],
+                    "config": {
+                        "profile": "embedded-alloc",
+                        "bind_mode": "remote",
+                        "auth_mode": "mtls",
+                        "rpc_backend": {
+                            "mtls_auth": {
+                                "ca_bundle_path": "/tmp/test-ca.pem",
+                                "require_client_cert": false
+                            }
+                        }
+                    }
+                }),
+            ))
+            .expect("rpc call");
         let error = response.error.expect("must fail");
-        assert_eq!(error.code, "SDK_CAPABILITY_CONTRACT_INCOMPATIBLE");
+        assert_eq!(error.code, "SDK_VALIDATION_INVALID_ARGUMENT");
     }
 
     #[test]
