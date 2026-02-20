@@ -8,10 +8,12 @@ use crate::types::{
 use serde_json::json;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 struct MockBackend {
     negotiate_results: Mutex<VecDeque<Result<NegotiationResponse, SdkError>>>,
     shutdown_results: Mutex<VecDeque<Result<Ack, SdkError>>>,
+    send_calls: AtomicUsize,
     shutdown_calls: AtomicUsize,
 }
 
@@ -23,6 +25,7 @@ impl MockBackend {
                 accepted: true,
                 revision: None,
             })])),
+            send_calls: AtomicUsize::new(0),
             shutdown_calls: AtomicUsize::new(0),
         }
     }
@@ -49,7 +52,8 @@ impl SdkBackend for MockBackend {
     }
 
     fn send(&self, _req: SendRequest) -> Result<MessageId, SdkError> {
-        Ok(MessageId("m-1".to_owned()))
+        let sequence = self.send_calls.fetch_add(1, Ordering::Relaxed) + 1;
+        Ok(MessageId(format!("m-{sequence}")))
     }
 
     fn cancel(&self, _id: MessageId) -> Result<CancelResult, SdkError> {
@@ -186,6 +190,19 @@ fn successful_negotiation() -> Result<NegotiationResponse, SdkError> {
     })
 }
 
+fn sample_send_request(payload: &str, idempotency_key: Option<&str>) -> SendRequest {
+    serde_json::from_value(json!({
+        "source": "src",
+        "destination": "dst",
+        "payload": { "content": payload },
+        "idempotency_key": idempotency_key,
+        "ttl_ms": null,
+        "correlation_id": null,
+        "extensions": {},
+    }))
+    .expect("deserialize send request")
+}
+
 #[test]
 fn start_failure_rolls_back_to_new_and_can_retry() {
     let backend = MockBackend::new(vec![
@@ -235,4 +252,70 @@ fn shutdown_is_noop_once_stopped() {
     let second = client.shutdown(ShutdownMode::Graceful).expect("second shutdown must be noop");
     assert!(second.accepted);
     assert_eq!(client.backend().shutdown_calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn race_idempotent_send_parallel_calls_dedupe_to_single_backend_send() {
+    let backend = MockBackend::new(vec![successful_negotiation()]);
+    let client = Arc::new(Client::new(backend));
+    client.start(sample_start_request()).expect("start");
+
+    let mut workers = Vec::new();
+    for _ in 0..24 {
+        let client = Arc::clone(&client);
+        workers.push(std::thread::spawn(move || {
+            client.send(sample_send_request("payload-race", Some("idem-race")))
+        }));
+    }
+
+    let mut first: Option<MessageId> = None;
+    for worker in workers {
+        let result = worker.join().expect("worker panicked").expect("send result");
+        match &first {
+            Some(expected) => assert_eq!(&result, expected, "all idempotent sends must reuse id"),
+            None => first = Some(result),
+        }
+    }
+
+    assert_eq!(
+        client.backend().send_calls.load(Ordering::Relaxed),
+        1,
+        "parallel idempotent sends must issue a single backend send"
+    );
+}
+
+#[test]
+fn race_idempotency_conflict_parallel_payloads_return_conflict() {
+    let backend = MockBackend::new(vec![successful_negotiation()]);
+    let client = Arc::new(Client::new(backend));
+    client.start(sample_start_request()).expect("start");
+
+    let mut workers = Vec::new();
+    for idx in 0..24 {
+        let client = Arc::clone(&client);
+        workers.push(std::thread::spawn(move || {
+            let payload = if idx % 2 == 0 { "payload-a" } else { "payload-b" };
+            client.send(sample_send_request(payload, Some("idem-conflict")))
+        }));
+    }
+
+    let mut success = 0_usize;
+    let mut conflicts = 0_usize;
+    for worker in workers {
+        match worker.join().expect("worker panicked") {
+            Ok(_) => success = success.saturating_add(1),
+            Err(err) if err.machine_code == code::VALIDATION_IDEMPOTENCY_CONFLICT => {
+                conflicts = conflicts.saturating_add(1);
+            }
+            Err(err) => panic!("unexpected send error: {err:?}"),
+        }
+    }
+
+    assert!(success > 0, "at least one send must succeed");
+    assert!(conflicts > 0, "conflicting payloads must produce idempotency conflicts");
+    assert_eq!(
+        client.backend().send_calls.load(Ordering::Relaxed),
+        1,
+        "idempotency conflict races must not duplicate backend sends"
+    );
 }

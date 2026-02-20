@@ -54,6 +54,7 @@ enum XtaskCommand {
     SdkSecurityCheck,
     SdkPropertyCheck,
     SdkModelCheck,
+    SdkRaceCheck,
     SdkMatrixCheck,
 }
 
@@ -81,6 +82,7 @@ enum CiStage {
     SdkSecurityCheck,
     SdkPropertyCheck,
     SdkModelCheck,
+    SdkRaceCheck,
     SdkMatrixCheck,
     MigrationChecks,
     ArchitectureChecks,
@@ -112,6 +114,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkSecurityCheck => run_sdk_security_check(),
         XtaskCommand::SdkPropertyCheck => run_sdk_property_check(),
         XtaskCommand::SdkModelCheck => run_sdk_model_check(),
+        XtaskCommand::SdkRaceCheck => run_sdk_race_check(),
         XtaskCommand::SdkMatrixCheck => run_sdk_matrix_check(),
     }
 }
@@ -149,6 +152,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_sdk_security_check()?;
     run_sdk_property_check()?;
     run_sdk_model_check()?;
+    run_sdk_race_check()?;
     run_sdk_matrix_check()?;
     run_migration_checks()?;
     run_architecture_checks()?;
@@ -184,6 +188,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkSecurityCheck => run_sdk_security_check(),
         CiStage::SdkPropertyCheck => run_sdk_property_check(),
         CiStage::SdkModelCheck => run_sdk_model_check(),
+        CiStage::SdkRaceCheck => run_sdk_race_check(),
         CiStage::SdkMatrixCheck => run_sdk_matrix_check(),
         CiStage::MigrationChecks => run_migration_checks(),
         CiStage::ArchitectureChecks => run_architecture_checks(),
@@ -646,6 +651,11 @@ fn run_sdk_model_check() -> Result<()> {
         ],
     )?;
     run("cargo", &["test", "-p", "test-support", "sdk_model", "--", "--nocapture"])
+}
+
+fn run_sdk_race_check() -> Result<()> {
+    run("cargo", &["test", "-p", "lxmf-sdk", "race_idempot", "--", "--nocapture"])?;
+    run("cargo", &["test", "-p", "rns-rpc", "sdk_race", "--", "--nocapture"])
 }
 
 fn run_sdk_matrix_check() -> Result<()> {
