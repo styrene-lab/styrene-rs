@@ -240,6 +240,60 @@
     }
 
     #[test]
+    fn sdk_configure_v2_rejects_out_of_bounds_event_stream_limits() {
+        let daemon = RpcDaemon::test_instance();
+        let below_min_batch = daemon
+            .handle_rpc(rpc_request(
+                434,
+                "sdk_configure_v2",
+                json!({
+                    "expected_revision": 0,
+                    "patch": { "event_stream": { "max_batch_bytes": 512 } }
+                }),
+            ))
+            .expect("configure");
+        assert_eq!(
+            below_min_batch.error.expect("error").code,
+            "SDK_VALIDATION_INVALID_ARGUMENT"
+        );
+
+        let extension_limit_overflow = daemon
+            .handle_rpc(rpc_request(
+                435,
+                "sdk_configure_v2",
+                json!({
+                    "expected_revision": 0,
+                    "patch": { "event_stream": { "max_extension_keys": 64 } }
+                }),
+            ))
+            .expect("configure");
+        assert_eq!(
+            extension_limit_overflow.error.expect("error").code,
+            "SDK_VALIDATION_INVALID_ARGUMENT"
+        );
+
+        let inconsistent_event_and_batch = daemon
+            .handle_rpc(rpc_request(
+                436,
+                "sdk_configure_v2",
+                json!({
+                    "expected_revision": 0,
+                    "patch": {
+                        "event_stream": {
+                            "max_event_bytes": 4096,
+                            "max_batch_bytes": 2048
+                        }
+                    }
+                }),
+            ))
+            .expect("configure");
+        assert_eq!(
+            inconsistent_event_and_batch.error.expect("error").code,
+            "SDK_VALIDATION_INVALID_ARGUMENT"
+        );
+    }
+
+    #[test]
     fn sdk_dispatch_maps_unknown_fields_to_validation_unknown_field() {
         let daemon = RpcDaemon::test_instance();
         let response = daemon

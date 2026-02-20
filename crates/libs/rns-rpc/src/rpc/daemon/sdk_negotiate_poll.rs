@@ -319,6 +319,9 @@ impl RpcDaemon {
                 "poll max exceeds supported limit",
             ));
         }
+        let max_event_bytes = self.sdk_max_event_bytes();
+        let max_batch_bytes = self.sdk_max_batch_bytes();
+        let max_extension_keys = self.sdk_max_extension_keys();
 
         let cursor_seq = match self.sdk_decode_cursor(parsed.cursor.as_deref()) {
             Ok(value) => value,
@@ -348,12 +351,50 @@ impl RpcDaemon {
 
         let start_seq = cursor_seq.map(|value| value.saturating_add(1)).or(oldest_seq).unwrap_or(0);
         let mut event_rows = Vec::new();
+        let mut batch_bytes = 0_usize;
+
+        let append_event_row =
+            |row: JsonValue, event_rows: &mut Vec<JsonValue>, batch_bytes: &mut usize| {
+                let payload_bytes =
+                    row.get("payload").map(|payload| payload.to_string().len()).unwrap_or(0);
+                if payload_bytes > max_event_bytes {
+                    return Err(self.sdk_error_response(
+                        request.id,
+                        "SDK_VALIDATION_EVENT_TOO_LARGE",
+                        "event payload exceeds supported max_event_bytes limit",
+                    ));
+                }
+                let extension_keys = row
+                    .get("payload")
+                    .and_then(|payload| payload.get("extensions"))
+                    .and_then(JsonValue::as_object)
+                    .map_or(0, JsonMap::len);
+                if extension_keys > max_extension_keys {
+                    return Err(self.sdk_error_response(
+                        request.id,
+                        "SDK_VALIDATION_MAX_EXTENSION_KEYS_EXCEEDED",
+                        "event extensions key count exceeds supported limit",
+                    ));
+                }
+                let event_bytes = row.to_string().len();
+                let next_batch_bytes = (*batch_bytes).saturating_add(event_bytes);
+                if next_batch_bytes > max_batch_bytes {
+                    return Err(self.sdk_error_response(
+                        request.id,
+                        "SDK_VALIDATION_BATCH_TOO_LARGE",
+                        "event batch exceeds supported max_batch_bytes limit",
+                    ));
+                }
+                *batch_bytes = next_batch_bytes;
+                event_rows.push(row);
+                Ok(())
+            };
 
         if parsed.cursor.is_none() && dropped_count > 0 && event_rows.len() < parsed.max {
             let observed_seq_no = oldest_seq.unwrap_or(0);
             let expected_seq_no = observed_seq_no.saturating_sub(dropped_count);
             let gap_seq_no = observed_seq_no.saturating_sub(1);
-            event_rows.push(json!({
+            let gap_row = json!({
                 "event_id": format!("gap-{}", gap_seq_no),
                 "runtime_id": self.identity_hash,
                 "stream_id": SDK_STREAM_ID,
@@ -368,14 +409,17 @@ impl RpcDaemon {
                     "observed_seq_no": observed_seq_no,
                     "dropped_count": dropped_count,
                 },
-            }));
+            });
+            if let Err(response) = append_event_row(gap_row, &mut event_rows, &mut batch_bytes) {
+                return Ok(response);
+            }
         }
 
         let remaining_slots = parsed.max.saturating_sub(event_rows.len());
         for entry in
             log_guard.iter().filter(|entry| entry.seq_no >= start_seq).take(remaining_slots)
         {
-            event_rows.push(json!({
+            let event_row = json!({
                 "event_id": format!("evt-{}", entry.seq_no),
                 "runtime_id": self.identity_hash,
                 "stream_id": SDK_STREAM_ID,
@@ -386,7 +430,10 @@ impl RpcDaemon {
                 "severity": Self::event_severity(entry.event.event_type.as_str()),
                 "source_component": "rns-rpc",
                 "payload": entry.event.payload.clone(),
-            }));
+            });
+            if let Err(response) = append_event_row(event_row, &mut event_rows, &mut batch_bytes) {
+                return Ok(response);
+            }
         }
 
         let next_seq = event_rows

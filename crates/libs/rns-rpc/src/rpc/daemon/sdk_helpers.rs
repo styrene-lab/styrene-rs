@@ -63,6 +63,66 @@ impl RpcDaemon {
             ));
         }
 
+        if let Some(event_stream) = config.get("event_stream") {
+            if !event_stream.is_object() && !event_stream.is_null() {
+                return Err(Self::sdk_config_error(
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "event_stream must be an object when provided",
+                ));
+            }
+        }
+        if let Some(event_stream) = config.get("event_stream").and_then(JsonValue::as_object) {
+            let parse_u64_field = |key: &str| -> Result<Option<u64>, RpcError> {
+                match event_stream.get(key) {
+                    None | Some(JsonValue::Null) => Ok(None),
+                    Some(value) => value.as_u64().map(Some).ok_or_else(|| {
+                        Self::sdk_config_error(
+                            "SDK_VALIDATION_INVALID_ARGUMENT",
+                            &format!("event_stream.{key} must be an unsigned integer"),
+                        )
+                    }),
+                }
+            };
+            let max_poll_events = parse_u64_field("max_poll_events")?;
+            let max_event_bytes = parse_u64_field("max_event_bytes")?;
+            let max_batch_bytes = parse_u64_field("max_batch_bytes")?;
+            let max_extension_keys = parse_u64_field("max_extension_keys")?;
+
+            if max_poll_events.is_some_and(|value| value == 0 || value > 10_000) {
+                return Err(Self::sdk_config_error(
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "event_stream.max_poll_events must be in the range 1..=10000",
+                ));
+            }
+            if max_event_bytes.is_some_and(|value| value < 256) {
+                return Err(Self::sdk_config_error(
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "event_stream.max_event_bytes must be at least 256",
+                ));
+            }
+            if max_batch_bytes.is_some_and(|value| value < 1_024) {
+                return Err(Self::sdk_config_error(
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "event_stream.max_batch_bytes must be at least 1024",
+                ));
+            }
+            if max_extension_keys.is_some_and(|value| value > 32) {
+                return Err(Self::sdk_config_error(
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "event_stream.max_extension_keys must be in the range 0..=32",
+                ));
+            }
+            if let (Some(max_event_bytes), Some(max_batch_bytes)) = (max_event_bytes, max_batch_bytes)
+            {
+                if max_batch_bytes < max_event_bytes {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "event_stream.max_batch_bytes must be greater than or equal to max_event_bytes",
+                    ));
+                }
+            }
+        }
+
         match auth_mode.as_str() {
             "token" => {
                 let Some(token_auth) = config
