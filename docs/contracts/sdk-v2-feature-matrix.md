@@ -128,6 +128,7 @@ Queue overflow behavior is release-gated with `cargo run -p xtask -- sdk-queue-p
 | `sdk-queue-pressure-check` | required |
 | `sdk-migration-check` | required |
 | `sdk-matrix-check` | required |
+| `sdk-docs-check` | required |
 | `supply-chain-check` | required |
 | `reproducible-build-check` | required |
 | `embedded-alloc` profile build | required |

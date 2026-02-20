@@ -13,6 +13,11 @@
 - `rns-transport`
 - `rns-rpc`
 
+## SDK Integration Guide
+- Guide index: `docs/sdk/README.md`
+- Lifecycle/event operations: `docs/sdk/lifecycle-and-events.md`
+- Profile/security configuration: `docs/sdk/configuration-profiles.md`
+
 ## Layering Rules
 - `crates/libs/*` must not depend on `crates/apps/*`.
 - `lxmf-core` must not directly depend on `tokio`, `clap`, `ureq`, or `serde_json`.
