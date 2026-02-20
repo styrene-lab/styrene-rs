@@ -113,6 +113,20 @@ pub struct RpcDaemon {
     sdk_rate_window_started_ms: Mutex<u64>,
     sdk_rate_ip_counts: Mutex<HashMap<String, u32>>,
     sdk_rate_principal_counts: Mutex<HashMap<String, u32>>,
+    sdk_next_domain_seq: Mutex<u64>,
+    sdk_topics: Mutex<HashMap<String, SdkTopicRecord>>,
+    sdk_topic_order: Mutex<Vec<String>>,
+    sdk_topic_subscriptions: Mutex<HashSet<String>>,
+    sdk_telemetry_points: Mutex<Vec<SdkTelemetryPoint>>,
+    sdk_attachments: Mutex<HashMap<String, SdkAttachmentRecord>>,
+    sdk_attachment_payloads: Mutex<HashMap<String, String>>,
+    sdk_attachment_order: Mutex<Vec<String>>,
+    sdk_markers: Mutex<HashMap<String, SdkMarkerRecord>>,
+    sdk_marker_order: Mutex<Vec<String>>,
+    sdk_identities: Mutex<HashMap<String, SdkIdentityBundle>>,
+    sdk_active_identity: Mutex<Option<String>>,
+    sdk_remote_commands: Mutex<HashSet<String>>,
+    sdk_voice_sessions: Mutex<HashMap<String, SdkVoiceSessionRecord>>,
     peers: Mutex<HashMap<String, PeerRecord>>,
     interfaces: Mutex<Vec<InterfaceRecord>>,
     delivery_policy: Mutex<DeliveryPolicy>,
@@ -308,6 +322,354 @@ struct SetOutboundPropagationNodeParams {
 #[derive(Debug, Deserialize)]
 struct MessageDeliveryTraceParams {
     message_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct SdkTopicRecord {
+    topic_id: String,
+    #[serde(default)]
+    topic_path: Option<String>,
+    created_ts_ms: u64,
+    #[serde(default)]
+    metadata: JsonMap<String, JsonValue>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct SdkTelemetryPoint {
+    ts_ms: u64,
+    key: String,
+    value: JsonValue,
+    #[serde(default)]
+    unit: Option<String>,
+    #[serde(default)]
+    tags: HashMap<String, String>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct SdkAttachmentRecord {
+    attachment_id: String,
+    name: String,
+    content_type: String,
+    byte_len: u64,
+    checksum_sha256: String,
+    created_ts_ms: u64,
+    #[serde(default)]
+    expires_ts_ms: Option<u64>,
+    #[serde(default)]
+    topic_ids: Vec<String>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct SdkGeoPoint {
+    lat: f64,
+    lon: f64,
+    #[serde(default)]
+    alt_m: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct SdkMarkerRecord {
+    marker_id: String,
+    label: String,
+    position: SdkGeoPoint,
+    #[serde(default)]
+    topic_id: Option<String>,
+    updated_ts_ms: u64,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct SdkIdentityBundle {
+    identity: String,
+    public_key: String,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    capabilities: Vec<String>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct SdkVoiceSessionRecord {
+    session_id: String,
+    peer_id: String,
+    #[serde(default)]
+    codec_hint: Option<String>,
+    state: String,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkTopicCreateV2Params {
+    #[serde(default)]
+    topic_path: Option<String>,
+    #[serde(default)]
+    metadata: JsonMap<String, JsonValue>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkTopicGetV2Params {
+    topic_id: String,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkTopicListV2Params {
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkTopicSubscriptionV2Params {
+    topic_id: String,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkTopicPublishV2Params {
+    topic_id: String,
+    payload: JsonValue,
+    #[serde(default)]
+    correlation_id: Option<String>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkTelemetryQueryV2Params {
+    #[serde(default)]
+    peer_id: Option<String>,
+    #[serde(default)]
+    topic_id: Option<String>,
+    #[serde(default)]
+    from_ts_ms: Option<u64>,
+    #[serde(default)]
+    to_ts_ms: Option<u64>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkAttachmentStoreV2Params {
+    name: String,
+    content_type: String,
+    bytes_base64: String,
+    #[serde(default)]
+    expires_ts_ms: Option<u64>,
+    #[serde(default)]
+    topic_ids: Vec<String>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkAttachmentRefV2Params {
+    attachment_id: String,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkAttachmentListV2Params {
+    #[serde(default)]
+    topic_id: Option<String>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkAttachmentAssociateTopicV2Params {
+    attachment_id: String,
+    topic_id: String,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkMarkerCreateV2Params {
+    label: String,
+    position: SdkGeoPoint,
+    #[serde(default)]
+    topic_id: Option<String>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkMarkerListV2Params {
+    #[serde(default)]
+    topic_id: Option<String>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkMarkerUpdatePositionV2Params {
+    marker_id: String,
+    position: SdkGeoPoint,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkMarkerDeleteV2Params {
+    marker_id: String,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct SdkIdentityListV2Params {
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkIdentityActivateV2Params {
+    identity: String,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkIdentityImportV2Params {
+    bundle_base64: String,
+    #[serde(default)]
+    passphrase: Option<String>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkIdentityExportV2Params {
+    identity: String,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkIdentityResolveV2Params {
+    hash: String,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkPaperEncodeV2Params {
+    message_id: String,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkPaperDecodeV2Params {
+    uri: String,
+    #[serde(default)]
+    transient_id: Option<String>,
+    #[serde(default)]
+    destination_hint: Option<String>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkCommandInvokeV2Params {
+    command: String,
+    #[serde(default)]
+    target: Option<String>,
+    payload: JsonValue,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkCommandReplyV2Params {
+    correlation_id: String,
+    accepted: bool,
+    payload: JsonValue,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkVoiceSessionOpenV2Params {
+    peer_id: String,
+    #[serde(default)]
+    codec_hint: Option<String>,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkVoiceSessionUpdateV2Params {
+    session_id: String,
+    state: String,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkVoiceSessionCloseV2Params {
+    session_id: String,
+    #[serde(default)]
+    extensions: JsonMap<String, JsonValue>,
 }
 
 #[derive(Debug, Deserialize)]

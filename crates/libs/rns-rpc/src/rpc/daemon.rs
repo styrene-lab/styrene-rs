@@ -1,9 +1,15 @@
 use super::*;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use hmac::Mac;
 
 impl RpcDaemon {
     pub fn with_store(store: MessagesStore, identity_hash: String) -> Self {
         let (events, _rx) = broadcast::channel(64);
+        let active_identity = identity_hash.clone();
+        let mut sdk_identities = HashMap::new();
+        sdk_identities
+            .insert(identity_hash.clone(), Self::default_sdk_identity(identity_hash.as_str()));
         Self {
             store,
             identity_hash,
@@ -24,6 +30,20 @@ impl RpcDaemon {
             sdk_rate_window_started_ms: Mutex::new(0),
             sdk_rate_ip_counts: Mutex::new(HashMap::new()),
             sdk_rate_principal_counts: Mutex::new(HashMap::new()),
+            sdk_next_domain_seq: Mutex::new(0),
+            sdk_topics: Mutex::new(HashMap::new()),
+            sdk_topic_order: Mutex::new(Vec::new()),
+            sdk_topic_subscriptions: Mutex::new(HashSet::new()),
+            sdk_telemetry_points: Mutex::new(Vec::new()),
+            sdk_attachments: Mutex::new(HashMap::new()),
+            sdk_attachment_payloads: Mutex::new(HashMap::new()),
+            sdk_attachment_order: Mutex::new(Vec::new()),
+            sdk_markers: Mutex::new(HashMap::new()),
+            sdk_marker_order: Mutex::new(Vec::new()),
+            sdk_identities: Mutex::new(sdk_identities),
+            sdk_active_identity: Mutex::new(Some(active_identity)),
+            sdk_remote_commands: Mutex::new(HashSet::new()),
+            sdk_voice_sessions: Mutex::new(HashMap::new()),
             peers: Mutex::new(HashMap::new()),
             interfaces: Mutex::new(Vec::new()),
             delivery_policy: Mutex::new(DeliveryPolicy::default()),
@@ -46,6 +66,10 @@ impl RpcDaemon {
         outbound_bridge: Arc<dyn OutboundBridge>,
     ) -> Self {
         let (events, _rx) = broadcast::channel(64);
+        let active_identity = identity_hash.clone();
+        let mut sdk_identities = HashMap::new();
+        sdk_identities
+            .insert(identity_hash.clone(), Self::default_sdk_identity(identity_hash.as_str()));
         Self {
             store,
             identity_hash,
@@ -66,6 +90,20 @@ impl RpcDaemon {
             sdk_rate_window_started_ms: Mutex::new(0),
             sdk_rate_ip_counts: Mutex::new(HashMap::new()),
             sdk_rate_principal_counts: Mutex::new(HashMap::new()),
+            sdk_next_domain_seq: Mutex::new(0),
+            sdk_topics: Mutex::new(HashMap::new()),
+            sdk_topic_order: Mutex::new(Vec::new()),
+            sdk_topic_subscriptions: Mutex::new(HashSet::new()),
+            sdk_telemetry_points: Mutex::new(Vec::new()),
+            sdk_attachments: Mutex::new(HashMap::new()),
+            sdk_attachment_payloads: Mutex::new(HashMap::new()),
+            sdk_attachment_order: Mutex::new(Vec::new()),
+            sdk_markers: Mutex::new(HashMap::new()),
+            sdk_marker_order: Mutex::new(Vec::new()),
+            sdk_identities: Mutex::new(sdk_identities),
+            sdk_active_identity: Mutex::new(Some(active_identity)),
+            sdk_remote_commands: Mutex::new(HashSet::new()),
+            sdk_voice_sessions: Mutex::new(HashMap::new()),
             peers: Mutex::new(HashMap::new()),
             interfaces: Mutex::new(Vec::new()),
             delivery_policy: Mutex::new(DeliveryPolicy::default()),
@@ -89,6 +127,10 @@ impl RpcDaemon {
         announce_bridge: Option<Arc<dyn AnnounceBridge>>,
     ) -> Self {
         let (events, _rx) = broadcast::channel(64);
+        let active_identity = identity_hash.clone();
+        let mut sdk_identities = HashMap::new();
+        sdk_identities
+            .insert(identity_hash.clone(), Self::default_sdk_identity(identity_hash.as_str()));
         Self {
             store,
             identity_hash,
@@ -109,6 +151,20 @@ impl RpcDaemon {
             sdk_rate_window_started_ms: Mutex::new(0),
             sdk_rate_ip_counts: Mutex::new(HashMap::new()),
             sdk_rate_principal_counts: Mutex::new(HashMap::new()),
+            sdk_next_domain_seq: Mutex::new(0),
+            sdk_topics: Mutex::new(HashMap::new()),
+            sdk_topic_order: Mutex::new(Vec::new()),
+            sdk_topic_subscriptions: Mutex::new(HashSet::new()),
+            sdk_telemetry_points: Mutex::new(Vec::new()),
+            sdk_attachments: Mutex::new(HashMap::new()),
+            sdk_attachment_payloads: Mutex::new(HashMap::new()),
+            sdk_attachment_order: Mutex::new(Vec::new()),
+            sdk_markers: Mutex::new(HashMap::new()),
+            sdk_marker_order: Mutex::new(Vec::new()),
+            sdk_identities: Mutex::new(sdk_identities),
+            sdk_active_identity: Mutex::new(Some(active_identity)),
+            sdk_remote_commands: Mutex::new(HashSet::new()),
+            sdk_voice_sessions: Mutex::new(HashMap::new()),
             peers: Mutex::new(HashMap::new()),
             interfaces: Mutex::new(Vec::new()),
             delivery_policy: Mutex::new(DeliveryPolicy::default()),
@@ -1018,6 +1074,1644 @@ impl RpcDaemon {
         })
     }
 
+    fn default_sdk_identity(identity_hash: &str) -> SdkIdentityBundle {
+        SdkIdentityBundle {
+            identity: identity_hash.to_string(),
+            public_key: format!("{identity_hash}-pub"),
+            display_name: Some("default".to_string()),
+            capabilities: vec!["sdk.capability.identity_hash_resolution".to_string()],
+            extensions: JsonMap::new(),
+        }
+    }
+
+    fn next_sdk_domain_id(&self, prefix: &str) -> String {
+        let mut guard =
+            self.sdk_next_domain_seq.lock().expect("sdk_next_domain_seq mutex poisoned");
+        *guard = guard.saturating_add(1);
+        format!("{prefix}-{:016x}", *guard)
+    }
+
+    fn sdk_has_capability(&self, capability: &str) -> bool {
+        self.sdk_effective_capabilities
+            .lock()
+            .expect("sdk_effective_capabilities mutex poisoned")
+            .iter()
+            .any(|current| current == capability)
+    }
+
+    fn collection_cursor_index(
+        &self,
+        cursor: Option<&str>,
+        prefix: &str,
+    ) -> Result<usize, SdkCursorError> {
+        let Some(cursor) = cursor else {
+            return Ok(0);
+        };
+        let cursor = cursor.trim();
+        if cursor.is_empty() {
+            return Err(SdkCursorError {
+                code: "SDK_RUNTIME_INVALID_CURSOR".to_string(),
+                message: "cursor must not be empty".to_string(),
+            });
+        }
+        let Some(value) = cursor.strip_prefix(prefix) else {
+            return Err(SdkCursorError {
+                code: "SDK_RUNTIME_INVALID_CURSOR".to_string(),
+                message: "cursor scope does not match method domain".to_string(),
+            });
+        };
+        value.parse::<usize>().map_err(|_| SdkCursorError {
+            code: "SDK_RUNTIME_INVALID_CURSOR".to_string(),
+            message: "cursor index is invalid".to_string(),
+        })
+    }
+
+    fn collection_next_cursor(
+        prefix: &str,
+        next_index: usize,
+        total_items: usize,
+    ) -> Option<String> {
+        if next_index >= total_items {
+            return None;
+        }
+        Some(format!("{prefix}{next_index}"))
+    }
+
+    fn normalize_non_empty(value: &str) -> Option<String> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        Some(trimmed.to_string())
+    }
+
+    fn normalize_voice_state(value: &str) -> Option<&'static str> {
+        let normalized = value.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "new" => Some("new"),
+            "ringing" => Some("ringing"),
+            "active" => Some("active"),
+            "holding" => Some("holding"),
+            "closed" => Some("closed"),
+            "failed" => Some("failed"),
+            _ => None,
+        }
+    }
+
+    fn voice_state_rank(value: &str) -> u8 {
+        match value {
+            "new" => 0,
+            "ringing" => 1,
+            "active" => 2,
+            "holding" => 3,
+            "closed" | "failed" => 4,
+            _ => 0,
+        }
+    }
+
+    fn handle_sdk_topic_create_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.topics") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_topic_create_v2",
+                "sdk.capability.topics",
+            ));
+        }
+        let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
+        let parsed: SdkTopicCreateV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let topic_path = match parsed.topic_path {
+            Some(value) => {
+                let normalized = Self::normalize_non_empty(value.as_str());
+                if normalized.is_none() {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "topic_path must not be empty when provided",
+                    ));
+                }
+                normalized
+            }
+            None => None,
+        };
+
+        let topic_id = self.next_sdk_domain_id("topic");
+        let record = SdkTopicRecord {
+            topic_id: topic_id.clone(),
+            topic_path,
+            created_ts_ms: now_millis_u64(),
+            metadata: parsed.metadata,
+            extensions: parsed.extensions,
+        };
+        self.sdk_topics
+            .lock()
+            .expect("sdk_topics mutex poisoned")
+            .insert(topic_id.clone(), record.clone());
+        self.sdk_topic_order.lock().expect("sdk_topic_order mutex poisoned").push(topic_id.clone());
+        let event = RpcEvent {
+            event_type: "sdk_topic_created".to_string(),
+            payload: json!({
+                "topic_id": topic_id,
+                "created_ts_ms": record.created_ts_ms,
+            }),
+        };
+        self.push_event(event.clone());
+        let _ = self.events.send(event);
+        Ok(RpcResponse { id: request.id, result: Some(json!({ "topic": record })), error: None })
+    }
+
+    fn handle_sdk_topic_get_v2(&self, request: RpcRequest) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.topics") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_topic_get_v2",
+                "sdk.capability.topics",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkTopicGetV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let topic_id = match Self::normalize_non_empty(parsed.topic_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "topic_id must not be empty",
+                ))
+            }
+        };
+        let topic = self
+            .sdk_topics
+            .lock()
+            .expect("sdk_topics mutex poisoned")
+            .get(topic_id.as_str())
+            .cloned();
+        Ok(RpcResponse { id: request.id, result: Some(json!({ "topic": topic })), error: None })
+    }
+
+    fn handle_sdk_topic_list_v2(&self, request: RpcRequest) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.topics") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_topic_list_v2",
+                "sdk.capability.topics",
+            ));
+        }
+        let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
+        let parsed: SdkTopicListV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let start_index = match self.collection_cursor_index(parsed.cursor.as_deref(), "topic:") {
+            Ok(index) => index,
+            Err(error) => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    error.code.as_str(),
+                    error.message.as_str(),
+                ))
+            }
+        };
+        let limit = parsed.limit.unwrap_or(100).clamp(1, 500);
+        let order_guard = self.sdk_topic_order.lock().expect("sdk_topic_order mutex poisoned");
+        if start_index > order_guard.len() {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_INVALID_CURSOR",
+                "topic cursor is out of range",
+            ));
+        }
+        let topics_guard = self.sdk_topics.lock().expect("sdk_topics mutex poisoned");
+        let topics = order_guard
+            .iter()
+            .skip(start_index)
+            .take(limit)
+            .filter_map(|topic_id| topics_guard.get(topic_id).cloned())
+            .collect::<Vec<_>>();
+        let next_index = start_index.saturating_add(topics.len());
+        let next_cursor = Self::collection_next_cursor("topic:", next_index, order_guard.len());
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({
+                "topics": topics,
+                "next_cursor": next_cursor,
+            })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_topic_subscribe_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.topic_subscriptions") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_topic_subscribe_v2",
+                "sdk.capability.topic_subscriptions",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkTopicSubscriptionV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.cursor.as_deref();
+        let _ = parsed.extensions.len();
+        let topic_id = match Self::normalize_non_empty(parsed.topic_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "topic_id must not be empty",
+                ))
+            }
+        };
+        if !self
+            .sdk_topics
+            .lock()
+            .expect("sdk_topics mutex poisoned")
+            .contains_key(topic_id.as_str())
+        {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "topic not found",
+            ));
+        }
+        self.sdk_topic_subscriptions
+            .lock()
+            .expect("sdk_topic_subscriptions mutex poisoned")
+            .insert(topic_id.clone());
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "accepted": true, "topic_id": topic_id })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_topic_unsubscribe_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.topic_subscriptions") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_topic_unsubscribe_v2",
+                "sdk.capability.topic_subscriptions",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkTopicGetV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let topic_id = match Self::normalize_non_empty(parsed.topic_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "topic_id must not be empty",
+                ))
+            }
+        };
+        let removed = self
+            .sdk_topic_subscriptions
+            .lock()
+            .expect("sdk_topic_subscriptions mutex poisoned")
+            .remove(topic_id.as_str());
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "accepted": removed, "topic_id": topic_id })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_topic_publish_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.topic_fanout") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_topic_publish_v2",
+                "sdk.capability.topic_fanout",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkTopicPublishV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let topic_id = match Self::normalize_non_empty(parsed.topic_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "topic_id must not be empty",
+                ))
+            }
+        };
+        if !self
+            .sdk_topics
+            .lock()
+            .expect("sdk_topics mutex poisoned")
+            .contains_key(topic_id.as_str())
+        {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "topic not found",
+            ));
+        }
+
+        let ts_ms = now_millis_u64();
+        let mut tags = HashMap::new();
+        tags.insert("topic_id".to_string(), topic_id.clone());
+        let telemetry = SdkTelemetryPoint {
+            ts_ms,
+            key: "topic_publish".to_string(),
+            value: parsed.payload.clone(),
+            unit: None,
+            tags,
+            extensions: parsed.extensions.clone(),
+        };
+        self.sdk_telemetry_points
+            .lock()
+            .expect("sdk_telemetry_points mutex poisoned")
+            .push(telemetry);
+
+        let event = RpcEvent {
+            event_type: "sdk_topic_published".to_string(),
+            payload: json!({
+                "topic_id": topic_id,
+                "correlation_id": parsed.correlation_id,
+                "ts_ms": ts_ms,
+                "payload": parsed.payload,
+            }),
+        };
+        self.push_event(event.clone());
+        let _ = self.events.send(event);
+        Ok(RpcResponse { id: request.id, result: Some(json!({ "accepted": true })), error: None })
+    }
+
+    fn handle_sdk_telemetry_query_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.telemetry_query") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_telemetry_query_v2",
+                "sdk.capability.telemetry_query",
+            ));
+        }
+        let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
+        let parsed: SdkTelemetryQueryV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let mut points =
+            self.sdk_telemetry_points.lock().expect("sdk_telemetry_points mutex poisoned").clone();
+
+        if let Some(from_ts_ms) = parsed.from_ts_ms {
+            points.retain(|point| point.ts_ms >= from_ts_ms);
+        }
+        if let Some(to_ts_ms) = parsed.to_ts_ms {
+            points.retain(|point| point.ts_ms <= to_ts_ms);
+        }
+        if let Some(topic_id) = parsed.topic_id {
+            points.retain(|point| {
+                point.tags.get("topic_id").is_some_and(|current| current == topic_id.as_str())
+            });
+        }
+        if let Some(peer_id) = parsed.peer_id {
+            points.retain(|point| {
+                point.tags.get("peer_id").is_some_and(|current| current == peer_id.as_str())
+            });
+        }
+        let limit = parsed.limit.unwrap_or(128).clamp(1, 2048);
+        if points.len() > limit {
+            points.truncate(limit);
+        }
+        Ok(RpcResponse { id: request.id, result: Some(json!({ "points": points })), error: None })
+    }
+
+    fn handle_sdk_telemetry_subscribe_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.telemetry_stream") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_telemetry_subscribe_v2",
+                "sdk.capability.telemetry_stream",
+            ));
+        }
+        let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
+        let parsed: SdkTelemetryQueryV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let event = RpcEvent {
+            event_type: "sdk_telemetry_subscribed".to_string(),
+            payload: json!({
+                "peer_id": parsed.peer_id,
+                "topic_id": parsed.topic_id,
+                "from_ts_ms": parsed.from_ts_ms,
+                "to_ts_ms": parsed.to_ts_ms,
+                "limit": parsed.limit,
+            }),
+        };
+        self.push_event(event.clone());
+        let _ = self.events.send(event);
+        Ok(RpcResponse { id: request.id, result: Some(json!({ "accepted": true })), error: None })
+    }
+
+    fn handle_sdk_attachment_store_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.attachments") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_attachment_store_v2",
+                "sdk.capability.attachments",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkAttachmentStoreV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let name = match Self::normalize_non_empty(parsed.name.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "attachment name must not be empty",
+                ))
+            }
+        };
+        let content_type = match Self::normalize_non_empty(parsed.content_type.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "attachment content_type must not be empty",
+                ))
+            }
+        };
+        let decoded_bytes =
+            BASE64_STANDARD.decode(parsed.bytes_base64.as_bytes()).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "attachment bytes_base64 is invalid",
+                )
+            })?;
+        if let Some(missing_topic) = parsed.topic_ids.iter().find(|topic_id| {
+            !self
+                .sdk_topics
+                .lock()
+                .expect("sdk_topics mutex poisoned")
+                .contains_key(topic_id.as_str())
+        }) {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                &format!("attachment references unknown topic_id '{missing_topic}'"),
+            ));
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(decoded_bytes.as_slice());
+        let attachment_id = self.next_sdk_domain_id("attachment");
+        let record = SdkAttachmentRecord {
+            attachment_id: attachment_id.clone(),
+            name,
+            content_type,
+            byte_len: decoded_bytes.len() as u64,
+            checksum_sha256: encode_hex(hasher.finalize()),
+            created_ts_ms: now_millis_u64(),
+            expires_ts_ms: parsed.expires_ts_ms,
+            topic_ids: parsed.topic_ids,
+            extensions: parsed.extensions,
+        };
+        self.sdk_attachments
+            .lock()
+            .expect("sdk_attachments mutex poisoned")
+            .insert(attachment_id.clone(), record.clone());
+        self.sdk_attachment_payloads
+            .lock()
+            .expect("sdk_attachment_payloads mutex poisoned")
+            .insert(attachment_id.clone(), parsed.bytes_base64);
+        self.sdk_attachment_order
+            .lock()
+            .expect("sdk_attachment_order mutex poisoned")
+            .push(attachment_id.clone());
+        let event = RpcEvent {
+            event_type: "sdk_attachment_stored".to_string(),
+            payload: json!({
+                "attachment_id": attachment_id,
+                "byte_len": record.byte_len,
+            }),
+        };
+        self.push_event(event.clone());
+        let _ = self.events.send(event);
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "attachment": record })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_attachment_get_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.attachments") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_attachment_get_v2",
+                "sdk.capability.attachments",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkAttachmentRefV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let attachment_id = match Self::normalize_non_empty(parsed.attachment_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "attachment_id must not be empty",
+                ))
+            }
+        };
+        let attachment = self
+            .sdk_attachments
+            .lock()
+            .expect("sdk_attachments mutex poisoned")
+            .get(attachment_id.as_str())
+            .cloned();
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "attachment": attachment })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_attachment_list_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.attachments") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_attachment_list_v2",
+                "sdk.capability.attachments",
+            ));
+        }
+        let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
+        let parsed: SdkAttachmentListV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let start_index =
+            match self.collection_cursor_index(parsed.cursor.as_deref(), "attachment:") {
+                Ok(index) => index,
+                Err(error) => {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        error.code.as_str(),
+                        error.message.as_str(),
+                    ))
+                }
+            };
+        let limit = parsed.limit.unwrap_or(100).clamp(1, 500);
+        let order_guard =
+            self.sdk_attachment_order.lock().expect("sdk_attachment_order mutex poisoned");
+        if start_index > order_guard.len() {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_INVALID_CURSOR",
+                "attachment cursor is out of range",
+            ));
+        }
+        let attachments_guard =
+            self.sdk_attachments.lock().expect("sdk_attachments mutex poisoned");
+        let mut attachments = Vec::new();
+        let mut next_index = start_index;
+        for attachment_id in order_guard.iter().skip(start_index) {
+            next_index = next_index.saturating_add(1);
+            let Some(record) = attachments_guard.get(attachment_id).cloned() else {
+                continue;
+            };
+            if let Some(topic_id) = parsed.topic_id.as_deref() {
+                if !record.topic_ids.iter().any(|current| current == topic_id) {
+                    continue;
+                }
+            }
+            attachments.push(record);
+            if attachments.len() >= limit {
+                break;
+            }
+        }
+        let next_cursor =
+            Self::collection_next_cursor("attachment:", next_index, order_guard.len());
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({
+                "attachments": attachments,
+                "next_cursor": next_cursor,
+            })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_attachment_delete_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.attachment_delete") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_attachment_delete_v2",
+                "sdk.capability.attachment_delete",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkAttachmentRefV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let attachment_id = match Self::normalize_non_empty(parsed.attachment_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "attachment_id must not be empty",
+                ))
+            }
+        };
+        let removed = self
+            .sdk_attachments
+            .lock()
+            .expect("sdk_attachments mutex poisoned")
+            .remove(attachment_id.as_str())
+            .is_some();
+        self.sdk_attachment_payloads
+            .lock()
+            .expect("sdk_attachment_payloads mutex poisoned")
+            .remove(attachment_id.as_str());
+        self.sdk_attachment_order
+            .lock()
+            .expect("sdk_attachment_order mutex poisoned")
+            .retain(|current| current != attachment_id.as_str());
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "accepted": removed, "attachment_id": attachment_id })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_attachment_download_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.attachments") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_attachment_download_v2",
+                "sdk.capability.attachments",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkAttachmentRefV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let attachment_id = match Self::normalize_non_empty(parsed.attachment_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "attachment_id must not be empty",
+                ))
+            }
+        };
+        let payload = self
+            .sdk_attachment_payloads
+            .lock()
+            .expect("sdk_attachment_payloads mutex poisoned")
+            .get(attachment_id.as_str())
+            .cloned();
+        if payload.is_none() {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "attachment not found",
+            ));
+        }
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({
+                "accepted": true,
+                "attachment_id": attachment_id,
+                "bytes_base64": payload,
+            })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_attachment_associate_topic_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.attachments") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_attachment_associate_topic_v2",
+                "sdk.capability.attachments",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkAttachmentAssociateTopicV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let attachment_id = match Self::normalize_non_empty(parsed.attachment_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "attachment_id must not be empty",
+                ))
+            }
+        };
+        let topic_id = match Self::normalize_non_empty(parsed.topic_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "topic_id must not be empty",
+                ))
+            }
+        };
+        if !self
+            .sdk_topics
+            .lock()
+            .expect("sdk_topics mutex poisoned")
+            .contains_key(topic_id.as_str())
+        {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "topic not found",
+            ));
+        }
+        let mut attachments = self.sdk_attachments.lock().expect("sdk_attachments mutex poisoned");
+        let Some(record) = attachments.get_mut(attachment_id.as_str()) else {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "attachment not found",
+            ));
+        };
+        if !record.topic_ids.iter().any(|current| current == topic_id.as_str()) {
+            record.topic_ids.push(topic_id.clone());
+        }
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(
+                json!({ "accepted": true, "attachment_id": attachment_id, "topic_id": topic_id }),
+            ),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_marker_create_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.markers") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_marker_create_v2",
+                "sdk.capability.markers",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkMarkerCreateV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let label = match Self::normalize_non_empty(parsed.label.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "marker label must not be empty",
+                ))
+            }
+        };
+        if !((-90.0..=90.0).contains(&parsed.position.lat)
+            && (-180.0..=180.0).contains(&parsed.position.lon))
+        {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "marker coordinates are out of range",
+            ));
+        }
+        if let Some(topic_id) = parsed.topic_id.as_deref() {
+            if !self.sdk_topics.lock().expect("sdk_topics mutex poisoned").contains_key(topic_id) {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_RUNTIME_NOT_FOUND",
+                    "topic not found",
+                ));
+            }
+        }
+        let marker_id = self.next_sdk_domain_id("marker");
+        let record = SdkMarkerRecord {
+            marker_id: marker_id.clone(),
+            label,
+            position: parsed.position,
+            topic_id: parsed.topic_id,
+            updated_ts_ms: now_millis_u64(),
+            extensions: parsed.extensions,
+        };
+        self.sdk_markers
+            .lock()
+            .expect("sdk_markers mutex poisoned")
+            .insert(marker_id.clone(), record.clone());
+        self.sdk_marker_order.lock().expect("sdk_marker_order mutex poisoned").push(marker_id);
+        Ok(RpcResponse { id: request.id, result: Some(json!({ "marker": record })), error: None })
+    }
+
+    fn handle_sdk_marker_list_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.markers") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_marker_list_v2",
+                "sdk.capability.markers",
+            ));
+        }
+        let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
+        let parsed: SdkMarkerListV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let start_index = match self.collection_cursor_index(parsed.cursor.as_deref(), "marker:") {
+            Ok(index) => index,
+            Err(error) => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    error.code.as_str(),
+                    error.message.as_str(),
+                ))
+            }
+        };
+        let limit = parsed.limit.unwrap_or(100).clamp(1, 500);
+        let order_guard = self.sdk_marker_order.lock().expect("sdk_marker_order mutex poisoned");
+        if start_index > order_guard.len() {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_INVALID_CURSOR",
+                "marker cursor is out of range",
+            ));
+        }
+        let markers_guard = self.sdk_markers.lock().expect("sdk_markers mutex poisoned");
+        let mut markers = Vec::new();
+        let mut next_index = start_index;
+        for marker_id in order_guard.iter().skip(start_index) {
+            next_index = next_index.saturating_add(1);
+            let Some(record) = markers_guard.get(marker_id).cloned() else {
+                continue;
+            };
+            if let Some(topic_id) = parsed.topic_id.as_deref() {
+                if record.topic_id.as_deref() != Some(topic_id) {
+                    continue;
+                }
+            }
+            markers.push(record);
+            if markers.len() >= limit {
+                break;
+            }
+        }
+        let next_cursor = Self::collection_next_cursor("marker:", next_index, order_guard.len());
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "markers": markers, "next_cursor": next_cursor })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_marker_update_position_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.markers") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_marker_update_position_v2",
+                "sdk.capability.markers",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkMarkerUpdatePositionV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let marker_id = match Self::normalize_non_empty(parsed.marker_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "marker_id must not be empty",
+                ))
+            }
+        };
+        if !((-90.0..=90.0).contains(&parsed.position.lat)
+            && (-180.0..=180.0).contains(&parsed.position.lon))
+        {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "marker coordinates are out of range",
+            ));
+        }
+        let mut markers = self.sdk_markers.lock().expect("sdk_markers mutex poisoned");
+        let Some(record) = markers.get_mut(marker_id.as_str()) else {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "marker not found",
+            ));
+        };
+        record.position = parsed.position;
+        record.updated_ts_ms = now_millis_u64();
+        record.extensions = parsed.extensions;
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "marker": record.clone() })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_marker_delete_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.markers") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_marker_delete_v2",
+                "sdk.capability.markers",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkMarkerDeleteV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let marker_id = match Self::normalize_non_empty(parsed.marker_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "marker_id must not be empty",
+                ))
+            }
+        };
+        let removed = self
+            .sdk_markers
+            .lock()
+            .expect("sdk_markers mutex poisoned")
+            .remove(marker_id.as_str())
+            .is_some();
+        self.sdk_marker_order
+            .lock()
+            .expect("sdk_marker_order mutex poisoned")
+            .retain(|current| current != marker_id.as_str());
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "accepted": removed, "marker_id": marker_id })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_identity_list_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.identity_multi") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_identity_list_v2",
+                "sdk.capability.identity_multi",
+            ));
+        }
+        let params = request.params.unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
+        let parsed: SdkIdentityListV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let mut identities = self
+            .sdk_identities
+            .lock()
+            .expect("sdk_identities mutex poisoned")
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        identities.sort_by(|left, right| left.identity.cmp(&right.identity));
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "identities": identities })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_identity_activate_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.identity_multi") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_identity_activate_v2",
+                "sdk.capability.identity_multi",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkIdentityActivateV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let identity = match Self::normalize_non_empty(parsed.identity.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "identity must not be empty",
+                ))
+            }
+        };
+        if !self
+            .sdk_identities
+            .lock()
+            .expect("sdk_identities mutex poisoned")
+            .contains_key(identity.as_str())
+        {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "identity not found",
+            ));
+        }
+        *self.sdk_active_identity.lock().expect("sdk_active_identity mutex poisoned") =
+            Some(identity.clone());
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "accepted": true, "identity": identity })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_identity_import_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.identity_import_export") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_identity_import_v2",
+                "sdk.capability.identity_import_export",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkIdentityImportV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.passphrase.as_deref();
+        let _ = parsed.extensions.len();
+        let bundle_base64 = match Self::normalize_non_empty(parsed.bundle_base64.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "bundle_base64 must not be empty",
+                ))
+            }
+        };
+        let decoded = BASE64_STANDARD.decode(bundle_base64.as_bytes()).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "bundle_base64 is invalid")
+        })?;
+
+        let parsed_bundle = serde_json::from_slice::<SdkIdentityBundle>(decoded.as_slice()).ok();
+        let mut hasher = Sha256::new();
+        hasher.update(decoded.as_slice());
+        let generated_identity = format!("id-{}", &encode_hex(hasher.finalize())[..16]);
+        let mut bundle = parsed_bundle.unwrap_or(SdkIdentityBundle {
+            identity: generated_identity.clone(),
+            public_key: format!("{generated_identity}-pub"),
+            display_name: None,
+            capabilities: Vec::new(),
+            extensions: JsonMap::new(),
+        });
+        if Self::normalize_non_empty(bundle.identity.as_str()).is_none() {
+            bundle.identity = generated_identity;
+        }
+        if Self::normalize_non_empty(bundle.public_key.as_str()).is_none() {
+            bundle.public_key = format!("{}-pub", bundle.identity);
+        }
+        self.sdk_identities
+            .lock()
+            .expect("sdk_identities mutex poisoned")
+            .insert(bundle.identity.clone(), bundle.clone());
+        Ok(RpcResponse { id: request.id, result: Some(json!({ "identity": bundle })), error: None })
+    }
+
+    fn handle_sdk_identity_export_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.identity_import_export") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_identity_export_v2",
+                "sdk.capability.identity_import_export",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkIdentityExportV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let identity = match Self::normalize_non_empty(parsed.identity.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "identity must not be empty",
+                ))
+            }
+        };
+        let bundle = self
+            .sdk_identities
+            .lock()
+            .expect("sdk_identities mutex poisoned")
+            .get(identity.as_str())
+            .cloned();
+        let Some(bundle) = bundle else {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "identity not found",
+            ));
+        };
+        let raw = serde_json::to_vec(&bundle).map_err(std::io::Error::other)?;
+        let bundle_base64 = BASE64_STANDARD.encode(raw);
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({
+                "bundle": {
+                    "bundle_base64": bundle_base64,
+                    "passphrase": JsonValue::Null,
+                    "extensions": JsonMap::<String, JsonValue>::new(),
+                }
+            })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_identity_resolve_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.identity_hash_resolution") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_identity_resolve_v2",
+                "sdk.capability.identity_hash_resolution",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkIdentityResolveV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let query = match Self::normalize_non_empty(parsed.hash.as_str()) {
+            Some(value) => value.to_ascii_lowercase(),
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "hash must not be empty",
+                ))
+            }
+        };
+        let identities_guard = self.sdk_identities.lock().expect("sdk_identities mutex poisoned");
+        let identity = identities_guard.values().find_map(|bundle| {
+            if bundle.identity.eq_ignore_ascii_case(query.as_str()) {
+                return Some(bundle.identity.clone());
+            }
+            if bundle.public_key.to_ascii_lowercase().contains(query.as_str()) {
+                return Some(bundle.identity.clone());
+            }
+            None
+        });
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "identity": identity })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_paper_encode_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.paper_messages") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_paper_encode_v2",
+                "sdk.capability.paper_messages",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkPaperEncodeV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let message_id = match Self::normalize_non_empty(parsed.message_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "message_id must not be empty",
+                ))
+            }
+        };
+        let message = self.store.get_message(message_id.as_str()).map_err(std::io::Error::other)?;
+        let Some(message) = message else {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "message not found",
+            ));
+        };
+        let envelope = json!({
+            "uri": format!("lxm://{}/{}", message.destination, message.id),
+            "transient_id": format!("paper-{}", message.id),
+            "destination_hint": message.destination,
+            "extensions": JsonMap::<String, JsonValue>::new(),
+        });
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "envelope": envelope })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_paper_decode_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.paper_messages") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_paper_decode_v2",
+                "sdk.capability.paper_messages",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkPaperDecodeV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        if !parsed.uri.starts_with("lxm://") {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "paper URI must start with lxm://",
+            ));
+        }
+        let transient_id = parsed.transient_id.unwrap_or_else(|| {
+            let mut hasher = Sha256::new();
+            hasher.update(parsed.uri.as_bytes());
+            format!("paper-{}", encode_hex(hasher.finalize()))
+        });
+        let duplicate = {
+            let mut guard =
+                self.paper_ingest_seen.lock().expect("paper_ingest_seen mutex poisoned");
+            if guard.contains(transient_id.as_str()) {
+                true
+            } else {
+                guard.insert(transient_id.clone());
+                false
+            }
+        };
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({
+                "accepted": true,
+                "transient_id": transient_id,
+                "duplicate": duplicate,
+                "destination_hint": parsed.destination_hint,
+            })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_command_invoke_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.remote_commands") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_command_invoke_v2",
+                "sdk.capability.remote_commands",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkCommandInvokeV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let command = match Self::normalize_non_empty(parsed.command.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "command must not be empty",
+                ))
+            }
+        };
+        let correlation_id = self.next_sdk_domain_id("cmd");
+        self.sdk_remote_commands
+            .lock()
+            .expect("sdk_remote_commands mutex poisoned")
+            .insert(correlation_id.clone());
+        let response = json!({
+            "accepted": true,
+            "payload": {
+                "correlation_id": correlation_id,
+                "command": command,
+                "target": parsed.target,
+                "echo": parsed.payload,
+                "timeout_ms": parsed.timeout_ms,
+            },
+            "extensions": parsed.extensions,
+        });
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "response": response })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_command_reply_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.remote_commands") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_command_reply_v2",
+                "sdk.capability.remote_commands",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkCommandReplyV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let correlation_id = match Self::normalize_non_empty(parsed.correlation_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "correlation_id must not be empty",
+                ))
+            }
+        };
+        let removed = self
+            .sdk_remote_commands
+            .lock()
+            .expect("sdk_remote_commands mutex poisoned")
+            .remove(correlation_id.as_str());
+        if !removed {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "correlation_id not found",
+            ));
+        }
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({
+                "accepted": true,
+                "correlation_id": correlation_id,
+                "reply_accepted": parsed.accepted,
+                "payload": parsed.payload,
+            })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_voice_session_open_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.voice_signaling") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_voice_session_open_v2",
+                "sdk.capability.voice_signaling",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkVoiceSessionOpenV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let peer_id = match Self::normalize_non_empty(parsed.peer_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "peer_id must not be empty",
+                ))
+            }
+        };
+        let session_id = self.next_sdk_domain_id("voice");
+        let record = SdkVoiceSessionRecord {
+            session_id: session_id.clone(),
+            peer_id,
+            codec_hint: parsed.codec_hint,
+            state: "ringing".to_string(),
+            extensions: parsed.extensions,
+        };
+        self.sdk_voice_sessions
+            .lock()
+            .expect("sdk_voice_sessions mutex poisoned")
+            .insert(session_id.clone(), record);
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "session_id": session_id })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_voice_session_update_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.voice_signaling") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_voice_session_update_v2",
+                "sdk.capability.voice_signaling",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkVoiceSessionUpdateV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let session_id = match Self::normalize_non_empty(parsed.session_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "session_id must not be empty",
+                ))
+            }
+        };
+        let Some(next_state) = Self::normalize_voice_state(parsed.state.as_str()) else {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "voice state is invalid",
+            ));
+        };
+        let mut sessions =
+            self.sdk_voice_sessions.lock().expect("sdk_voice_sessions mutex poisoned");
+        let Some(session) = sessions.get_mut(session_id.as_str()) else {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "voice session not found",
+            ));
+        };
+        let current_state = session.state.clone();
+        let current_rank = Self::voice_state_rank(current_state.as_str());
+        let next_rank = Self::voice_state_rank(next_state);
+        if current_rank == 4 && current_state != next_state {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "voice session is already terminal",
+            ));
+        }
+        if next_rank < current_rank && next_rank != 4 {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "voice session transitions must be monotonic",
+            ));
+        }
+        session.state = next_state.to_string();
+        session.extensions = parsed.extensions;
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "state": next_state })),
+            error: None,
+        })
+    }
+
+    fn handle_sdk_voice_session_close_v2(
+        &self,
+        request: RpcRequest,
+    ) -> Result<RpcResponse, std::io::Error> {
+        if !self.sdk_has_capability("sdk.capability.voice_signaling") {
+            return Ok(self.sdk_capability_disabled_response(
+                request.id,
+                "sdk_voice_session_close_v2",
+                "sdk.capability.voice_signaling",
+            ));
+        }
+        let params = request.params.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "missing params")
+        })?;
+        let parsed: SdkVoiceSessionCloseV2Params = serde_json::from_value(params)
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+        let _ = parsed.extensions.len();
+        let session_id = match Self::normalize_non_empty(parsed.session_id.as_str()) {
+            Some(value) => value,
+            None => {
+                return Ok(self.sdk_error_response(
+                    request.id,
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "session_id must not be empty",
+                ))
+            }
+        };
+        let mut sessions =
+            self.sdk_voice_sessions.lock().expect("sdk_voice_sessions mutex poisoned");
+        let Some(session) = sessions.get_mut(session_id.as_str()) else {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_RUNTIME_NOT_FOUND",
+                "voice session not found",
+            ));
+        };
+        session.state = "closed".to_string();
+        Ok(RpcResponse {
+            id: request.id,
+            result: Some(json!({ "accepted": true, "session_id": session_id })),
+            error: None,
+        })
+    }
+
     pub fn handle_rpc(&self, request: RpcRequest) -> Result<RpcResponse, std::io::Error> {
         match request.method.as_str() {
             "status" => Ok(RpcResponse {
@@ -1063,156 +2757,38 @@ impl RpcDaemon {
             "sdk_status_v2" => self.handle_sdk_status_v2(request),
             "sdk_configure_v2" => self.handle_sdk_configure_v2(request),
             "sdk_shutdown_v2" => self.handle_sdk_shutdown_v2(request),
-            "sdk_topic_create_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_topic_create_v2",
-                "sdk.capability.topics",
-            )),
-            "sdk_topic_get_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_topic_get_v2",
-                "sdk.capability.topics",
-            )),
-            "sdk_topic_list_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_topic_list_v2",
-                "sdk.capability.topics",
-            )),
-            "sdk_topic_subscribe_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_topic_subscribe_v2",
-                "sdk.capability.topic_subscriptions",
-            )),
-            "sdk_topic_unsubscribe_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_topic_unsubscribe_v2",
-                "sdk.capability.topic_subscriptions",
-            )),
-            "sdk_topic_publish_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_topic_publish_v2",
-                "sdk.capability.topic_fanout",
-            )),
-            "sdk_telemetry_query_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_telemetry_query_v2",
-                "sdk.capability.telemetry_query",
-            )),
-            "sdk_telemetry_subscribe_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_telemetry_subscribe_v2",
-                "sdk.capability.telemetry_stream",
-            )),
-            "sdk_attachment_store_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_attachment_store_v2",
-                "sdk.capability.attachments",
-            )),
-            "sdk_attachment_get_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_attachment_get_v2",
-                "sdk.capability.attachments",
-            )),
-            "sdk_attachment_list_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_attachment_list_v2",
-                "sdk.capability.attachments",
-            )),
-            "sdk_attachment_delete_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_attachment_delete_v2",
-                "sdk.capability.attachment_delete",
-            )),
-            "sdk_attachment_download_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_attachment_download_v2",
-                "sdk.capability.attachments",
-            )),
-            "sdk_attachment_associate_topic_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_attachment_associate_topic_v2",
-                "sdk.capability.attachments",
-            )),
-            "sdk_marker_create_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_marker_create_v2",
-                "sdk.capability.markers",
-            )),
-            "sdk_marker_list_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_marker_list_v2",
-                "sdk.capability.markers",
-            )),
-            "sdk_marker_update_position_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_marker_update_position_v2",
-                "sdk.capability.markers",
-            )),
-            "sdk_marker_delete_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_marker_delete_v2",
-                "sdk.capability.markers",
-            )),
-            "sdk_identity_list_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_identity_list_v2",
-                "sdk.capability.identity_multi",
-            )),
-            "sdk_identity_activate_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_identity_activate_v2",
-                "sdk.capability.identity_multi",
-            )),
-            "sdk_identity_import_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_identity_import_v2",
-                "sdk.capability.identity_import_export",
-            )),
-            "sdk_identity_export_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_identity_export_v2",
-                "sdk.capability.identity_import_export",
-            )),
-            "sdk_identity_resolve_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_identity_resolve_v2",
-                "sdk.capability.identity_hash_resolution",
-            )),
-            "sdk_paper_encode_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_paper_encode_v2",
-                "sdk.capability.paper_messages",
-            )),
-            "sdk_paper_decode_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_paper_decode_v2",
-                "sdk.capability.paper_messages",
-            )),
-            "sdk_command_invoke_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_command_invoke_v2",
-                "sdk.capability.remote_commands",
-            )),
-            "sdk_command_reply_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_command_reply_v2",
-                "sdk.capability.remote_commands",
-            )),
-            "sdk_voice_session_open_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_voice_session_open_v2",
-                "sdk.capability.voice_signaling",
-            )),
-            "sdk_voice_session_update_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_voice_session_update_v2",
-                "sdk.capability.voice_signaling",
-            )),
-            "sdk_voice_session_close_v2" => Ok(self.sdk_capability_disabled_response(
-                request.id,
-                "sdk_voice_session_close_v2",
-                "sdk.capability.voice_signaling",
-            )),
+            "sdk_topic_create_v2" => self.handle_sdk_topic_create_v2(request),
+            "sdk_topic_get_v2" => self.handle_sdk_topic_get_v2(request),
+            "sdk_topic_list_v2" => self.handle_sdk_topic_list_v2(request),
+            "sdk_topic_subscribe_v2" => self.handle_sdk_topic_subscribe_v2(request),
+            "sdk_topic_unsubscribe_v2" => self.handle_sdk_topic_unsubscribe_v2(request),
+            "sdk_topic_publish_v2" => self.handle_sdk_topic_publish_v2(request),
+            "sdk_telemetry_query_v2" => self.handle_sdk_telemetry_query_v2(request),
+            "sdk_telemetry_subscribe_v2" => self.handle_sdk_telemetry_subscribe_v2(request),
+            "sdk_attachment_store_v2" => self.handle_sdk_attachment_store_v2(request),
+            "sdk_attachment_get_v2" => self.handle_sdk_attachment_get_v2(request),
+            "sdk_attachment_list_v2" => self.handle_sdk_attachment_list_v2(request),
+            "sdk_attachment_delete_v2" => self.handle_sdk_attachment_delete_v2(request),
+            "sdk_attachment_download_v2" => self.handle_sdk_attachment_download_v2(request),
+            "sdk_attachment_associate_topic_v2" => {
+                self.handle_sdk_attachment_associate_topic_v2(request)
+            }
+            "sdk_marker_create_v2" => self.handle_sdk_marker_create_v2(request),
+            "sdk_marker_list_v2" => self.handle_sdk_marker_list_v2(request),
+            "sdk_marker_update_position_v2" => self.handle_sdk_marker_update_position_v2(request),
+            "sdk_marker_delete_v2" => self.handle_sdk_marker_delete_v2(request),
+            "sdk_identity_list_v2" => self.handle_sdk_identity_list_v2(request),
+            "sdk_identity_activate_v2" => self.handle_sdk_identity_activate_v2(request),
+            "sdk_identity_import_v2" => self.handle_sdk_identity_import_v2(request),
+            "sdk_identity_export_v2" => self.handle_sdk_identity_export_v2(request),
+            "sdk_identity_resolve_v2" => self.handle_sdk_identity_resolve_v2(request),
+            "sdk_paper_encode_v2" => self.handle_sdk_paper_encode_v2(request),
+            "sdk_paper_decode_v2" => self.handle_sdk_paper_decode_v2(request),
+            "sdk_command_invoke_v2" => self.handle_sdk_command_invoke_v2(request),
+            "sdk_command_reply_v2" => self.handle_sdk_command_reply_v2(request),
+            "sdk_voice_session_open_v2" => self.handle_sdk_voice_session_open_v2(request),
+            "sdk_voice_session_update_v2" => self.handle_sdk_voice_session_update_v2(request),
+            "sdk_voice_session_close_v2" => self.handle_sdk_voice_session_close_v2(request),
             "list_messages" => {
                 let items = self.store.list_messages(100, None).map_err(std::io::Error::other)?;
                 Ok(RpcResponse {
@@ -1950,11 +3526,30 @@ impl RpcDaemon {
                     error: None,
                 })
             }
-            "clear_resources" => Ok(RpcResponse {
-                id: request.id,
-                result: Some(json!({ "cleared": "resources" })),
-                error: None,
-            }),
+            "clear_resources" => {
+                self.sdk_attachments.lock().expect("sdk_attachments mutex poisoned").clear();
+                self.sdk_attachment_payloads
+                    .lock()
+                    .expect("sdk_attachment_payloads mutex poisoned")
+                    .clear();
+                self.sdk_attachment_order
+                    .lock()
+                    .expect("sdk_attachment_order mutex poisoned")
+                    .clear();
+                self.sdk_topics.lock().expect("sdk_topics mutex poisoned").clear();
+                self.sdk_topic_order.lock().expect("sdk_topic_order mutex poisoned").clear();
+                self.sdk_topic_subscriptions
+                    .lock()
+                    .expect("sdk_topic_subscriptions mutex poisoned")
+                    .clear();
+                self.sdk_markers.lock().expect("sdk_markers mutex poisoned").clear();
+                self.sdk_marker_order.lock().expect("sdk_marker_order mutex poisoned").clear();
+                Ok(RpcResponse {
+                    id: request.id,
+                    result: Some(json!({ "cleared": "resources" })),
+                    error: None,
+                })
+            }
             "clear_peers" => {
                 {
                     let mut guard = self.peers.lock().expect("peers mutex poisoned");
@@ -1979,6 +3574,32 @@ impl RpcDaemon {
                         self.delivery_traces.lock().expect("delivery traces mutex poisoned");
                     guard.clear();
                 }
+                self.sdk_attachments.lock().expect("sdk_attachments mutex poisoned").clear();
+                self.sdk_attachment_payloads
+                    .lock()
+                    .expect("sdk_attachment_payloads mutex poisoned")
+                    .clear();
+                self.sdk_attachment_order
+                    .lock()
+                    .expect("sdk_attachment_order mutex poisoned")
+                    .clear();
+                self.sdk_topics.lock().expect("sdk_topics mutex poisoned").clear();
+                self.sdk_topic_order.lock().expect("sdk_topic_order mutex poisoned").clear();
+                self.sdk_topic_subscriptions
+                    .lock()
+                    .expect("sdk_topic_subscriptions mutex poisoned")
+                    .clear();
+                self.sdk_markers.lock().expect("sdk_markers mutex poisoned").clear();
+                self.sdk_marker_order.lock().expect("sdk_marker_order mutex poisoned").clear();
+                self.sdk_telemetry_points
+                    .lock()
+                    .expect("sdk_telemetry_points mutex poisoned")
+                    .clear();
+                self.sdk_remote_commands
+                    .lock()
+                    .expect("sdk_remote_commands mutex poisoned")
+                    .clear();
+                self.sdk_voice_sessions.lock().expect("sdk_voice_sessions mutex poisoned").clear();
                 Ok(RpcResponse {
                     id: request.id,
                     result: Some(json!({ "cleared": "all" })),
@@ -2398,9 +4019,24 @@ impl RpcDaemon {
         vec![
             "sdk.capability.cursor_replay".to_string(),
             "sdk.capability.async_events".to_string(),
+            "sdk.capability.token_auth".to_string(),
             "sdk.capability.receipt_terminality".to_string(),
             "sdk.capability.config_revision_cas".to_string(),
             "sdk.capability.idempotency_ttl".to_string(),
+            "sdk.capability.topics".to_string(),
+            "sdk.capability.topic_subscriptions".to_string(),
+            "sdk.capability.topic_fanout".to_string(),
+            "sdk.capability.telemetry_query".to_string(),
+            "sdk.capability.telemetry_stream".to_string(),
+            "sdk.capability.attachments".to_string(),
+            "sdk.capability.attachment_delete".to_string(),
+            "sdk.capability.markers".to_string(),
+            "sdk.capability.identity_multi".to_string(),
+            "sdk.capability.identity_import_export".to_string(),
+            "sdk.capability.identity_hash_resolution".to_string(),
+            "sdk.capability.paper_messages".to_string(),
+            "sdk.capability.remote_commands".to_string(),
+            "sdk.capability.voice_signaling".to_string(),
         ]
     }
 
@@ -2666,6 +4302,36 @@ impl RpcDaemon {
             "sdk_cancel_message_v2",
             "sdk_snapshot_v2",
             "sdk_shutdown_v2",
+            "sdk_topic_create_v2",
+            "sdk_topic_get_v2",
+            "sdk_topic_list_v2",
+            "sdk_topic_subscribe_v2",
+            "sdk_topic_unsubscribe_v2",
+            "sdk_topic_publish_v2",
+            "sdk_telemetry_query_v2",
+            "sdk_telemetry_subscribe_v2",
+            "sdk_attachment_store_v2",
+            "sdk_attachment_get_v2",
+            "sdk_attachment_list_v2",
+            "sdk_attachment_delete_v2",
+            "sdk_attachment_download_v2",
+            "sdk_attachment_associate_topic_v2",
+            "sdk_marker_create_v2",
+            "sdk_marker_list_v2",
+            "sdk_marker_update_position_v2",
+            "sdk_marker_delete_v2",
+            "sdk_identity_list_v2",
+            "sdk_identity_activate_v2",
+            "sdk_identity_import_v2",
+            "sdk_identity_export_v2",
+            "sdk_identity_resolve_v2",
+            "sdk_paper_encode_v2",
+            "sdk_paper_decode_v2",
+            "sdk_command_invoke_v2",
+            "sdk_command_reply_v2",
+            "sdk_voice_session_open_v2",
+            "sdk_voice_session_update_v2",
+            "sdk_voice_session_close_v2",
             "announce_now",
             "list_interfaces",
             "set_interfaces",
@@ -3315,24 +4981,400 @@ mod tests {
     }
 
     #[test]
-    fn sdk_domain_methods_return_capability_disabled_when_not_enabled() {
+    fn sdk_domain_methods_respect_capability_gating_when_removed() {
         let daemon = RpcDaemon::test_instance();
-        for method in [
-            "sdk_topic_create_v2",
-            "sdk_telemetry_query_v2",
-            "sdk_attachment_store_v2",
-            "sdk_marker_create_v2",
-            "sdk_identity_list_v2",
-            "sdk_paper_encode_v2",
-            "sdk_command_invoke_v2",
-            "sdk_voice_session_open_v2",
-        ] {
-            let response =
-                daemon.handle_rpc(rpc_request(77, method, json!({}))).expect("rpc response");
-            let error = response.error.expect("expected capability error");
-            assert_eq!(error.code, "SDK_CAPABILITY_DISABLED", "unexpected code for {method}");
-            assert!(error.message.contains(method), "error message should include method");
+        {
+            let mut capabilities = daemon
+                .sdk_effective_capabilities
+                .lock()
+                .expect("sdk_effective_capabilities mutex poisoned");
+            *capabilities = vec!["sdk.capability.cursor_replay".to_string()];
         }
+        let response = daemon
+            .handle_rpc(rpc_request(
+                77,
+                "sdk_topic_create_v2",
+                json!({ "topic_path": "ops/alpha" }),
+            ))
+            .expect("rpc response");
+        let error = response.error.expect("expected capability error");
+        assert_eq!(error.code, "SDK_CAPABILITY_DISABLED");
+        assert!(error.message.contains("sdk_topic_create_v2"));
+    }
+
+    #[test]
+    fn sdk_release_b_domain_methods_roundtrip() {
+        let daemon = RpcDaemon::test_instance();
+
+        let topic = daemon
+            .handle_rpc(rpc_request(
+                90,
+                "sdk_topic_create_v2",
+                json!({
+                    "topic_path": "ops/alerts",
+                    "metadata": { "kind": "ops" },
+                    "extensions": { "scope": "test" }
+                }),
+            ))
+            .expect("topic create");
+        assert!(topic.error.is_none());
+        let topic_id = topic.result.expect("topic result")["topic"]["topic_id"]
+            .as_str()
+            .expect("topic id")
+            .to_string();
+
+        let topic_get = daemon
+            .handle_rpc(rpc_request(
+                91,
+                "sdk_topic_get_v2",
+                json!({ "topic_id": topic_id.clone() }),
+            ))
+            .expect("topic get");
+        assert!(topic_get.error.is_none());
+        assert_eq!(topic_get.result.expect("result")["topic"]["topic_path"], json!("ops/alerts"));
+
+        let topic_list = daemon
+            .handle_rpc(rpc_request(92, "sdk_topic_list_v2", json!({ "limit": 10 })))
+            .expect("topic list");
+        assert!(topic_list.error.is_none());
+        assert_eq!(
+            topic_list.result.expect("result")["topics"].as_array().expect("topic array").len(),
+            1
+        );
+
+        let topic_subscribe = daemon
+            .handle_rpc(rpc_request(
+                93,
+                "sdk_topic_subscribe_v2",
+                json!({ "topic_id": topic_id.clone() }),
+            ))
+            .expect("topic subscribe");
+        assert!(topic_subscribe.error.is_none());
+        assert_eq!(topic_subscribe.result.expect("result")["accepted"], json!(true));
+
+        let publish = daemon
+            .handle_rpc(rpc_request(
+                94,
+                "sdk_topic_publish_v2",
+                json!({
+                    "topic_id": topic_id.clone(),
+                    "payload": { "message": "hello topic" },
+                    "correlation_id": "corr-1"
+                }),
+            ))
+            .expect("topic publish");
+        assert!(publish.error.is_none());
+        assert_eq!(publish.result.expect("result")["accepted"], json!(true));
+
+        let telemetry = daemon
+            .handle_rpc(rpc_request(
+                95,
+                "sdk_telemetry_query_v2",
+                json!({ "topic_id": topic_id.clone() }),
+            ))
+            .expect("telemetry query");
+        assert!(telemetry.error.is_none());
+        assert!(!telemetry.result.expect("result")["points"]
+            .as_array()
+            .expect("points array")
+            .is_empty());
+
+        let attachment = daemon
+            .handle_rpc(rpc_request(
+                96,
+                "sdk_attachment_store_v2",
+                json!({
+                    "name": "sample.txt",
+                    "content_type": "text/plain",
+                    "bytes_base64": "aGVsbG8gd29ybGQ=",
+                    "topic_ids": [topic_id.clone()]
+                }),
+            ))
+            .expect("attachment store");
+        assert!(attachment.error.is_none());
+        let attachment_id = attachment.result.expect("result")["attachment"]["attachment_id"]
+            .as_str()
+            .expect("attachment id")
+            .to_string();
+
+        let attachment_get = daemon
+            .handle_rpc(rpc_request(
+                97,
+                "sdk_attachment_get_v2",
+                json!({ "attachment_id": attachment_id }),
+            ))
+            .expect("attachment get");
+        assert!(attachment_get.error.is_none());
+        assert_eq!(
+            attachment_get.result.expect("result")["attachment"]["name"],
+            json!("sample.txt")
+        );
+
+        let attachment_list = daemon
+            .handle_rpc(rpc_request(
+                98,
+                "sdk_attachment_list_v2",
+                json!({ "topic_id": topic_id.clone() }),
+            ))
+            .expect("attachment list");
+        assert!(attachment_list.error.is_none());
+        assert_eq!(
+            attachment_list.result.expect("result")["attachments"]
+                .as_array()
+                .expect("attachments array")
+                .len(),
+            1
+        );
+
+        let marker = daemon
+            .handle_rpc(rpc_request(
+                99,
+                "sdk_marker_create_v2",
+                json!({
+                    "label": "Alpha",
+                    "position": { "lat": 35.0, "lon": -115.0, "alt_m": 1200.0 },
+                    "topic_id": topic_id.clone()
+                }),
+            ))
+            .expect("marker create");
+        assert!(marker.error.is_none());
+        let marker_id = marker.result.expect("result")["marker"]["marker_id"]
+            .as_str()
+            .expect("marker id")
+            .to_string();
+
+        let marker_update = daemon
+            .handle_rpc(rpc_request(
+                100,
+                "sdk_marker_update_position_v2",
+                json!({
+                    "marker_id": marker_id,
+                    "position": { "lat": 36.0, "lon": -116.0, "alt_m": null }
+                }),
+            ))
+            .expect("marker update");
+        assert!(marker_update.error.is_none());
+        assert_eq!(marker_update.result.expect("result")["marker"]["position"]["lat"], json!(36.0));
+    }
+
+    #[test]
+    fn sdk_release_b_filtered_list_cursor_does_not_stall_on_no_matches() {
+        let daemon = RpcDaemon::test_instance();
+        let topic_a = daemon
+            .handle_rpc(rpc_request(110, "sdk_topic_create_v2", json!({ "topic_path": "ops/a" })))
+            .expect("topic a");
+        let topic_b = daemon
+            .handle_rpc(rpc_request(111, "sdk_topic_create_v2", json!({ "topic_path": "ops/b" })))
+            .expect("topic b");
+        let topic_a_id = topic_a.result.expect("result")["topic"]["topic_id"]
+            .as_str()
+            .expect("topic_a_id")
+            .to_string();
+        let topic_b_id = topic_b.result.expect("result")["topic"]["topic_id"]
+            .as_str()
+            .expect("topic_b_id")
+            .to_string();
+
+        let _ = daemon
+            .handle_rpc(rpc_request(
+                112,
+                "sdk_attachment_store_v2",
+                json!({
+                    "name": "a.bin",
+                    "content_type": "application/octet-stream",
+                    "bytes_base64": "AA==",
+                    "topic_ids": [topic_a_id.clone()]
+                }),
+            ))
+            .expect("attachment store");
+        let _ = daemon
+            .handle_rpc(rpc_request(
+                113,
+                "sdk_marker_create_v2",
+                json!({
+                    "label": "A",
+                    "position": { "lat": 1.0, "lon": 1.0, "alt_m": null },
+                    "topic_id": topic_a_id
+                }),
+            ))
+            .expect("marker create");
+
+        let attachment_list = daemon
+            .handle_rpc(rpc_request(
+                114,
+                "sdk_attachment_list_v2",
+                json!({ "topic_id": topic_b_id.clone(), "cursor": null, "limit": 10 }),
+            ))
+            .expect("attachment list");
+        assert!(attachment_list.error.is_none());
+        let attachment_result = attachment_list.result.expect("attachment list result");
+        assert_eq!(attachment_result["attachments"], json!([]));
+        assert_eq!(attachment_result["next_cursor"], JsonValue::Null);
+
+        let marker_list = daemon
+            .handle_rpc(rpc_request(
+                115,
+                "sdk_marker_list_v2",
+                json!({ "topic_id": topic_b_id, "cursor": null, "limit": 10 }),
+            ))
+            .expect("marker list");
+        assert!(marker_list.error.is_none());
+        let marker_result = marker_list.result.expect("marker list result");
+        assert_eq!(marker_result["markers"], json!([]));
+        assert_eq!(marker_result["next_cursor"], JsonValue::Null);
+    }
+
+    #[test]
+    fn sdk_release_c_domain_methods_roundtrip() {
+        let daemon = RpcDaemon::test_instance();
+        let list_before =
+            daemon.handle_rpc(rpc_request(120, "sdk_identity_list_v2", json!({}))).expect("list");
+        assert!(list_before.error.is_none());
+        assert!(!list_before.result.expect("result")["identities"]
+            .as_array()
+            .expect("identity array")
+            .is_empty());
+
+        let identity_bundle = json!({
+            "identity": "node-b",
+            "public_key": "node-b-pub",
+            "display_name": "Node B",
+            "capabilities": ["ops"],
+            "extensions": {}
+        });
+        let identity_import = daemon
+            .handle_rpc(rpc_request(
+                121,
+                "sdk_identity_import_v2",
+                json!({
+                    "bundle_base64": BASE64_STANDARD.encode(identity_bundle.to_string().as_bytes()),
+                    "passphrase": null
+                }),
+            ))
+            .expect("identity import");
+        assert!(identity_import.error.is_none());
+        assert_eq!(
+            identity_import.result.expect("result")["identity"]["identity"],
+            json!("node-b")
+        );
+
+        let identity_resolve = daemon
+            .handle_rpc(rpc_request(
+                122,
+                "sdk_identity_resolve_v2",
+                json!({ "hash": "node-b-pub" }),
+            ))
+            .expect("identity resolve");
+        assert!(identity_resolve.error.is_none());
+        assert_eq!(identity_resolve.result.expect("result")["identity"], json!("node-b"));
+
+        let identity_export = daemon
+            .handle_rpc(rpc_request(123, "sdk_identity_export_v2", json!({ "identity": "node-b" })))
+            .expect("identity export");
+        assert!(identity_export.error.is_none());
+        assert!(!identity_export.result.expect("result")["bundle"]["bundle_base64"]
+            .as_str()
+            .expect("export bundle")
+            .is_empty());
+
+        let _ = daemon
+            .handle_rpc(rpc_request(
+                124,
+                "send_message_v2",
+                json!({
+                    "id": "paper-msg-1",
+                    "source": "src",
+                    "destination": "dst",
+                    "title": "",
+                    "content": "paper body"
+                }),
+            ))
+            .expect("send message for paper");
+        let paper_encode = daemon
+            .handle_rpc(rpc_request(
+                125,
+                "sdk_paper_encode_v2",
+                json!({ "message_id": "paper-msg-1" }),
+            ))
+            .expect("paper encode");
+        assert!(paper_encode.error.is_none());
+        let uri = paper_encode.result.expect("result")["envelope"]["uri"]
+            .as_str()
+            .expect("paper uri")
+            .to_string();
+        assert!(uri.starts_with("lxm://"));
+
+        let paper_decode = daemon
+            .handle_rpc(rpc_request(126, "sdk_paper_decode_v2", json!({ "uri": uri })))
+            .expect("paper decode");
+        assert!(paper_decode.error.is_none());
+        assert_eq!(paper_decode.result.expect("result")["accepted"], json!(true));
+
+        let command = daemon
+            .handle_rpc(rpc_request(
+                127,
+                "sdk_command_invoke_v2",
+                json!({
+                    "command": "ping",
+                    "target": "node-b",
+                    "payload": { "body": "hello" },
+                    "timeout_ms": 1000
+                }),
+            ))
+            .expect("command invoke");
+        assert!(command.error.is_none());
+        let correlation_id = command.result.expect("result")["response"]["payload"]
+            ["correlation_id"]
+            .as_str()
+            .expect("correlation id")
+            .to_string();
+
+        let command_reply = daemon
+            .handle_rpc(rpc_request(
+                128,
+                "sdk_command_reply_v2",
+                json!({
+                    "correlation_id": correlation_id,
+                    "accepted": true,
+                    "payload": { "reply": "pong" }
+                }),
+            ))
+            .expect("command reply");
+        assert!(command_reply.error.is_none());
+        assert_eq!(command_reply.result.expect("result")["accepted"], json!(true));
+
+        let voice_open = daemon
+            .handle_rpc(rpc_request(
+                129,
+                "sdk_voice_session_open_v2",
+                json!({ "peer_id": "node-b", "codec_hint": "opus" }),
+            ))
+            .expect("voice open");
+        assert!(voice_open.error.is_none());
+        let session_id = voice_open.result.expect("result")["session_id"]
+            .as_str()
+            .expect("session id")
+            .to_string();
+
+        let voice_update = daemon
+            .handle_rpc(rpc_request(
+                130,
+                "sdk_voice_session_update_v2",
+                json!({ "session_id": session_id.clone(), "state": "active" }),
+            ))
+            .expect("voice update");
+        assert!(voice_update.error.is_none());
+        assert_eq!(voice_update.result.expect("result")["state"], json!("active"));
+
+        let voice_close = daemon
+            .handle_rpc(rpc_request(
+                131,
+                "sdk_voice_session_close_v2",
+                json!({ "session_id": session_id }),
+            ))
+            .expect("voice close");
+        assert!(voice_close.error.is_none());
+        assert_eq!(voice_close.result.expect("result")["accepted"], json!(true));
     }
 
     #[test]
