@@ -327,3 +327,117 @@
         assert_eq!(error.code, "SDK_CAPABILITY_DISABLED");
         assert!(error.message.contains("sdk_topic_create_v2"));
     }
+
+    #[test]
+    fn sdk_overflow_policy_reject_keeps_oldest_events_and_drops_newest() {
+        let daemon = RpcDaemon::test_instance();
+        let configure = daemon
+            .handle_rpc(rpc_request(
+                90,
+                "sdk_configure_v2",
+                json!({
+                    "expected_revision": 0,
+                    "patch": {
+                        "overflow_policy": "reject",
+                        "event_stream": { "max_poll_events": 2048 }
+                    }
+                }),
+            ))
+            .expect("configure");
+        assert!(configure.error.is_none());
+
+        for idx in 0..(SDK_EVENT_LOG_CAPACITY + 1) {
+            daemon.emit_event(RpcEvent {
+                event_type: "inbound".to_string(),
+                payload: json!({ "idx": idx }),
+            });
+        }
+
+        let response = daemon
+            .handle_rpc(rpc_request(
+                91,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": null,
+                    "max": 2048
+                }),
+            ))
+            .expect("poll");
+        let result = response.result.expect("result");
+        let events = result["events"].as_array().expect("events array");
+        let payload_indices = events
+            .iter()
+            .filter_map(|row| {
+                row.get("payload")
+                    .and_then(|payload| payload.get("idx"))
+                    .and_then(JsonValue::as_u64)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(result["dropped_count"].as_u64().unwrap_or(0) > 0);
+        assert!(
+            payload_indices.contains(&0),
+            "reject policy should retain oldest entries instead of evicting head"
+        );
+        assert!(
+            !payload_indices.contains(&(SDK_EVENT_LOG_CAPACITY as u64)),
+            "reject policy should drop newest event when capacity is exhausted"
+        );
+    }
+
+    #[test]
+    fn sdk_overflow_policy_drop_oldest_evicts_head_entries() {
+        let daemon = RpcDaemon::test_instance();
+        let configure = daemon
+            .handle_rpc(rpc_request(
+                92,
+                "sdk_configure_v2",
+                json!({
+                    "expected_revision": 0,
+                    "patch": {
+                        "overflow_policy": "drop_oldest",
+                        "event_stream": { "max_poll_events": 2048 }
+                    }
+                }),
+            ))
+            .expect("configure");
+        assert!(configure.error.is_none());
+
+        for idx in 0..(SDK_EVENT_LOG_CAPACITY + 1) {
+            daemon.emit_event(RpcEvent {
+                event_type: "inbound".to_string(),
+                payload: json!({ "idx": idx }),
+            });
+        }
+
+        let response = daemon
+            .handle_rpc(rpc_request(
+                93,
+                "sdk_poll_events_v2",
+                json!({
+                    "cursor": null,
+                    "max": 2048
+                }),
+            ))
+            .expect("poll");
+        let result = response.result.expect("result");
+        let events = result["events"].as_array().expect("events array");
+        let payload_indices = events
+            .iter()
+            .filter_map(|row| {
+                row.get("payload")
+                    .and_then(|payload| payload.get("idx"))
+                    .and_then(JsonValue::as_u64)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(result["dropped_count"].as_u64().unwrap_or(0) > 0);
+        assert!(
+            !payload_indices.contains(&0),
+            "drop_oldest policy should evict oldest entry once capacity is exceeded"
+        );
+        assert!(
+            payload_indices.contains(&(SDK_EVENT_LOG_CAPACITY as u64)),
+            "drop_oldest policy should retain newest event"
+        );
+    }
