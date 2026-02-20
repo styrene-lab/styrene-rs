@@ -1,6 +1,9 @@
 impl RpcDaemon {
     pub fn handle_rpc(&self, request: RpcRequest) -> Result<RpcResponse, std::io::Error> {
-        match request.method.as_str() {
+        let request_id = request.id;
+        let method = request.method.clone();
+        let is_sdk_method = method.starts_with("sdk_");
+        let response = match method.as_str() {
             "status" => Ok(RpcResponse {
                 id: request.id,
                 result: Some(json!({
@@ -77,6 +80,21 @@ impl RpcDaemon {
             "sdk_voice_session_update_v2" => self.handle_sdk_voice_session_update_v2(request),
             "sdk_voice_session_close_v2" => self.handle_sdk_voice_session_close_v2(request),
             _ => self.handle_rpc_legacy(request),
+        };
+
+        match response {
+            Ok(response) => Ok(response),
+            Err(error) if is_sdk_method && error.kind() == std::io::ErrorKind::InvalidInput => {
+                let message = error.to_string();
+                let normalized = message.to_ascii_lowercase();
+                let (code, message) = if normalized.contains("unknown field") {
+                    ("SDK_VALIDATION_UNKNOWN_FIELD", "request contains unknown fields")
+                } else {
+                    ("SDK_VALIDATION_INVALID_ARGUMENT", message.as_str())
+                };
+                Ok(self.sdk_error_response(request_id, code, message))
+            }
+            Err(error) => Err(error),
         }
     }
     fn append_delivery_trace(&self, message_id: &str, status: String) {

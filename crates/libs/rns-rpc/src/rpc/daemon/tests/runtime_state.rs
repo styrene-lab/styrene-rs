@@ -240,6 +240,45 @@
     }
 
     #[test]
+    fn sdk_dispatch_maps_unknown_fields_to_validation_unknown_field() {
+        let daemon = RpcDaemon::test_instance();
+        let response = daemon
+            .handle_rpc(rpc_request(
+                432,
+                "sdk_negotiate_v2",
+                json!({
+                    "supported_contract_versions": [2],
+                    "requested_capabilities": [],
+                    "config": { "profile": "desktop-full" },
+                    "unexpected_field": true
+                }),
+            ))
+            .expect("negotiate");
+        assert_eq!(
+            response.error.expect("error").code,
+            "SDK_VALIDATION_UNKNOWN_FIELD",
+            "sdk requests with unknown fields should return typed validation errors"
+        );
+    }
+
+    #[test]
+    fn sdk_dispatch_maps_missing_params_to_validation_invalid_argument() {
+        let daemon = RpcDaemon::test_instance();
+        let response = daemon
+            .handle_rpc(RpcRequest {
+                id: 433,
+                method: "sdk_shutdown_v2".to_string(),
+                params: None,
+            })
+            .expect("shutdown response");
+        assert_eq!(
+            response.error.expect("error").code,
+            "SDK_VALIDATION_INVALID_ARGUMENT",
+            "sdk requests without params should return typed validation errors"
+        );
+    }
+
+    #[test]
     fn sdk_shutdown_v2_accepts_graceful_mode() {
         let daemon = RpcDaemon::test_instance();
         let response = daemon
