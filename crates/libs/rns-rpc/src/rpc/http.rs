@@ -6,6 +6,13 @@ use serde_json::json;
 
 const HEADER_END: &[u8] = b"\r\n\r\n";
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TransportAuthContext {
+    pub client_cert_present: bool,
+    pub client_subject: Option<String>,
+    pub client_sans: Vec<String>,
+}
+
 pub fn handle_http_request(daemon: &RpcDaemon, request: &[u8]) -> io::Result<Vec<u8>> {
     let _ = daemon;
     let _ = request;
@@ -19,6 +26,15 @@ pub fn handle_http_request_with_peer(
     daemon: &RpcDaemon,
     request: &[u8],
     peer_addr: Option<SocketAddr>,
+) -> io::Result<Vec<u8>> {
+    handle_http_request_with_transport_auth(daemon, request, peer_addr, None)
+}
+
+pub fn handle_http_request_with_transport_auth(
+    daemon: &RpcDaemon,
+    request: &[u8],
+    peer_addr: Option<SocketAddr>,
+    transport_auth: Option<TransportAuthContext>,
 ) -> io::Result<Vec<u8>> {
     let header_end = find_header_end(request)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing headers"))?;
@@ -58,7 +74,11 @@ pub fn handle_http_request_with_peer(
             Ok(build_json_response(StatusCode::Ok, &body))
         }
         ("GET", "/events") if query.is_empty() => {
-            if let Err(error) = daemon.authorize_http_request(&parsed_headers, peer_ip.as_deref()) {
+            if let Err(error) = daemon.authorize_http_request_with_transport(
+                &parsed_headers,
+                peer_ip.as_deref(),
+                transport_auth.as_ref(),
+            ) {
                 return build_rpc_error_response(0, error);
             }
             if let Some(event) = daemon.take_event() {
@@ -69,7 +89,11 @@ pub fn handle_http_request_with_peer(
             }
         }
         ("GET", "/events") | ("GET", "/events/v2") => {
-            if let Err(error) = daemon.authorize_http_request(&parsed_headers, peer_ip.as_deref()) {
+            if let Err(error) = daemon.authorize_http_request_with_transport(
+                &parsed_headers,
+                peer_ip.as_deref(),
+                transport_auth.as_ref(),
+            ) {
                 return build_rpc_error_response(0, error);
             }
             let cursor = query_param(query, "cursor");
@@ -97,7 +121,11 @@ pub fn handle_http_request_with_peer(
             }
             let body = &request[body_start..body_start + content_length];
             let rpc_request: RpcRequest = codec::decode_frame(body)?;
-            if let Err(error) = daemon.authorize_http_request(&parsed_headers, peer_ip.as_deref()) {
+            if let Err(error) = daemon.authorize_http_request_with_transport(
+                &parsed_headers,
+                peer_ip.as_deref(),
+                transport_auth.as_ref(),
+            ) {
                 return build_rpc_error_response(rpc_request.id, error);
             }
             let rpc_response = daemon.handle_rpc(rpc_request)?;

@@ -46,8 +46,17 @@ pub struct RpcBackendClient {
 #[derive(Clone, Debug)]
 enum SessionAuth {
     LocalTrusted,
-    Token { issuer: String, audience: String, shared_secret: String, ttl_secs: u64 },
-    Mtls { allowed_san: Option<String> },
+    Token {
+        issuer: String,
+        audience: String,
+        shared_secret: String,
+        ttl_secs: u64,
+    },
+    Mtls {
+        ca_bundle_path: String,
+        client_cert_path: Option<String>,
+        client_key_path: Option<String>,
+    },
 }
 
 impl RpcBackendClient {

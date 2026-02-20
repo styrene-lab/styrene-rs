@@ -84,11 +84,28 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["ca_bundle_path", "require_client_cert"],
+      "dependentRequired": {
+        "client_cert_path": ["client_key_path"],
+        "client_key_path": ["client_cert_path"]
+      },
       "properties": {
         "ca_bundle_path": { "type": "string", "minLength": 1 },
         "require_client_cert": { "type": "boolean" },
-        "allowed_san": { "type": "string", "minLength": 1 }
-      }
+        "allowed_san": { "type": "string", "minLength": 1 },
+        "client_cert_path": { "type": "string", "minLength": 1 },
+        "client_key_path": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "require_client_cert": { "const": true } },
+            "required": ["require_client_cert"]
+          },
+          "then": {
+            "required": ["client_cert_path", "client_key_path"]
+          }
+        }
+      ]
     },
     "rpc_backend": {
       "type": "object",
@@ -315,7 +332,13 @@
       "properties": {
         "ca_bundle_path": { "type": ["string", "null"], "minLength": 1 },
         "require_client_cert": { "type": ["boolean", "null"] },
-        "allowed_san": { "type": ["string", "null"], "minLength": 1 }
+        "allowed_san": { "type": ["string", "null"], "minLength": 1 },
+        "client_cert_path": { "type": ["string", "null"], "minLength": 1 },
+        "client_key_path": { "type": ["string", "null"], "minLength": 1 }
+      },
+      "dependentRequired": {
+        "client_cert_path": ["client_key_path"],
+        "client_key_path": ["client_cert_path"]
       }
     },
     "rpc_backend_patch": {

@@ -450,6 +450,10 @@ struct SdkMtlsAuthConfig {
     require_client_cert: bool,
     #[serde(default)]
     allowed_san: Option<String>,
+    #[serde(default)]
+    client_cert_path: Option<String>,
+    #[serde(default)]
+    client_key_path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

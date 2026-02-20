@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "docs/contracts/baselines/lxmf-sdk-public-api.txt",
-      "bytes": 164170,
-      "sha256": "ffb337ecd39eb8e8b393372b67a4c58651ec0a705f29c7260f47017f3454d72e"
+      "bytes": 162214,
+      "sha256": "dec343e925df5c0fed3d900102967f84d4d0cbeddeeafd5ab8cf6ef9903a99e1"
     },
     {
       "path": "docs/contracts/compatibility-contract.md",
@@ -43,8 +43,8 @@
     },
     {
       "path": "docs/contracts/sdk-v2-backends.md",
-      "bytes": 2620,
-      "sha256": "a22a27399660f437f93b05e3724f21926973346adb4d50fe21d105000d54ff8e"
+      "bytes": 2733,
+      "sha256": "b53147369639a271a5fee05d8908f28ac01c36160fb227ecb098d41235823149"
     },
     {
       "path": "docs/contracts/sdk-v2-commands.md",
@@ -108,8 +108,8 @@
     },
     {
       "path": "docs/contracts/sdk-v2.md",
-      "bytes": 7906,
-      "sha256": "bd5517443de6b9be1bbf151768901761f933900473787adec3ac000006b9c559"
+      "bytes": 8180,
+      "sha256": "e2804cd38f31f133bd7ef57877c9a02730a75bd10b827a886ccaa167f465b714"
     },
     {
       "path": "docs/fixtures/contract-v2/README.md",
@@ -958,8 +958,8 @@
     },
     {
       "path": "docs/schemas/sdk/v2/config.schema.json",
-      "bytes": 11478,
-      "sha256": "ad755dbd39bb71927da0bbb68db7900d4ae7d093fd5957571211a77c59a2e4d3"
+      "bytes": 12323,
+      "sha256": "2a1db316ea4035b7dda2224fe68e55a14e0c7839268d6698548a7b62ff249f83"
     },
     {
       "path": "docs/schemas/sdk/v2/error.schema.json",

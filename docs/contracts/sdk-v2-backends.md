@@ -86,6 +86,7 @@ Minimum backend responsibilities:
 4. Enforce replay rejection for token mode.
 5. Enforce per-principal and per-IP rate limits.
 6. Apply redaction policy before event/log emission.
+7. Enforce `mtls` authorization from TLS transport metadata (peer certificate/SAN), not user-controlled headers.
 
 ## Evolution Rules
 

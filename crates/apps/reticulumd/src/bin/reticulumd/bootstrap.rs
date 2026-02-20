@@ -17,17 +17,35 @@ use rns_transport::iface::tcp_server::TcpServer;
 use rns_transport::transport::{Transport, TransportConfig};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::unbounded_channel;
 
+#[derive(Clone, Debug)]
+pub(super) struct RpcTlsConfig {
+    pub(super) cert_chain_path: PathBuf,
+    pub(super) private_key_path: PathBuf,
+    pub(super) client_ca_path: Option<PathBuf>,
+}
+
 pub(super) struct BootstrapContext {
     pub(super) rpc_addr: SocketAddr,
     pub(super) daemon: Rc<RpcDaemon>,
+    pub(super) rpc_tls: Option<RpcTlsConfig>,
 }
 
 pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     let rpc_addr: SocketAddr = args.rpc.parse().expect("invalid rpc address");
+    let rpc_tls = match (args.rpc_tls_cert.clone(), args.rpc_tls_key.clone()) {
+        (None, None) => None,
+        (Some(cert_chain_path), Some(private_key_path)) => Some(RpcTlsConfig {
+            cert_chain_path,
+            private_key_path,
+            client_ca_path: args.rpc_tls_client_ca.clone(),
+        }),
+        _ => panic!("--rpc-tls-cert and --rpc-tls-key must be provided together"),
+    };
     let store = MessagesStore::open(&args.db).expect("open sqlite");
 
     let identity_path = args.identity.clone().unwrap_or_else(|| {
@@ -175,5 +193,5 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         spawn_announce_worker(daemon.clone(), transport, peer_crypto);
     }
 
-    BootstrapContext { rpc_addr, daemon }
+    BootstrapContext { rpc_addr, daemon, rpc_tls }
 }

@@ -29,6 +29,12 @@ struct Args {
     announce_interval_secs: u64,
     #[arg(long)]
     transport: Option<String>,
+    #[arg(long)]
+    rpc_tls_cert: Option<PathBuf>,
+    #[arg(long)]
+    rpc_tls_key: Option<PathBuf>,
+    #[arg(long)]
+    rpc_tls_client_ca: Option<PathBuf>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -38,7 +44,7 @@ async fn main() {
         .run_until(async {
             let args = Args::parse();
             let context = bootstrap::bootstrap(args).await;
-            rpc_loop::run_rpc_loop(context.rpc_addr, context.daemon).await;
+            rpc_loop::run_rpc_loop(context.rpc_addr, context.daemon, context.rpc_tls).await;
         })
         .await;
 }
