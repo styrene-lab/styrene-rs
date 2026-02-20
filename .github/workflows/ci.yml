@@ -107,6 +107,14 @@ jobs:
       - name: SDK schema fixtures
         run: cargo xtask ci --stage sdk-schema-check
 
+  interop-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Interop artifacts manifest
+        run: cargo xtask ci --stage interop-artifacts
+
   sdk-conformance:
     runs-on: ubuntu-latest
     steps:
