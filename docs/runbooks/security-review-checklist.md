@@ -14,6 +14,7 @@ Use this checklist for release-candidate security sign-off.
 | Sensitive fields redacted in events/errors/logs | PASS | `sdk_security_events_redact_sensitive_fields_by_default` |
 | Rate limiting enforced for RPC auth attempts | PASS | `sdk_security_authorize_http_request_enforces_rate_limits_and_emits_event` |
 | Event stream limits and queue bounds prevent unbounded growth | PASS | `sdk_event_queues_remain_bounded_under_sustained_load`, `sdk_poll_events_v2_rejects_oversized_*` |
+| Unsafe governance gate enforces inventory and invariant discipline | PASS | `cargo run -p xtask -- unsafe-audit-check`, `tools/scripts/check-unsafe.sh`, `docs/architecture/unsafe-inventory.md` |
 
 ## Gate
 
@@ -21,4 +22,5 @@ Run before release:
 
 ```bash
 cargo run -p xtask -- security-review-check
+cargo run -p xtask -- unsafe-audit-check
 ```

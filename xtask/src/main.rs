@@ -13,6 +13,10 @@ const INTEROP_MATRIX_PATH: &str = "docs/contracts/compatibility-matrix.md";
 const SUPPORT_POLICY_PATH: &str = "docs/contracts/support-policy.md";
 const EXTENSION_REGISTRY_PATH: &str = "docs/contracts/extension-registry.md";
 const EXTENSION_REGISTRY_ADR_PATH: &str = "docs/adr/0005-extension-registry-governance.md";
+const UNSAFE_POLICY_PATH: &str = "docs/architecture/unsafe-code-policy.md";
+const UNSAFE_INVENTORY_PATH: &str = "docs/architecture/unsafe-inventory.md";
+const UNSAFE_GOVERNANCE_ADR_PATH: &str = "docs/adr/0006-unsafe-code-audit-governance.md";
+const UNSAFE_AUDIT_SCRIPT_PATH: &str = "tools/scripts/check-unsafe.sh";
 const INTEROP_CORPUS_PATH: &str = "docs/fixtures/interop/v1/golden-corpus.json";
 const RPC_CONTRACT_PATH: &str = "docs/contracts/rpc-contract.md";
 const PAYLOAD_CONTRACT_PATH: &str = "docs/contracts/payload-contract.md";
@@ -60,6 +64,9 @@ const GOVERNANCE_REQUIRED_CODEOWNER_PATHS: &[&str] = &[
     "/docs/schemas/",
     "/docs/migrations/",
     "/docs/runbooks/",
+    "/docs/architecture/unsafe-code-policy.md",
+    "/docs/architecture/unsafe-inventory.md",
+    "/docs/adr/0006-unsafe-code-audit-governance.md",
     "/crates/libs/lxmf-core/",
     "/crates/libs/lxmf-sdk/",
     "/crates/libs/rns-core/",
@@ -72,6 +79,7 @@ const GOVERNANCE_REQUIRED_CODEOWNER_PATHS: &[&str] = &[
     "/.github/workflows/",
     "/xtask/",
     "/tools/scripts/",
+    "/tools/scripts/check-unsafe.sh",
 ];
 
 const GOVERNANCE_FORBIDDEN_CODEOWNER_PATHS: &[&str] =
@@ -274,6 +282,7 @@ enum XtaskCommand {
     SdkMigrationCheck,
     GovernanceCheck,
     SupportPolicyCheck,
+    UnsafeAuditCheck,
     ReleaseScorecardCheck,
     ExtensionRegistryCheck,
     LeaderReadinessCheck,
@@ -330,6 +339,7 @@ enum CiStage {
     SdkMigrationCheck,
     GovernanceCheck,
     SupportPolicyCheck,
+    UnsafeAuditCheck,
     ReleaseScorecardCheck,
     ExtensionRegistryCheck,
     LeaderReadinessCheck,
@@ -392,6 +402,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkMigrationCheck => run_sdk_migration_check(),
         XtaskCommand::GovernanceCheck => run_governance_check(),
         XtaskCommand::SupportPolicyCheck => run_support_policy_check(),
+        XtaskCommand::UnsafeAuditCheck => run_unsafe_audit_check(),
         XtaskCommand::ReleaseScorecardCheck => run_release_scorecard_check(),
         XtaskCommand::ExtensionRegistryCheck => run_extension_registry_check(),
         XtaskCommand::LeaderReadinessCheck => run_leader_readiness_check(),
@@ -459,6 +470,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_sdk_examples_check()?;
     run_governance_check()?;
     run_support_policy_check()?;
+    run_unsafe_audit_check()?;
     run_release_scorecard_check()?;
     run_extension_registry_check()?;
     run_security_review_check()?;
@@ -520,6 +532,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkMigrationCheck => run_sdk_migration_check(),
         CiStage::GovernanceCheck => run_governance_check(),
         CiStage::SupportPolicyCheck => run_support_policy_check(),
+        CiStage::UnsafeAuditCheck => run_unsafe_audit_check(),
         CiStage::ReleaseScorecardCheck => run_release_scorecard_check(),
         CiStage::ExtensionRegistryCheck => run_extension_registry_check(),
         CiStage::LeaderReadinessCheck => run_leader_readiness_check(),
@@ -556,6 +569,7 @@ fn run_release_check() -> Result<()> {
     run_interop_drift_check(false)?;
     run_compat_kit_check()?;
     run_support_policy_check()?;
+    run_unsafe_audit_check()?;
     run_release_scorecard_check()?;
     run_extension_registry_check()?;
     run_sdk_api_break()?;
@@ -1195,6 +1209,74 @@ fn run_support_policy_check() -> Result<()> {
     }
     if !workflow.contains("cargo xtask ci --stage support-policy-check") {
         bail!("ci workflow must execute `cargo xtask ci --stage support-policy-check`");
+    }
+
+    Ok(())
+}
+
+fn run_unsafe_audit_check() -> Result<()> {
+    let policy = fs::read_to_string(UNSAFE_POLICY_PATH)
+        .with_context(|| format!("missing {UNSAFE_POLICY_PATH}"))?;
+    for marker in [
+        "# Unsafe Code Policy",
+        "## Guardrails",
+        "## Inventory Process",
+        "## Reviewer Requirements",
+        "## CI Gate",
+        "tools/scripts/check-unsafe.sh",
+        "cargo xtask ci --stage unsafe-audit-check",
+    ] {
+        if !policy.contains(marker) {
+            bail!("unsafe policy missing required marker '{marker}' in {UNSAFE_POLICY_PATH}");
+        }
+    }
+
+    let inventory = fs::read_to_string(UNSAFE_INVENTORY_PATH)
+        .with_context(|| format!("missing {UNSAFE_INVENTORY_PATH}"))?;
+    for marker in [
+        "# Unsafe Inventory",
+        "## Active Unsafe Entries",
+        "| Id | File | Line | Safety Invariant | Owner | Last Reviewed |",
+    ] {
+        if !inventory.contains(marker) {
+            bail!("unsafe inventory missing required marker '{marker}' in {UNSAFE_INVENTORY_PATH}");
+        }
+    }
+
+    let adr = fs::read_to_string(UNSAFE_GOVERNANCE_ADR_PATH)
+        .with_context(|| format!("missing {UNSAFE_GOVERNANCE_ADR_PATH}"))?;
+    for marker in [
+        "# ADR 0006: Unsafe Code Audit Governance",
+        "- Status: Accepted",
+        "tools/scripts/check-unsafe.sh",
+    ] {
+        if !adr.contains(marker) {
+            bail!("unsafe governance adr missing required marker '{marker}' in {UNSAFE_GOVERNANCE_ADR_PATH}");
+        }
+    }
+
+    run("bash", &[UNSAFE_AUDIT_SCRIPT_PATH])?;
+
+    let codeowners = fs::read_to_string(CODEOWNERS_PATH)
+        .with_context(|| format!("missing {CODEOWNERS_PATH}"))?;
+    for entry in [
+        "/docs/architecture/unsafe-code-policy.md @FreeTAKTeam",
+        "/docs/architecture/unsafe-inventory.md @FreeTAKTeam",
+        "/docs/adr/0006-unsafe-code-audit-governance.md @FreeTAKTeam",
+        "/tools/scripts/check-unsafe.sh @FreeTAKTeam",
+    ] {
+        if !codeowners.contains(entry) {
+            bail!("CODEOWNERS missing unsafe governance entry '{entry}'");
+        }
+    }
+
+    let workflow = fs::read_to_string(CI_WORKFLOW_PATH)
+        .with_context(|| format!("missing {CI_WORKFLOW_PATH}"))?;
+    if !workflow.contains("unsafe-audit-check:") {
+        bail!("ci workflow must include an 'unsafe-audit-check' job");
+    }
+    if !workflow.contains("cargo xtask ci --stage unsafe-audit-check") {
+        bail!("ci workflow must execute `cargo xtask ci --stage unsafe-audit-check`");
     }
 
     Ok(())

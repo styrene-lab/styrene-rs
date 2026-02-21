@@ -452,6 +452,14 @@ jobs:
       - name: Support and LTS policy gate
         run: cargo xtask ci --stage support-policy-check
 
+  unsafe-audit-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Unsafe inventory and invariant gate
+        run: cargo xtask ci --stage unsafe-audit-check
+
   extension-registry-check:
     runs-on: ubuntu-latest
     steps:

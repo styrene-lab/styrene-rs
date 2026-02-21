@@ -38,6 +38,12 @@
 ## Security Architecture
 - Threat model source of truth: `docs/adr/0004-sdk-v25-threat-model.md`.
 - Security review checklist source of truth: `docs/runbooks/security-review-checklist.md`.
+- Unsafe governance ADR: `docs/adr/0006-unsafe-code-audit-governance.md`.
+- Unsafe policy and inventory:
+  - `docs/architecture/unsafe-code-policy.md`
+  - `docs/architecture/unsafe-inventory.md`
+- Unsafe CI gate:
+  - `unsafe-audit-check` via `cargo xtask ci --stage unsafe-audit-check`
 - Primary controls:
   - Local-only default RPC binding with explicit secure auth required for remote bind.
   - Token replay protection (`jti`) and rate limiting for authenticated HTTP RPC.

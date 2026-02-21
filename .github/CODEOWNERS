@@ -9,6 +9,9 @@
 /docs/schemas/ @FreeTAKTeam
 /docs/migrations/ @FreeTAKTeam
 /docs/runbooks/ @FreeTAKTeam
+/docs/architecture/unsafe-code-policy.md @FreeTAKTeam
+/docs/architecture/unsafe-inventory.md @FreeTAKTeam
+/docs/adr/0006-unsafe-code-audit-governance.md @FreeTAKTeam
 
 /crates/libs/lxmf-core/ @FreeTAKTeam
 /crates/libs/lxmf-sdk/ @FreeTAKTeam
@@ -24,3 +27,4 @@
 /.github/workflows/ @FreeTAKTeam
 /xtask/ @FreeTAKTeam
 /tools/scripts/ @FreeTAKTeam
+/tools/scripts/check-unsafe.sh @FreeTAKTeam
