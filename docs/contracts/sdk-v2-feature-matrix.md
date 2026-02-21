@@ -64,6 +64,7 @@ Legend:
 | `sdk.capability.group_delivery` | optional | optional | optional |
 | `sdk.capability.event_sink_bridge` | optional | optional | optional |
 | `sdk.capability.shared_instance_rpc_auth` | optional | optional | optional |
+| `sdk.capability.key_management` | experimental (OS keystore/HSM hooks) | experimental (OS keystore/HSM hooks) | experimental (alloc-only key hook adapters) |
 
 ## Backend Support Matrix
 

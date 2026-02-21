@@ -21,7 +21,10 @@ pub use api::{
 // Stability class: internal (backend composition surface)
 #[cfg(all(feature = "rpc-backend", feature = "std"))]
 pub use backend::rpc::RpcBackendClient;
-pub use backend::{SdkBackend, SdkBackendAsyncEvents};
+pub use backend::{
+    KeyProviderClass, SdkBackend, SdkBackendAsyncEvents, SdkBackendKeyManagement, SdkKeyPurpose,
+    SdkStoredKey,
+};
 // Stability class: stable
 pub use capability::{
     effective_capabilities_for_profile, negotiate_contract_version, CapabilityDescriptor,
