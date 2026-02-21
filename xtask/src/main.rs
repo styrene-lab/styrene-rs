@@ -32,11 +32,14 @@ const CRYPTO_AGILITY_ADR_PATH: &str = "docs/adr/0007-crypto-agility-roadmap.md";
 const SECURITY_REVIEW_CHECKLIST_PATH: &str = "docs/runbooks/security-review-checklist.md";
 const SDK_DOCS_CHECKLIST_PATH: &str = "docs/runbooks/sdk-docs-checklist.md";
 const COMPLIANCE_PROFILES_RUNBOOK_PATH: &str = "docs/runbooks/compliance-profiles.md";
+const REFERENCE_INTEGRATIONS_RUNBOOK_PATH: &str = "docs/runbooks/reference-integrations.md";
 const CVE_RESPONSE_RUNBOOK_PATH: &str = "docs/runbooks/cve-response-workflow.md";
 const INCIDENT_RUNBOOK_PATH: &str = "docs/runbooks/incident-response-playbooks.md";
 const DISASTER_RECOVERY_RUNBOOK_PATH: &str = "docs/runbooks/disaster-recovery-drills.md";
 const EMBEDDED_HIL_RUNBOOK_PATH: &str = "docs/runbooks/embedded-hil-esp32.md";
 const BACKUP_RESTORE_DRILL_SCRIPT_PATH: &str = "tools/scripts/backup-restore-drill.sh";
+const REFERENCE_INTEGRATIONS_SMOKE_SCRIPT_PATH: &str =
+    "tools/scripts/reference-integrations-smoke.sh";
 const SOAK_REPORT_PATH: &str = "target/soak/soak-report.json";
 const BENCH_SUMMARY_PATH: &str = "target/criterion/bench-summary.txt";
 const PERF_BUDGET_REPORT_PATH: &str = "target/criterion/bench-budget-report.txt";
@@ -274,6 +277,7 @@ enum XtaskCommand {
     SdkCookbookCheck,
     SdkErgonomicsCheck,
     LxmfCliCheck,
+    ReferenceIntegrationCheck,
     DxBootstrapCheck,
     SdkIncidentRunbookCheck,
     SdkDrillCheck,
@@ -343,6 +347,7 @@ enum CiStage {
     SdkCookbookCheck,
     SdkErgonomicsCheck,
     LxmfCliCheck,
+    ReferenceIntegrationCheck,
     DxBootstrapCheck,
     SdkIncidentRunbookCheck,
     SdkDrillCheck,
@@ -412,6 +417,7 @@ fn main() -> Result<()> {
         XtaskCommand::SdkCookbookCheck => run_sdk_cookbook_check(),
         XtaskCommand::SdkErgonomicsCheck => run_sdk_ergonomics_check(),
         XtaskCommand::LxmfCliCheck => run_lxmf_cli_check(),
+        XtaskCommand::ReferenceIntegrationCheck => run_reference_integration_check(),
         XtaskCommand::DxBootstrapCheck => run_dx_bootstrap_check(),
         XtaskCommand::SdkIncidentRunbookCheck => run_sdk_incident_runbook_check(),
         XtaskCommand::SdkDrillCheck => run_sdk_drill_check(),
@@ -486,6 +492,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_sdk_cookbook_check()?;
     run_sdk_ergonomics_check()?;
     run_lxmf_cli_check()?;
+    run_reference_integration_check()?;
     run_dx_bootstrap_check()?;
     run_sdk_incident_runbook_check()?;
     run_sdk_drill_check()?;
@@ -553,6 +560,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::SdkCookbookCheck => run_sdk_cookbook_check(),
         CiStage::SdkErgonomicsCheck => run_sdk_ergonomics_check(),
         CiStage::LxmfCliCheck => run_lxmf_cli_check(),
+        CiStage::ReferenceIntegrationCheck => run_reference_integration_check(),
         CiStage::DxBootstrapCheck => run_dx_bootstrap_check(),
         CiStage::SdkIncidentRunbookCheck => run_sdk_incident_runbook_check(),
         CiStage::SdkDrillCheck => run_sdk_drill_check(),
@@ -611,6 +619,7 @@ fn run_release_check() -> Result<()> {
     run_interop_corpus_check()?;
     run_interop_drift_check(false)?;
     run_compat_kit_check()?;
+    run_reference_integration_check()?;
     run_compliance_profile_check()?;
     run_support_policy_check()?;
     run_unsafe_audit_check()?;
@@ -697,6 +706,41 @@ fn run_lxmf_cli_check() -> Result<()> {
     run("cargo", &["test", "-p", "lxmf-cli"])?;
     run("cargo", &["run", "-p", "lxmf-cli", "--", "--help"])?;
     run("bash", &["-lc", "cargo run -p lxmf-cli -- completions --shell bash > /dev/null"])
+}
+
+fn run_reference_integration_check() -> Result<()> {
+    run("bash", &[REFERENCE_INTEGRATIONS_SMOKE_SCRIPT_PATH])?;
+
+    let runbook = fs::read_to_string(REFERENCE_INTEGRATIONS_RUNBOOK_PATH)
+        .with_context(|| format!("missing {REFERENCE_INTEGRATIONS_RUNBOOK_PATH}"))?;
+    for marker in [
+        "# Reference Integrations",
+        "## Service Host Integration (`reticulumd`)",
+        "## Desktop App Integration (`lxmf-cli`)",
+        "## Gateway Integration (`rns-tools`)",
+        "## Reference Integration Smoke Suite",
+        "cargo run -p xtask -- reference-integration-check",
+        "crates/apps/reticulumd/examples/service-reference.toml",
+        "crates/apps/lxmf-cli/examples/desktop-reference.toml",
+        "crates/apps/rns-tools/examples/gateway-reference.toml",
+    ] {
+        if !runbook.contains(marker) {
+            bail!(
+                "reference integration runbook missing marker '{marker}' in {REFERENCE_INTEGRATIONS_RUNBOOK_PATH}"
+            );
+        }
+    }
+
+    let workflow = fs::read_to_string(CI_WORKFLOW_PATH)
+        .with_context(|| format!("missing {CI_WORKFLOW_PATH}"))?;
+    if !workflow.contains("reference-integration-check:") {
+        bail!("ci workflow must include a 'reference-integration-check' job");
+    }
+    if !workflow.contains("cargo xtask ci --stage reference-integration-check") {
+        bail!("ci workflow must execute `cargo xtask ci --stage reference-integration-check`");
+    }
+
+    Ok(())
 }
 
 fn run_dx_bootstrap_check() -> Result<()> {
