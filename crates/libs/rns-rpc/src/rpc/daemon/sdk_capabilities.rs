@@ -105,6 +105,7 @@ impl RpcDaemon {
         vec![
             "sdk.capability.cursor_replay".to_string(),
             "sdk.capability.async_events".to_string(),
+            "sdk.capability.manual_tick".to_string(),
             "sdk.capability.token_auth".to_string(),
             "sdk.capability.mtls_auth".to_string(),
             "sdk.capability.receipt_terminality".to_string(),
@@ -138,8 +139,15 @@ impl RpcDaemon {
 
     fn sdk_required_capabilities_for_profile(profile: &str) -> Vec<String> {
         match profile {
-            "desktop-local-runtime" | "embedded-alloc" => vec![
+            "desktop-local-runtime" => vec![
                 "sdk.capability.cursor_replay".to_string(),
+                "sdk.capability.receipt_terminality".to_string(),
+                "sdk.capability.config_revision_cas".to_string(),
+                "sdk.capability.idempotency_ttl".to_string(),
+            ],
+            "embedded-alloc" => vec![
+                "sdk.capability.cursor_replay".to_string(),
+                "sdk.capability.manual_tick".to_string(),
                 "sdk.capability.receipt_terminality".to_string(),
                 "sdk.capability.config_revision_cas".to_string(),
                 "sdk.capability.idempotency_ttl".to_string(),
