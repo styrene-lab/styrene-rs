@@ -11,6 +11,28 @@ require_command() {
   command -v "$cmd" >/dev/null || fail "required tool missing: ${cmd}"
 }
 
+pattern_matcher() {
+  if command -v rg >/dev/null; then
+    echo "rg"
+    return
+  fi
+  require_command grep
+  echo "grep"
+}
+
+PATTERN_MATCHER="$(pattern_matcher)"
+
+search_text() {
+  local pattern="$1"
+  local path="$2"
+
+  if [[ "${PATTERN_MATCHER}" == "rg" ]]; then
+    rg -n -- "${pattern}" "${path}"
+  else
+    grep -RInP -- "${pattern}" "${path}"
+  fi
+}
+
 has_dependency() {
   local package="$1"
   local dep="$2"
@@ -25,7 +47,7 @@ has_dependency() {
 check_source_imports() {
   local crate_root="$1"
   local symbol="$2"
-  if rg -n "\\b${symbol}::" "$crate_root" >/dev/null; then
+  if search_text "\\b${symbol}::" "$crate_root" >/dev/null; then
     fail "${crate_root} imports '${symbol}' symbols"
   fi
 }
@@ -33,14 +55,14 @@ check_source_imports() {
 check_source_use_imports() {
   local crate_root="$1"
   local symbol="$2"
-  if rg -n "^[[:space:]]*use .*\\b${symbol}::" "$crate_root" >/dev/null; then
+  if search_text "^[[:space:]]*use .*\\b${symbol}::" "$crate_root" >/dev/null; then
     fail "${crate_root} imports '${symbol}' symbols in source use statements"
   fi
 }
 
 check_legacy_root_imports() {
   local crate_root="$1"
-  if rg -n "^[[:space:]]*use .*\\breticulum::" "$crate_root" >/dev/null; then
+  if search_text "^[[:space:]]*use .*\\breticulum::" "$crate_root" >/dev/null; then
     fail "${crate_root} still imports legacy 'reticulum::' paths"
   fi
 }
@@ -128,11 +150,11 @@ ENFORCE_LEGACY_APP_IMPORTS="${ENFORCE_LEGACY_APP_IMPORTS:-0}"
 ARCH_REPORT_PATH="${ARCH_REPORT_PATH:-target/architecture/boundary-report.txt}"
 
 require_command jq
-require_command rg
+require_command "${PATTERN_MATCHER}"
 
 cargo metadata --no-deps --format-version 1 > "$METADATA_FILE"
 
-if rg -n "crates/internal/lxmf-legacy|crates/internal/reticulum-legacy" Cargo.toml >/dev/null; then
+if search_text "crates/internal/lxmf-legacy|crates/internal/reticulum-legacy" Cargo.toml >/dev/null; then
   fail "Workspace membership must not include crates/internal legacy crates"
 fi
 
@@ -185,10 +207,10 @@ check_edge_set_matches_allowlist "app" "$actual_app_edges" "$allowed_app_edges"
 
 # 2) Explicit manifest-pattern checks for accidental legacy wiring.
 for manifest in crates/libs/*/Cargo.toml; do
-  if rg -n "lxmf_legacy|reticulum_legacy|crates/internal/" "$manifest" >/dev/null; then
+  if search_text "lxmf_legacy|reticulum_legacy|crates/internal/" "$manifest" >/dev/null; then
     fail "${manifest} must not reference legacy shim crates"
   fi
-  if rg -n "path\\s*=\\s*\"\\.\\./\\.\\./apps/|path\\s*=\\s*\"\\.\\./apps/" "$manifest" >/dev/null; then
+  if search_text "path\\s*=\\s*\"\\.\\./\\.\\./apps/|path\\s*=\\s*\"\\.\\./apps/" "$manifest" >/dev/null; then
     fail "${manifest} must not depend on crates/apps/*"
   fi
 done
@@ -203,12 +225,12 @@ while IFS=$'\t' read -r from to; do
 done <<<"$(metadata_deps)"
 
 if [ -d "crates/internal" ]; then
-  if find crates/internal -type d -path "*/tests/fixtures/python" | rg -q .; then
+  if find crates/internal -type d -path "*/tests/fixtures/python" -print -quit | grep -q .; then
     fail "Legacy Python fixtures under crates/*/tests/fixtures/python are not allowed in this repo"
   fi
 fi
 if [ -d "crates/apps" ]; then
-  if find crates/apps -type d -path "*/tests/fixtures/python" | rg -q .; then
+  if find crates/apps -type d -path "*/tests/fixtures/python" -print -quit | grep -q .; then
     fail "Legacy Python fixtures under crates/apps/*/tests/fixtures/python are not allowed in this repo"
   fi
 fi
@@ -236,10 +258,10 @@ check_source_use_imports "crates/libs/lxmf-core/src" "reticulum"
 check_source_use_imports "crates/libs/lxmf-core/src" "legacy_reticulum"
 
 if (( ENFORCE_RETM_LEGACY_SHIMS == 1 )); then
-  if rg -n "\b(legacy_reticulum|reticulum::|reticulum-rs)\\b" crates/libs/rns-transport/src crates/libs/rns-rpc/src >/dev/null; then
+  if search_text "\\b(legacy_reticulum|reticulum::|reticulum-rs)\\b" crates/libs/rns-transport/src crates/libs/rns-rpc/src >/dev/null; then
     fail "legacy reticulum symbols still referenced in rns transport/rpc source"
   fi
-  if rg -n "reticulum-rs|legacy_reticulum" crates/libs/rns-transport/Cargo.toml crates/libs/rns-rpc/Cargo.toml >/dev/null; then
+  if search_text "reticulum-rs|legacy_reticulum" crates/libs/rns-transport/Cargo.toml crates/libs/rns-rpc/Cargo.toml >/dev/null; then
     fail "rns transport/rpc still depend on legacy reticulum crate"
   fi
 else

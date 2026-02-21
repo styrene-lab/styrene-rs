@@ -11,6 +11,25 @@ require_command() {
   command -v "$cmd" >/dev/null || fail "required tool missing: ${cmd}"
 }
 
+pattern_matcher() {
+  if command -v rg >/dev/null; then
+    echo "rg"
+    return
+  fi
+  require_command grep
+  echo "grep"
+}
+
+PATTERN_MATCHER="$(pattern_matcher)"
+
+search_text() {
+  if [[ "${PATTERN_MATCHER}" == "rg" ]]; then
+    rg -n -- "$@"
+  else
+    grep -RInP -- "$@"
+  fi
+}
+
 trim() {
   local value="$1"
   value="${value#"${value%%[![:space:]]*}"}"
@@ -30,14 +49,18 @@ has_safety_comment() {
     start=1
   fi
   local end=$(( line - 1 ))
-  sed -n "${start},${end}p" "$file" | rg -q "SAFETY:"
+  if [[ "${PATTERN_MATCHER}" == "rg" ]]; then
+    sed -n "${start},${end}p" "$file" | rg -q "SAFETY:"
+  else
+    sed -n "${start},${end}p" "$file" | grep -q "SAFETY:"
+  fi
 }
 
 INVENTORY_PATH="${INVENTORY_PATH:-docs/architecture/unsafe-inventory.md}"
 
 [[ -f "${INVENTORY_PATH}" ]] || fail "inventory not found: ${INVENTORY_PATH}"
 
-require_command rg
+require_command "${PATTERN_MATCHER}"
 
 inventory_keys_file="$(mktemp)"
 observed_keys_file="$(mktemp)"
@@ -94,12 +117,19 @@ while IFS=: read -r file line _; do
     fail "${key} has unsafe usage but no matching inventory entry in ${INVENTORY_PATH}"
   fi
 done < <(
-  rg -n \
-    --no-heading \
-    --color never \
-    --glob '*.rs' \
-    '(\\bunsafe\\s*\\{|\\bunsafe\\s+fn\\b|\\bunsafe\\s+impl\\b|\\bunsafe\\s+trait\\b|\\bunsafe\\s+extern\\b)' \
-    crates xtask/src 2>/dev/null || true
+  if [[ "${PATTERN_MATCHER}" == "rg" ]]; then
+    rg -n \
+      --no-heading \
+      --color never \
+      --glob '*.rs' \
+      '(\\bunsafe\\s*\\{|\\bunsafe\\s+fn\\b|\\bunsafe\\s+impl\\b|\\bunsafe\\s+trait\\b|\\bunsafe\\s+extern\\b)' \
+      crates xtask/src 2>/dev/null || true
+  else
+    grep -RInP \
+      --include='*.rs' \
+      '(\\bunsafe\\s*\\{|\\bunsafe\\s+fn\\b|\\bunsafe\\s+impl\\b|\\bunsafe\\s+trait\\b|\\bunsafe\\s+extern\\b)' \
+      crates xtask/src 2>/dev/null || true
+  fi
 )
 
 if [[ ! -s "${observed_keys_file}" ]]; then

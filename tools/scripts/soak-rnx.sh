@@ -21,6 +21,8 @@ if [[ ! -f "${MANIFEST_PATH}" ]]; then
   exit 1
 fi
 
+cargo build -p reticulumd --bin reticulumd --quiet
+
 mkdir -p "$(dirname "${REPORT_PATH}")"
 
 total_rounds=$(( CYCLES * BURST_ROUNDS ))
