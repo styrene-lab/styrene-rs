@@ -11,19 +11,25 @@ mod lifecycle;
 pub mod profiles;
 pub mod types;
 
+// Stability class: stable
+pub use api::{LxmfSdk, LxmfSdkAsync, LxmfSdkManualTick};
+// Stability class: experimental (capability-gated extension traits)
 pub use api::{
-    LxmfSdk, LxmfSdkAsync, LxmfSdkAttachments, LxmfSdkGroupDelivery, LxmfSdkIdentity,
-    LxmfSdkManualTick, LxmfSdkMarkers, LxmfSdkPaper, LxmfSdkRemoteCommands, LxmfSdkTelemetry,
-    LxmfSdkTopics, LxmfSdkVoiceSignaling,
+    LxmfSdkAttachments, LxmfSdkGroupDelivery, LxmfSdkIdentity, LxmfSdkMarkers, LxmfSdkPaper,
+    LxmfSdkRemoteCommands, LxmfSdkTelemetry, LxmfSdkTopics, LxmfSdkVoiceSignaling,
 };
+// Stability class: internal (backend composition surface)
 #[cfg(all(feature = "rpc-backend", feature = "std"))]
 pub use backend::rpc::RpcBackendClient;
 pub use backend::{SdkBackend, SdkBackendAsyncEvents};
+// Stability class: stable
 pub use capability::{
     effective_capabilities_for_profile, negotiate_contract_version, CapabilityDescriptor,
     CapabilityState, EffectiveLimits, NegotiationRequest, NegotiationResponse,
 };
+// Stability class: internal
 pub use client::Client;
+// Stability class: stable
 pub use domain::{
     AttachmentDownloadChunk, AttachmentDownloadChunkRequest, AttachmentId, AttachmentListRequest,
     AttachmentListResult, AttachmentMeta, AttachmentStoreRequest, AttachmentUploadChunkAck,
@@ -39,14 +45,17 @@ pub use domain::{
     VoiceSessionState, VoiceSessionUpdateRequest,
 };
 pub use error::{code as error_code, ErrorCategory, ErrorDetails, SdkError};
+// Stability class: stable
 pub use event::{
     EventBatch, EventCursor, EventSubscription, SdkEvent, Severity, SubscriptionStart,
 };
+// Stability class: stable
 pub use lifecycle::{Lifecycle, SdkMethod};
 pub use profiles::{
     default_effective_limits, default_memory_budget, required_capabilities, supports_capability,
     MemoryBudget,
 };
+// Stability class: stable
 pub use types::{
     Ack, AuthMode, BindMode, CancelResult, ClientHandle, ConfigPatch, DeliverySnapshot,
     DeliveryState, EventSinkConfig, EventSinkKind, EventSinkPatch, EventStreamConfig,

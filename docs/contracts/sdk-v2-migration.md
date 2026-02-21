@@ -90,6 +90,20 @@ Timeline scope clarification:
 - This alias timeline applies to SDK-level method/event aliases.
 - The legacy runtime switch (`sdk_v25_enabled` / `LXMF_SDK_V25_ENABLED`) is allowed only in `N`.
 
+## Stability-Class Change Workflow
+
+Stability classes are tracked in:
+
+- `docs/contracts/sdk-v2-api-stability.md`
+
+Required process for class changes:
+
+1. Update stability classification rules in the same PR as API changes.
+2. For `stable -> deprecated`, include replacement path and target removal release.
+3. For `experimental -> stable`, include conformance evidence and contract updates.
+4. For `internal -> stable`, include explicit compatibility commitment in release notes.
+5. `cargo xtask sdk-api-break` must pass after updates.
+
 ## Marker Writer Migration (Hard Break)
 
 `v2.5` marker semantics are no longer last-write-wins.

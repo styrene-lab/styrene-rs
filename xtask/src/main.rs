@@ -11,6 +11,7 @@ const INTEROP_BASELINE_PATH: &str = "docs/contracts/baselines/interop-artifacts-
 const INTEROP_DRIFT_BASELINE_PATH: &str = "docs/contracts/baselines/interop-drift-baseline.json";
 const INTEROP_MATRIX_PATH: &str = "docs/contracts/compatibility-matrix.md";
 const SUPPORT_POLICY_PATH: &str = "docs/contracts/support-policy.md";
+const SDK_API_STABILITY_PATH: &str = "docs/contracts/sdk-v2-api-stability.md";
 const EXTENSION_REGISTRY_PATH: &str = "docs/contracts/extension-registry.md";
 const EXTENSION_REGISTRY_ADR_PATH: &str = "docs/adr/0005-extension-registry-governance.md";
 const UNSAFE_POLICY_PATH: &str = "docs/architecture/unsafe-code-policy.md";
@@ -1075,6 +1076,84 @@ fn run_sdk_api_break() -> Result<()> {
         bail!(
             "sdk public API drift detected for {MANIFEST_PATH}; review and refresh {BASELINE_PATH}"
         );
+    }
+
+    run_sdk_api_stability_check(&current_normalized)?;
+
+    Ok(())
+}
+
+fn run_sdk_api_stability_check(current_public_api: &str) -> Result<()> {
+    let stability_doc = fs::read_to_string(SDK_API_STABILITY_PATH)
+        .with_context(|| format!("missing {SDK_API_STABILITY_PATH}"))?;
+    for marker in [
+        "# SDK API Stability Classes",
+        "## Stability Classes",
+        "| Class | Match Prefix | Lifecycle Rule |",
+        "## Deprecation Workflow",
+    ] {
+        if !stability_doc.contains(marker) {
+            bail!("stability contract missing marker '{marker}' in {SDK_API_STABILITY_PATH}");
+        }
+    }
+
+    let rows =
+        parse_markdown_table_rows(&stability_doc, &["Class", "Match Prefix", "Lifecycle Rule"])?;
+    if rows.is_empty() {
+        bail!("stability contract must contain at least one classification row");
+    }
+
+    let mut rules = Vec::<(String, String)>::new();
+    for row in rows {
+        if row.len() < 3 {
+            continue;
+        }
+        let class = row[0].trim().trim_matches('`').to_ascii_lowercase();
+        let prefix = row[1].trim().trim_matches('`').to_string();
+        let lifecycle = row[2].trim().trim_matches('`');
+        if class.is_empty() || prefix.is_empty() || lifecycle.is_empty() {
+            continue;
+        }
+        if !matches!(class.as_str(), "stable" | "experimental" | "internal") {
+            bail!("invalid stability class '{class}' in {SDK_API_STABILITY_PATH}");
+        }
+        rules.push((class, prefix));
+    }
+    if rules.is_empty() {
+        bail!("stability contract has no usable classification rules");
+    }
+
+    let mut unmatched = Vec::new();
+    let mut matched_rule_indexes = BTreeSet::new();
+
+    for line in current_public_api.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("pub ") || !trimmed.contains("lxmf_sdk::") {
+            continue;
+        }
+
+        let matched = rules.iter().enumerate().find(|(_, (_, prefix))| trimmed.contains(prefix));
+
+        if let Some((idx, _)) = matched {
+            matched_rule_indexes.insert(idx);
+        } else {
+            unmatched.push(trimmed.to_string());
+        }
+    }
+
+    if !unmatched.is_empty() {
+        let first = unmatched[0].clone();
+        bail!(
+            "unclassified sdk public api entry '{first}' (update {SDK_API_STABILITY_PATH} rules)"
+        );
+    }
+
+    for (idx, (_, prefix)) in rules.iter().enumerate() {
+        if !matched_rule_indexes.contains(&idx) {
+            bail!(
+                "stability rule prefix '{prefix}' in {SDK_API_STABILITY_PATH} is stale (matches no public API entries)"
+            );
+        }
     }
 
     Ok(())

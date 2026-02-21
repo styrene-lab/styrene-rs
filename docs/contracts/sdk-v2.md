@@ -116,6 +116,20 @@ Async extension (feature-gated):
 
 - `subscribe_events(start) -> Result<EventSubscription, SdkError>` (requires `sdk.capability.async_events`)
 
+## API Stability Classes
+
+Stability classes for every `lxmf-sdk` public API symbol are defined in:
+
+- `docs/contracts/sdk-v2-api-stability.md`
+
+Rules:
+
+1. Every public symbol must resolve to exactly one stability class by ordered rule matching.
+2. `stable` symbols follow `v2.x` compatibility and deprecation workflow requirements.
+3. `experimental` symbols may change additively before promotion.
+4. `internal` symbols are public for composition/runtime wiring but are not embedder-stable guarantees.
+5. Stability class updates are release-gated by `cargo xtask sdk-api-break`.
+
 ## Trait Evolution Policy
 
 Rules:
