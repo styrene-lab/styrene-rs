@@ -105,7 +105,7 @@ impl RpcDaemon {
                 let ticket = encode_hex(hasher.finalize());
                 let record = TicketRecord {
                     destination: parsed.destination.clone(),
-                    ticket: ticket.clone(),
+                    ticket,
                     expires_at,
                 };
 

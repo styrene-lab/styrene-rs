@@ -143,17 +143,17 @@ impl RpcDaemon {
 
                 let timestamp = now_i64();
                 let record = self.upsert_peer(parsed.peer, timestamp, None, None);
-                let event = RpcEvent {
-                    event_type: "peer_sync".into(),
-                    payload: json!({
-                        "peer": record.peer.clone(),
-                        "timestamp": timestamp,
-                        "name": record.name.clone(),
-                        "name_source": record.name_source.clone(),
-                        "first_seen": record.first_seen,
-                        "seen_count": record.seen_count,
-                    }),
-                };
+                    let event = RpcEvent {
+                        event_type: "peer_sync".into(),
+                        payload: json!({
+                            "peer": &record.peer,
+                            "timestamp": timestamp,
+                            "name": &record.name,
+                            "name_source": &record.name_source,
+                            "first_seen": record.first_seen,
+                            "seen_count": record.seen_count,
+                        }),
+                    };
                 self.publish_event(event);
 
                 Ok(RpcResponse {
@@ -248,12 +248,12 @@ impl RpcDaemon {
                         .as_ref()
                         .and_then(|message| message.receipt_status.clone());
                     if existing_message.is_none() {
-                        (requested_status.clone(), false)
+                        (requested_status, false)
                     } else if existing_status
                         .as_deref()
                         .is_some_and(Self::is_terminal_receipt_status)
                     {
-                        (existing_status.unwrap_or(requested_status.clone()), false)
+                        (existing_status.unwrap_or(requested_status), false)
                     } else {
                         self.store
                             .update_receipt_status(&message_id, &requested_status)

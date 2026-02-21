@@ -53,14 +53,14 @@ impl RpcDaemon {
                     .get_message(&id)
                     .map_err(std::io::Error::other)?
                     .and_then(|message| message.receipt_status);
-                if existing_status.as_deref().is_some_and(Self::is_terminal_receipt_status) {
-                    existing_status.unwrap_or(status.clone())
+                if let Some(status) = existing_status && Self::is_terminal_receipt_status(&status) {
+                    status
                 } else {
                     self.store
                         .update_receipt_status(&id, &status)
                         .map_err(std::io::Error::other)?;
-                    self.append_delivery_trace(&id, status.clone());
-                    status.clone()
+                    self.append_delivery_trace(&id, status);
+                    status
                 }
             };
             record.receipt_status = Some(resolved_status.clone());
@@ -90,14 +90,14 @@ impl RpcDaemon {
                 .get_message(&id)
                 .map_err(std::io::Error::other)?
                 .and_then(|message| message.receipt_status);
-            if existing_status.as_deref().is_some_and(Self::is_terminal_receipt_status) {
-                existing_status.unwrap_or(sent_status.clone())
+            if let Some(sent_status) = existing_status && Self::is_terminal_receipt_status(&sent_status) {
+                sent_status
             } else {
                 self.store
                     .update_receipt_status(&id, &sent_status)
                     .map_err(std::io::Error::other)?;
-                self.append_delivery_trace(&id, sent_status.clone());
-                sent_status.clone()
+                self.append_delivery_trace(&id, sent_status);
+                sent_status
             }
         };
         record.receipt_status = Some(resolved_status.clone());
