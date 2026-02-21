@@ -6,6 +6,7 @@ bench_report="${BENCH_BUDGET_REPORT_PATH:-target/criterion/bench-budget-report.t
 soak_report="${SOAK_REPORT_PATH:-target/soak/soak-report.json}"
 provenance_report="${PROVENANCE_REPORT_PATH:-target/supply-chain/provenance/artifact-provenance.json}"
 security_checklist="${SECURITY_REVIEW_CHECKLIST_PATH:-docs/runbooks/security-review-checklist.md}"
+max_soak_failures="${SCORECARD_MAX_SOAK_FAILURES:-0}"
 
 fail() {
   echo "release-scorecard failed: $*" >&2
@@ -71,7 +72,7 @@ security_pass_rows="$(count_pass_rows)"
 security_pass_rows="${security_pass_rows:-0}"
 
 overall_status="PASS"
-if [ "$perf_status" != "PASS" ] || [ "$soak_status" != "pass" ] || [ "$soak_failures" != "0" ]; then
+if [ "$perf_status" != "PASS" ] || [ "$soak_status" != "pass" ] || [ "$soak_failures" -gt "$max_soak_failures" ]; then
   overall_status="FAIL"
 fi
 
@@ -85,6 +86,7 @@ cat > "$json_path" <<EOF
   "soak_status": "$soak_status",
   "soak_failures": $soak_failures,
   "soak_mesh_failures": $soak_mesh_failures,
+  "max_soak_failures": $max_soak_failures,
   "soak_duration_secs": $soak_duration_secs,
   "soak_timestamp_utc": "$soak_timestamp",
   "supply_chain_artifact_count": $artifact_count,
