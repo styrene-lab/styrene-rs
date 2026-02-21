@@ -47,6 +47,7 @@ This checklist is the publication gate for the Rust workspace.
 - `release-scorecard-check`
 - `canary-criteria-check`
 - `extension-registry-check`
+- `plugin-negotiation-check`
 - `architecture-lint`
 - `architecture-checks`
 - `changelog-migration-check`
@@ -83,6 +84,7 @@ cargo run -p xtask -- unsafe-audit-check
 cargo run -p xtask -- release-scorecard-check
 cargo run -p xtask -- canary-criteria-check
 cargo run -p xtask -- extension-registry-check
+cargo run -p xtask -- plugin-negotiation-check
 cargo run -p xtask -- architecture-lint-check
 cargo run -p xtask -- architecture-checks
 cargo run -p xtask -- changelog-migration-check

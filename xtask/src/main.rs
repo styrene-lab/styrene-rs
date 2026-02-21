@@ -307,6 +307,7 @@ enum XtaskCommand {
     CanaryCriteriaCheck,
     ReleaseScorecardCheck,
     ExtensionRegistryCheck,
+    PluginNegotiationCheck,
     LeaderReadinessCheck,
     SecurityReviewCheck,
     CryptoAgilityCheck,
@@ -370,6 +371,7 @@ enum CiStage {
     CanaryCriteriaCheck,
     ReleaseScorecardCheck,
     ExtensionRegistryCheck,
+    PluginNegotiationCheck,
     LeaderReadinessCheck,
     SecurityReviewCheck,
     CryptoAgilityCheck,
@@ -441,6 +443,7 @@ fn main() -> Result<()> {
         XtaskCommand::CanaryCriteriaCheck => run_canary_criteria_check(),
         XtaskCommand::ReleaseScorecardCheck => run_release_scorecard_check(),
         XtaskCommand::ExtensionRegistryCheck => run_extension_registry_check(),
+        XtaskCommand::PluginNegotiationCheck => run_plugin_negotiation_check(),
         XtaskCommand::LeaderReadinessCheck => run_leader_readiness_check(),
         XtaskCommand::SecurityReviewCheck => run_security_review_check(),
         XtaskCommand::CryptoAgilityCheck => run_crypto_agility_check(),
@@ -516,6 +519,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_release_scorecard_check()?;
     run_canary_criteria_check()?;
     run_extension_registry_check()?;
+    run_plugin_negotiation_check()?;
     run_security_review_check()?;
     run_sdk_security_check()?;
     run_key_management_check()?;
@@ -583,6 +587,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::CanaryCriteriaCheck => run_canary_criteria_check(),
         CiStage::ReleaseScorecardCheck => run_release_scorecard_check(),
         CiStage::ExtensionRegistryCheck => run_extension_registry_check(),
+        CiStage::PluginNegotiationCheck => run_plugin_negotiation_check(),
         CiStage::LeaderReadinessCheck => run_leader_readiness_check(),
         CiStage::SecurityReviewCheck => run_security_review_check(),
         CiStage::CryptoAgilityCheck => run_crypto_agility_check(),
@@ -626,6 +631,7 @@ fn run_release_check() -> Result<()> {
     run_release_scorecard_check()?;
     run_canary_criteria_check()?;
     run_extension_registry_check()?;
+    run_plugin_negotiation_check()?;
     run_sdk_api_break()?;
     run_changelog_migration_check()?;
     run_crypto_agility_check()?;
@@ -1745,6 +1751,55 @@ fn run_extension_registry_check() -> Result<()> {
     }
     if !workflow.contains("cargo xtask ci --stage extension-registry-check") {
         bail!("ci workflow must execute `cargo xtask ci --stage extension-registry-check`");
+    }
+
+    Ok(())
+}
+
+fn run_plugin_negotiation_check() -> Result<()> {
+    run("cargo", &["test", "-p", "lxmf-sdk", "plugin_negotiation", "--", "--nocapture"])?;
+
+    let backends = fs::read_to_string(SDK_BACKENDS_CONTRACT_PATH)
+        .with_context(|| format!("missing {SDK_BACKENDS_CONTRACT_PATH}"))?;
+    for marker in [
+        "## Extension and Plugin Model",
+        "PluginDescriptor",
+        "PluginState",
+        "negotiate_plugins",
+        "plugin-negotiation-check",
+    ] {
+        if !backends.contains(marker) {
+            bail!(
+                "backend contract missing plugin marker '{marker}' in {SDK_BACKENDS_CONTRACT_PATH}"
+            );
+        }
+    }
+
+    let feature_matrix = fs::read_to_string(SDK_FEATURE_MATRIX_PATH)
+        .with_context(|| format!("missing {SDK_FEATURE_MATRIX_PATH}"))?;
+    if !feature_matrix.contains("sdk.capability.plugin_host") {
+        bail!("feature matrix must include sdk.capability.plugin_host capability row");
+    }
+
+    let adr = fs::read_to_string("docs/adr/0008-plugin-extension-model.md")
+        .context("missing docs/adr/0008-plugin-extension-model.md")?;
+    for marker in [
+        "# ADR 0008: Extension and Plugin Contract Model",
+        "- Status: Accepted",
+        "negotiate_plugins",
+    ] {
+        if !adr.contains(marker) {
+            bail!("plugin extension ADR missing marker '{marker}'");
+        }
+    }
+
+    let workflow = fs::read_to_string(CI_WORKFLOW_PATH)
+        .with_context(|| format!("missing {CI_WORKFLOW_PATH}"))?;
+    if !workflow.contains("plugin-negotiation-check:") {
+        bail!("ci workflow must include a 'plugin-negotiation-check' job");
+    }
+    if !workflow.contains("cargo xtask ci --stage plugin-negotiation-check") {
+        bail!("ci workflow must execute `cargo xtask ci --stage plugin-negotiation-check`");
     }
 
     Ok(())

@@ -526,6 +526,14 @@ jobs:
       - name: Extension registry governance gate
         run: cargo xtask ci --stage extension-registry-check
 
+  plugin-negotiation-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Plugin negotiation contract gate
+        run: cargo xtask ci --stage plugin-negotiation-check
+
   forbidden-deps:
     runs-on: ubuntu-latest
     steps:

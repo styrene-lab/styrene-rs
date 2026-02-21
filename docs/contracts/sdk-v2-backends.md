@@ -45,6 +45,34 @@ Rules:
 1. Optional trait implementation must be discoverable through negotiation capability descriptors.
 2. Absence of a capability must produce deterministic `Capability` errors for dependent commands.
 
+## Extension and Plugin Model
+
+Optional domain modules are negotiated as plugins on top of capability negotiation.
+
+Plugin negotiation surface:
+
+- SDK types: `PluginDescriptor`, `PluginState`
+- negotiation helper: `negotiate_plugins(requested, available, effective_capabilities)`
+
+Policy:
+
+1. Plugin activation is additive and must not alter core command semantics.
+2. A plugin may activate only when all `required_capabilities` are present in
+   `effective_capabilities`.
+3. Unknown plugin IDs are ignored (forward-compatible behavior).
+4. Duplicate plugin requests must collapse to a single activation decision.
+5. Plugin-specific wire fields must remain under explicit extension namespaces.
+
+Current lifecycle:
+
+- `stable`: release-gated and backward-compatibility managed.
+- `experimental`: available but not release-blocking.
+- `deprecated`: supported for migration window only.
+
+Conformance gate:
+
+- `cargo run -p xtask -- plugin-negotiation-check`
+
 ## Storage Backend Invariants
 
 Required behavior:

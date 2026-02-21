@@ -27,8 +27,9 @@ pub use backend::{
 };
 // Stability class: stable
 pub use capability::{
-    effective_capabilities_for_profile, negotiate_contract_version, CapabilityDescriptor,
-    CapabilityState, EffectiveLimits, NegotiationRequest, NegotiationResponse,
+    effective_capabilities_for_profile, negotiate_contract_version, negotiate_plugins,
+    CapabilityDescriptor, CapabilityState, EffectiveLimits, NegotiationRequest,
+    NegotiationResponse, PluginDescriptor, PluginState,
 };
 // Stability class: internal
 pub use client::Client;
