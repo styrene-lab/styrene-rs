@@ -3,6 +3,9 @@ use serde_bytes::ByteBuf;
 
 use crate::error::LxmfError;
 use crate::message::{MessageState, TransportMethod};
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessageContainer {

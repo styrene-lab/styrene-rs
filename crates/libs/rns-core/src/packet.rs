@@ -1,5 +1,6 @@
 use core::fmt;
 
+use alloc::vec::Vec;
 use sha2::Digest;
 
 use crate::buffer::StaticBuffer;

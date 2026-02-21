@@ -3,10 +3,15 @@ use crate::{
     identity::{PrivateIdentity, PUBLIC_KEY_LENGTH},
     ratchets::decrypt_with_private_key,
 };
+use alloc::vec::Vec;
+#[cfg(feature = "std")]
 use ed25519_dalek::Signature;
 use rand_core::OsRng;
+#[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "std")]
 use serde_bytes::ByteBuf;
+#[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -18,6 +23,7 @@ const DEFAULT_RETAINED_RATCHETS: usize = 512;
 pub(crate) struct RatchetState {
     pub(crate) enabled: bool,
     pub(crate) ratchets: Vec<[u8; RATCHET_LENGTH]>,
+    #[cfg(feature = "std")]
     pub(crate) ratchets_path: Option<PathBuf>,
     pub(crate) ratchet_interval_secs: u64,
     pub(crate) retained_ratchets: usize,
@@ -25,6 +31,7 @@ pub(crate) struct RatchetState {
     pub(crate) enforce_ratchets: bool,
 }
 
+#[cfg(feature = "std")]
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedRatchets {
     signature: ByteBuf,
@@ -36,6 +43,7 @@ impl Default for RatchetState {
         Self {
             enabled: false,
             ratchets: Vec::new(),
+            #[cfg(feature = "std")]
             ratchets_path: None,
             ratchet_interval_secs: DEFAULT_RATCHET_INTERVAL_SECS,
             retained_ratchets: DEFAULT_RETAINED_RATCHETS,
@@ -46,6 +54,7 @@ impl Default for RatchetState {
 }
 
 impl RatchetState {
+    #[cfg(feature = "std")]
     pub(crate) fn enable(
         &mut self,
         identity: &PrivateIdentity,
@@ -58,6 +67,7 @@ impl RatchetState {
         Ok(())
     }
 
+    #[cfg(feature = "std")]
     pub(crate) fn reload(
         &mut self,
         identity: &PrivateIdentity,
@@ -91,6 +101,7 @@ impl RatchetState {
         Ok(())
     }
 
+    #[cfg(feature = "std")]
     fn persist(&self, identity: &PrivateIdentity, path: &Path) -> Result<(), RnsError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|_| RnsError::PacketError)?;
@@ -116,6 +127,8 @@ impl RatchetState {
         identity: &PrivateIdentity,
         now: f64,
     ) -> Result<(), RnsError> {
+        #[cfg(not(feature = "std"))]
+        let _ = identity;
         if !self.enabled {
             return Ok(());
         }
@@ -127,6 +140,7 @@ impl RatchetState {
             if self.ratchets.len() > self.retained_ratchets {
                 self.ratchets.truncate(self.retained_ratchets);
             }
+            #[cfg(feature = "std")]
             if let Some(path) = self.ratchets_path.clone() {
                 self.persist(identity, &path)?;
             }
@@ -144,6 +158,7 @@ impl RatchetState {
     }
 }
 
+#[cfg(feature = "std")]
 fn pack_ratchets(ratchets: &[[u8; RATCHET_LENGTH]]) -> Result<Vec<u8>, RnsError> {
     let list: Vec<ByteBuf> = ratchets.iter().map(|bytes| ByteBuf::from(bytes.to_vec())).collect();
     rmp_serde::to_vec(&list).map_err(|_| RnsError::PacketError)

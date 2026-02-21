@@ -2,7 +2,9 @@ use ed25519_dalek::{Signature, SigningKey, VerifyingKey, SIGNATURE_LENGTH};
 use rand_core::CryptoRngCore;
 use x25519_dalek::PublicKey;
 
+use alloc::vec::Vec;
 use core::{fmt, marker::PhantomData};
+#[cfg(feature = "std")]
 use std::path::Path;
 
 use crate::{
@@ -129,6 +131,7 @@ impl DestinationAnnounce {
         let expected_hash =
             create_address_hash(&identity, &DestinationName::new_from_hash_slice(name_hash));
         if expected_hash != *destination {
+            #[cfg(feature = "std")]
             eprintln!("[announce] dest mismatch expected={} got={}", expected_hash, destination);
         }
 
@@ -280,6 +283,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         }
     }
 
+    #[cfg(feature = "std")]
     pub fn enable_ratchets<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RnsError> {
         let path = path.as_ref().to_path_buf();
         self.ratchet_state.enable(&self.identity, path)
@@ -319,6 +323,7 @@ impl Destination<PrivateIdentity, Input, Single> {
             {
                 return Ok((plaintext, true));
             }
+            #[cfg(feature = "std")]
             if let Some(path) = self.ratchet_state.ratchets_path.clone() {
                 if self.ratchet_state.reload(&self.identity, &path).is_ok() {
                     if let Some(plaintext) =

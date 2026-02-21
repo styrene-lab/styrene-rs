@@ -1,4 +1,9 @@
 use crate::LxmfError;
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use rmpv::Value;
@@ -338,8 +343,7 @@ fn decode_client_columba_meta(value: &Value, options: RmpvToJsonOptions) -> Opti
 }
 
 fn decode_sideband_location_telemetry(packed: &[u8]) -> Option<JsonValue> {
-    let mut cursor = std::io::Cursor::new(packed);
-    let decoded = rmpv::decode::read_value(&mut cursor).ok()?;
+    let decoded = decode_msgpack_value_from_bytes(packed)?;
     let Value::Map(map) = decoded else {
         return None;
     };
@@ -378,8 +382,7 @@ fn decode_sideband_location_telemetry(packed: &[u8]) -> Option<JsonValue> {
 }
 
 fn decode_telemetry_stream(packed: &[u8], options: RmpvToJsonOptions) -> Option<JsonValue> {
-    let mut cursor = std::io::Cursor::new(packed);
-    let decoded = rmpv::decode::read_value(&mut cursor).ok()?;
+    let decoded = decode_msgpack_value_from_bytes(packed)?;
     rmpv_to_json_with_options_inner(&decoded, options)
 }
 
@@ -392,22 +395,44 @@ fn decode_columba_meta_text(text: &str) -> Option<JsonValue> {
 }
 
 fn decode_columba_meta_bytes(bytes: &[u8], options: RmpvToJsonOptions) -> Option<JsonValue> {
-    let text = std::str::from_utf8(bytes).ok();
+    let text = core::str::from_utf8(bytes).ok();
     if let Some(text) = text {
         if let Ok(json) = serde_json::from_str::<JsonValue>(text) {
             return Some(json);
         }
     }
-    let mut cursor = std::io::Cursor::new(bytes);
-    if let Ok(decoded) = rmpv::decode::read_value(&mut cursor) {
-        if usize::try_from(cursor.position()).ok() == Some(bytes.len()) {
-            if let Some(decoded) = rmpv_to_json_with_options_inner(&decoded, options) {
-                return Some(decoded);
-            }
+
+    if let Some(decoded) = decode_msgpack_value_from_bytes_exact(bytes) {
+        if let Some(decoded) = rmpv_to_json_with_options_inner(&decoded, options) {
+            return Some(decoded);
         }
     }
+
     text.map(|value| JsonValue::String(value.to_string()))
         .or_else(|| rmpv_to_json_with_options_inner(&Value::Binary(bytes.to_vec()), options))
+}
+
+#[cfg(feature = "std")]
+fn decode_msgpack_value_from_bytes(bytes: &[u8]) -> Option<Value> {
+    let mut cursor = std::io::Cursor::new(bytes);
+    rmpv::decode::read_value(&mut cursor).ok()
+}
+
+#[cfg(not(feature = "std"))]
+fn decode_msgpack_value_from_bytes(bytes: &[u8]) -> Option<Value> {
+    rmp_serde::from_slice(bytes).ok()
+}
+
+#[cfg(feature = "std")]
+fn decode_msgpack_value_from_bytes_exact(bytes: &[u8]) -> Option<Value> {
+    let mut cursor = std::io::Cursor::new(bytes);
+    let decoded = rmpv::decode::read_value(&mut cursor).ok()?;
+    (usize::try_from(cursor.position()).ok() == Some(bytes.len())).then_some(decoded)
+}
+
+#[cfg(not(feature = "std"))]
+fn decode_msgpack_value_from_bytes_exact(bytes: &[u8]) -> Option<Value> {
+    rmp_serde::from_slice(bytes).ok()
 }
 
 fn enrich_app_extension_fields(object: &mut JsonMap<String, JsonValue>) {

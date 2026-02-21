@@ -364,6 +364,14 @@ jobs:
       - name: Embedded transport adapter conformance
         run: cargo xtask ci --stage embedded-link-check
 
+  embedded-core-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Alloc-first core compile matrix
+        run: cargo xtask ci --stage embedded-core-check
+
   sdk-profile-build:
     runs-on: ubuntu-latest
     steps:

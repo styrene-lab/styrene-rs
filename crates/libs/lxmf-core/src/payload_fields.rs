@@ -1,6 +1,9 @@
 use crate::constants::FIELD_COMMANDS;
 use crate::LxmfError;
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandEntry {
