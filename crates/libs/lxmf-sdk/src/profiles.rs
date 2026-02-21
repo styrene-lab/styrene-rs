@@ -23,6 +23,7 @@ const CAP_IDENTITY_HASH_RESOLUTION: &str = "sdk.capability.identity_hash_resolut
 const CAP_PAPER_MESSAGES: &str = "sdk.capability.paper_messages";
 const CAP_REMOTE_COMMANDS: &str = "sdk.capability.remote_commands";
 const CAP_VOICE_SIGNALING: &str = "sdk.capability.voice_signaling";
+const CAP_GROUP_DELIVERY: &str = "sdk.capability.group_delivery";
 const CAP_SHARED_INSTANCE_RPC_AUTH: &str = "sdk.capability.shared_instance_rpc_auth";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,6 +70,7 @@ const DESKTOP_FULL_SUPPORTED: &[&str] = &[
     CAP_PAPER_MESSAGES,
     CAP_REMOTE_COMMANDS,
     CAP_VOICE_SIGNALING,
+    CAP_GROUP_DELIVERY,
     CAP_SHARED_INSTANCE_RPC_AUTH,
 ];
 
@@ -95,6 +97,7 @@ const DESKTOP_LOCAL_RUNTIME_SUPPORTED: &[&str] = &[
     CAP_PAPER_MESSAGES,
     CAP_REMOTE_COMMANDS,
     CAP_VOICE_SIGNALING,
+    CAP_GROUP_DELIVERY,
     CAP_SHARED_INSTANCE_RPC_AUTH,
 ];
 
@@ -119,6 +122,7 @@ const EMBEDDED_ALLOC_SUPPORTED: &[&str] = &[
     CAP_PAPER_MESSAGES,
     CAP_REMOTE_COMMANDS,
     CAP_VOICE_SIGNALING,
+    CAP_GROUP_DELIVERY,
     CAP_SHARED_INSTANCE_RPC_AUTH,
 ];
 
@@ -187,9 +191,11 @@ pub fn supports_capability(profile: Profile, capability_id: &str) -> bool {
 
 pub fn is_profile_method_required(profile: Profile, method: &str) -> bool {
     match profile {
-        Profile::DesktopFull => !matches!(method, "tick"),
-        Profile::DesktopLocalRuntime => !matches!(method, "tick" | "subscribe_events"),
-        Profile::EmbeddedAlloc => !matches!(method, "subscribe_events"),
+        Profile::DesktopFull => !matches!(method, "tick" | "send_group"),
+        Profile::DesktopLocalRuntime => {
+            !matches!(method, "tick" | "subscribe_events" | "send_group")
+        }
+        Profile::EmbeddedAlloc => !matches!(method, "subscribe_events" | "send_group"),
     }
 }
 
@@ -235,6 +241,12 @@ mod tests {
         assert!(is_profile_method_supported(Profile::DesktopFull, "tick"));
         assert!(is_profile_method_supported(Profile::DesktopLocalRuntime, "tick"));
         assert!(is_profile_method_supported(Profile::EmbeddedAlloc, "tick"));
+        assert!(is_profile_method_supported(Profile::DesktopFull, "send_group"));
+        assert!(is_profile_method_supported(Profile::DesktopLocalRuntime, "send_group"));
+        assert!(is_profile_method_supported(Profile::EmbeddedAlloc, "send_group"));
+        assert!(!is_profile_method_required(Profile::DesktopFull, "send_group"));
+        assert!(!is_profile_method_required(Profile::DesktopLocalRuntime, "send_group"));
+        assert!(!is_profile_method_required(Profile::EmbeddedAlloc, "send_group"));
     }
 
     #[test]

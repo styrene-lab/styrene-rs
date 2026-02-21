@@ -12,8 +12,9 @@ pub mod profiles;
 pub mod types;
 
 pub use api::{
-    LxmfSdk, LxmfSdkAsync, LxmfSdkAttachments, LxmfSdkIdentity, LxmfSdkManualTick, LxmfSdkMarkers,
-    LxmfSdkPaper, LxmfSdkRemoteCommands, LxmfSdkTelemetry, LxmfSdkTopics, LxmfSdkVoiceSignaling,
+    LxmfSdk, LxmfSdkAsync, LxmfSdkAttachments, LxmfSdkGroupDelivery, LxmfSdkIdentity,
+    LxmfSdkManualTick, LxmfSdkMarkers, LxmfSdkPaper, LxmfSdkRemoteCommands, LxmfSdkTelemetry,
+    LxmfSdkTopics, LxmfSdkVoiceSignaling,
 };
 #[cfg(all(feature = "rpc-backend", feature = "std"))]
 pub use backend::rpc::RpcBackendClient;
@@ -44,9 +45,10 @@ pub use profiles::{
 };
 pub use types::{
     Ack, AuthMode, BindMode, CancelResult, ClientHandle, ConfigPatch, DeliverySnapshot,
-    DeliveryState, EventStreamConfig, MessageId, OverflowPolicy, Profile, RedactionConfig,
-    RedactionTransform, RpcBackendConfig, RuntimeSnapshot, RuntimeState, SdkConfig, SendRequest,
-    ShutdownMode, StartRequest, TickBudget, TickResult,
+    DeliveryState, EventStreamConfig, GroupRecipientState, GroupSendOutcome, GroupSendRequest,
+    GroupSendResult, MessageId, OverflowPolicy, Profile, RedactionConfig, RedactionTransform,
+    RpcBackendConfig, RuntimeSnapshot, RuntimeState, SdkConfig, SendRequest, ShutdownMode,
+    StartRequest, TickBudget, TickResult,
 };
 
 pub const CONTRACT_RELEASE: &str = "v2.5";

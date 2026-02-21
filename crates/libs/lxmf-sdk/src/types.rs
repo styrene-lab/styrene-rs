@@ -8,7 +8,10 @@ pub use config::{
     AuthMode, BindMode, EventStreamConfig, MtlsAuthConfig, OverflowPolicy, Profile,
     RedactionConfig, RedactionTransform, RpcBackendConfig, SdkConfig, TokenAuthConfig,
 };
-pub use delivery::{Ack, CancelResult, DeliverySnapshot, DeliveryState, MessageId, SendRequest};
+pub use delivery::{
+    Ack, CancelResult, DeliverySnapshot, DeliveryState, GroupRecipientState, GroupSendOutcome,
+    GroupSendRequest, GroupSendResult, MessageId, SendRequest,
+};
 pub use patch::{
     ConfigPatch, EventStreamPatch, MtlsAuthPatch, RedactionPatch, RpcBackendPatch, TokenAuthPatch,
 };

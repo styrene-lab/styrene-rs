@@ -30,6 +30,16 @@ fn sdk_schema_valid_fixtures_pass_contract_checks() {
     );
     assert_schema_valid(
         &schemas.command,
+        "docs/fixtures/sdk-v2/command.send_group.empty_destination.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.send_group.empty_destination.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.send_group.valid.json",
+        &fixture("docs/fixtures/sdk-v2/command.send_group.valid.json"),
+    );
+    assert_schema_valid(
+        &schemas.command,
         "docs/fixtures/sdk-v2/command.topic_get.valid.json",
         &fixture("docs/fixtures/sdk-v2/command.topic_get.valid.json"),
     );
@@ -242,6 +252,11 @@ fn sdk_schema_invalid_fixtures_are_rejected() {
         &schemas.command,
         "docs/fixtures/sdk-v2/command.send_unknown_field.invalid.json",
         &fixture("docs/fixtures/sdk-v2/command.send_unknown_field.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.command,
+        "docs/fixtures/sdk-v2/command.send_group.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/command.send_group.invalid.json"),
     );
     assert_schema_invalid(
         &schemas.command,

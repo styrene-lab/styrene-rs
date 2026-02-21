@@ -134,6 +134,7 @@ Current additive extension traits:
 6. `LxmfSdkPaper`
 7. `LxmfSdkRemoteCommands`
 8. `LxmfSdkVoiceSignaling`
+9. `LxmfSdkGroupDelivery`
 
 ## Lifecycle State Machine
 
@@ -222,6 +223,24 @@ Rules:
 - `TooLateToCancel`
 7. Cancel/send races resolve by first terminal CAS commit.
 8. Conformant `v2.5` profiles must not return `Unsupported` for `cancel`.
+
+## Group Delivery Semantics
+
+`send_group(req) -> Result<GroupSendResult, SdkError>` provides multi-recipient fanout over the
+base send path.
+
+Rules:
+
+1. `GroupSendRequest` must contain at least one destination.
+2. Empty destinations are treated as per-recipient failures, not global request failure.
+3. Outcome is per-recipient:
+- `accepted` when send returns a `MessageId`
+- `deferred` when send fails with retryable error
+- `failed` when send fails with non-retryable error
+4. The overall call returns `GroupSendResult` even for partial success/failure.
+5. `accepted_count + deferred_count + failed_count` must equal `outcomes.len()`.
+6. Group fanout is at-least-once per recipient; retries are host-controlled using `deferred`
+   outcomes.
 
 ## Config and Policy Mutation
 
