@@ -20,13 +20,16 @@ Schema namespace: `v2`
 1. `MarkerId`
 2. `GeoPoint`
 3. `MarkerCreateRequest`
-4. `MarkerUpdatePositionRequest`
-5. `MarkerRecord`
-6. `MarkerListRequest`
-7. `MarkerListResult`
+4. `MarkerUpdatePositionRequest` (`expected_revision` required)
+5. `MarkerDeleteRequest` (`expected_revision` required)
+6. `MarkerRecord` (`revision` required)
+7. `MarkerListRequest`
+8. `MarkerListResult`
 
 ## Rules
 
 1. Marker coordinates use WGS84 decimal degrees.
-2. Marker updates are last-write-wins unless backend advertises stronger consistency.
-3. Marker list operations are cursor-based and deterministic for stable replay.
+2. Marker writes are revision-CAS only. Update/delete requests must include `expected_revision`.
+3. On revision mismatch, backend returns `SDK_RUNTIME_CONFLICT` with `details.expected_revision` and `details.observed_revision`.
+4. Marker create starts at `revision=1`; successful write increments revision by exactly 1.
+5. Marker list operations are cursor-based and deterministic for stable replay.

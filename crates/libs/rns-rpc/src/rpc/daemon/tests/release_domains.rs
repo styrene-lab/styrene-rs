@@ -134,10 +134,14 @@
             ))
             .expect("marker create");
         assert!(marker.error.is_none());
-        let marker_id = marker.result.expect("result")["marker"]["marker_id"]
+        let marker_result = marker.result.expect("result");
+        let marker_id = marker_result["marker"]["marker_id"]
             .as_str()
             .expect("marker id")
             .to_string();
+        let marker_revision = marker_result["marker"]["revision"]
+            .as_u64()
+            .expect("marker revision");
 
         let marker_update = daemon
             .handle_rpc(rpc_request(
@@ -145,6 +149,7 @@
                 "sdk_marker_update_position_v2",
                 json!({
                     "marker_id": marker_id,
+                    "expected_revision": marker_revision,
                     "position": { "lat": 36.0, "lon": -116.0, "alt_m": null }
                 }),
             ))
@@ -872,6 +877,124 @@
             ))
             .expect("command reply on daemon B");
         assert!(command_reply_from_b.error.is_none());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn sdk_release_b_marker_revision_conflicts_are_rejected_across_live_daemons() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let run_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("unix epoch")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!(
+            "lxmf-rs-sdk-marker-conflict-{run_id}-{}.sqlite",
+            std::process::id()
+        ));
+
+        let store_a = MessagesStore::open(db_path.as_path()).expect("open sqlite store A");
+        let daemon_a = RpcDaemon::with_store(store_a, "marker-conflict-node".to_string());
+        let store_b = MessagesStore::open(db_path.as_path()).expect("open sqlite store B");
+        let daemon_b = RpcDaemon::with_store(store_b, "marker-conflict-node".to_string());
+
+        let marker = daemon_a
+            .handle_rpc(rpc_request(
+                350,
+                "sdk_marker_create_v2",
+                json!({
+                    "label": "CAS marker",
+                    "position": { "lat": 45.0, "lon": -122.0, "alt_m": null }
+                }),
+            ))
+            .expect("marker create");
+        assert!(marker.error.is_none());
+        let marker_result = marker.result.expect("marker result");
+        let marker_id = marker_result["marker"]["marker_id"]
+            .as_str()
+            .expect("marker_id")
+            .to_string();
+        let revision_1 = marker_result["marker"]["revision"]
+            .as_u64()
+            .expect("revision_1");
+        assert_eq!(revision_1, 1);
+
+        let update_success = daemon_b
+            .handle_rpc(rpc_request(
+                351,
+                "sdk_marker_update_position_v2",
+                json!({
+                    "marker_id": marker_id.clone(),
+                    "expected_revision": revision_1,
+                    "position": { "lat": 46.0, "lon": -123.0, "alt_m": null }
+                }),
+            ))
+            .expect("marker update success");
+        assert!(update_success.error.is_none());
+        let revision_2 = update_success.result.expect("update result")["marker"]["revision"]
+            .as_u64()
+            .expect("revision_2");
+        assert_eq!(revision_2, 2);
+
+        let stale_update = daemon_a
+            .handle_rpc(rpc_request(
+                352,
+                "sdk_marker_update_position_v2",
+                json!({
+                    "marker_id": marker_id.clone(),
+                    "expected_revision": revision_1,
+                    "position": { "lat": 47.0, "lon": -124.0, "alt_m": null }
+                }),
+            ))
+            .expect("stale marker update");
+        let stale_update_error = stale_update.error.expect("stale update error");
+        assert_eq!(stale_update_error.code, "SDK_RUNTIME_CONFLICT");
+        let stale_update_details = stale_update_error.details.expect("stale update details");
+        assert_eq!(stale_update_details["expected_revision"], json!(revision_1));
+        assert_eq!(stale_update_details["observed_revision"], json!(revision_2));
+
+        let stale_delete = daemon_a
+            .handle_rpc(rpc_request(
+                353,
+                "sdk_marker_delete_v2",
+                json!({
+                    "marker_id": marker_id.clone(),
+                    "expected_revision": revision_1
+                }),
+            ))
+            .expect("stale marker delete");
+        let stale_delete_error = stale_delete.error.expect("stale delete error");
+        assert_eq!(stale_delete_error.code, "SDK_RUNTIME_CONFLICT");
+        let stale_delete_details = stale_delete_error.details.expect("stale delete details");
+        assert_eq!(stale_delete_details["expected_revision"], json!(revision_1));
+        assert_eq!(stale_delete_details["observed_revision"], json!(revision_2));
+
+        let delete_success = daemon_a
+            .handle_rpc(rpc_request(
+                354,
+                "sdk_marker_delete_v2",
+                json!({
+                    "marker_id": marker_id.clone(),
+                    "expected_revision": revision_2
+                }),
+            ))
+            .expect("marker delete success");
+        assert!(delete_success.error.is_none());
+        assert_eq!(delete_success.result.expect("delete result")["accepted"], json!(true));
+
+        let delete_missing = daemon_b
+            .handle_rpc(rpc_request(
+                355,
+                "sdk_marker_delete_v2",
+                json!({
+                    "marker_id": marker_id,
+                    "expected_revision": revision_2
+                }),
+            ))
+            .expect("delete missing marker");
+        assert!(delete_missing.error.is_none());
+        assert_eq!(delete_missing.result.expect("delete missing result")["accepted"], json!(false));
 
         let _ = std::fs::remove_file(&db_path);
     }

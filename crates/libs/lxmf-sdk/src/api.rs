@@ -3,11 +3,12 @@ use crate::domain::{
     AttachmentListResult, AttachmentMeta, AttachmentStoreRequest, AttachmentUploadChunkAck,
     AttachmentUploadChunkRequest, AttachmentUploadCommitRequest, AttachmentUploadSession,
     AttachmentUploadStartRequest, IdentityBundle, IdentityImportRequest, IdentityRef,
-    IdentityResolveRequest, MarkerCreateRequest, MarkerId, MarkerListRequest, MarkerListResult,
-    MarkerRecord, MarkerUpdatePositionRequest, PaperMessageEnvelope, RemoteCommandRequest,
-    RemoteCommandResponse, TelemetryPoint, TelemetryQuery, TopicCreateRequest, TopicId,
-    TopicListRequest, TopicListResult, TopicPublishRequest, TopicRecord, TopicSubscriptionRequest,
-    VoiceSessionId, VoiceSessionOpenRequest, VoiceSessionState, VoiceSessionUpdateRequest,
+    IdentityResolveRequest, MarkerCreateRequest, MarkerDeleteRequest, MarkerListRequest,
+    MarkerListResult, MarkerRecord, MarkerUpdatePositionRequest, PaperMessageEnvelope,
+    RemoteCommandRequest, RemoteCommandResponse, TelemetryPoint, TelemetryQuery,
+    TopicCreateRequest, TopicId, TopicListRequest, TopicListResult, TopicPublishRequest,
+    TopicRecord, TopicSubscriptionRequest, VoiceSessionId, VoiceSessionOpenRequest,
+    VoiceSessionState, VoiceSessionUpdateRequest,
 };
 use crate::error::SdkError;
 use crate::event::{EventBatch, EventCursor};
@@ -158,7 +159,7 @@ pub trait LxmfSdkMarkers {
         Err(SdkError::capability_disabled("sdk.capability.markers"))
     }
 
-    fn marker_delete(&self, _marker_id: MarkerId) -> Result<Ack, SdkError> {
+    fn marker_delete(&self, _req: MarkerDeleteRequest) -> Result<Ack, SdkError> {
         Err(SdkError::capability_disabled("sdk.capability.markers"))
     }
 }

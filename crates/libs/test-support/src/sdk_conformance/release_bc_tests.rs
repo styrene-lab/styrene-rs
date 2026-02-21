@@ -4,8 +4,8 @@ use lxmf_sdk::{
     domain::{
         AttachmentDownloadChunkRequest, AttachmentStoreRequest, AttachmentUploadChunkRequest,
         AttachmentUploadCommitRequest, AttachmentUploadStartRequest, GeoPoint,
-        IdentityImportRequest, IdentityResolveRequest, MarkerCreateRequest, MarkerListRequest,
-        MarkerUpdatePositionRequest, PaperMessageEnvelope, RemoteCommandRequest,
+        IdentityImportRequest, IdentityResolveRequest, MarkerCreateRequest, MarkerDeleteRequest,
+        MarkerListRequest, MarkerUpdatePositionRequest, PaperMessageEnvelope, RemoteCommandRequest,
         RemoteCommandResponse, TelemetryQuery, TopicCreateRequest, TopicListRequest, TopicPath,
         TopicPublishRequest, VoiceSessionOpenRequest, VoiceSessionState, VoiceSessionUpdateRequest,
     },
@@ -151,11 +151,19 @@ fn sdk_conformance_release_bc_domain_methods_work_through_rpc_adapter() {
     let updated_marker = client
         .marker_update_position(MarkerUpdatePositionRequest {
             marker_id: marker.marker_id.clone(),
+            expected_revision: marker.revision,
             position: GeoPoint { lat: 35.0, lon: -117.0, alt_m: None },
             extensions: BTreeMap::new(),
         })
         .expect("marker_update_position");
     assert_eq!(updated_marker.position.lat, 35.0);
+    client
+        .marker_delete(MarkerDeleteRequest {
+            marker_id: marker.marker_id,
+            expected_revision: updated_marker.revision,
+            extensions: BTreeMap::new(),
+        })
+        .expect("marker_delete");
 
     let identities = client.identity_list().expect("identity_list");
     assert!(!identities.is_empty(), "default identity expected");

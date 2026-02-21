@@ -146,8 +146,8 @@ impl<B: SdkBackend> LxmfSdkMarkers for Client<B> {
         self.backend.marker_update_position(req)
     }
 
-    fn marker_delete(&self, marker_id: crate::domain::MarkerId) -> Result<Ack, SdkError> {
-        self.backend.marker_delete(marker_id)
+    fn marker_delete(&self, req: crate::domain::MarkerDeleteRequest) -> Result<Ack, SdkError> {
+        self.backend.marker_delete(req)
     }
 }
 

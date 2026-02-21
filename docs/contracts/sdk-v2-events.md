@@ -105,6 +105,19 @@ Degraded-stream rules:
 3. After reset, returned events start from current retained head and include a `StreamGap` event in the first batch.
 4. Implementations must not silently heal by rewinding or skipping without `StreamGap`.
 
+## Marker Sync Conflict Semantics
+
+For multi-client marker writers:
+
+1. Marker records carry a monotonic `revision`.
+2. `marker_update_position` and `marker_delete` must include `expected_revision`.
+3. Stale writes fail with `SDK_RUNTIME_CONFLICT` and conflict details:
+- `domain=marker`
+- `marker_id`
+- `expected_revision`
+- `observed_revision`
+4. Clients must refresh from `marker_list` before retrying a conflicted marker write.
+
 ## Size and Rate Limits
 
 Required caps:
