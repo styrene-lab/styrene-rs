@@ -17,6 +17,7 @@ Legend:
 | --- | --- | --- | --- |
 | `start` | required | required | required |
 | `send` | required | required | required |
+| `send_group` | optional | optional | optional |
 | `cancel` | required | required | required |
 | `status` | required | required | required |
 | `configure` | required | required | required |
@@ -52,6 +53,7 @@ Legend:
 | `sdk.capability.paper_messages` | optional | optional | optional |
 | `sdk.capability.remote_commands` | optional | optional | optional |
 | `sdk.capability.voice_signaling` | optional | optional | optional |
+| `sdk.capability.group_delivery` | optional | optional | optional |
 | `sdk.capability.shared_instance_rpc_auth` | optional | optional | optional |
 
 ## Backend Support Matrix

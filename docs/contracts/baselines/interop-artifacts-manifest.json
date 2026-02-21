@@ -18,8 +18,13 @@
     },
     {
       "path": "docs/contracts/compatibility-matrix.md",
-      "bytes": 3640,
-      "sha256": "eda8bd26c2cad38c33901d26f81d50e0cb5124c720adef8c3b830e34a2481259"
+      "bytes": 3889,
+      "sha256": "8564d2a1527bf6d7175449b50e017a7d1afbfc030f62febaab4cd0f170b566dd"
+    },
+    {
+      "path": "docs/contracts/extension-registry.md",
+      "bytes": 2171,
+      "sha256": "4419038fb85a39646a2f0cd28de055fa737be2fb91462a48bceaf2f1daa03868"
     },
     {
       "path": "docs/contracts/interop-revision-lock.example.json",
@@ -33,13 +38,13 @@
     },
     {
       "path": "docs/contracts/payload-contract.md",
-      "bytes": 3874,
-      "sha256": "1eed4f48835b6966d98ced90a3c1b856c654eca06b1ccae47aea6b54133f85c9"
+      "bytes": 4032,
+      "sha256": "93c804105e3fbb91e0aecb2bd4c724ce2c0e0446cfcfca5abee24cbbd9ae8bf3"
     },
     {
       "path": "docs/contracts/rpc-contract.md",
-      "bytes": 3471,
-      "sha256": "e4b0e3de4a6f7c709be92abb2440730a6122e348820b8c67da73afee8ae38415"
+      "bytes": 3769,
+      "sha256": "0161b5fdfb0b8c3f5f4afc2b4aaeb52b120da6c88d8e3ac02e6c511eaf56c05c"
     },
     {
       "path": "docs/contracts/sdk-v2-attachments.md",
@@ -48,8 +53,8 @@
     },
     {
       "path": "docs/contracts/sdk-v2-backends.md",
-      "bytes": 2733,
-      "sha256": "b53147369639a271a5fee05d8908f28ac01c36160fb227ecb098d41235823149"
+      "bytes": 3495,
+      "sha256": "00f6778fe9d2fc978fa67726b4d7d3ce77c76f19a2cc69c0d6a8ffca955c7809"
     },
     {
       "path": "docs/contracts/sdk-v2-commands.md",
@@ -68,8 +73,8 @@
     },
     {
       "path": "docs/contracts/sdk-v2-feature-matrix.md",
-      "bytes": 6924,
-      "sha256": "a89183a83647e2e0c923d3cd448086b828b921ac7eee89329c9304afb37d4bd9"
+      "bytes": 8007,
+      "sha256": "ccc2841c9b5280220a04c87620bfd362764419c21b74ff58c97a8bdf0faf9a74"
     },
     {
       "path": "docs/contracts/sdk-v2-identity.md",
@@ -83,8 +88,8 @@
     },
     {
       "path": "docs/contracts/sdk-v2-migration.md",
-      "bytes": 2695,
-      "sha256": "06ebc628b7403429ad1cf229957c5f6f6e5427fae432f29150f4b04429916e11"
+      "bytes": 2995,
+      "sha256": "55aab9b5779f599f9942246695f3577d1904e93efcedd5d86db807a6989f83e3"
     },
     {
       "path": "docs/contracts/sdk-v2-paper.md",
@@ -113,8 +118,18 @@
     },
     {
       "path": "docs/contracts/sdk-v2.md",
-      "bytes": 8352,
-      "sha256": "c220f647d59edd6e9978b9b0b1426bb0e377081efbe7896b2a5a3dd9d5a0e691"
+      "bytes": 9838,
+      "sha256": "300d30bea2296102cce9f0905d76d4c82367569cc10c4df59a72dc49ffc1b224"
+    },
+    {
+      "path": "docs/contracts/support-policy.md",
+      "bytes": 1902,
+      "sha256": "f8738e3c0049f67202896da2b20072b82aa68f2269c220eee1556080c957540f"
+    },
+    {
+      "path": "docs/contracts/third-party-compatibility-kit.md",
+      "bytes": 1554,
+      "sha256": "553560b96e53ba723db44fc5d654ffdbf451a3fdf6350fc1bfb7740b1e61b606"
     },
     {
       "path": "docs/fixtures/contract-v2/README.md",
@@ -335,6 +350,21 @@
       "path": "docs/fixtures/sdk-v2/command.paper_encode.valid.json",
       "bytes": 114,
       "sha256": "7a209f9d81d2fef78675aef2b8be161340b9b1e27ede17248bdb9b8fb2398ed4"
+    },
+    {
+      "path": "docs/fixtures/sdk-v2/command.send_group.empty_destination.valid.json",
+      "bytes": 228,
+      "sha256": "8663c2503f2ecb2af3eaa00351c7cd15bfed74b2ee4b58513349cbeb0a4dc3b6"
+    },
+    {
+      "path": "docs/fixtures/sdk-v2/command.send_group.invalid.json",
+      "bytes": 186,
+      "sha256": "0c0f53b07d48903a36b5c6e92ec7b911423781bae20f3fdab2b7269f0161dedd"
+    },
+    {
+      "path": "docs/fixtures/sdk-v2/command.send_group.valid.json",
+      "bytes": 393,
+      "sha256": "9a69cbed30979e45b59bf6b81dad59a5ed70114f5cb6546b919d9271f1938948"
     },
     {
       "path": "docs/fixtures/sdk-v2/command.send_unknown_field.invalid.json",
@@ -1003,8 +1033,8 @@
     },
     {
       "path": "docs/schemas/sdk/v2/command.schema.json",
-      "bytes": 25038,
-      "sha256": "ee764ed457b5ca6fa35e82e5c16a9757e32593e711d64386371fea88eee38a20"
+      "bytes": 26042,
+      "sha256": "e40984cf108f6143ffe91fc6a1d3177c195ed1c204d20d0c79b19a286e3b4d49"
     },
     {
       "path": "docs/schemas/sdk/v2/config.schema.json",

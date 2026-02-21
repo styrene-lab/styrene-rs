@@ -1,6 +1,7 @@
 use lxmf_sdk::{
-    CancelResult, Client, ConfigPatch, EventCursor, LxmfSdk, LxmfSdkAsync, MessageId,
-    RpcBackendClient, SendRequest, StartRequest, SubscriptionStart,
+    CancelResult, Client, ConfigPatch, EventCursor, GroupSendRequest, LxmfSdk, LxmfSdkAsync,
+    LxmfSdkGroupDelivery, MessageId, RpcBackendClient, SendRequest, StartRequest,
+    SubscriptionStart,
 };
 use rns_rpc::e2e_harness::{
     build_http_post, build_rpc_frame, parse_http_response_body, parse_rpc_frame, timestamp_millis,
@@ -454,6 +455,34 @@ fn sdk_conformance_idempotency_conflict_is_rejected() {
         .send(send_request("payload-b", Some("idem-key")))
         .expect_err("same idempotency key with different payload must fail");
     assert_eq!(err.machine_code, "SDK_VALIDATION_IDEMPOTENCY_CONFLICT");
+}
+
+#[test]
+fn sdk_conformance_group_send_partial_outcomes() {
+    let harness = RpcHarness::new();
+    let client = harness.client();
+    client.start(base_start_request()).expect("start");
+
+    let result = client
+        .send_group(GroupSendRequest::new(
+            "source.test",
+            vec!["destination.test", "", "destination.test"],
+            json!({ "content": "group payload" }),
+        ))
+        .expect("group send should return outcomes");
+
+    assert_eq!(result.outcomes.len(), 3);
+    assert_eq!(
+        result.accepted_count + result.deferred_count + result.failed_count,
+        result.outcomes.len(),
+        "group send counters must match number of outcomes"
+    );
+    assert!(
+        result.outcomes.iter().any(
+            |outcome| outcome.reason_code.as_deref() == Some("SDK_VALIDATION_INVALID_ARGUMENT")
+        ),
+        "group send should classify empty destinations as per-recipient validation failures"
+    );
 }
 
 #[test]

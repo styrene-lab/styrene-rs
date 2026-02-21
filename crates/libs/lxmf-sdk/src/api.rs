@@ -12,8 +12,9 @@ use crate::event::{EventBatch, EventCursor};
 #[cfg(feature = "sdk-async")]
 use crate::event::{EventSubscription, SubscriptionStart};
 use crate::types::{
-    Ack, CancelResult, ClientHandle, ConfigPatch, DeliverySnapshot, MessageId, RuntimeSnapshot,
-    SendRequest, ShutdownMode, StartRequest, TickBudget, TickResult,
+    Ack, CancelResult, ClientHandle, ConfigPatch, DeliverySnapshot, GroupSendRequest,
+    GroupSendResult, MessageId, RuntimeSnapshot, SendRequest, ShutdownMode, StartRequest,
+    TickBudget, TickResult,
 };
 
 pub trait LxmfSdk {
@@ -201,5 +202,11 @@ pub trait LxmfSdkVoiceSignaling {
 
     fn voice_session_close(&self, _session_id: VoiceSessionId) -> Result<Ack, SdkError> {
         Err(SdkError::capability_disabled("sdk.capability.voice_signaling"))
+    }
+}
+
+pub trait LxmfSdkGroupDelivery {
+    fn send_group(&self, _req: GroupSendRequest) -> Result<GroupSendResult, SdkError> {
+        Err(SdkError::capability_disabled("sdk.capability.group_delivery"))
     }
 }

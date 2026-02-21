@@ -1,9 +1,10 @@
 use super::*;
+use crate::api::LxmfSdkGroupDelivery;
 use crate::capability::EffectiveLimits;
 use crate::event::{SdkEvent, Severity};
 use crate::types::{
-    AuthMode, BindMode, EventStreamConfig, OverflowPolicy, Profile, RedactionConfig,
-    RedactionTransform, SdkConfig, ShutdownMode,
+    AuthMode, BindMode, EventStreamConfig, GroupRecipientState, GroupSendRequest, OverflowPolicy,
+    Profile, RedactionConfig, RedactionTransform, SdkConfig, ShutdownMode,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, VecDeque};
@@ -13,6 +14,7 @@ use std::sync::Arc;
 struct MockBackend {
     negotiate_results: Mutex<VecDeque<Result<NegotiationResponse, SdkError>>>,
     shutdown_results: Mutex<VecDeque<Result<Ack, SdkError>>>,
+    send_results: Mutex<VecDeque<Result<MessageId, SdkError>>>,
     send_calls: AtomicUsize,
     shutdown_calls: AtomicUsize,
 }
@@ -25,6 +27,7 @@ impl MockBackend {
                 accepted: true,
                 revision: None,
             })])),
+            send_results: Mutex::new(VecDeque::new()),
             send_calls: AtomicUsize::new(0),
             shutdown_calls: AtomicUsize::new(0),
         }
@@ -32,6 +35,11 @@ impl MockBackend {
 
     fn with_shutdown_results(mut self, results: Vec<Result<Ack, SdkError>>) -> Self {
         self.shutdown_results = Mutex::new(VecDeque::from(results));
+        self
+    }
+
+    fn with_send_results(mut self, results: Vec<Result<MessageId, SdkError>>) -> Self {
+        self.send_results = Mutex::new(VecDeque::from(results));
         self
     }
 }
@@ -53,6 +61,11 @@ impl SdkBackend for MockBackend {
 
     fn send(&self, _req: SendRequest) -> Result<MessageId, SdkError> {
         let sequence = self.send_calls.fetch_add(1, Ordering::Relaxed) + 1;
+        if let Some(result) =
+            self.send_results.lock().expect("send_results mutex poisoned").pop_front()
+        {
+            return result;
+        }
         Ok(MessageId(format!("m-{sequence}")))
     }
 
@@ -318,4 +331,54 @@ fn race_idempotency_conflict_parallel_payloads_return_conflict() {
         1,
         "idempotency conflict races must not duplicate backend sends"
     );
+}
+
+#[test]
+fn group_send_returns_partial_outcomes_with_retry_classification() {
+    let retryable = SdkError::new(code::INTERNAL, ErrorCategory::Transport, "temporary failure")
+        .with_retryable(true);
+    let hard_fail = SdkError::new(
+        code::VALIDATION_INVALID_ARGUMENT,
+        ErrorCategory::Validation,
+        "invalid destination",
+    );
+    let backend = MockBackend::new(vec![successful_negotiation()]).with_send_results(vec![
+        Ok(MessageId("m-1".to_owned())),
+        Err(retryable),
+        Err(hard_fail),
+    ]);
+    let client = Client::new(backend);
+    client.start(sample_start_request()).expect("start");
+
+    let result = client
+        .send_group(GroupSendRequest::new(
+            "src",
+            vec!["dst-a", "dst-b", "dst-c"],
+            json!({ "content": "group hello" }),
+        ))
+        .expect("group send should return outcomes");
+
+    assert_eq!(result.accepted_count, 1);
+    assert_eq!(result.deferred_count, 1);
+    assert_eq!(result.failed_count, 1);
+    assert_eq!(result.outcomes.len(), 3);
+    assert_eq!(result.outcomes[0].state, GroupRecipientState::Accepted);
+    assert_eq!(result.outcomes[0].message_id, Some(MessageId("m-1".to_owned())));
+    assert_eq!(result.outcomes[1].state, GroupRecipientState::Deferred);
+    assert!(result.outcomes[1].retryable);
+    assert_eq!(result.outcomes[1].reason_code.as_deref(), Some(code::INTERNAL));
+    assert_eq!(result.outcomes[2].state, GroupRecipientState::Failed);
+    assert_eq!(result.outcomes[2].reason_code.as_deref(), Some(code::VALIDATION_INVALID_ARGUMENT));
+}
+
+#[test]
+fn group_send_rejects_empty_destination_list() {
+    let backend = MockBackend::new(vec![successful_negotiation()]);
+    let client = Client::new(backend);
+    client.start(sample_start_request()).expect("start");
+
+    let err = client
+        .send_group(GroupSendRequest::new("src", Vec::<String>::new(), json!({ "content": "x" })))
+        .expect_err("group send without destinations must fail");
+    assert_eq!(err.machine_code, code::VALIDATION_INVALID_ARGUMENT);
 }
