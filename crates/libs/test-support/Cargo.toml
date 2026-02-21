@@ -12,7 +12,7 @@ workspace = true
 
 [dev-dependencies]
 base64.workspace = true
-jsonschema = { version = "0.18.0", features = ["draft202012"] }
+jsonschema = { version = "0.18.0", default-features = false, features = ["draft202012"] }
 lxmf-sdk = { workspace = true, features = ["rpc-backend", "std", "sdk-async"] }
 rns-core.workspace = true
 rns-rpc.workspace = true
