@@ -137,6 +137,7 @@ Queue overflow behavior is release-gated with `cargo run -p xtask -- sdk-queue-p
 | Legacy event queue (`event_queue`) | 32 events | `reject`, `drop_oldest`, `block` |
 | SDK event log (`sdk_event_log`) | 1024 events | `reject`, `drop_oldest`, `block` |
 | Runtime broadcast channel | 64 events | bounded channel drop behavior |
+| Outbound store-forward spool (`messages` store) | configurable (`store_forward.max_messages`) | `reject_new`, `drop_oldest` + `oldest_first`/`terminal_first` eviction |
 
 ## Operability Metrics Matrix
 

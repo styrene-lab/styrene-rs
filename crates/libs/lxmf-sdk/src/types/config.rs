@@ -39,6 +39,31 @@ pub enum OverflowPolicy {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum StoreForwardCapacityPolicy {
+    RejectNew,
+    DropOldest,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum StoreForwardEvictionPriority {
+    OldestFirst,
+    TerminalFirst,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct StoreForwardConfig {
+    pub max_messages: usize,
+    pub max_message_age_ms: u64,
+    pub capacity_policy: StoreForwardCapacityPolicy,
+    pub eviction_priority: StoreForwardEvictionPriority,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct EventStreamConfig {
     pub max_poll_events: usize,
@@ -105,6 +130,8 @@ pub struct SdkConfig {
     pub auth_mode: AuthMode,
     pub overflow_policy: OverflowPolicy,
     pub block_timeout_ms: Option<u64>,
+    #[serde(default = "default_store_forward_for_deser")]
+    pub store_forward: StoreForwardConfig,
     pub event_stream: EventStreamConfig,
     pub idempotency_ttl_ms: u64,
     pub redaction: RedactionConfig,
@@ -153,6 +180,27 @@ fn default_rpc_backend(listen_addr: impl Into<String>) -> RpcBackendConfig {
     }
 }
 
+fn default_store_forward(profile: &Profile) -> StoreForwardConfig {
+    match profile {
+        Profile::DesktopFull | Profile::DesktopLocalRuntime => StoreForwardConfig {
+            max_messages: 50_000,
+            max_message_age_ms: 604_800_000,
+            capacity_policy: StoreForwardCapacityPolicy::DropOldest,
+            eviction_priority: StoreForwardEvictionPriority::TerminalFirst,
+        },
+        Profile::EmbeddedAlloc => StoreForwardConfig {
+            max_messages: 2_000,
+            max_message_age_ms: 86_400_000,
+            capacity_policy: StoreForwardCapacityPolicy::DropOldest,
+            eviction_priority: StoreForwardEvictionPriority::TerminalFirst,
+        },
+    }
+}
+
+fn default_store_forward_for_deser() -> StoreForwardConfig {
+    default_store_forward(&Profile::DesktopFull)
+}
+
 impl SdkConfig {
     pub fn desktop_local_default() -> Self {
         Self {
@@ -161,6 +209,7 @@ impl SdkConfig {
             auth_mode: AuthMode::LocalTrusted,
             overflow_policy: OverflowPolicy::Reject,
             block_timeout_ms: None,
+            store_forward: default_store_forward(&Profile::DesktopLocalRuntime),
             event_stream: default_event_stream(&Profile::DesktopLocalRuntime),
             idempotency_ttl_ms: 86_400_000,
             redaction: default_redaction(),
@@ -176,6 +225,7 @@ impl SdkConfig {
             auth_mode: AuthMode::LocalTrusted,
             overflow_policy: OverflowPolicy::Reject,
             block_timeout_ms: None,
+            store_forward: default_store_forward(&Profile::DesktopFull),
             event_stream: default_event_stream(&Profile::DesktopFull),
             idempotency_ttl_ms: 86_400_000,
             redaction: default_redaction(),
@@ -191,6 +241,7 @@ impl SdkConfig {
             auth_mode: AuthMode::LocalTrusted,
             overflow_policy: OverflowPolicy::Reject,
             block_timeout_ms: None,
+            store_forward: default_store_forward(&Profile::EmbeddedAlloc),
             event_stream: default_event_stream(&Profile::EmbeddedAlloc),
             idempotency_ttl_ms: 60_000,
             redaction: default_redaction(),
@@ -279,6 +330,26 @@ impl SdkConfig {
         self
     }
 
+    pub fn with_store_forward_limits(
+        mut self,
+        max_messages: usize,
+        max_message_age_ms: u64,
+    ) -> Self {
+        self.store_forward.max_messages = max_messages;
+        self.store_forward.max_message_age_ms = max_message_age_ms;
+        self
+    }
+
+    pub fn with_store_forward_policy(
+        mut self,
+        capacity_policy: StoreForwardCapacityPolicy,
+        eviction_priority: StoreForwardEvictionPriority,
+    ) -> Self {
+        self.store_forward.capacity_policy = capacity_policy;
+        self.store_forward.eviction_priority = eviction_priority;
+        self
+    }
+
     pub fn validate(&self) -> Result<(), SdkError> {
         if self.overflow_policy == OverflowPolicy::Block && self.block_timeout_ms.is_none() {
             return Err(SdkError::new(
@@ -299,6 +370,29 @@ impl SdkConfig {
             .with_user_actionable(true)
             .with_detail("limit_name", JsonValue::String("max_extension_keys".to_owned()))
             .with_detail("limit_value", JsonValue::from(self.event_stream.max_extension_keys)));
+        }
+
+        if self.store_forward.max_messages == 0 {
+            return Err(SdkError::new(
+                code::VALIDATION_INVALID_ARGUMENT,
+                ErrorCategory::Validation,
+                "store_forward.max_messages must be greater than zero",
+            )
+            .with_user_actionable(true)
+            .with_detail("field", JsonValue::String("store_forward.max_messages".to_owned())));
+        }
+
+        if self.store_forward.max_message_age_ms == 0 {
+            return Err(SdkError::new(
+                code::VALIDATION_INVALID_ARGUMENT,
+                ErrorCategory::Validation,
+                "store_forward.max_message_age_ms must be greater than zero",
+            )
+            .with_user_actionable(true)
+            .with_detail(
+                "field",
+                JsonValue::String("store_forward.max_message_age_ms".to_owned()),
+            ));
         }
 
         match self.bind_mode {

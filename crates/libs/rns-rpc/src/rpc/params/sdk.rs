@@ -609,7 +609,22 @@ struct SdkRuntimeConfig {
     #[serde(default)]
     block_timeout_ms: Option<u64>,
     #[serde(default)]
+    store_forward: Option<SdkStoreForwardConfig>,
+    #[serde(default)]
     rpc_backend: Option<SdkRpcBackendConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkStoreForwardConfig {
+    #[serde(default)]
+    max_messages: Option<usize>,
+    #[serde(default)]
+    max_message_age_ms: Option<u64>,
+    #[serde(default)]
+    capacity_policy: Option<String>,
+    #[serde(default)]
+    eviction_priority: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

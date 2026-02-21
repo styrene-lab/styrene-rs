@@ -132,6 +132,7 @@ impl RpcDaemon {
         const ALLOWED_KEYS: &[&str] = &[
             "overflow_policy",
             "block_timeout_ms",
+            "store_forward",
             "event_stream",
             "idempotency_ttl_ms",
             "redaction",

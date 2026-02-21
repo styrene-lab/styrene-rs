@@ -256,6 +256,27 @@ Rules:
 5. Download chunk returns `offset`, `next_offset`, `done`, and `checksum_sha256`.
 6. `attachment_download` remains available for full-object reads where supported.
 
+## Store-and-Forward Retention Semantics
+
+Mutable runtime config may include `store_forward`:
+
+- `max_messages`
+- `max_message_age_ms`
+- `capacity_policy` (`reject_new|drop_oldest`)
+- `eviction_priority` (`oldest_first|terminal_first`)
+
+Rules:
+
+1. Before admitting a new outbound message, runtime applies deterministic retention in this order:
+- age expiry (`timestamp < now - max_message_age_ms`) for non-terminal outbound records
+- capacity enforcement against `max_messages`
+2. Expired non-terminal outbound records transition to `expired`.
+3. With `capacity_policy=reject_new`, sends beyond capacity fail with `SDK_RUNTIME_STORE_FORWARD_CAPACITY_REACHED`.
+4. With `capacity_policy=drop_oldest`, runtime prunes enough oldest records to admit one new message.
+5. `eviction_priority=terminal_first` must prune terminal records before non-terminal records; ties use `(timestamp ASC, id ASC)`.
+6. `eviction_priority=oldest_first` prunes by `(timestamp ASC, id ASC)` without terminal preference.
+7. Retention behavior must be deterministic for identical store state and policy input.
+
 ## Config and Policy Mutation
 
 Rules:

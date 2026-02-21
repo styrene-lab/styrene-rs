@@ -354,6 +354,59 @@
     }
 
     #[test]
+    fn sdk_configure_v2_validates_and_applies_store_forward_policy_patch() {
+        let daemon = RpcDaemon::test_instance();
+
+        let invalid = daemon
+            .handle_rpc(rpc_request(
+                4361,
+                "sdk_configure_v2",
+                json!({
+                    "expected_revision": 0,
+                    "patch": {
+                        "store_forward": {
+                            "max_messages": 0
+                        }
+                    }
+                }),
+            ))
+            .expect("configure invalid");
+        assert_eq!(
+            invalid.error.expect("error").code,
+            "SDK_VALIDATION_INVALID_ARGUMENT",
+            "store_forward max_messages=0 should fail validation"
+        );
+
+        let valid = daemon
+            .handle_rpc(rpc_request(
+                4362,
+                "sdk_configure_v2",
+                json!({
+                    "expected_revision": 0,
+                    "patch": {
+                        "store_forward": {
+                            "max_messages": 1024,
+                            "max_message_age_ms": 120000,
+                            "capacity_policy": "drop_oldest",
+                            "eviction_priority": "terminal_first"
+                        }
+                    }
+                }),
+            ))
+            .expect("configure valid");
+        assert!(valid.error.is_none());
+        assert_eq!(valid.result.expect("result")["revision"], json!(1));
+
+        let runtime_config = daemon
+            .sdk_runtime_config
+            .lock()
+            .expect("sdk_runtime_config mutex poisoned")
+            .clone();
+        assert_eq!(runtime_config["store_forward"]["max_messages"], json!(1024));
+        assert_eq!(runtime_config["store_forward"]["capacity_policy"], json!("drop_oldest"));
+    }
+
+    #[test]
     fn sdk_dispatch_maps_unknown_fields_to_validation_unknown_field() {
         let daemon = RpcDaemon::test_instance();
         let response = daemon

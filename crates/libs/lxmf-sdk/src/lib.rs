@@ -52,7 +52,8 @@ pub use types::{
     DeliveryState, EventStreamConfig, GroupRecipientState, GroupSendOutcome, GroupSendRequest,
     GroupSendResult, MessageId, OverflowPolicy, Profile, RedactionConfig, RedactionTransform,
     RpcBackendConfig, RuntimeSnapshot, RuntimeState, SdkConfig, SendRequest, ShutdownMode,
-    StartRequest, TickBudget, TickResult,
+    StartRequest, StoreForwardCapacityPolicy, StoreForwardConfig, StoreForwardEvictionPriority,
+    StoreForwardPatch, TickBudget, TickResult,
 };
 
 pub const CONTRACT_RELEASE: &str = "v2.5";

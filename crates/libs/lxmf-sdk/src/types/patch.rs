@@ -1,4 +1,6 @@
-use super::config::{OverflowPolicy, RedactionTransform};
+use super::config::{
+    OverflowPolicy, RedactionTransform, StoreForwardCapacityPolicy, StoreForwardEvictionPriority,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
@@ -80,11 +82,26 @@ pub struct RpcBackendPatch {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
+pub struct StoreForwardPatch {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_messages: Option<Option<usize>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_message_age_ms: Option<Option<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capacity_policy: Option<Option<StoreForwardCapacityPolicy>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eviction_priority: Option<Option<StoreForwardEvictionPriority>>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub struct ConfigPatch {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overflow_policy: Option<Option<OverflowPolicy>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_timeout_ms: Option<Option<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store_forward: Option<Option<StoreForwardPatch>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_stream: Option<Option<EventStreamPatch>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,6 +129,11 @@ impl ConfigPatch {
         self
     }
 
+    pub fn with_store_forward_patch(mut self, patch: StoreForwardPatch) -> Self {
+        self.store_forward = Some(Some(patch));
+        self
+    }
+
     pub fn with_idempotency_ttl_ms(mut self, ttl_ms: u64) -> Self {
         self.idempotency_ttl_ms = Some(Some(ttl_ms));
         self
@@ -127,6 +149,7 @@ impl ConfigPatch {
     pub fn is_empty(&self) -> bool {
         self.overflow_policy.is_none()
             && self.block_timeout_ms.is_none()
+            && self.store_forward.is_none()
             && self.event_stream.is_none()
             && self.idempotency_ttl_ms.is_none()
             && self.redaction.is_none()

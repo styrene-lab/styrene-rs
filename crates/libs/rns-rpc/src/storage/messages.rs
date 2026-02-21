@@ -173,6 +173,122 @@ impl MessagesStore {
         Ok((queued.max(0) as u64, in_flight.max(0) as u64))
     }
 
+    pub fn count_outbound_messages(&self) -> rusqlite::Result<u64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM messages WHERE direction = 'out'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as u64)
+    }
+
+    pub fn expire_outbound_messages_before(&self, cutoff_ts: i64) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id
+             FROM messages
+             WHERE direction = 'out'
+               AND timestamp < ?1
+               AND (
+                    receipt_status IS NULL
+                    OR TRIM(receipt_status) = ''
+                    OR (
+                        LOWER(receipt_status) NOT LIKE 'sent%'
+                        AND LOWER(receipt_status) NOT IN ('cancelled', 'delivered', 'failed', 'expired', 'rejected')
+                    )
+               )
+             ORDER BY timestamp ASC, id ASC",
+        )?;
+        let mut rows = stmt.query(params![cutoff_ts])?;
+        let mut ids = Vec::new();
+        while let Some(row) = rows.next()? {
+            ids.push(row.get::<_, String>(0)?);
+        }
+        for message_id in ids.iter() {
+            self.conn.execute(
+                "UPDATE messages SET receipt_status = 'expired' WHERE id = ?1",
+                params![message_id],
+            )?;
+        }
+        Ok(ids)
+    }
+
+    pub fn prune_outbound_messages(
+        &self,
+        count: usize,
+        eviction_priority: &str,
+    ) -> rusqlite::Result<Vec<String>> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let mut collect_ids = |query: &str, remaining: usize| -> rusqlite::Result<Vec<String>> {
+            if remaining == 0 {
+                return Ok(Vec::new());
+            }
+            let mut stmt = self.conn.prepare(query)?;
+            let mut rows = stmt.query(params![remaining as i64])?;
+            let mut ids = Vec::new();
+            while let Some(row) = rows.next()? {
+                ids.push(row.get::<_, String>(0)?);
+            }
+            Ok(ids)
+        };
+
+        let normalized = eviction_priority.trim().to_ascii_lowercase();
+        let mut ids = if normalized == "terminal_first" {
+            let mut selected = collect_ids(
+                "SELECT id
+                 FROM messages
+                 WHERE direction = 'out'
+                   AND receipt_status IS NOT NULL
+                   AND TRIM(receipt_status) <> ''
+                   AND (
+                        LOWER(receipt_status) LIKE 'sent%'
+                        OR LOWER(receipt_status) IN ('cancelled', 'delivered', 'failed', 'expired', 'rejected')
+                   )
+                 ORDER BY timestamp ASC, id ASC
+                 LIMIT ?1",
+                count,
+            )?;
+            let remaining = count.saturating_sub(selected.len());
+            if remaining > 0 {
+                let mut non_terminal = collect_ids(
+                    "SELECT id
+                     FROM messages
+                     WHERE direction = 'out'
+                       AND (
+                            receipt_status IS NULL
+                            OR TRIM(receipt_status) = ''
+                            OR (
+                                LOWER(receipt_status) NOT LIKE 'sent%'
+                                AND LOWER(receipt_status) NOT IN ('cancelled', 'delivered', 'failed', 'expired', 'rejected')
+                            )
+                       )
+                     ORDER BY timestamp ASC, id ASC
+                     LIMIT ?1",
+                    remaining,
+                )?;
+                selected.append(&mut non_terminal);
+            }
+            selected
+        } else {
+            collect_ids(
+                "SELECT id
+                 FROM messages
+                 WHERE direction = 'out'
+                 ORDER BY timestamp ASC, id ASC
+                 LIMIT ?1",
+                count,
+            )?
+        };
+
+        ids.sort();
+        ids.dedup();
+        for message_id in ids.iter() {
+            self.conn.execute("DELETE FROM messages WHERE id = ?1", params![message_id])?;
+        }
+        Ok(ids)
+    }
+
     pub fn update_receipt_status(&self, message_id: &str, status: &str) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE messages SET receipt_status = ?1 WHERE id = ?2",
@@ -371,6 +487,20 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn outbound_message(id: &str, timestamp: i64, receipt_status: Option<&str>) -> MessageRecord {
+        MessageRecord {
+            id: id.to_string(),
+            source: "src".to_string(),
+            destination: "dst".to_string(),
+            title: "title".to_string(),
+            content: "body".to_string(),
+            timestamp,
+            direction: "out".to_string(),
+            fields: None,
+            receipt_status: receipt_status.map(ToString::to_string),
+        }
+    }
+
     #[test]
     fn sdk_domain_snapshot_roundtrip() {
         let store = MessagesStore::in_memory().expect("in-memory store");
@@ -397,5 +527,49 @@ mod tests {
         store.clear_sdk_domain_snapshot().expect("clear snapshot");
         let loaded = store.get_sdk_domain_snapshot().expect("load snapshot");
         assert!(loaded.is_none(), "snapshot should be removed after clear");
+    }
+
+    #[test]
+    fn expire_outbound_messages_marks_non_terminal_records() {
+        let store = MessagesStore::in_memory().expect("in-memory store");
+        store
+            .insert_message(&outbound_message("out-non-terminal", 10, None))
+            .expect("insert non-terminal");
+        store
+            .insert_message(&outbound_message("out-terminal", 10, Some("delivered")))
+            .expect("insert terminal");
+        let expired = store.expire_outbound_messages_before(11).expect("expire outbound");
+        assert_eq!(expired, vec!["out-non-terminal".to_string()]);
+        let non_terminal = store
+            .get_message("out-non-terminal")
+            .expect("load non-terminal")
+            .expect("non-terminal exists");
+        assert_eq!(non_terminal.receipt_status.as_deref(), Some("expired"));
+        let terminal =
+            store.get_message("out-terminal").expect("load terminal").expect("terminal exists");
+        assert_eq!(terminal.receipt_status.as_deref(), Some("delivered"));
+    }
+
+    #[test]
+    fn prune_outbound_messages_terminal_first_prefers_terminal_records() {
+        let store = MessagesStore::in_memory().expect("in-memory store");
+        store
+            .insert_message(&outbound_message("msg-terminal-old", 1, Some("sent: direct")))
+            .expect("insert terminal old");
+        store
+            .insert_message(&outbound_message("msg-non-terminal", 2, None))
+            .expect("insert non-terminal");
+        store
+            .insert_message(&outbound_message("msg-terminal-new", 3, Some("delivered")))
+            .expect("insert terminal new");
+
+        let pruned = store.prune_outbound_messages(2, "terminal_first").expect("prune outbound");
+        assert_eq!(pruned.len(), 2);
+        assert!(pruned.iter().any(|id| id == "msg-terminal-old"));
+        assert!(pruned.iter().any(|id| id == "msg-terminal-new"));
+        assert!(
+            store.get_message("msg-non-terminal").expect("load non-terminal").is_some(),
+            "non-terminal record should remain when terminal records satisfy prune count"
+        );
     }
 }

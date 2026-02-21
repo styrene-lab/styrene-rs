@@ -20,6 +20,30 @@
       "type": "string",
       "enum": ["reject", "drop_oldest", "block"]
     },
+    "store_forward_capacity_policy": {
+      "type": "string",
+      "enum": ["reject_new", "drop_oldest"]
+    },
+    "store_forward_eviction_priority": {
+      "type": "string",
+      "enum": ["oldest_first", "terminal_first"]
+    },
+    "store_forward": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_messages",
+        "max_message_age_ms",
+        "capacity_policy",
+        "eviction_priority"
+      ],
+      "properties": {
+        "max_messages": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "max_message_age_ms": { "type": "integer", "minimum": 1 },
+        "capacity_policy": { "$ref": "#/$defs/store_forward_capacity_policy" },
+        "eviction_priority": { "$ref": "#/$defs/store_forward_eviction_priority" }
+      }
+    },
     "extension_map": {
       "type": "object",
       "maxProperties": 32,
@@ -145,6 +169,7 @@
         "auth_mode": { "$ref": "#/$defs/auth_mode" },
         "overflow_policy": { "$ref": "#/$defs/overflow_policy" },
         "block_timeout_ms": { "type": "integer", "minimum": 1 },
+        "store_forward": { "$ref": "#/$defs/store_forward" },
         "event_stream": { "$ref": "#/$defs/event_stream" },
         "idempotency_ttl_ms": { "type": "integer", "minimum": 1 },
         "redaction": { "$ref": "#/$defs/redaction" },
@@ -364,6 +389,33 @@
         }
       }
     },
+    "store_forward_patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_messages": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "max_message_age_ms": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "capacity_policy": {
+          "oneOf": [
+            { "$ref": "#/$defs/store_forward_capacity_policy" },
+            { "type": "null" }
+          ]
+        },
+        "eviction_priority": {
+          "oneOf": [
+            { "$ref": "#/$defs/store_forward_eviction_priority" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
     "config_patch": {
       "type": "object",
       "additionalProperties": false,
@@ -378,6 +430,12 @@
         "block_timeout_ms": {
           "type": ["integer", "null"],
           "minimum": 1
+        },
+        "store_forward": {
+          "oneOf": [
+            { "$ref": "#/$defs/store_forward_patch" },
+            { "type": "null" }
+          ]
         },
         "event_stream": {
           "oneOf": [
