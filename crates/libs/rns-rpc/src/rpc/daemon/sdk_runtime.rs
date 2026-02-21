@@ -134,6 +134,7 @@ impl RpcDaemon {
             "block_timeout_ms",
             "store_forward",
             "event_stream",
+            "event_sink",
             "idempotency_ttl_ms",
             "redaction",
             "rpc_backend",

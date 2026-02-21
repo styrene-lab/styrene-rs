@@ -284,8 +284,6 @@ impl RpcDaemon {
             *guard = effective_capabilities.clone();
         }
         {
-            let mut guard =
-                self.sdk_runtime_config.lock().expect("sdk_runtime_config mutex poisoned");
             let rpc_backend =
                 parsed.config.rpc_backend.as_ref().map_or(JsonValue::Null, |backend| {
                     json!({
@@ -310,7 +308,26 @@ impl RpcDaemon {
                         })),
                     })
                 });
-            *guard = json!({
+            let event_sink = parsed.config.event_sink.as_ref().map_or_else(
+                || Self::default_event_sink_config_for_profile(profile.as_str()),
+                |sink| {
+                    let mut config = Self::default_event_sink_config_for_profile(profile.as_str());
+                    if let Some(enabled) = sink.enabled {
+                        config["enabled"] = json!(enabled);
+                    }
+                    if let Some(max_event_bytes) = sink.max_event_bytes {
+                        config["max_event_bytes"] = json!(max_event_bytes);
+                    }
+                    if let Some(allow_kinds) = sink.allow_kinds.as_ref() {
+                        config["allow_kinds"] = json!(allow_kinds);
+                    }
+                    if let Some(extensions) = sink.extensions.as_ref() {
+                        config["extensions"] = JsonValue::Object(extensions.clone());
+                    }
+                    config
+                },
+            );
+            let next_runtime_config = json!({
                 "profile": profile,
                 "bind_mode": bind_mode,
                 "auth_mode": auth_mode,
@@ -329,6 +346,7 @@ impl RpcDaemon {
                     "max_batch_bytes": limits.get("max_batch_bytes").and_then(JsonValue::as_u64).unwrap_or(1_048_576),
                     "max_extension_keys": limits.get("max_extension_keys").and_then(JsonValue::as_u64).unwrap_or(32),
                 },
+                "event_sink": event_sink,
                 "idempotency_ttl_ms": limits.get("idempotency_ttl_ms").and_then(JsonValue::as_u64).unwrap_or(86_400_000_u64),
                 "extensions": {
                     "rate_limits": {
@@ -337,6 +355,12 @@ impl RpcDaemon {
                     }
                 }
             });
+            if let Err(error) = self.validate_sdk_runtime_config(&next_runtime_config) {
+                return Ok(RpcResponse { id: request.id, result: None, error: Some(error) });
+            }
+            let mut guard =
+                self.sdk_runtime_config.lock().expect("sdk_runtime_config mutex poisoned");
+            *guard = next_runtime_config;
         }
         {
             let mut guard =

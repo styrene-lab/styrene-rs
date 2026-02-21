@@ -148,9 +148,9 @@ fn legal_states_for_method(method: SdkMethod) -> &'static [RuntimeState] {
 mod tests {
     use super::*;
     use crate::types::{
-        AuthMode, BindMode, EventStreamConfig, OverflowPolicy, Profile, RedactionConfig,
-        RedactionTransform, SdkConfig, StoreForwardCapacityPolicy, StoreForwardConfig,
-        StoreForwardEvictionPriority,
+        AuthMode, BindMode, EventSinkConfig, EventSinkKind, EventStreamConfig, OverflowPolicy,
+        Profile, RedactionConfig, RedactionTransform, SdkConfig, StoreForwardCapacityPolicy,
+        StoreForwardConfig, StoreForwardEvictionPriority,
     };
     use std::collections::BTreeMap;
 
@@ -204,6 +204,16 @@ mod tests {
                     max_event_bytes: 65_536,
                     max_batch_bytes: 1_048_576,
                     max_extension_keys: 32,
+                },
+                event_sink: EventSinkConfig {
+                    enabled: false,
+                    max_event_bytes: 65_536,
+                    allow_kinds: vec![
+                        EventSinkKind::Webhook,
+                        EventSinkKind::Mqtt,
+                        EventSinkKind::Custom,
+                    ],
+                    extensions: BTreeMap::new(),
                 },
                 idempotency_ttl_ms: 86_400_000,
                 redaction: RedactionConfig {

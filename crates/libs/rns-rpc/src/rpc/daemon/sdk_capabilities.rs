@@ -129,6 +129,7 @@ impl RpcDaemon {
             "sdk.capability.remote_commands".to_string(),
             "sdk.capability.voice_signaling".to_string(),
             "sdk.capability.group_delivery".to_string(),
+            "sdk.capability.event_sink_bridge".to_string(),
             "sdk.capability.shared_instance_rpc_auth".to_string(),
         ]
     }

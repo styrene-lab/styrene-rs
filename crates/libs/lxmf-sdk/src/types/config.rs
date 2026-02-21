@@ -64,6 +64,25 @@ pub struct StoreForwardConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum EventSinkKind {
+    Webhook,
+    Mqtt,
+    Custom,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct EventSinkConfig {
+    pub enabled: bool,
+    pub max_event_bytes: usize,
+    pub allow_kinds: Vec<EventSinkKind>,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct EventStreamConfig {
     pub max_poll_events: usize,
@@ -133,6 +152,8 @@ pub struct SdkConfig {
     #[serde(default = "default_store_forward_for_deser")]
     pub store_forward: StoreForwardConfig,
     pub event_stream: EventStreamConfig,
+    #[serde(default = "default_event_sink_for_deser")]
+    pub event_sink: EventSinkConfig,
     pub idempotency_ttl_ms: u64,
     pub redaction: RedactionConfig,
     pub rpc_backend: Option<RpcBackendConfig>,
@@ -201,6 +222,24 @@ fn default_store_forward_for_deser() -> StoreForwardConfig {
     default_store_forward(&Profile::DesktopFull)
 }
 
+fn default_event_sink(profile: &Profile) -> EventSinkConfig {
+    let max_event_bytes = match profile {
+        Profile::DesktopFull => 65_536,
+        Profile::DesktopLocalRuntime => 32_768,
+        Profile::EmbeddedAlloc => 8_192,
+    };
+    EventSinkConfig {
+        enabled: false,
+        max_event_bytes,
+        allow_kinds: vec![EventSinkKind::Webhook, EventSinkKind::Mqtt, EventSinkKind::Custom],
+        extensions: BTreeMap::new(),
+    }
+}
+
+fn default_event_sink_for_deser() -> EventSinkConfig {
+    default_event_sink(&Profile::DesktopFull)
+}
+
 impl SdkConfig {
     pub fn desktop_local_default() -> Self {
         Self {
@@ -211,6 +250,7 @@ impl SdkConfig {
             block_timeout_ms: None,
             store_forward: default_store_forward(&Profile::DesktopLocalRuntime),
             event_stream: default_event_stream(&Profile::DesktopLocalRuntime),
+            event_sink: default_event_sink(&Profile::DesktopLocalRuntime),
             idempotency_ttl_ms: 86_400_000,
             redaction: default_redaction(),
             rpc_backend: Some(default_rpc_backend(DEFAULT_RPC_LISTEN_ADDR)),
@@ -227,6 +267,7 @@ impl SdkConfig {
             block_timeout_ms: None,
             store_forward: default_store_forward(&Profile::DesktopFull),
             event_stream: default_event_stream(&Profile::DesktopFull),
+            event_sink: default_event_sink(&Profile::DesktopFull),
             idempotency_ttl_ms: 86_400_000,
             redaction: default_redaction(),
             rpc_backend: Some(default_rpc_backend(DEFAULT_RPC_LISTEN_ADDR)),
@@ -243,6 +284,7 @@ impl SdkConfig {
             block_timeout_ms: None,
             store_forward: default_store_forward(&Profile::EmbeddedAlloc),
             event_stream: default_event_stream(&Profile::EmbeddedAlloc),
+            event_sink: default_event_sink(&Profile::EmbeddedAlloc),
             idempotency_ttl_ms: 60_000,
             redaction: default_redaction(),
             rpc_backend: Some(RpcBackendConfig {
@@ -350,6 +392,18 @@ impl SdkConfig {
         self
     }
 
+    pub fn with_event_sink(
+        mut self,
+        enabled: bool,
+        max_event_bytes: usize,
+        allow_kinds: Vec<EventSinkKind>,
+    ) -> Self {
+        self.event_sink.enabled = enabled;
+        self.event_sink.max_event_bytes = max_event_bytes;
+        self.event_sink.allow_kinds = allow_kinds;
+        self
+    }
+
     pub fn validate(&self) -> Result<(), SdkError> {
         if self.overflow_policy == OverflowPolicy::Block && self.block_timeout_ms.is_none() {
             return Err(SdkError::new(
@@ -370,6 +424,36 @@ impl SdkConfig {
             .with_user_actionable(true)
             .with_detail("limit_name", JsonValue::String("max_extension_keys".to_owned()))
             .with_detail("limit_value", JsonValue::from(self.event_stream.max_extension_keys)));
+        }
+
+        if !(256..=2_097_152).contains(&self.event_sink.max_event_bytes) {
+            return Err(SdkError::new(
+                code::VALIDATION_INVALID_ARGUMENT,
+                ErrorCategory::Validation,
+                "event_sink.max_event_bytes must be in the range 256..=2097152",
+            )
+            .with_user_actionable(true)
+            .with_detail("field", JsonValue::String("event_sink.max_event_bytes".to_owned())));
+        }
+
+        if self.event_sink.allow_kinds.is_empty() {
+            return Err(SdkError::new(
+                code::VALIDATION_INVALID_ARGUMENT,
+                ErrorCategory::Validation,
+                "event_sink.allow_kinds must include at least one kind",
+            )
+            .with_user_actionable(true)
+            .with_detail("field", JsonValue::String("event_sink.allow_kinds".to_owned())));
+        }
+
+        if self.event_sink.enabled && !self.redaction.enabled {
+            return Err(SdkError::new(
+                code::SECURITY_REDACTION_REQUIRED,
+                ErrorCategory::Security,
+                "event sink requires redaction.enabled=true",
+            )
+            .with_user_actionable(true)
+            .with_detail("field", JsonValue::String("redaction.enabled".to_owned())));
         }
 
         if self.store_forward.max_messages == 0 {

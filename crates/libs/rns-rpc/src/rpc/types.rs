@@ -231,10 +231,15 @@ struct RpcMetrics {
     sdk_cancel_not_found_total: u64,
     sdk_cancel_already_terminal_total: u64,
     sdk_event_drops_total: u64,
+    sdk_event_sink_publish_total: u64,
+    sdk_event_sink_error_total: u64,
+    sdk_event_sink_skipped_total: u64,
     sdk_auth_failures_total: u64,
     http_requests_by_route: BTreeMap<String, u64>,
     rpc_requests_by_method: BTreeMap<String, u64>,
     rpc_errors_by_method: BTreeMap<String, u64>,
+    sdk_event_sink_publish_by_kind: BTreeMap<String, u64>,
+    sdk_event_sink_errors_by_kind: BTreeMap<String, u64>,
     sdk_send_latency_ms: RpcLatencyHistogram,
     sdk_poll_latency_ms: RpcLatencyHistogram,
     sdk_auth_latency_ms: RpcLatencyHistogram,
@@ -292,6 +297,7 @@ pub struct RpcDaemon {
     sdk_metrics: Mutex<RpcMetrics>,
     outbound_bridge: Option<Arc<dyn OutboundBridge>>,
     announce_bridge: Option<Arc<dyn AnnounceBridge>>,
+    event_sink_bridges: Vec<Arc<dyn EventSinkBridge>>,
 }
 
 pub trait OutboundBridge: Send + Sync {
@@ -304,6 +310,22 @@ pub trait OutboundBridge: Send + Sync {
 
 pub trait AnnounceBridge: Send + Sync {
     fn announce_now(&self) -> Result<(), std::io::Error>;
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct RpcEventSinkEnvelope {
+    pub contract_release: String,
+    pub runtime_id: String,
+    pub stream_id: String,
+    pub seq_no: u64,
+    pub emitted_at_ms: i64,
+    pub event: RpcEvent,
+}
+
+pub trait EventSinkBridge: Send + Sync {
+    fn sink_id(&self) -> &str;
+    fn sink_kind(&self) -> &'static str;
+    fn publish(&self, envelope: &RpcEventSinkEnvelope) -> Result<(), std::io::Error>;
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]

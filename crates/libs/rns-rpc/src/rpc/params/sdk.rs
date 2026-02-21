@@ -611,6 +611,8 @@ struct SdkRuntimeConfig {
     #[serde(default)]
     store_forward: Option<SdkStoreForwardConfig>,
     #[serde(default)]
+    event_sink: Option<SdkEventSinkConfig>,
+    #[serde(default)]
     rpc_backend: Option<SdkRpcBackendConfig>,
 }
 
@@ -625,6 +627,19 @@ struct SdkStoreForwardConfig {
     capacity_policy: Option<String>,
     #[serde(default)]
     eviction_priority: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkEventSinkConfig {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    max_event_bytes: Option<u64>,
+    #[serde(default)]
+    allow_kinds: Option<Vec<String>>,
+    #[serde(default)]
+    extensions: Option<JsonMap<String, JsonValue>>,
 }
 
 #[derive(Debug, Deserialize)]

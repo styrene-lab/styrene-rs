@@ -62,6 +62,7 @@ Legend:
 | `sdk.capability.remote_commands` | optional | optional | optional |
 | `sdk.capability.voice_signaling` | optional | optional | optional |
 | `sdk.capability.group_delivery` | optional | optional | optional |
+| `sdk.capability.event_sink_bridge` | optional | optional | optional |
 | `sdk.capability.shared_instance_rpc_auth` | optional | optional | optional |
 
 ## Backend Support Matrix
@@ -138,6 +139,7 @@ Queue overflow behavior is release-gated with `cargo run -p xtask -- sdk-queue-p
 | SDK event log (`sdk_event_log`) | 1024 events | `reject`, `drop_oldest`, `block` |
 | Runtime broadcast channel | 64 events | bounded channel drop behavior |
 | Outbound store-forward spool (`messages` store) | configurable (`store_forward.max_messages`) | `reject_new`, `drop_oldest` + `oldest_first`/`terminal_first` eviction |
+| Event sink envelope fanout | configurable (`event_sink.max_event_bytes`) | skip oversized envelope + kind-allowlist filtering |
 
 ## Operability Metrics Matrix
 
@@ -148,6 +150,7 @@ Metrics export is available at `GET /metrics` and covered by `cargo run -p xtask
 | SDK send/poll/cancel counters | required |
 | SDK auth failures counter | required |
 | SDK event-drop counters | required |
+| SDK event-sink publish/error/skip counters | required |
 | SDK send/poll/auth latency histograms | required |
 | HTTP/RPC method counters | required |
 

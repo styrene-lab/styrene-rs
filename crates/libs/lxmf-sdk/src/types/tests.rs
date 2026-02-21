@@ -20,6 +20,12 @@ fn base_config() -> SdkConfig {
             max_batch_bytes: 1_048_576,
             max_extension_keys: 32,
         },
+        event_sink: EventSinkConfig {
+            enabled: false,
+            max_event_bytes: 65_536,
+            allow_kinds: vec![EventSinkKind::Webhook, EventSinkKind::Mqtt, EventSinkKind::Custom],
+            extensions: BTreeMap::new(),
+        },
         idempotency_ttl_ms: 86_400_000,
         redaction: RedactionConfig {
             enabled: true,
@@ -128,6 +134,7 @@ fn config_patch_serialization_preserves_absent_vs_null() {
         overflow_policy: None,
         block_timeout_ms: None,
         store_forward: None,
+        event_sink: None,
         event_stream: None,
         idempotency_ttl_ms: None,
         redaction: None,
@@ -141,6 +148,7 @@ fn config_patch_serialization_preserves_absent_vs_null() {
         overflow_policy: Some(None),
         block_timeout_ms: None,
         store_forward: None,
+        event_sink: None,
         event_stream: None,
         idempotency_ttl_ms: None,
         redaction: None,
@@ -231,6 +239,37 @@ fn sdk_config_store_forward_helpers_apply_policy_mutations() {
     assert_eq!(config.store_forward.max_message_age_ms, 120_000);
     assert_eq!(config.store_forward.capacity_policy, StoreForwardCapacityPolicy::RejectNew);
     assert_eq!(config.store_forward.eviction_priority, StoreForwardEvictionPriority::OldestFirst);
+}
+
+#[test]
+fn sdk_config_event_sink_helpers_apply_policy_mutations() {
+    let config = SdkConfig::desktop_full_default().with_event_sink(
+        true,
+        4_096,
+        vec![EventSinkKind::Webhook, EventSinkKind::Custom],
+    );
+    assert!(config.event_sink.enabled);
+    assert_eq!(config.event_sink.max_event_bytes, 4_096);
+    assert_eq!(config.event_sink.allow_kinds, vec![EventSinkKind::Webhook, EventSinkKind::Custom]);
+}
+
+#[test]
+fn sdk_config_rejects_invalid_event_sink_policy() {
+    let mut config = SdkConfig::desktop_full_default();
+    config.event_sink.max_event_bytes = 128;
+    let err = config.validate().expect_err("event sink max bytes below bound should fail");
+    assert_eq!(err.machine_code, crate::error::code::VALIDATION_INVALID_ARGUMENT);
+
+    let mut config = SdkConfig::desktop_full_default();
+    config.event_sink.allow_kinds.clear();
+    let err = config.validate().expect_err("event sink kinds cannot be empty");
+    assert_eq!(err.machine_code, crate::error::code::VALIDATION_INVALID_ARGUMENT);
+
+    let mut config = SdkConfig::desktop_full_default();
+    config.event_sink.enabled = true;
+    config.redaction.enabled = false;
+    let err = config.validate().expect_err("event sink must enforce redaction");
+    assert_eq!(err.machine_code, crate::error::code::SECURITY_REDACTION_REQUIRED);
 }
 
 #[test]

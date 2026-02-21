@@ -38,6 +38,7 @@ Examples:
 - `sdk.capability.cursor_replay`
 - `sdk.capability.token_auth`
 - `sdk.capability.mtls_auth`
+- `sdk.capability.event_sink_bridge`
 
 Rules:
 
@@ -70,6 +71,25 @@ When `sdk.capability.attachment_streaming` is enabled:
 2. Commit must validate both declared byte length and declared SHA-256 checksum.
 3. Download chunk must support caller-provided offsets for resumable transfer.
 4. Out-of-range upload/download offsets must return `SDK_RUNTIME_INVALID_CURSOR`.
+
+## Event Sink Adapter Contract
+
+When `sdk.capability.event_sink_bridge` is enabled, `rns-rpc` supports optional sink adapters
+behind `EventSinkBridge`.
+
+Current adapter surface contracts:
+
+- webhook adapter: `WebhookEventSinkBridge` + `WebhookEventPublisher`
+- mqtt adapter: `MqttEventSinkBridge` + `MqttEventPublisher`
+
+Required semantics:
+
+1. Sink dispatch happens only for `event_sink.enabled=true`.
+2. Sink dispatch always uses already-redacted event payloads.
+3. `event_sink.allow_kinds` acts as a deterministic allowlist (`webhook|mqtt|custom`).
+4. Oversized sink envelopes (`event_sink.max_event_bytes`) are skipped, not partially delivered.
+5. Sink publish failures must not block local runtime event progress.
+6. Sink publish success/error/skip counters must be exported via runtime metrics.
 
 ## Embedded Link Adapter Contract
 
