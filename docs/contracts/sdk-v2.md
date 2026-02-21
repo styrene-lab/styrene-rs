@@ -171,6 +171,21 @@ Method legality matrix:
 
 `shutdown()` behavior in `Stopped` must return success/no-op.
 
+## Manual Tick Semantics
+
+When `sdk.capability.manual_tick` is enabled, hosts drive event progression explicitly via `tick`.
+
+Rules:
+
+1. `tick` is deterministic for a fixed event stream and fixed `TickBudget`.
+2. Backend-private tick cursor is advanced only from successful `tick` calls.
+3. `tick` processing is bounded by `budget.max_work_items` and negotiated `effective_limits.max_poll_events`.
+4. Idle ticks (`processed_items=0`) return a deterministic delay recommendation:
+- `budget.max_duration_ms` when provided
+- otherwise `25ms` default
+5. Non-idle ticks return `next_recommended_delay_ms=0`.
+6. `tick` must never silently reset cursor position; cursor reset is explicit on new negotiation/start session.
+
 ## Delivery State Semantics
 
 States:

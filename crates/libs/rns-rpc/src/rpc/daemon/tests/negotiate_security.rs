@@ -175,6 +175,10 @@
             !capabilities.iter().any(|capability| capability == "sdk.capability.async_events"),
             "embedded profile must not advertise async_events"
         );
+        assert!(
+            capabilities.iter().any(|capability| capability == "sdk.capability.manual_tick"),
+            "embedded profile must advertise manual_tick capability"
+        );
     }
 
     #[test]

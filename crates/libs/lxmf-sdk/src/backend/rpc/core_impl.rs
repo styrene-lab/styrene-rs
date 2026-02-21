@@ -2,6 +2,44 @@ use super::*;
 use serde_json::json;
 
 impl RpcBackendClient {
+    const DEFAULT_IDLE_TICK_DELAY_MS: u64 = 25;
+
+    fn run_manual_tick_loop<F>(
+        start_cursor: Option<EventCursor>,
+        max_work_items: usize,
+        max_poll_events: usize,
+        mut poll_events: F,
+    ) -> Result<(usize, Option<EventCursor>), SdkError>
+    where
+        F: FnMut(Option<EventCursor>, usize) -> Result<EventBatch, SdkError>,
+    {
+        let mut processed_items = 0usize;
+        let mut cursor = start_cursor;
+        while processed_items < max_work_items {
+            let request_max = (max_work_items - processed_items).min(max_poll_events).max(1);
+            let batch = poll_events(cursor.clone(), request_max)?;
+            cursor = Some(batch.next_cursor);
+            let batch_processed = batch.events.len();
+            processed_items = processed_items.saturating_add(batch_processed);
+            if batch_processed < request_max {
+                break;
+            }
+        }
+        Ok((processed_items, cursor))
+    }
+
+    fn recommended_tick_delay_ms(
+        budget: &TickBudget,
+        processed_items: usize,
+        yielded: bool,
+    ) -> Option<u64> {
+        if yielded || processed_items > 0 {
+            Some(0)
+        } else {
+            Some(budget.max_duration_ms.unwrap_or(Self::DEFAULT_IDLE_TICK_DELAY_MS))
+        }
+    }
+
     pub(super) fn negotiate_impl(
         &self,
         req: NegotiationRequest,
@@ -84,6 +122,11 @@ impl RpcBackendClient {
         {
             let mut guard = self.session_auth.write().expect("session_auth rwlock poisoned");
             *guard = session_auth;
+        }
+        {
+            let mut guard =
+                self.manual_tick_cursor.write().expect("manual_tick_cursor rwlock poisoned");
+            *guard = None;
         }
 
         Ok(NegotiationResponse {
@@ -353,14 +396,49 @@ impl RpcBackendClient {
                 "mode": mode,
             })),
         )?;
-        Ok(Ack {
+        let ack = Ack {
             accepted: result.get("accepted").and_then(JsonValue::as_bool).unwrap_or(false),
             revision: None,
-        })
+        };
+        if ack.accepted {
+            let mut guard =
+                self.manual_tick_cursor.write().expect("manual_tick_cursor rwlock poisoned");
+            *guard = None;
+        }
+        Ok(ack)
     }
 
-    pub(super) fn tick_impl(&self, _budget: TickBudget) -> Result<TickResult, SdkError> {
-        Err(SdkError::capability_disabled("sdk.capability.manual_tick"))
+    pub(super) fn tick_impl(&self, budget: TickBudget) -> Result<TickResult, SdkError> {
+        if !self.has_capability("sdk.capability.manual_tick") {
+            return Err(SdkError::capability_disabled("sdk.capability.manual_tick"));
+        }
+        if budget.max_work_items == 0 {
+            return Err(SdkError::new(
+                code::VALIDATION_INVALID_ARGUMENT,
+                ErrorCategory::Validation,
+                "tick budget max_work_items must be greater than zero",
+            )
+            .with_user_actionable(true));
+        }
+
+        let start_cursor =
+            self.manual_tick_cursor.read().expect("manual_tick_cursor rwlock poisoned").clone();
+        let (processed_items, next_cursor) = Self::run_manual_tick_loop(
+            start_cursor,
+            budget.max_work_items,
+            self.negotiated_max_poll_events(),
+            |cursor, max| self.poll_events_impl(cursor, max),
+        )?;
+        {
+            let mut guard =
+                self.manual_tick_cursor.write().expect("manual_tick_cursor rwlock poisoned");
+            *guard = next_cursor;
+        }
+
+        let yielded = processed_items >= budget.max_work_items;
+        let next_recommended_delay_ms =
+            Self::recommended_tick_delay_ms(&budget, processed_items, yielded);
+        Ok(TickResult { processed_items, yielded, next_recommended_delay_ms })
     }
 
     #[cfg(feature = "sdk-async")]
@@ -418,6 +496,47 @@ impl RpcBackendClient {
 #[cfg(test)]
 mod tests {
     use super::RpcBackendClient;
+    use crate::error::{code, ErrorCategory, SdkError};
+    use crate::event::{EventBatch, EventCursor, SdkEvent, Severity};
+    use crate::types::TickBudget;
+    use serde_json::json;
+    use std::collections::{BTreeMap, VecDeque};
+
+    fn test_event(seq_no: u64) -> SdkEvent {
+        SdkEvent {
+            event_id: format!("evt-{seq_no}"),
+            runtime_id: "rt-1".to_owned(),
+            stream_id: "stream-1".to_owned(),
+            seq_no,
+            contract_version: 2,
+            ts_ms: seq_no * 10,
+            event_type: "DeliveryStateTransition".to_owned(),
+            severity: Severity::Info,
+            source_component: "test".to_owned(),
+            operation_id: None,
+            message_id: None,
+            peer_id: None,
+            correlation_id: None,
+            trace_id: None,
+            payload: json!({}),
+            extensions: BTreeMap::new(),
+        }
+    }
+
+    fn test_batch(start_seq: u64, count: usize, next_cursor: &str) -> EventBatch {
+        let mut events = Vec::with_capacity(count);
+        for offset in 0..count {
+            let seq_no = start_seq + offset as u64;
+            events.push(test_event(seq_no));
+        }
+        EventBatch {
+            events,
+            next_cursor: EventCursor(next_cursor.to_owned()),
+            dropped_count: 0,
+            snapshot_high_watermark_seq_no: None,
+            extensions: BTreeMap::new(),
+        }
+    }
 
     #[test]
     fn parse_cancel_result_accepts_contract_variants() {
@@ -448,5 +567,86 @@ mod tests {
             err.details.get("cancel_result"),
             Some(&serde_json::Value::String("LegacyUnsupported".to_owned()))
         );
+    }
+
+    #[test]
+    fn manual_tick_loop_is_deterministic_for_fixed_budget() {
+        let expected_batches = vec![
+            test_batch(1, 2, "cursor-1"),
+            test_batch(3, 2, "cursor-2"),
+            test_batch(5, 1, "cursor-3"),
+        ];
+        let mut expected_calls: Option<Vec<(Option<String>, usize)>> = None;
+
+        for _ in 0..2 {
+            let mut batches = VecDeque::from(expected_batches.clone());
+            let mut calls = Vec::new();
+            let (processed_items, cursor) =
+                RpcBackendClient::run_manual_tick_loop(None, 5, 2, |cursor, max| {
+                    calls.push((cursor.as_ref().map(|value| value.0.clone()), max));
+                    batches.pop_front().ok_or_else(|| {
+                        SdkError::new(
+                            code::INTERNAL,
+                            ErrorCategory::Internal,
+                            "test batch queue exhausted unexpectedly",
+                        )
+                    })
+                })
+                .expect("manual tick loop should succeed");
+
+            assert_eq!(processed_items, 5);
+            assert_eq!(cursor, Some(EventCursor("cursor-3".to_owned())));
+            match &expected_calls {
+                Some(expected) => assert_eq!(&calls, expected),
+                None => expected_calls = Some(calls),
+            }
+        }
+    }
+
+    #[test]
+    fn manual_tick_loop_stops_when_backend_is_idle() {
+        let mut call_count = 0usize;
+        let (processed_items, cursor) =
+            RpcBackendClient::run_manual_tick_loop(None, 8, 4, |_, _| {
+                call_count += 1;
+                Ok(EventBatch::empty(EventCursor("cursor-idle".to_owned())))
+            })
+            .expect("manual tick loop should succeed");
+
+        assert_eq!(call_count, 1, "idle backend should terminate tick loop in one poll");
+        assert_eq!(processed_items, 0);
+        assert_eq!(cursor, Some(EventCursor("cursor-idle".to_owned())));
+    }
+
+    #[test]
+    fn tick_delay_is_deterministic_for_work_and_idle_paths() {
+        let budget = TickBudget::new(16).with_max_duration_ms(40);
+        assert_eq!(RpcBackendClient::recommended_tick_delay_ms(&budget, 0, false), Some(40));
+        assert_eq!(RpcBackendClient::recommended_tick_delay_ms(&budget, 1, false), Some(0));
+        assert_eq!(RpcBackendClient::recommended_tick_delay_ms(&budget, 16, true), Some(0));
+
+        let default_budget = TickBudget::new(4);
+        assert_eq!(
+            RpcBackendClient::recommended_tick_delay_ms(&default_budget, 0, false),
+            Some(25)
+        );
+    }
+
+    #[test]
+    fn tick_impl_rejects_missing_capability_and_zero_budget() {
+        let backend = RpcBackendClient::new("127.0.0.1:65530");
+        let missing_capability =
+            backend.tick_impl(TickBudget::new(1)).expect_err("manual tick capability required");
+        assert_eq!(missing_capability.machine_code, code::CAPABILITY_DISABLED);
+
+        backend
+            .negotiated_capabilities
+            .write()
+            .expect("negotiated_capabilities rwlock poisoned")
+            .push("sdk.capability.manual_tick".to_owned());
+        let zero_budget = backend
+            .tick_impl(TickBudget { max_work_items: 0, max_duration_ms: None })
+            .expect_err("zero budget must fail");
+        assert_eq!(zero_budget.machine_code, code::VALIDATION_INVALID_ARGUMENT);
     }
 }

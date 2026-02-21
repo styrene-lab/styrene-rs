@@ -41,6 +41,7 @@ pub struct RpcBackendClient {
     next_request_id: AtomicU64,
     negotiated_capabilities: RwLock<Vec<String>>,
     negotiated_limits: RwLock<Option<EffectiveLimits>>,
+    manual_tick_cursor: RwLock<Option<EventCursor>>,
     session_auth: RwLock<SessionAuth>,
 }
 
@@ -73,6 +74,7 @@ impl RpcBackendClient {
             next_request_id: AtomicU64::new(1),
             negotiated_capabilities: RwLock::new(Vec::new()),
             negotiated_limits: RwLock::new(None),
+            manual_tick_cursor: RwLock::new(None),
             session_auth: RwLock::new(SessionAuth::LocalTrusted),
         }
     }
@@ -93,7 +95,6 @@ impl RpcBackendClient {
             .any(|capability| capability == capability_id)
     }
 
-    #[cfg(feature = "sdk-async")]
     fn negotiated_max_poll_events(&self) -> usize {
         self.negotiated_limits
             .read()
