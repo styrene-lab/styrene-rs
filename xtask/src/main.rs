@@ -14,6 +14,10 @@ const SUPPORT_POLICY_PATH: &str = "docs/contracts/support-policy.md";
 const SDK_API_STABILITY_PATH: &str = "docs/contracts/sdk-v2-api-stability.md";
 const SDK_BACKENDS_CONTRACT_PATH: &str = "docs/contracts/sdk-v2-backends.md";
 const SDK_FEATURE_MATRIX_PATH: &str = "docs/contracts/sdk-v2-feature-matrix.md";
+const SCHEMA_CLIENT_CONTRACT_PATH: &str = "docs/contracts/schema-driven-clients.md";
+const SCHEMA_CLIENT_MANIFEST_PATH: &str =
+    "docs/schemas/sdk/v2/clients/client-generation-manifest.json";
+const SCHEMA_CLIENT_SMOKE_PATH: &str = "docs/schemas/sdk/v2/clients/smoke-requests.json";
 const EXTENSION_REGISTRY_PATH: &str = "docs/contracts/extension-registry.md";
 const EXTENSION_REGISTRY_ADR_PATH: &str = "docs/adr/0005-extension-registry-governance.md";
 const UNSAFE_POLICY_PATH: &str = "docs/architecture/unsafe-code-policy.md";
@@ -40,6 +44,7 @@ const EMBEDDED_HIL_RUNBOOK_PATH: &str = "docs/runbooks/embedded-hil-esp32.md";
 const BACKUP_RESTORE_DRILL_SCRIPT_PATH: &str = "tools/scripts/backup-restore-drill.sh";
 const REFERENCE_INTEGRATIONS_SMOKE_SCRIPT_PATH: &str =
     "tools/scripts/reference-integrations-smoke.sh";
+const SCHEMA_CLIENT_SMOKE_SCRIPT_PATH: &str = "tools/scripts/schema-client-smoke.sh";
 const SOAK_REPORT_PATH: &str = "target/soak/soak-report.json";
 const BENCH_SUMMARY_PATH: &str = "target/criterion/bench-summary.txt";
 const PERF_BUDGET_REPORT_PATH: &str = "target/criterion/bench-budget-report.txt";
@@ -50,6 +55,7 @@ const SUPPLY_CHAIN_SIGNATURE_PATH: &str =
     "target/supply-chain/provenance/artifact-provenance.sha256";
 const REPRODUCIBLE_BUILD_REPORT_PATH: &str =
     "target/supply-chain/reproducible/reproducible-build-report.txt";
+const SCHEMA_CLIENT_SMOKE_REPORT_PATH: &str = "target/interop/schema-client-smoke-report.txt";
 const EMBEDDED_FOOTPRINT_REPORT_PATH: &str = "target/embedded/footprint-report.txt";
 const EMBEDDED_HIL_REPORT_PATH: &str = "target/hil/esp32-smoke-report.json";
 const LEADER_READINESS_REPORT_PATH: &str = "target/release-readiness/leader-grade-readiness.md";
@@ -292,6 +298,7 @@ enum XtaskCommand {
         #[arg(long)]
         update: bool,
     },
+    SchemaClientCheck,
     CompatKitCheck,
     E2eCompatibility,
     MeshSim,
@@ -357,6 +364,7 @@ enum CiStage {
     InteropMatrixCheck,
     InteropCorpusCheck,
     InteropDriftCheck,
+    SchemaClientCheck,
     CompatKitCheck,
     E2eCompatibility,
     SdkProfileBuild,
@@ -428,6 +436,7 @@ fn main() -> Result<()> {
         XtaskCommand::InteropMatrixCheck => run_interop_matrix_check(),
         XtaskCommand::InteropCorpusCheck => run_interop_corpus_check(),
         XtaskCommand::InteropDriftCheck { update } => run_interop_drift_check(update),
+        XtaskCommand::SchemaClientCheck => run_schema_client_check(),
         XtaskCommand::CompatKitCheck => run_compat_kit_check(),
         XtaskCommand::E2eCompatibility => run_e2e_compatibility(),
         XtaskCommand::MeshSim => run_mesh_sim(),
@@ -505,6 +514,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_interop_matrix_check()?;
     run_interop_corpus_check()?;
     run_interop_drift_check(false)?;
+    run_schema_client_check()?;
     run_compat_kit_check()?;
     run_e2e_compatibility()?;
     run_sdk_conformance()?;
@@ -573,6 +583,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::InteropMatrixCheck => run_interop_matrix_check(),
         CiStage::InteropCorpusCheck => run_interop_corpus_check(),
         CiStage::InteropDriftCheck => run_interop_drift_check(false),
+        CiStage::SchemaClientCheck => run_schema_client_check(),
         CiStage::CompatKitCheck => run_compat_kit_check(),
         CiStage::E2eCompatibility => run_e2e_compatibility(),
         CiStage::SdkProfileBuild => run_sdk_profile_build(),
@@ -623,6 +634,7 @@ fn run_release_check() -> Result<()> {
     run_interop_matrix_check()?;
     run_interop_corpus_check()?;
     run_interop_drift_check(false)?;
+    run_schema_client_check()?;
     run_compat_kit_check()?;
     run_reference_integration_check()?;
     run_compliance_profile_check()?;
@@ -928,6 +940,71 @@ fn run_interop_drift_check(update: bool) -> Result<()> {
         let details = classification.breaking.join("; ");
         bail!("interop semantic drift detected (breaking): {details}");
     }
+    Ok(())
+}
+
+fn run_schema_client_check() -> Result<()> {
+    run("bash", &[SCHEMA_CLIENT_SMOKE_SCRIPT_PATH])?;
+
+    let contract = fs::read_to_string(SCHEMA_CLIENT_CONTRACT_PATH)
+        .with_context(|| format!("missing {SCHEMA_CLIENT_CONTRACT_PATH}"))?;
+    for marker in [
+        "# Schema-Driven Client Generation Strategy",
+        "## Goals",
+        "## Source of Truth",
+        "## Target Client Languages",
+        "Go",
+        "JavaScript/TypeScript",
+        "Python",
+        "cargo run -p xtask -- schema-client-check",
+    ] {
+        if !contract.contains(marker) {
+            bail!(
+                "schema-driven clients contract missing marker '{marker}' in {SCHEMA_CLIENT_CONTRACT_PATH}"
+            );
+        }
+    }
+
+    let manifest = fs::read_to_string(SCHEMA_CLIENT_MANIFEST_PATH)
+        .with_context(|| format!("missing {SCHEMA_CLIENT_MANIFEST_PATH}"))?;
+    for marker in
+        ["\"language\": \"go\"", "\"language\": \"javascript\"", "\"language\": \"python\""]
+    {
+        if !manifest.contains(marker) {
+            bail!(
+                "client generation manifest missing marker '{marker}' in {SCHEMA_CLIENT_MANIFEST_PATH}"
+            );
+        }
+    }
+
+    let smoke = fs::read_to_string(SCHEMA_CLIENT_SMOKE_PATH)
+        .with_context(|| format!("missing {SCHEMA_CLIENT_SMOKE_PATH}"))?;
+    for marker in
+        ["\"language\": \"go\"", "\"language\": \"javascript\"", "\"language\": \"python\""]
+    {
+        if !smoke.contains(marker) {
+            bail!("schema smoke vectors missing marker '{marker}' in {SCHEMA_CLIENT_SMOKE_PATH}");
+        }
+    }
+
+    let report = fs::read_to_string(SCHEMA_CLIENT_SMOKE_REPORT_PATH).with_context(|| {
+        format!("missing generated schema client smoke report at {SCHEMA_CLIENT_SMOKE_REPORT_PATH}")
+    })?;
+    if !report.contains("status=PASS") {
+        bail!(
+            "schema client smoke report missing PASS status in {SCHEMA_CLIENT_SMOKE_REPORT_PATH}"
+        );
+    }
+
+    let workflow = fs::read_to_string(CI_WORKFLOW_PATH)
+        .with_context(|| format!("missing {CI_WORKFLOW_PATH}"))?;
+    if !workflow.contains("schema-client-check:") {
+        bail!("ci workflow must include a 'schema-client-check' job");
+    }
+    if !workflow.contains("cargo xtask ci --stage schema-client-check") {
+        bail!("ci workflow must execute `cargo xtask ci --stage schema-client-check`");
+    }
+
     Ok(())
 }
 

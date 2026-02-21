@@ -41,6 +41,7 @@ This checklist is the publication gate for the Rust workspace.
 - `api-surface-check`
 - `compat-kit-check`
 - `reference-integration-check`
+- `schema-client-check`
 - `compliance-profile-check`
 - `support-policy-check`
 - `unsafe-audit-check`
@@ -76,6 +77,7 @@ cargo run -p xtask -- sdk-drill-check
 cargo run -p xtask -- sdk-soak-check
 cargo run -p xtask -- lxmf-cli-check
 cargo run -p xtask -- reference-integration-check
+cargo run -p xtask -- schema-client-check
 cargo run -p xtask -- dx-bootstrap-check
 cargo run -p xtask -- compat-kit-check
 cargo run -p xtask -- compliance-profile-check

@@ -247,6 +247,18 @@ jobs:
       - name: Interop artifacts manifest
         run: cargo xtask ci --stage interop-artifacts
 
+  schema-client-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Schema-driven client generation smoke gate
+        run: cargo xtask ci --stage schema-client-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: schema-client-smoke-report
+          path: target/interop/schema-client-smoke-report.txt
+
   compat-kit-check:
     runs-on: ubuntu-latest
     steps:

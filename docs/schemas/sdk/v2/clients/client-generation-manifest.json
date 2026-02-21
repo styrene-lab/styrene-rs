@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "contract_release": "v2.5",
+  "schema_namespace": "v2",
+  "targets": [
+    {
+      "language": "go",
+      "output_dir": "generated/clients/go",
+      "entrypoint": "sdk_client.go"
+    },
+    {
+      "language": "javascript",
+      "output_dir": "generated/clients/javascript",
+      "entrypoint": "sdkClient.ts"
+    },
+    {
+      "language": "python",
+      "output_dir": "generated/clients/python",
+      "entrypoint": "sdk_client.py"
+    }
+  ],
+  "required_schemas": [
+    "docs/schemas/sdk/v2/rpc/sdk_negotiate_v2.schema.json",
+    "docs/schemas/sdk/v2/rpc/sdk_send_v2.schema.json",
+    "docs/schemas/sdk/v2/rpc/sdk_poll_events_v2.schema.json",
+    "docs/schemas/sdk/v2/rpc/sdk_snapshot_v2.schema.json",
+    "docs/schemas/sdk/v2/error.schema.json"
+  ]
+}
