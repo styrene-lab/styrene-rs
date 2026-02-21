@@ -2181,8 +2181,10 @@ dependencies = [
  "base64",
  "jsonschema",
  "lxmf-sdk",
+ "rns-core",
  "rns-rpc",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

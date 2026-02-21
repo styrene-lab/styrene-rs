@@ -111,6 +111,36 @@ Mock conformance gate:
 
 - `cargo run -p xtask -- embedded-link-check`
 
+## Key Management Backend Contract
+
+When `sdk.capability.key_management` is enabled, the backend must provide deterministic key
+storage semantics through `SdkBackendKeyManagement`.
+
+Key management scope:
+
+- backend class discovery (`in_memory`, `file`, `os_keystore`, `hsm`, `custom`)
+- key CRUD by `key_id`
+- stable key listing for operational audits
+- secure fallback wiring (`FallbackKeyManager<Primary, Secondary>`)
+
+Required semantics:
+
+1. `key_id` is canonical and path-safe (`[A-Za-z0-9._-]+`).
+2. `key_get` returns exact key bytes previously stored by `key_put` without mutation.
+3. `key_delete` is idempotent.
+4. `key_list_ids` returns stable sorted identifiers.
+5. Fallback behavior uses secondary backend when primary read/write/list paths fail.
+6. Primary and secondary backend failures must return explicit backend errors (no silent success).
+
+Backend hook interfaces:
+
+- OS keystore hook adapter: `rns_core::key_manager::OsKeyStoreHook`
+- HSM hook adapter: `rns_core::key_manager::HsmKeyStoreHook`
+
+Conformance gate:
+
+- `cargo run -p xtask -- key-management-check`
+
 ## Config Layering
 
 `SdkCoreConfig`:

@@ -160,6 +160,14 @@ jobs:
       - name: Crypto agility policy and negotiation tests
         run: cargo xtask ci --stage crypto-agility-check
 
+  key-management-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Key management backends and fallback conformance
+        run: cargo xtask ci --stage key-management-check
+
   supply-chain-check:
     runs-on: ubuntu-latest
     steps:

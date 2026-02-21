@@ -9,6 +9,7 @@ pub mod destination_hash;
 mod error;
 pub mod hash;
 pub mod identity;
+pub mod key_manager;
 pub mod packet;
 pub mod ratchets;
 

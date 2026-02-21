@@ -12,6 +12,8 @@ const INTEROP_DRIFT_BASELINE_PATH: &str = "docs/contracts/baselines/interop-drif
 const INTEROP_MATRIX_PATH: &str = "docs/contracts/compatibility-matrix.md";
 const SUPPORT_POLICY_PATH: &str = "docs/contracts/support-policy.md";
 const SDK_API_STABILITY_PATH: &str = "docs/contracts/sdk-v2-api-stability.md";
+const SDK_BACKENDS_CONTRACT_PATH: &str = "docs/contracts/sdk-v2-backends.md";
+const SDK_FEATURE_MATRIX_PATH: &str = "docs/contracts/sdk-v2-feature-matrix.md";
 const EXTENSION_REGISTRY_PATH: &str = "docs/contracts/extension-registry.md";
 const EXTENSION_REGISTRY_ADR_PATH: &str = "docs/adr/0005-extension-registry-governance.md";
 const UNSAFE_POLICY_PATH: &str = "docs/architecture/unsafe-code-policy.md";
@@ -299,6 +301,7 @@ enum XtaskCommand {
     LeaderReadinessCheck,
     SecurityReviewCheck,
     CryptoAgilityCheck,
+    KeyManagementCheck,
     SdkSecurityCheck,
     SdkFuzzCheck,
     SdkPropertyCheck,
@@ -359,6 +362,7 @@ enum CiStage {
     LeaderReadinessCheck,
     SecurityReviewCheck,
     CryptoAgilityCheck,
+    KeyManagementCheck,
     SdkSecurityCheck,
     SdkFuzzCheck,
     SdkPropertyCheck,
@@ -427,6 +431,7 @@ fn main() -> Result<()> {
         XtaskCommand::LeaderReadinessCheck => run_leader_readiness_check(),
         XtaskCommand::SecurityReviewCheck => run_security_review_check(),
         XtaskCommand::CryptoAgilityCheck => run_crypto_agility_check(),
+        XtaskCommand::KeyManagementCheck => run_key_management_check(),
         XtaskCommand::SdkSecurityCheck => run_sdk_security_check(),
         XtaskCommand::SdkFuzzCheck => run_sdk_fuzz_check(),
         XtaskCommand::SdkPropertyCheck => run_sdk_property_check(),
@@ -498,6 +503,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_extension_registry_check()?;
     run_security_review_check()?;
     run_sdk_security_check()?;
+    run_key_management_check()?;
     run_sdk_fuzz_check()?;
     run_sdk_property_check()?;
     run_sdk_model_check()?;
@@ -563,6 +569,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::LeaderReadinessCheck => run_leader_readiness_check(),
         CiStage::SecurityReviewCheck => run_security_review_check(),
         CiStage::CryptoAgilityCheck => run_crypto_agility_check(),
+        CiStage::KeyManagementCheck => run_key_management_check(),
         CiStage::SdkSecurityCheck => run_sdk_security_check(),
         CiStage::SdkFuzzCheck => run_sdk_fuzz_check(),
         CiStage::SdkPropertyCheck => run_sdk_property_check(),
@@ -603,6 +610,7 @@ fn run_release_check() -> Result<()> {
     run_sdk_api_break()?;
     run_changelog_migration_check()?;
     run_crypto_agility_check()?;
+    run_key_management_check()?;
     run_supply_chain_check()?;
     run("cargo", &["deny", "check"])?;
     run("cargo", &["audit"])?;
@@ -1751,6 +1759,48 @@ fn run_crypto_agility_check() -> Result<()> {
     }
     if !workflow.contains("cargo xtask ci --stage crypto-agility-check") {
         bail!("ci workflow must execute `cargo xtask ci --stage crypto-agility-check`");
+    }
+
+    Ok(())
+}
+
+fn run_key_management_check() -> Result<()> {
+    run("cargo", &["test", "-p", "rns-core", "key_manager", "--", "--nocapture"])?;
+    run(
+        "cargo",
+        &["test", "-p", "test-support", "sdk_conformance_key_management", "--", "--nocapture"],
+    )?;
+
+    let backends = fs::read_to_string(SDK_BACKENDS_CONTRACT_PATH)
+        .with_context(|| format!("missing {SDK_BACKENDS_CONTRACT_PATH}"))?;
+    for marker in [
+        "## Key Management Backend Contract",
+        "sdk.capability.key_management",
+        "OsKeyStoreHook",
+        "HsmKeyStoreHook",
+        "FallbackKeyManager<Primary, Secondary>",
+        "cargo run -p xtask -- key-management-check",
+    ] {
+        if !backends.contains(marker) {
+            bail!(
+                "backend contract missing key-management marker '{marker}' in {SDK_BACKENDS_CONTRACT_PATH}"
+            );
+        }
+    }
+
+    let matrix = fs::read_to_string(SDK_FEATURE_MATRIX_PATH)
+        .with_context(|| format!("missing {SDK_FEATURE_MATRIX_PATH}"))?;
+    if !matrix.contains("sdk.capability.key_management") {
+        bail!("feature matrix must include sdk.capability.key_management capability row");
+    }
+
+    let workflow = fs::read_to_string(CI_WORKFLOW_PATH)
+        .with_context(|| format!("missing {CI_WORKFLOW_PATH}"))?;
+    if !workflow.contains("key-management-check:") {
+        bail!("ci workflow must include a 'key-management-check' job");
+    }
+    if !workflow.contains("cargo xtask ci --stage key-management-check") {
+        bail!("ci workflow must execute `cargo xtask ci --stage key-management-check`");
     }
 
     Ok(())

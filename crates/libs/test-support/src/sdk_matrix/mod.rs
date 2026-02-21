@@ -313,6 +313,7 @@ fn sdk_matrix_capability_table_matches_profile_capabilities() {
         "sdk.capability.voice_signaling",
         "sdk.capability.group_delivery",
         "sdk.capability.shared_instance_rpc_auth",
+        "sdk.capability.key_management",
     ];
     for capability in KNOWN_CAPABILITIES {
         assert!(seen.contains_key(*capability), "matrix missing known capability row {capability}");
