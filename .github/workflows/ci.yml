@@ -16,6 +16,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Format
         run: cargo xtask ci --stage lint-format
 
@@ -29,6 +34,11 @@ jobs:
         with:
           toolchain: nightly
           components: miri,rust-src
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Correctness (strict clippy + miri + loom)
         run: cargo xtask ci --stage correctness
 
@@ -43,6 +53,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Build
         run: cargo xtask ci --stage build-matrix
 
@@ -51,6 +66,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
@@ -62,6 +82,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Integration tests
         run: cargo xtask ci --stage test-integration
 
@@ -70,6 +95,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Docs
         run: cargo xtask ci --stage doc
 
@@ -78,6 +108,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK docs completeness
         run: cargo xtask ci --stage sdk-docs-check
 
@@ -86,6 +121,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK cookbook fixtures
         run: cargo xtask ci --stage sdk-cookbook-check
 
@@ -94,6 +134,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK ergonomics tests and examples
         run: cargo xtask ci --stage sdk-ergonomics-check
 
@@ -102,6 +147,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: LXMF CLI smoke and tests
         run: cargo xtask ci --stage lxmf-cli-check
 
@@ -110,6 +160,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Reference service/desktop/gateway integration smoke suite
         run: cargo xtask ci --stage reference-integration-check
 
@@ -118,6 +173,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Developer bootstrap prerequisites
         run: cargo xtask ci --stage dx-bootstrap-check
 
@@ -126,6 +186,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Incident runbook completeness
         run: cargo xtask ci --stage sdk-incident-runbook-check
 
@@ -134,6 +199,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Backup/restore drill gate
         run: cargo xtask ci --stage sdk-drill-check
 
@@ -142,6 +212,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Soak + chaos regression gate
         run: cargo xtask ci --stage sdk-soak-check
       - uses: actions/upload-artifact@v4
@@ -154,6 +229,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny,cargo-audit
@@ -165,6 +245,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Crypto agility policy and negotiation tests
         run: cargo xtask ci --stage crypto-agility-check
 
@@ -173,6 +258,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Key management backends and fallback conformance
         run: cargo xtask ci --stage key-management-check
 
@@ -181,6 +271,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SBOM + provenance metadata
         run: cargo xtask ci --stage supply-chain-check
       - uses: actions/upload-artifact@v4
@@ -196,6 +291,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Reproducible build verification
         run: cargo xtask ci --stage reproducible-build-check
       - uses: actions/upload-artifact@v4
@@ -208,6 +308,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Install nightly toolchain (for cargo-udeps)
         run: rustup toolchain install nightly --profile minimal
       - uses: taiki-e/install-action@v2
@@ -223,6 +328,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Install pinned nightly toolchain (for cargo-public-api)
         run: rustup toolchain install nightly-2026-02-15 --profile minimal
       - uses: taiki-e/install-action@v2
@@ -236,6 +346,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK schema fixtures
         run: cargo xtask ci --stage sdk-schema-check
 
@@ -244,6 +359,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Interop artifacts manifest
         run: cargo xtask ci --stage interop-artifacts
 
@@ -252,6 +372,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Schema-driven client generation smoke gate
         run: cargo xtask ci --stage schema-client-check
       - uses: actions/upload-artifact@v4
@@ -264,6 +389,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: External compatibility kit dry-run
         run: cargo xtask ci --stage compat-kit-check
 
@@ -272,6 +402,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Regulated deployment profile gate
         run: cargo xtask ci --stage compliance-profile-check
 
@@ -280,6 +415,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: E2E compatibility workflows
         run: cargo xtask ci --stage e2e-compatibility
 
@@ -288,6 +428,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK conformance suite
         run: cargo xtask ci --stage sdk-conformance
 
@@ -296,6 +441,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK security suite
         run: cargo xtask ci --stage sdk-security-check
 
@@ -304,6 +454,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK parser fuzz smoke suite
         run: cargo xtask ci --stage sdk-fuzz-check
 
@@ -312,6 +467,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK property suite
         run: cargo xtask ci --stage sdk-property-check
 
@@ -320,6 +480,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK model conformance suite
         run: cargo xtask ci --stage sdk-model-check
 
@@ -328,6 +493,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK race stress suite
         run: cargo xtask ci --stage sdk-race-check
 
@@ -336,6 +506,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK replay determinism suite
         run: cargo xtask ci --stage sdk-replay-check
 
@@ -344,6 +519,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK metrics contract and endpoint suite
         run: cargo xtask ci --stage sdk-metrics-check
 
@@ -352,6 +532,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK benchmark baseline
         run: cargo xtask ci --stage sdk-bench-check
       - uses: actions/upload-artifact@v4
@@ -366,6 +551,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK performance budget gate
         run: cargo xtask ci --stage sdk-perf-budget-check
       - uses: actions/upload-artifact@v4
@@ -380,6 +570,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Release scorecard generation gate
         run: cargo xtask ci --stage release-scorecard-check
       - uses: actions/upload-artifact@v4
@@ -394,6 +589,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Canary criteria and rollback trigger gate
         run: cargo xtask ci --stage canary-criteria-check
       - uses: actions/upload-artifact@v4
@@ -408,6 +608,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK memory budget gate
         run: cargo xtask ci --stage sdk-memory-budget-check
 
@@ -416,6 +621,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK queue pressure gate
         run: cargo xtask ci --stage sdk-queue-pressure-check
 
@@ -424,6 +634,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK feature matrix gate
         run: cargo xtask ci --stage sdk-matrix-check
 
@@ -432,6 +647,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Embedded transport adapter conformance
         run: cargo xtask ci --stage embedded-link-check
 
@@ -440,6 +660,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Alloc-first core compile matrix
         run: cargo xtask ci --stage embedded-core-check
 
@@ -448,6 +673,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Embedded footprint budget gate
         run: cargo xtask ci --stage embedded-footprint-check
       - uses: actions/upload-artifact@v4
@@ -460,6 +690,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK profile build matrix
         run: cargo xtask ci --stage sdk-profile-build
 
@@ -468,6 +703,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK example compile gate
         run: cargo xtask ci --stage sdk-examples-check
 
@@ -478,6 +718,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Install pinned nightly toolchain (for cargo-public-api)
         run: rustup toolchain install nightly-2026-02-15 --profile minimal
       - uses: taiki-e/install-action@v2
@@ -491,6 +736,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: SDK migration gate
         run: cargo xtask ci --stage sdk-migration-check
 
@@ -499,6 +749,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Generate changelog and migration notes
         run: cargo xtask ci --stage changelog-migration-check
       - uses: actions/upload-artifact@v4
@@ -511,6 +766,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Governance ownership and PR policy simulation
         run: cargo xtask ci --stage governance-check
 
@@ -519,6 +779,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Support and LTS policy gate
         run: cargo xtask ci --stage support-policy-check
 
@@ -527,6 +792,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Unsafe inventory and invariant gate
         run: cargo xtask ci --stage unsafe-audit-check
 
@@ -535,6 +805,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Extension registry governance gate
         run: cargo xtask ci --stage extension-registry-check
 
@@ -543,6 +818,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Plugin negotiation contract gate
         run: cargo xtask ci --stage plugin-negotiation-check
 
@@ -551,6 +831,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Third-party conformance certification report gate
         run: cargo xtask ci --stage certification-report-check
       - uses: actions/upload-artifact@v4
@@ -565,6 +850,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Architecture boundaries
         run: cargo xtask ci --stage forbidden-deps
 
@@ -573,6 +863,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Architecture dependency graph lint
         run: cargo xtask ci --stage architecture-lint
 
@@ -581,6 +876,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Architecture boundaries
         run: cargo xtask ci --stage architecture-checks
 
@@ -589,5 +889,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+          cache-on-failure: false
       - name: Migration checks
         run: cargo xtask ci --stage migration-checks
