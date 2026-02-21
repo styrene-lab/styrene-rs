@@ -7,11 +7,12 @@ use crate::domain::{
     AttachmentListResult, AttachmentMeta, AttachmentStoreRequest, AttachmentUploadChunkAck,
     AttachmentUploadChunkRequest, AttachmentUploadCommitRequest, AttachmentUploadSession,
     AttachmentUploadStartRequest, IdentityBundle, IdentityImportRequest, IdentityRef,
-    IdentityResolveRequest, MarkerCreateRequest, MarkerId, MarkerListRequest, MarkerListResult,
-    MarkerRecord, MarkerUpdatePositionRequest, PaperMessageEnvelope, RemoteCommandRequest,
-    RemoteCommandResponse, TelemetryPoint, TelemetryQuery, TopicCreateRequest, TopicId,
-    TopicListRequest, TopicListResult, TopicPublishRequest, TopicRecord, TopicSubscriptionRequest,
-    VoiceSessionId, VoiceSessionOpenRequest, VoiceSessionState, VoiceSessionUpdateRequest,
+    IdentityResolveRequest, MarkerCreateRequest, MarkerDeleteRequest, MarkerListRequest,
+    MarkerListResult, MarkerRecord, MarkerUpdatePositionRequest, PaperMessageEnvelope,
+    RemoteCommandRequest, RemoteCommandResponse, TelemetryPoint, TelemetryQuery,
+    TopicCreateRequest, TopicId, TopicListRequest, TopicListResult, TopicPublishRequest,
+    TopicRecord, TopicSubscriptionRequest, VoiceSessionId, VoiceSessionOpenRequest,
+    VoiceSessionState, VoiceSessionUpdateRequest,
 };
 use crate::error::{code, ErrorCategory, SdkError};
 use crate::event::{EventBatch, EventCursor, SdkEvent, Severity};
@@ -249,8 +250,8 @@ impl SdkBackend for RpcBackendClient {
         self.marker_update_position_impl(req)
     }
 
-    fn marker_delete(&self, marker_id: MarkerId) -> Result<Ack, SdkError> {
-        self.marker_delete_impl(marker_id)
+    fn marker_delete(&self, req: MarkerDeleteRequest) -> Result<Ack, SdkError> {
+        self.marker_delete_impl(req)
     }
 
     fn identity_list(&self) -> Result<Vec<IdentityBundle>, SdkError> {

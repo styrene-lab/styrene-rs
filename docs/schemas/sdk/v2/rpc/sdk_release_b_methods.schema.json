@@ -405,9 +405,10 @@
               "params": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["marker_id"],
+                "required": ["marker_id", "expected_revision"],
                 "properties": {
                   "marker_id": { "type": "string", "minLength": 1 },
+                  "expected_revision": { "type": "integer", "minimum": 1 },
                   "extensions": { "$ref": "#/$defs/extension_map" }
                 }
               }
@@ -474,9 +475,10 @@
               "params": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["marker_id", "position"],
+                "required": ["marker_id", "expected_revision", "position"],
                 "properties": {
                   "marker_id": { "type": "string", "minLength": 1 },
+                  "expected_revision": { "type": "integer", "minimum": 1 },
                   "position": {
                     "type": "object",
                     "additionalProperties": false,

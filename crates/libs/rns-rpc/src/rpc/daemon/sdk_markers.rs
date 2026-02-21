@@ -1,4 +1,27 @@
 impl RpcDaemon {
+    fn marker_revision_conflict_response(
+        &self,
+        request_id: u64,
+        marker_id: &str,
+        expected_revision: u64,
+        observed_revision: u64,
+    ) -> RpcResponse {
+        let mut error = RpcError::new("SDK_RUNTIME_CONFLICT", "marker revision mismatch");
+        let mut details = JsonMap::new();
+        details.insert("domain".to_string(), JsonValue::String("marker".to_string()));
+        details.insert("marker_id".to_string(), JsonValue::String(marker_id.to_string()));
+        details.insert(
+            "expected_revision".to_string(),
+            JsonValue::Number(serde_json::Number::from(expected_revision)),
+        );
+        details.insert(
+            "observed_revision".to_string(),
+            JsonValue::Number(serde_json::Number::from(observed_revision)),
+        );
+        error.details = Some(Box::new(details));
+        RpcResponse { id: request_id, result: None, error: Some(error) }
+    }
+
     fn handle_sdk_marker_create_v2(
         &self,
         request: RpcRequest,
@@ -50,6 +73,7 @@ impl RpcDaemon {
             label,
             position: parsed.position,
             topic_id: parsed.topic_id,
+            revision: 1,
             updated_ts_ms: now_millis_u64(),
             extensions: parsed.extensions,
         };
@@ -150,6 +174,13 @@ impl RpcDaemon {
                 ))
             }
         };
+        if parsed.expected_revision == 0 {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "expected_revision must be greater than 0",
+            ));
+        }
         if !((-90.0..=90.0).contains(&parsed.position.lat)
             && (-180.0..=180.0).contains(&parsed.position.lon))
         {
@@ -168,8 +199,17 @@ impl RpcDaemon {
                     "marker not found",
                 ));
             };
+            if record.revision != parsed.expected_revision {
+                return Ok(self.marker_revision_conflict_response(
+                    request.id,
+                    marker_id.as_str(),
+                    parsed.expected_revision,
+                    record.revision,
+                ));
+            }
             record.position = parsed.position;
             record.updated_ts_ms = now_millis_u64();
+            record.revision = record.revision.saturating_add(1);
             record.extensions = parsed.extensions;
             record.clone()
         };
@@ -209,17 +249,36 @@ impl RpcDaemon {
                 ))
             }
         };
-        let removed = self
-            .sdk_markers
-            .lock()
-            .expect("sdk_markers mutex poisoned")
-            .remove(marker_id.as_str())
-            .is_some();
-        self.sdk_marker_order
-            .lock()
-            .expect("sdk_marker_order mutex poisoned")
-            .retain(|current| current != marker_id.as_str());
-        self.persist_sdk_domain_snapshot()?;
+        if parsed.expected_revision == 0 {
+            return Ok(self.sdk_error_response(
+                request.id,
+                "SDK_VALIDATION_INVALID_ARGUMENT",
+                "expected_revision must be greater than 0",
+            ));
+        }
+        let removed = {
+            let mut markers = self.sdk_markers.lock().expect("sdk_markers mutex poisoned");
+            let Some(existing) = markers.get(marker_id.as_str()) else {
+                false
+            };
+            if existing.revision != parsed.expected_revision {
+                return Ok(self.marker_revision_conflict_response(
+                    request.id,
+                    marker_id.as_str(),
+                    parsed.expected_revision,
+                    existing.revision,
+                ));
+            }
+            markers.remove(marker_id.as_str());
+            true
+        };
+        if removed {
+            self.sdk_marker_order
+                .lock()
+                .expect("sdk_marker_order mutex poisoned")
+                .retain(|current| current != marker_id.as_str());
+            self.persist_sdk_domain_snapshot()?;
+        }
         Ok(RpcResponse {
             id: request.id,
             result: Some(json!({ "accepted": removed, "marker_id": marker_id })),

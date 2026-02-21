@@ -24,12 +24,13 @@
     "marker_record": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["marker_id", "label", "position", "updated_ts_ms"],
+      "required": ["marker_id", "label", "position", "revision", "updated_ts_ms"],
       "properties": {
         "marker_id": { "$ref": "#/$defs/marker_id" },
         "label": { "type": "string", "minLength": 1 },
         "position": { "$ref": "#/$defs/geo_point" },
         "topic_id": { "type": ["string", "null"] },
+        "revision": { "type": "integer", "minimum": 1 },
         "updated_ts_ms": { "type": "integer", "minimum": 0 },
         "extensions": { "type": "object", "additionalProperties": true }
       }
@@ -48,9 +49,10 @@
     "marker_update_position_request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["marker_id", "position"],
+      "required": ["marker_id", "expected_revision", "position"],
       "properties": {
         "marker_id": { "$ref": "#/$defs/marker_id" },
+        "expected_revision": { "type": "integer", "minimum": 1 },
         "position": { "$ref": "#/$defs/geo_point" },
         "extensions": { "type": "object", "additionalProperties": true }
       }

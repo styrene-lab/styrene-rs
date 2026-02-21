@@ -69,6 +69,8 @@ struct SdkMarkerRecord {
     position: SdkGeoPoint,
     #[serde(default)]
     topic_id: Option<String>,
+    #[serde(default = "sdk_default_marker_revision")]
+    revision: u64,
     updated_ts_ms: u64,
     #[serde(default)]
     extensions: JsonMap<String, JsonValue>,
@@ -318,6 +320,7 @@ struct SdkMarkerListV2Params {
 #[serde(deny_unknown_fields)]
 struct SdkMarkerUpdatePositionV2Params {
     marker_id: String,
+    expected_revision: u64,
     position: SdkGeoPoint,
     #[serde(default)]
     extensions: JsonMap<String, JsonValue>,
@@ -327,8 +330,13 @@ struct SdkMarkerUpdatePositionV2Params {
 #[serde(deny_unknown_fields)]
 struct SdkMarkerDeleteV2Params {
     marker_id: String,
+    expected_revision: u64,
     #[serde(default)]
     extensions: JsonMap<String, JsonValue>,
+}
+
+fn sdk_default_marker_revision() -> u64 {
+    1
 }
 
 #[derive(Debug, Deserialize, Default)]

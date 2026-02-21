@@ -253,11 +253,14 @@ impl RpcBackendClient {
         Self::decode_field_or_root(&result, "marker", "marker_update_position response")
     }
 
-    pub(super) fn marker_delete_impl(&self, marker_id: MarkerId) -> Result<Ack, SdkError> {
+    pub(super) fn marker_delete_impl(&self, req: MarkerDeleteRequest) -> Result<Ack, SdkError> {
+        let MarkerDeleteRequest { marker_id, expected_revision, extensions } = req;
         let result = self.call_rpc(
             "sdk_marker_delete_v2",
             Some(json!({
                 "marker_id": marker_id.0,
+                "expected_revision": expected_revision,
+                "extensions": extensions,
             })),
         )?;
         Ok(Self::parse_ack(&result))

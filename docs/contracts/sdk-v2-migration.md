@@ -90,6 +90,17 @@ Timeline scope clarification:
 - This alias timeline applies to SDK-level method/event aliases.
 - The legacy runtime switch (`sdk_v25_enabled` / `LXMF_SDK_V25_ENABLED`) is allowed only in `N`.
 
+## Marker Writer Migration (Hard Break)
+
+`v2.5` marker semantics are no longer last-write-wins.
+
+Required client changes:
+
+1. Persist marker `revision` returned by `marker_create`/`marker_list`.
+2. Send `expected_revision` on `marker_update_position` and `marker_delete`.
+3. Handle `SDK_RUNTIME_CONFLICT` by refreshing marker state and retrying with the latest revision.
+4. Treat `expected_revision=0` as invalid client input.
+
 ## Machine-Checkable Migration Gates
 
 Migration gate is passing only when all checks pass:

@@ -216,7 +216,16 @@ pub struct MarkerCreateRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct MarkerUpdatePositionRequest {
     pub marker_id: MarkerId,
+    pub expected_revision: u64,
     pub position: GeoPoint,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct MarkerDeleteRequest {
+    pub marker_id: MarkerId,
+    pub expected_revision: u64,
     #[serde(default)]
     pub extensions: BTreeMap<String, JsonValue>,
 }
@@ -227,6 +236,7 @@ pub struct MarkerRecord {
     pub label: String,
     pub position: GeoPoint,
     pub topic_id: Option<TopicId>,
+    pub revision: u64,
     pub updated_ts_ms: u64,
     #[serde(default)]
     pub extensions: BTreeMap<String, JsonValue>,

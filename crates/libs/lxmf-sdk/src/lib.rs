@@ -29,11 +29,11 @@ pub use domain::{
     AttachmentListResult, AttachmentMeta, AttachmentStoreRequest, AttachmentUploadChunkAck,
     AttachmentUploadChunkRequest, AttachmentUploadCommitRequest, AttachmentUploadId,
     AttachmentUploadSession, AttachmentUploadStartRequest, GeoPoint, IdentityBundle,
-    IdentityImportRequest, IdentityRef, IdentityResolveRequest, MarkerCreateRequest, MarkerId,
-    MarkerListRequest, MarkerListResult, MarkerRecord, MarkerUpdatePositionRequest,
-    PaperMessageEnvelope, RemoteCommandRequest, RemoteCommandResponse, TelemetryPoint,
-    TelemetryQuery, TopicCreateRequest, TopicId, TopicListRequest, TopicListResult, TopicPath,
-    TopicPublishRequest, TopicRecord, TopicSubscriptionRequest, VoiceSessionId,
+    IdentityImportRequest, IdentityRef, IdentityResolveRequest, MarkerCreateRequest,
+    MarkerDeleteRequest, MarkerId, MarkerListRequest, MarkerListResult, MarkerRecord,
+    MarkerUpdatePositionRequest, PaperMessageEnvelope, RemoteCommandRequest, RemoteCommandResponse,
+    TelemetryPoint, TelemetryQuery, TopicCreateRequest, TopicId, TopicListRequest, TopicListResult,
+    TopicPath, TopicPublishRequest, TopicRecord, TopicSubscriptionRequest, VoiceSessionId,
     VoiceSessionOpenRequest, VoiceSessionState, VoiceSessionUpdateRequest,
 };
 pub use error::{code as error_code, ErrorCategory, ErrorDetails, SdkError};
