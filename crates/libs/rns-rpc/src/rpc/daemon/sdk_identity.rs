@@ -401,7 +401,7 @@ impl RpcDaemon {
             .display_name
             .as_deref()
             .and_then(Self::normalize_non_empty)
-            .map(ToString::to_string);
+            .map(|name| name.to_string());
         let trust_level = if let Some(level) = parsed.trust_level.as_deref() {
             match Self::normalize_trust_level(level) {
                 Some(value) => Some(value),
@@ -422,7 +422,7 @@ impl RpcDaemon {
                 .sdk_contacts
                 .lock()
                 .expect("sdk_contacts mutex poisoned");
-            let existing = contacts.get(identity).cloned();
+            let existing = contacts.get(&identity).cloned();
             let record = SdkContactRecord {
                 identity: identity.to_string(),
                 display_name: display_name.or_else(|| {
@@ -463,7 +463,7 @@ impl RpcDaemon {
                 .sdk_contact_order
                 .lock()
                 .expect("sdk_contact_order mutex poisoned");
-            if !order.iter().any(|current| current == identity) {
+            if !order.iter().any(|current| current == &identity) {
                 order.push(identity.to_string());
             }
         }
@@ -472,7 +472,7 @@ impl RpcDaemon {
                 .sdk_identities
                 .lock()
                 .expect("sdk_identities mutex poisoned")
-                .get_mut(identity)
+                .get_mut(&identity)
             {
                 bundle.display_name = Some(name);
             }

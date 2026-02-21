@@ -258,19 +258,21 @@ impl RpcDaemon {
         }
         let removed = {
             let mut markers = self.sdk_markers.lock().expect("sdk_markers mutex poisoned");
-            let Some(existing) = markers.get(marker_id.as_str()) else {
-                false
-            };
-            if existing.revision != parsed.expected_revision {
-                return Ok(self.marker_revision_conflict_response(
-                    request.id,
-                    marker_id.as_str(),
-                    parsed.expected_revision,
-                    existing.revision,
-                ));
+            match markers.get(marker_id.as_str()) {
+                Some(existing) => {
+                    if existing.revision != parsed.expected_revision {
+                        return Ok(self.marker_revision_conflict_response(
+                            request.id,
+                            marker_id.as_str(),
+                            parsed.expected_revision,
+                            existing.revision,
+                        ));
+                    }
+                    markers.remove(marker_id.as_str());
+                    true
+                }
+                None => false,
             }
-            markers.remove(marker_id.as_str());
-            true
         };
         if removed {
             self.sdk_marker_order
