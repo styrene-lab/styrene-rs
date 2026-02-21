@@ -39,6 +39,7 @@ This checklist is the publication gate for the Rust workspace.
 - `api-surface-check`
 - `compat-kit-check`
 - `support-policy-check`
+- `unsafe-audit-check`
 - `release-scorecard-check`
 - `extension-registry-check`
 
@@ -66,6 +67,7 @@ cargo run -p xtask -- lxmf-cli-check
 cargo run -p xtask -- dx-bootstrap-check
 cargo run -p xtask -- compat-kit-check
 cargo run -p xtask -- support-policy-check
+cargo run -p xtask -- unsafe-audit-check
 cargo run -p xtask -- release-scorecard-check
 cargo run -p xtask -- extension-registry-check
 cargo run -p xtask -- supply-chain-check
