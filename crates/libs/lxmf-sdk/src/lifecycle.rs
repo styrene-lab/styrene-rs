@@ -149,7 +149,8 @@ mod tests {
     use super::*;
     use crate::types::{
         AuthMode, BindMode, EventStreamConfig, OverflowPolicy, Profile, RedactionConfig,
-        RedactionTransform, SdkConfig,
+        RedactionTransform, SdkConfig, StoreForwardCapacityPolicy, StoreForwardConfig,
+        StoreForwardEvictionPriority,
     };
     use std::collections::BTreeMap;
 
@@ -192,6 +193,12 @@ mod tests {
                 auth_mode: AuthMode::LocalTrusted,
                 overflow_policy: OverflowPolicy::Reject,
                 block_timeout_ms: None,
+                store_forward: StoreForwardConfig {
+                    max_messages: 50_000,
+                    max_message_age_ms: 604_800_000,
+                    capacity_policy: StoreForwardCapacityPolicy::DropOldest,
+                    eviction_priority: StoreForwardEvictionPriority::TerminalFirst,
+                },
                 event_stream: EventStreamConfig {
                     max_poll_events: 256,
                     max_event_bytes: 65_536,

@@ -1,3 +1,13 @@
+const STORE_FORWARD_MAX_MESSAGES_LIMIT: usize = 1_000_000;
+
+#[derive(Clone, Debug)]
+struct SdkStoreForwardPolicy {
+    max_messages: usize,
+    max_message_age_ms: u64,
+    capacity_policy: String,
+    eviction_priority: String,
+}
+
 impl RpcDaemon {
     fn sdk_config_error(code: &str, message: &str) -> RpcError {
         RpcError::new(code, message)
@@ -84,6 +94,86 @@ impl RpcDaemon {
                 "SDK_VALIDATION_INVALID_ARGUMENT",
                 "overflow_policy=block requires block_timeout_ms",
             ));
+        }
+
+        if let Some(store_forward) = config.get("store_forward") {
+            if !store_forward.is_object() && !store_forward.is_null() {
+                return Err(Self::sdk_config_error(
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "store_forward must be an object when provided",
+                ));
+            }
+        }
+        if let Some(store_forward) = config.get("store_forward").and_then(JsonValue::as_object) {
+            const ALLOWED_STORE_FORWARD_KEYS: &[&str] = &[
+                "max_messages",
+                "max_message_age_ms",
+                "capacity_policy",
+                "eviction_priority",
+            ];
+            if let Some(key) = store_forward
+                .keys()
+                .find(|key| !ALLOWED_STORE_FORWARD_KEYS.contains(&key.as_str()))
+            {
+                return Err(Self::sdk_config_error(
+                    "SDK_CONFIG_UNKNOWN_KEY",
+                    &format!("unknown store_forward key '{key}'"),
+                ));
+            }
+            if let Some(max_messages) = store_forward.get("max_messages") {
+                let Some(value) = max_messages.as_u64() else {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "store_forward.max_messages must be an unsigned integer",
+                    ));
+                };
+                if value == 0 || value > STORE_FORWARD_MAX_MESSAGES_LIMIT as u64 {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "store_forward.max_messages must be in the range 1..=1000000",
+                    ));
+                }
+            }
+            if let Some(max_message_age_ms) = store_forward.get("max_message_age_ms") {
+                let Some(value) = max_message_age_ms.as_u64() else {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "store_forward.max_message_age_ms must be an unsigned integer",
+                    ));
+                };
+                if value == 0 {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "store_forward.max_message_age_ms must be greater than zero",
+                    ));
+                }
+            }
+            if let Some(capacity_policy) = store_forward
+                .get("capacity_policy")
+                .and_then(JsonValue::as_str)
+                .map(str::trim)
+                .map(str::to_ascii_lowercase)
+            {
+                if !matches!(capacity_policy.as_str(), "reject_new" | "drop_oldest") {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "store_forward.capacity_policy must be reject_new or drop_oldest",
+                    ));
+                }
+            }
+            if let Some(eviction_priority) = store_forward
+                .get("eviction_priority")
+                .and_then(JsonValue::as_str)
+                .map(str::trim)
+                .map(str::to_ascii_lowercase)
+            {
+                if !matches!(eviction_priority.as_str(), "oldest_first" | "terminal_first") {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "store_forward.eviction_priority must be oldest_first or terminal_first",
+                    ));
+                }
+            }
         }
 
         if let Some(event_stream) = config.get("event_stream") {
@@ -252,6 +342,141 @@ impl RpcDaemon {
         }
 
         Ok(())
+    }
+
+    fn default_store_forward_policy_for_profile(profile: &str) -> SdkStoreForwardPolicy {
+        match profile {
+            "embedded-alloc" => SdkStoreForwardPolicy {
+                max_messages: 2_000,
+                max_message_age_ms: 86_400_000,
+                capacity_policy: "drop_oldest".to_string(),
+                eviction_priority: "terminal_first".to_string(),
+            },
+            _ => SdkStoreForwardPolicy {
+                max_messages: 50_000,
+                max_message_age_ms: 604_800_000,
+                capacity_policy: "drop_oldest".to_string(),
+                eviction_priority: "terminal_first".to_string(),
+            },
+        }
+    }
+
+    fn sdk_store_forward_policy(&self) -> SdkStoreForwardPolicy {
+        let config = self
+            .sdk_runtime_config
+            .lock()
+            .expect("sdk_runtime_config mutex poisoned")
+            .clone();
+        let profile = config
+            .get("profile")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("desktop-full")
+            .trim()
+            .to_ascii_lowercase();
+        let mut policy = Self::default_store_forward_policy_for_profile(profile.as_str());
+        let Some(store_forward) = config.get("store_forward").and_then(JsonValue::as_object) else {
+            return policy;
+        };
+
+        if let Some(value) = store_forward.get("max_messages").and_then(JsonValue::as_u64) {
+            if value > 0 && value <= STORE_FORWARD_MAX_MESSAGES_LIMIT as u64 {
+                policy.max_messages = value as usize;
+            }
+        }
+        if let Some(value) = store_forward.get("max_message_age_ms").and_then(JsonValue::as_u64) {
+            if value > 0 {
+                policy.max_message_age_ms = value;
+            }
+        }
+        if let Some(value) = store_forward
+            .get("capacity_policy")
+            .and_then(JsonValue::as_str)
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+        {
+            if matches!(value.as_str(), "reject_new" | "drop_oldest") {
+                policy.capacity_policy = value;
+            }
+        }
+        if let Some(value) = store_forward
+            .get("eviction_priority")
+            .and_then(JsonValue::as_str)
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+        {
+            if matches!(value.as_str(), "oldest_first" | "terminal_first") {
+                policy.eviction_priority = value;
+            }
+        }
+        policy
+    }
+
+    fn enforce_store_forward_retention(&self, now_ts: i64) -> Result<bool, std::io::Error> {
+        let policy = self.sdk_store_forward_policy();
+        let max_age = i64::try_from(policy.max_message_age_ms).unwrap_or(i64::MAX);
+        let retention_cutoff = now_ts.saturating_sub(max_age);
+        let expired_ids = self
+            .store
+            .expire_outbound_messages_before(retention_cutoff)
+            .map_err(std::io::Error::other)?;
+        if !expired_ids.is_empty() {
+            for message_id in expired_ids.iter() {
+                self.append_delivery_trace(message_id, "expired".to_string());
+            }
+            self.publish_event(RpcEvent {
+                event_type: "store_forward_expired".to_string(),
+                payload: json!({
+                    "expired_count": expired_ids.len(),
+                    "expired_ids": expired_ids,
+                    "cutoff_ts_ms": retention_cutoff,
+                    "max_message_age_ms": policy.max_message_age_ms,
+                }),
+            });
+        }
+
+        let outbound_count =
+            self.store.count_outbound_messages().map_err(std::io::Error::other)? as usize;
+        if outbound_count < policy.max_messages {
+            return Ok(false);
+        }
+
+        if policy.capacity_policy == "reject_new" {
+            self.publish_event(RpcEvent {
+                event_type: "store_forward_capacity_reached".to_string(),
+                payload: json!({
+                    "policy": "reject_new",
+                    "outbound_count": outbound_count,
+                    "max_messages": policy.max_messages,
+                }),
+            });
+            return Ok(true);
+        }
+
+        let prune_count = outbound_count
+            .saturating_sub(policy.max_messages)
+            .saturating_add(1);
+        let pruned_ids = self
+            .store
+            .prune_outbound_messages(prune_count, policy.eviction_priority.as_str())
+            .map_err(std::io::Error::other)?;
+        if !pruned_ids.is_empty() {
+            for message_id in pruned_ids.iter() {
+                self.append_delivery_trace(message_id, "rejected:store_forward_pruned".to_string());
+            }
+            self.publish_event(RpcEvent {
+                event_type: "store_forward_pruned".to_string(),
+                payload: json!({
+                    "pruned_count": pruned_ids.len(),
+                    "pruned_ids": pruned_ids,
+                    "eviction_priority": policy.eviction_priority,
+                    "max_messages": policy.max_messages,
+                }),
+            });
+        }
+
+        let remaining =
+            self.store.count_outbound_messages().map_err(std::io::Error::other)? as usize;
+        Ok(remaining >= policy.max_messages)
     }
 
     fn default_sdk_identity(identity_hash: &str) -> SdkIdentityBundle {

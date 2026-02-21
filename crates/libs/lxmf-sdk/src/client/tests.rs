@@ -5,6 +5,7 @@ use crate::event::{SdkEvent, Severity};
 use crate::types::{
     AuthMode, BindMode, EventStreamConfig, GroupRecipientState, GroupSendRequest, OverflowPolicy,
     Profile, RedactionConfig, RedactionTransform, SdkConfig, ShutdownMode,
+    StoreForwardCapacityPolicy, StoreForwardConfig, StoreForwardEvictionPriority,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, VecDeque};
@@ -161,6 +162,12 @@ fn sample_start_request() -> StartRequest {
             auth_mode: AuthMode::LocalTrusted,
             overflow_policy: OverflowPolicy::Reject,
             block_timeout_ms: None,
+            store_forward: StoreForwardConfig {
+                max_messages: 50_000,
+                max_message_age_ms: 604_800_000,
+                capacity_policy: StoreForwardCapacityPolicy::DropOldest,
+                eviction_priority: StoreForwardEvictionPriority::TerminalFirst,
+            },
             event_stream: EventStreamConfig {
                 max_poll_events: 256,
                 max_event_bytes: 65_536,

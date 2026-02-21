@@ -10,4 +10,5 @@ mod tests {
     include!("tests/events_basic.rs");
     include!("tests/release_domains.rs");
     include!("tests/runtime_state.rs");
+    include!("tests/store_forward_policy.rs");
 }

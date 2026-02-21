@@ -15,6 +15,13 @@ impl RpcDaemon {
         include_ticket: Option<bool>,
     ) -> Result<RpcResponse, std::io::Error> {
         let timestamp = now_i64();
+        if self.enforce_store_forward_retention(timestamp)? {
+            return Ok(self.sdk_error_response(
+                request_id,
+                "SDK_RUNTIME_STORE_FORWARD_CAPACITY_REACHED",
+                "store-forward capacity reached and policy rejected new outbound message",
+            ));
+        }
         self.append_delivery_trace(&id, "queued".to_string());
         let mut record = MessageRecord {
             id: id.clone(),

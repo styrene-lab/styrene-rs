@@ -6,14 +6,16 @@ mod session;
 
 pub use config::{
     AuthMode, BindMode, EventStreamConfig, MtlsAuthConfig, OverflowPolicy, Profile,
-    RedactionConfig, RedactionTransform, RpcBackendConfig, SdkConfig, TokenAuthConfig,
+    RedactionConfig, RedactionTransform, RpcBackendConfig, SdkConfig, StoreForwardCapacityPolicy,
+    StoreForwardConfig, StoreForwardEvictionPriority, TokenAuthConfig,
 };
 pub use delivery::{
     Ack, CancelResult, DeliverySnapshot, DeliveryState, GroupRecipientState, GroupSendOutcome,
     GroupSendRequest, GroupSendResult, MessageId, SendRequest,
 };
 pub use patch::{
-    ConfigPatch, EventStreamPatch, MtlsAuthPatch, RedactionPatch, RpcBackendPatch, TokenAuthPatch,
+    ConfigPatch, EventStreamPatch, MtlsAuthPatch, RedactionPatch, RpcBackendPatch,
+    StoreForwardPatch, TokenAuthPatch,
 };
 pub use runtime::{RuntimeSnapshot, RuntimeState, ShutdownMode, TickBudget, TickResult};
 pub use session::{ClientHandle, StartRequest};

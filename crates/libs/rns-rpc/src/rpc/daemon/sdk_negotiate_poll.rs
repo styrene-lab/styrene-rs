@@ -101,6 +101,53 @@ impl RpcDaemon {
             ));
         }
 
+        let mut store_forward_policy =
+            Self::default_store_forward_policy_for_profile(profile.as_str());
+        if let Some(store_forward) = parsed.config.store_forward.as_ref() {
+            if let Some(max_messages) = store_forward.max_messages {
+                if max_messages == 0 || max_messages > STORE_FORWARD_MAX_MESSAGES_LIMIT {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "store_forward.max_messages must be in the range 1..=1000000",
+                    ));
+                }
+                store_forward_policy.max_messages = max_messages;
+            }
+            if let Some(max_message_age_ms) = store_forward.max_message_age_ms {
+                if max_message_age_ms == 0 {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "store_forward.max_message_age_ms must be greater than zero",
+                    ));
+                }
+                store_forward_policy.max_message_age_ms = max_message_age_ms;
+            }
+            if let Some(capacity_policy) = store_forward.capacity_policy.as_deref() {
+                let normalized = capacity_policy.trim().to_ascii_lowercase();
+                if !matches!(normalized.as_str(), "reject_new" | "drop_oldest") {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "store_forward.capacity_policy must be reject_new or drop_oldest",
+                    ));
+                }
+                store_forward_policy.capacity_policy = normalized;
+            }
+            if let Some(eviction_priority) = store_forward.eviction_priority.as_deref() {
+                let normalized = eviction_priority.trim().to_ascii_lowercase();
+                if !matches!(normalized.as_str(), "oldest_first" | "terminal_first") {
+                    return Ok(self.sdk_error_response(
+                        request.id,
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "store_forward.eviction_priority must be oldest_first or terminal_first",
+                    ));
+                }
+                store_forward_policy.eviction_priority = normalized;
+            }
+        }
+
         match auth_mode.as_str() {
             "token" => {
                 let Some(token_auth) = parsed
@@ -269,6 +316,12 @@ impl RpcDaemon {
                 "auth_mode": auth_mode,
                 "overflow_policy": overflow_policy,
                 "block_timeout_ms": parsed.config.block_timeout_ms,
+                "store_forward": {
+                    "max_messages": store_forward_policy.max_messages,
+                    "max_message_age_ms": store_forward_policy.max_message_age_ms,
+                    "capacity_policy": store_forward_policy.capacity_policy,
+                    "eviction_priority": store_forward_policy.eviction_priority,
+                },
                 "rpc_backend": rpc_backend,
                 "event_stream": {
                     "max_poll_events": limits.get("max_poll_events").and_then(JsonValue::as_u64).unwrap_or(256),

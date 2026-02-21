@@ -8,6 +8,12 @@ fn base_config() -> SdkConfig {
         auth_mode: AuthMode::LocalTrusted,
         overflow_policy: OverflowPolicy::Reject,
         block_timeout_ms: None,
+        store_forward: StoreForwardConfig {
+            max_messages: 50_000,
+            max_message_age_ms: 604_800_000,
+            capacity_policy: StoreForwardCapacityPolicy::DropOldest,
+            eviction_priority: StoreForwardEvictionPriority::TerminalFirst,
+        },
         event_stream: EventStreamConfig {
             max_poll_events: 128,
             max_event_bytes: 32_768,
@@ -50,6 +56,21 @@ fn config_rejects_remote_bind_without_token_or_mtls() {
 fn config_accepts_local_trusted_profile() {
     let config = base_config();
     assert!(config.validate().is_ok());
+}
+
+#[test]
+fn config_rejects_zero_store_forward_limits() {
+    let mut config = base_config();
+    config.store_forward.max_messages = 0;
+    let err =
+        config.validate().expect_err("zero store-forward message capacity should fail validation");
+    assert_eq!(err.machine_code, crate::error::code::VALIDATION_INVALID_ARGUMENT);
+
+    let mut config = base_config();
+    config.store_forward.max_messages = 1;
+    config.store_forward.max_message_age_ms = 0;
+    let err = config.validate().expect_err("zero store-forward age limit should fail validation");
+    assert_eq!(err.machine_code, crate::error::code::VALIDATION_INVALID_ARGUMENT);
 }
 
 #[test]
@@ -106,6 +127,7 @@ fn config_patch_serialization_preserves_absent_vs_null() {
     let absent_patch = ConfigPatch {
         overflow_policy: None,
         block_timeout_ms: None,
+        store_forward: None,
         event_stream: None,
         idempotency_ttl_ms: None,
         redaction: None,
@@ -118,6 +140,7 @@ fn config_patch_serialization_preserves_absent_vs_null() {
     let clear_patch = ConfigPatch {
         overflow_policy: Some(None),
         block_timeout_ms: None,
+        store_forward: None,
         event_stream: None,
         idempotency_ttl_ms: None,
         redaction: None,
@@ -194,6 +217,20 @@ fn sdk_config_remote_auth_helpers_apply_valid_security_modes() {
     assert!(mtls.validate().is_ok());
     assert_eq!(mtls.bind_mode, BindMode::Remote);
     assert_eq!(mtls.auth_mode, AuthMode::Mtls);
+}
+
+#[test]
+fn sdk_config_store_forward_helpers_apply_policy_mutations() {
+    let config = SdkConfig::desktop_full_default()
+        .with_store_forward_limits(4096, 120_000)
+        .with_store_forward_policy(
+            StoreForwardCapacityPolicy::RejectNew,
+            StoreForwardEvictionPriority::OldestFirst,
+        );
+    assert_eq!(config.store_forward.max_messages, 4096);
+    assert_eq!(config.store_forward.max_message_age_ms, 120_000);
+    assert_eq!(config.store_forward.capacity_policy, StoreForwardCapacityPolicy::RejectNew);
+    assert_eq!(config.store_forward.eviction_priority, StoreForwardEvictionPriority::OldestFirst);
 }
 
 #[test]
