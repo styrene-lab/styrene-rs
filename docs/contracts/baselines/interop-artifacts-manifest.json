@@ -48,8 +48,8 @@
     },
     {
       "path": "docs/contracts/schema-driven-clients.md",
-      "bytes": 2225,
-      "sha256": "acdeb4660aa922808a52e89990a39b2af61c354ccc4bbcdaedee18f14e93b5c2"
+      "bytes": 2403,
+      "sha256": "29fc40ec4300fde2c4002189e49957d3557a321d4e2e54df3d6a953239da0cb7"
     },
     {
       "path": "docs/contracts/sdk-v2-api-stability.md",
@@ -1248,8 +1248,8 @@
     },
     {
       "path": "docs/schemas/sdk/v2/clients/client-generation-manifest.json",
-      "bytes": 1873,
-      "sha256": "c7386320ff9083525340dc46d9bc349679f829b54fcd38e8f2f3f7d31bd4a9fc"
+      "bytes": 1816,
+      "sha256": "46ea1745fe6b2da4f3306edb9f0db085b8b5805cadd256b1f76d4d54d6ce38bd"
     },
     {
       "path": "docs/schemas/sdk/v2/clients/client-generation-manifest.schema.json",
