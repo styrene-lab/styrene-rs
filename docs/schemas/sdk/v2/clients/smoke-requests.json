@@ -1,0 +1,42 @@
+{
+  "contract_release": "v2.5",
+  "schema_namespace": "v2",
+  "smoke_vectors": [
+    {
+      "language": "go",
+      "method": "sdk_negotiate_v2",
+      "request": {
+        "supported_contract_versions": [
+          2
+        ],
+        "requested_capabilities": [
+          "sdk.capability.cursor_replay"
+        ],
+        "profile": "desktop-full",
+        "bind_mode": "local_only",
+        "auth_mode": "local_trusted",
+        "overflow_policy": "reject"
+      }
+    },
+    {
+      "language": "javascript",
+      "method": "send_message_v2",
+      "request": {
+        "source": "source-a",
+        "destination": "destination-b",
+        "payload": {
+          "content": "hello"
+        },
+        "idempotency_key": "idem-1"
+      }
+    },
+    {
+      "language": "python",
+      "method": "sdk_poll_events_v2",
+      "request": {
+        "cursor": null,
+        "max_events": 64
+      }
+    }
+  ]
+}

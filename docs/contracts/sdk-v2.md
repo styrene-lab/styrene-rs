@@ -366,3 +366,4 @@ Auth mode defaults and requirements:
 - Backend SPI: `docs/contracts/sdk-v2-backends.md`
 - Migration and cutover: `docs/contracts/sdk-v2-migration.md`
 - Capability/profile matrix: `docs/contracts/sdk-v2-feature-matrix.md`
+- Schema-driven client generation: `docs/contracts/schema-driven-clients.md`
