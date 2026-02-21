@@ -1,6 +1,7 @@
 use core::cmp;
 use core::fmt;
 
+use alloc::string::String;
 use crypto_common::typenum::Unsigned;
 use crypto_common::OutputSizeUser;
 use rand_core::CryptoRngCore;

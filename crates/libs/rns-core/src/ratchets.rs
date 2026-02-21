@@ -1,4 +1,5 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use alloc::vec;
+use alloc::vec::Vec;
 
 use rand_core::CryptoRngCore;
 use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
@@ -87,5 +88,15 @@ pub fn decrypt_with_identity(
 }
 
 pub(crate) fn now_secs() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64()
+    #[cfg(feature = "std")]
+    {
+        return std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        0.0
+    }
 }

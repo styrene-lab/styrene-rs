@@ -1,12 +1,16 @@
 use crate::error::LxmfError;
 use crate::message::Payload;
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
 use base64::Engine;
 use ed25519_dalek::Signature;
 use rand_core::CryptoRngCore;
 use rns_core::crypt::fernet::{Fernet, PlainText, FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE};
 use rns_core::identity::{DerivedKey, Identity, PrivateIdentity, PUBLIC_KEY_LENGTH};
 use sha2::{Digest, Sha256};
-use std::path::Path;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 pub const SIGNATURE_LENGTH: usize = ed25519_dalek::SIGNATURE_LENGTH;
@@ -123,7 +127,8 @@ impl WireMessage {
         Ok(Self { destination: dest, source: src, signature: Some(signature), payload })
     }
 
-    pub fn unpack_from_file(path: impl AsRef<Path>) -> Result<Self, LxmfError> {
+    #[cfg(feature = "std")]
+    pub fn unpack_from_file(path: impl AsRef<std::path::Path>) -> Result<Self, LxmfError> {
         let bytes = std::fs::read(path).map_err(|e| LxmfError::Io(e.to_string()))?;
         Self::unpack(&bytes)
     }
@@ -164,17 +169,20 @@ impl WireMessage {
         Self::unpack(bytes)
     }
 
-    pub fn unpack_storage_from_file(path: impl AsRef<Path>) -> Result<Self, LxmfError> {
+    #[cfg(feature = "std")]
+    pub fn unpack_storage_from_file(path: impl AsRef<std::path::Path>) -> Result<Self, LxmfError> {
         let bytes = std::fs::read(path).map_err(|e| LxmfError::Io(e.to_string()))?;
         Self::unpack_storage(&bytes)
     }
 
-    pub fn pack_to_file(&self, path: impl AsRef<Path>) -> Result<(), LxmfError> {
+    #[cfg(feature = "std")]
+    pub fn pack_to_file(&self, path: impl AsRef<std::path::Path>) -> Result<(), LxmfError> {
         let bytes = self.pack()?;
         std::fs::write(path, bytes).map_err(|e| LxmfError::Io(e.to_string()))
     }
 
-    pub fn pack_storage_to_file(&self, path: impl AsRef<Path>) -> Result<(), LxmfError> {
+    #[cfg(feature = "std")]
+    pub fn pack_storage_to_file(&self, path: impl AsRef<std::path::Path>) -> Result<(), LxmfError> {
         let bytes = self.pack_storage()?;
         std::fs::write(path, bytes).map_err(|e| LxmfError::Io(e.to_string()))
     }

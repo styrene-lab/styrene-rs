@@ -289,6 +289,7 @@ enum XtaskCommand {
     ReproducibleBuildCheck,
     SdkMatrixCheck,
     EmbeddedLinkCheck,
+    EmbeddedCoreCheck,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -342,6 +343,7 @@ enum CiStage {
     ReproducibleBuildCheck,
     SdkMatrixCheck,
     EmbeddedLinkCheck,
+    EmbeddedCoreCheck,
     MigrationChecks,
     ArchitectureChecks,
     ForbiddenDeps,
@@ -399,6 +401,7 @@ fn main() -> Result<()> {
         XtaskCommand::ReproducibleBuildCheck => run_reproducible_build_check(),
         XtaskCommand::SdkMatrixCheck => run_sdk_matrix_check(),
         XtaskCommand::EmbeddedLinkCheck => run_embedded_link_check(),
+        XtaskCommand::EmbeddedCoreCheck => run_embedded_core_check(),
     }
 }
 
@@ -459,6 +462,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_reproducible_build_check()?;
     run_sdk_matrix_check()?;
     run_embedded_link_check()?;
+    run_embedded_core_check()?;
     run_migration_checks()?;
     run_architecture_checks()?;
     Ok(())
@@ -521,6 +525,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::ReproducibleBuildCheck => run_reproducible_build_check(),
         CiStage::SdkMatrixCheck => run_sdk_matrix_check(),
         CiStage::EmbeddedLinkCheck => run_embedded_link_check(),
+        CiStage::EmbeddedCoreCheck => run_embedded_core_check(),
         CiStage::MigrationChecks => run_migration_checks(),
         CiStage::ArchitectureChecks => run_architecture_checks(),
         CiStage::ForbiddenDeps => run_forbidden_deps(),
@@ -1846,6 +1851,26 @@ fn run_embedded_link_check() -> Result<()> {
         .with_context(|| format!("missing {RPC_CONTRACT_PATH}"))?;
     if !rpc_contract.contains("Embedded link adapters (serial/BLE/LoRa)") {
         bail!("rpc contract must document embedded link adapter compatibility note");
+    }
+
+    Ok(())
+}
+
+fn run_embedded_core_check() -> Result<()> {
+    run("cargo", &["check", "-p", "lxmf-core", "--no-default-features", "--features", "alloc"])?;
+    run("cargo", &["check", "-p", "rns-core", "--no-default-features", "--features", "alloc"])?;
+
+    let matrix = fs::read_to_string("docs/contracts/sdk-v2-feature-matrix.md")
+        .context("missing docs/contracts/sdk-v2-feature-matrix.md")?;
+    for marker in [
+        "| `lxmf-core` |",
+        "| `rns-core` |",
+        "`alloc-ready`",
+        "`wire_fields` JSON bridge only (`std`-gated module)",
+    ] {
+        if !matrix.contains(marker) {
+            bail!("embedded feature matrix is missing required marker '{marker}'");
+        }
     }
 
     Ok(())

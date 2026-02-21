@@ -3,6 +3,8 @@ use crate::{
     error::RnsError,
     packet::DestinationType,
 };
+use alloc::vec;
+use alloc::vec::Vec;
 use rand_core::OsRng;
 
 pub trait Direction {}

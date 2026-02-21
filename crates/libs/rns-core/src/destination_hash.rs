@@ -1,4 +1,5 @@
-use std::io::{Error, ErrorKind};
+#[cfg(not(feature = "std"))]
+use crate::RnsError;
 
 pub fn parse_destination_hash(input: &str) -> Option<[u8; 16]> {
     let bytes = hex::decode(input.trim()).ok()?;
@@ -16,11 +17,17 @@ pub fn parse_destination_hash(input: &str) -> Option<[u8; 16]> {
     }
 }
 
-pub fn parse_destination_hash_required(input: &str) -> Result<[u8; 16], Error> {
+#[cfg(feature = "std")]
+pub fn parse_destination_hash_required(input: &str) -> Result<[u8; 16], std::io::Error> {
     parse_destination_hash(input).ok_or_else(|| {
-        Error::new(
-            ErrorKind::InvalidInput,
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
             format!("invalid destination hash '{input}' (expected 16-byte or 32-byte hex)"),
         )
     })
+}
+
+#[cfg(not(feature = "std"))]
+pub fn parse_destination_hash_required(input: &str) -> Result<[u8; 16], RnsError> {
+    parse_destination_hash(input).ok_or(RnsError::InvalidArgument)
 }

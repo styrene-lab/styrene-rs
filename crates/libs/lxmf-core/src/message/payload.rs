@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::error::LxmfError;
+use alloc::format;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Payload {

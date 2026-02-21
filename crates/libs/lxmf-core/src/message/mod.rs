@@ -13,8 +13,21 @@ pub use types::{MessageMethod, MessageState, TransportMethod, UnverifiedReason};
 pub use wire::WireMessage;
 
 use crate::error::LxmfError;
+use alloc::string::String;
+use alloc::vec::Vec;
 use rns_core::identity::PrivateIdentity;
-use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(feature = "std")]
+fn now_secs_f64() -> f64 {
+    let now =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    now.as_secs_f64()
+}
+
+#[cfg(not(feature = "std"))]
+fn now_secs_f64() -> f64 {
+    0.0
+}
 
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -105,10 +118,7 @@ impl Message {
             self.destination_hash.ok_or_else(|| LxmfError::Encode("missing destination".into()))?;
         let source = self.source_hash.ok_or_else(|| LxmfError::Encode("missing source".into()))?;
 
-        let timestamp = self.timestamp.unwrap_or_else(|| {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-            now.as_secs_f64()
-        });
+        let timestamp = self.timestamp.unwrap_or_else(now_secs_f64);
 
         let payload = Payload::new(
             timestamp,

@@ -68,8 +68,8 @@ This table is the source of truth for constrained-device portability planning.
 
 | Crate | std_required | alloc_target | status | removal_plan |
 | --- | --- | --- | --- | --- |
-| `lxmf-core` | `wire_fields` JSON conversion paths, attachment text decoding helpers | message encode/decode primitives and msgpack payload model | `std-first` | split JSON bridge into `std` adapter module and keep protocol encode/decode under `alloc` |
-| `rns-core` | identity key generation entropy plumbing (`rand_core/getrandom`) | packet/hash/destination/ratchet primitives | `std-first` | introduce host entropy trait + feature-gated std adapter for key material generation |
+| `lxmf-core` | `wire_fields` JSON bridge only (`std`-gated module) | message encode/decode primitives and msgpack payload model | `alloc-ready` | keep JSON conversion in `std` module and preserve alloc-only protocol core |
+| `rns-core` | host entropy sources for random key generation (`rand_core/getrandom`) | packet/hash/destination/ratchet primitives | `alloc-ready` | follow-up hardening: injectable entropy adapter for `no_std` targets without OS RNG |
 
 Status legend:
 - `std-first`: currently std-coupled with documented `alloc` migration plan.

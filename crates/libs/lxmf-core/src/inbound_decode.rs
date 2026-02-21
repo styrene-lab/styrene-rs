@@ -1,5 +1,7 @@
 use crate::message::Message;
 use crate::LxmfError;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InboundPayloadMode {
