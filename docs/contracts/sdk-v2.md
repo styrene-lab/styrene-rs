@@ -277,6 +277,24 @@ Rules:
 6. `eviction_priority=oldest_first` prunes by `(timestamp ASC, id ASC)` without terminal preference.
 7. Retention behavior must be deterministic for identical store state and policy input.
 
+## Event Sink Bridge Semantics
+
+Mutable runtime config may include `event_sink`:
+
+- `enabled`
+- `max_event_bytes`
+- `allow_kinds` (`webhook|mqtt|custom`)
+- `extensions`
+
+Rules:
+
+1. Sink dispatch is optional and must never replace canonical event polling semantics.
+2. Runtime emits sink envelopes only when `event_sink.enabled=true`.
+3. Sink envelopes are derived from already-redacted events.
+4. `allow_kinds` is an allowlist; non-matching sink kinds are skipped deterministically.
+5. Oversized sink envelopes (`> max_event_bytes`) are skipped and counted as sink skips.
+6. Sink adapter failures must be isolated (no crash, no local event loss) and counted in metrics.
+
 ## Config and Policy Mutation
 
 Rules:

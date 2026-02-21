@@ -49,10 +49,11 @@ pub use profiles::{
 };
 pub use types::{
     Ack, AuthMode, BindMode, CancelResult, ClientHandle, ConfigPatch, DeliverySnapshot,
-    DeliveryState, EventStreamConfig, GroupRecipientState, GroupSendOutcome, GroupSendRequest,
-    GroupSendResult, MessageId, OverflowPolicy, Profile, RedactionConfig, RedactionTransform,
-    RpcBackendConfig, RuntimeSnapshot, RuntimeState, SdkConfig, SendRequest, ShutdownMode,
-    StartRequest, StoreForwardCapacityPolicy, StoreForwardConfig, StoreForwardEvictionPriority,
+    DeliveryState, EventSinkConfig, EventSinkKind, EventSinkPatch, EventStreamConfig,
+    GroupRecipientState, GroupSendOutcome, GroupSendRequest, GroupSendResult, MessageId,
+    OverflowPolicy, Profile, RedactionConfig, RedactionTransform, RpcBackendConfig,
+    RuntimeSnapshot, RuntimeState, SdkConfig, SendRequest, ShutdownMode, StartRequest,
+    StoreForwardCapacityPolicy, StoreForwardConfig, StoreForwardEvictionPriority,
     StoreForwardPatch, TickBudget, TickResult,
 };
 

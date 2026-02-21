@@ -3,9 +3,9 @@ use crate::api::LxmfSdkGroupDelivery;
 use crate::capability::EffectiveLimits;
 use crate::event::{SdkEvent, Severity};
 use crate::types::{
-    AuthMode, BindMode, EventStreamConfig, GroupRecipientState, GroupSendRequest, OverflowPolicy,
-    Profile, RedactionConfig, RedactionTransform, SdkConfig, ShutdownMode,
-    StoreForwardCapacityPolicy, StoreForwardConfig, StoreForwardEvictionPriority,
+    AuthMode, BindMode, EventSinkConfig, EventSinkKind, EventStreamConfig, GroupRecipientState,
+    GroupSendRequest, OverflowPolicy, Profile, RedactionConfig, RedactionTransform, SdkConfig,
+    ShutdownMode, StoreForwardCapacityPolicy, StoreForwardConfig, StoreForwardEvictionPriority,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, VecDeque};
@@ -173,6 +173,16 @@ fn sample_start_request() -> StartRequest {
                 max_event_bytes: 65_536,
                 max_batch_bytes: 1_048_576,
                 max_extension_keys: 32,
+            },
+            event_sink: EventSinkConfig {
+                enabled: false,
+                max_event_bytes: 65_536,
+                allow_kinds: vec![
+                    EventSinkKind::Webhook,
+                    EventSinkKind::Mqtt,
+                    EventSinkKind::Custom,
+                ],
+                extensions: BTreeMap::new(),
             },
             idempotency_ttl_ms: 86_400_000,
             redaction: RedactionConfig {

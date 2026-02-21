@@ -101,6 +101,17 @@ Required client changes:
 3. Handle `SDK_RUNTIME_CONFLICT` by refreshing marker state and retrying with the latest revision.
 4. Treat `expected_revision=0` as invalid client input.
 
+## Event Sink Bridge Migration
+
+`v2.5` adds optional runtime event-sink fanout controls.
+
+Required operator/client changes:
+
+1. Treat sink fanout as additive to `poll_events`; do not replace cursor polling with sink delivery.
+2. Use `configure.patch.event_sink` to enable sink fanout and set `allow_kinds`.
+3. Keep `redaction.enabled=true` when `event_sink.enabled=true`; runtime rejects unsafe configs.
+4. Update observability dashboards to monitor `sdk_event_sink_publish_total`, `sdk_event_sink_error_total`, and `sdk_event_sink_skipped_total`.
+
 ## Machine-Checkable Migration Gates
 
 Migration gate is passing only when all checks pass:

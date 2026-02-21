@@ -1,5 +1,6 @@
 use super::config::{
-    OverflowPolicy, RedactionTransform, StoreForwardCapacityPolicy, StoreForwardEvictionPriority,
+    EventSinkKind, OverflowPolicy, RedactionTransform, StoreForwardCapacityPolicy,
+    StoreForwardEvictionPriority,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -95,6 +96,19 @@ pub struct StoreForwardPatch {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
+pub struct EventSinkPatch {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<Option<bool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_event_bytes: Option<Option<usize>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_kinds: Option<Option<Vec<EventSinkKind>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<Option<BTreeMap<String, JsonValue>>>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub struct ConfigPatch {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overflow_policy: Option<Option<OverflowPolicy>>,
@@ -102,6 +116,8 @@ pub struct ConfigPatch {
     pub block_timeout_ms: Option<Option<u64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store_forward: Option<Option<StoreForwardPatch>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_sink: Option<Option<EventSinkPatch>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_stream: Option<Option<EventStreamPatch>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -134,6 +150,11 @@ impl ConfigPatch {
         self
     }
 
+    pub fn with_event_sink_patch(mut self, patch: EventSinkPatch) -> Self {
+        self.event_sink = Some(Some(patch));
+        self
+    }
+
     pub fn with_idempotency_ttl_ms(mut self, ttl_ms: u64) -> Self {
         self.idempotency_ttl_ms = Some(Some(ttl_ms));
         self
@@ -150,6 +171,7 @@ impl ConfigPatch {
         self.overflow_policy.is_none()
             && self.block_timeout_ms.is_none()
             && self.store_forward.is_none()
+            && self.event_sink.is_none()
             && self.event_stream.is_none()
             && self.idempotency_ttl_ms.is_none()
             && self.redaction.is_none()

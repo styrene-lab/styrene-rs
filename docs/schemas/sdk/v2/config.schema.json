@@ -44,6 +44,30 @@
         "eviction_priority": { "$ref": "#/$defs/store_forward_eviction_priority" }
       }
     },
+    "event_sink_kind": {
+      "type": "string",
+      "enum": ["webhook", "mqtt", "custom"]
+    },
+    "event_sink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "max_event_bytes", "allow_kinds"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "max_event_bytes": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 2097152
+        },
+        "allow_kinds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/event_sink_kind" }
+        },
+        "extensions": { "$ref": "#/$defs/extension_map" }
+      }
+    },
     "extension_map": {
       "type": "object",
       "maxProperties": 32,
@@ -171,6 +195,7 @@
         "block_timeout_ms": { "type": "integer", "minimum": 1 },
         "store_forward": { "$ref": "#/$defs/store_forward" },
         "event_stream": { "$ref": "#/$defs/event_stream" },
+        "event_sink": { "$ref": "#/$defs/event_sink" },
         "idempotency_ttl_ms": { "type": "integer", "minimum": 1 },
         "redaction": { "$ref": "#/$defs/redaction" },
         "rpc_backend": { "$ref": "#/$defs/rpc_backend" },
@@ -416,6 +441,35 @@
         }
       }
     },
+    "event_sink_patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": ["boolean", "null"] },
+        "max_event_bytes": {
+          "type": ["integer", "null"],
+          "minimum": 256,
+          "maximum": 2097152
+        },
+        "allow_kinds": {
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/event_sink_kind" }
+            },
+            { "type": "null" }
+          ]
+        },
+        "extensions": {
+          "oneOf": [
+            { "$ref": "#/$defs/extension_map" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
     "config_patch": {
       "type": "object",
       "additionalProperties": false,
@@ -434,6 +488,12 @@
         "store_forward": {
           "oneOf": [
             { "$ref": "#/$defs/store_forward_patch" },
+            { "type": "null" }
+          ]
+        },
+        "event_sink": {
+          "oneOf": [
+            { "$ref": "#/$defs/event_sink_patch" },
             { "type": "null" }
           ]
         },

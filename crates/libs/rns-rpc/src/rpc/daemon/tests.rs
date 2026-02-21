@@ -11,4 +11,5 @@ mod tests {
     include!("tests/release_domains.rs");
     include!("tests/runtime_state.rs");
     include!("tests/store_forward_policy.rs");
+    include!("tests/event_sink_bridges.rs");
 }

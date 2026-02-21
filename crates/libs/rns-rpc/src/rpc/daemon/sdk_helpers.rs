@@ -1,4 +1,5 @@
 const STORE_FORWARD_MAX_MESSAGES_LIMIT: usize = 1_000_000;
+const EVENT_SINK_MAX_EVENT_BYTES_LIMIT: u64 = 2_097_152;
 
 #[derive(Clone, Debug)]
 struct SdkStoreForwardPolicy {
@@ -252,6 +253,95 @@ impl RpcDaemon {
             }
         }
 
+        if let Some(event_sink) = config.get("event_sink") {
+            if !event_sink.is_object() && !event_sink.is_null() {
+                return Err(Self::sdk_config_error(
+                    "SDK_VALIDATION_INVALID_ARGUMENT",
+                    "event_sink must be an object when provided",
+                ));
+            }
+        }
+        if let Some(event_sink) = config.get("event_sink").and_then(JsonValue::as_object) {
+            const ALLOWED_EVENT_SINK_KEYS: &[&str] =
+                &["enabled", "max_event_bytes", "allow_kinds", "extensions"];
+            if let Some(key) = event_sink
+                .keys()
+                .find(|key| !ALLOWED_EVENT_SINK_KEYS.contains(&key.as_str()))
+            {
+                return Err(Self::sdk_config_error(
+                    "SDK_CONFIG_UNKNOWN_KEY",
+                    &format!("unknown event_sink key '{key}'"),
+                ));
+            }
+            if let Some(enabled) = event_sink.get("enabled") {
+                if !enabled.is_boolean() {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "event_sink.enabled must be a boolean",
+                    ));
+                }
+            }
+            if let Some(max_event_bytes) = event_sink.get("max_event_bytes") {
+                let Some(value) = max_event_bytes.as_u64() else {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "event_sink.max_event_bytes must be an unsigned integer",
+                    ));
+                };
+                if !(256..=EVENT_SINK_MAX_EVENT_BYTES_LIMIT).contains(&value) {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "event_sink.max_event_bytes must be in the range 256..=2097152",
+                    ));
+                }
+            }
+            if let Some(allow_kinds) = event_sink.get("allow_kinds") {
+                let Some(values) = allow_kinds.as_array() else {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "event_sink.allow_kinds must be an array of strings",
+                    ));
+                };
+                if values.is_empty() {
+                    return Err(Self::sdk_config_error(
+                        "SDK_VALIDATION_INVALID_ARGUMENT",
+                        "event_sink.allow_kinds must include at least one sink kind",
+                    ));
+                }
+                for value in values {
+                    let Some(kind) = value
+                        .as_str()
+                        .map(str::trim)
+                        .map(str::to_ascii_lowercase)
+                        .filter(|kind| !kind.is_empty())
+                    else {
+                        return Err(Self::sdk_config_error(
+                            "SDK_VALIDATION_INVALID_ARGUMENT",
+                            "event_sink.allow_kinds entries must be non-empty strings",
+                        ));
+                    };
+                    if !matches!(kind.as_str(), "webhook" | "mqtt" | "custom") {
+                        return Err(Self::sdk_config_error(
+                            "SDK_VALIDATION_INVALID_ARGUMENT",
+                            "event_sink.allow_kinds supports webhook, mqtt, or custom",
+                        ));
+                    }
+                }
+            }
+            if event_sink.get("enabled").and_then(JsonValue::as_bool).unwrap_or(false)
+                && !config
+                    .get("redaction")
+                    .and_then(|value| value.get("enabled"))
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or(true)
+            {
+                return Err(Self::sdk_config_error(
+                    "SDK_SECURITY_REDACTION_REQUIRED",
+                    "event_sink.enabled requires redaction.enabled=true",
+                ));
+            }
+        }
+
         match auth_mode.as_str() {
             "token" => {
                 let Some(token_auth) = config
@@ -359,6 +449,20 @@ impl RpcDaemon {
                 eviction_priority: "terminal_first".to_string(),
             },
         }
+    }
+
+    fn default_event_sink_config_for_profile(profile: &str) -> JsonValue {
+        let max_event_bytes = match profile {
+            "embedded-alloc" => 8_192_u64,
+            "desktop-local-runtime" => 32_768_u64,
+            _ => 65_536_u64,
+        };
+        json!({
+            "enabled": false,
+            "max_event_bytes": max_event_bytes,
+            "allow_kinds": ["webhook", "mqtt", "custom"],
+            "extensions": JsonMap::new(),
+        })
     }
 
     fn sdk_store_forward_policy(&self) -> SdkStoreForwardPolicy {

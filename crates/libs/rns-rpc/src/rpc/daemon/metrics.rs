@@ -126,6 +126,23 @@ impl RpcDaemon {
         metrics.sdk_event_drops_total = metrics.sdk_event_drops_total.saturating_add(1);
     }
 
+    fn metrics_record_event_sink_publish(&self, kind: &str) {
+        let mut metrics = self.sdk_metrics.lock().expect("sdk_metrics mutex poisoned");
+        metrics.sdk_event_sink_publish_total = metrics.sdk_event_sink_publish_total.saturating_add(1);
+        Self::metrics_increment(&mut metrics.sdk_event_sink_publish_by_kind, kind);
+    }
+
+    fn metrics_record_event_sink_error(&self, kind: &str) {
+        let mut metrics = self.sdk_metrics.lock().expect("sdk_metrics mutex poisoned");
+        metrics.sdk_event_sink_error_total = metrics.sdk_event_sink_error_total.saturating_add(1);
+        Self::metrics_increment(&mut metrics.sdk_event_sink_errors_by_kind, kind);
+    }
+
+    fn metrics_record_event_sink_skipped(&self) {
+        let mut metrics = self.sdk_metrics.lock().expect("sdk_metrics mutex poisoned");
+        metrics.sdk_event_sink_skipped_total = metrics.sdk_event_sink_skipped_total.saturating_add(1);
+    }
+
     pub fn metrics_snapshot(&self) -> JsonValue {
         let metrics = self.sdk_metrics.lock().expect("sdk_metrics mutex poisoned").clone();
         let event_queue_depth = self.event_queue.lock().expect("event_queue mutex poisoned").len();
@@ -155,6 +172,9 @@ impl RpcDaemon {
                 "sdk_cancel_not_found_total": metrics.sdk_cancel_not_found_total,
                 "sdk_cancel_already_terminal_total": metrics.sdk_cancel_already_terminal_total,
                 "sdk_event_drops_total": metrics.sdk_event_drops_total,
+                "sdk_event_sink_publish_total": metrics.sdk_event_sink_publish_total,
+                "sdk_event_sink_error_total": metrics.sdk_event_sink_error_total,
+                "sdk_event_sink_skipped_total": metrics.sdk_event_sink_skipped_total,
                 "sdk_auth_failures_total": metrics.sdk_auth_failures_total,
                 "sdk_event_dropped_count": dropped_count,
             },
@@ -165,6 +185,8 @@ impl RpcDaemon {
             "http_requests_by_route": metrics.http_requests_by_route,
             "rpc_requests_by_method": metrics.rpc_requests_by_method,
             "rpc_errors_by_method": metrics.rpc_errors_by_method,
+            "sdk_event_sink_publish_by_kind": metrics.sdk_event_sink_publish_by_kind,
+            "sdk_event_sink_errors_by_kind": metrics.sdk_event_sink_errors_by_kind,
             "histograms": {
                 "sdk_send_latency_ms": metrics.sdk_send_latency_ms.as_json(),
                 "sdk_poll_latency_ms": metrics.sdk_poll_latency_ms.as_json(),

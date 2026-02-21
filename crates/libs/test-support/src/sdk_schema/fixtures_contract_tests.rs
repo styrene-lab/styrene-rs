@@ -29,6 +29,11 @@ fn sdk_schema_valid_fixtures_pass_contract_checks() {
         &fixture("docs/fixtures/sdk-v2/config.store_forward.valid.json"),
     );
     assert_schema_valid(
+        &schemas.config,
+        "docs/fixtures/sdk-v2/config.event_sink.valid.json",
+        &fixture("docs/fixtures/sdk-v2/config.event_sink.valid.json"),
+    );
+    assert_schema_valid(
         &schemas.command,
         "docs/fixtures/sdk-v2/command.start.valid.json",
         &fixture("docs/fixtures/sdk-v2/command.start.valid.json"),
@@ -312,6 +317,11 @@ fn sdk_schema_invalid_fixtures_are_rejected() {
         &schemas.config,
         "docs/fixtures/sdk-v2/config.store_forward.invalid.json",
         &fixture("docs/fixtures/sdk-v2/config.store_forward.invalid.json"),
+    );
+    assert_schema_invalid(
+        &schemas.config,
+        "docs/fixtures/sdk-v2/config.event_sink.invalid.json",
+        &fixture("docs/fixtures/sdk-v2/config.event_sink.invalid.json"),
     );
     assert_schema_invalid(
         &schemas.command,
