@@ -1,6 +1,7 @@
 * @FreeTAKTeam
 
 /SECURITY.md @FreeTAKTeam
+/.github/SECURITY.md @FreeTAKTeam
 /.github/CODEOWNERS @FreeTAKTeam
 
 /docs/ @FreeTAKTeam

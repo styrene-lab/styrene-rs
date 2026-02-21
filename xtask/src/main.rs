@@ -26,11 +26,13 @@ const RPC_CONTRACT_PATH: &str = "docs/contracts/rpc-contract.md";
 const PAYLOAD_CONTRACT_PATH: &str = "docs/contracts/payload-contract.md";
 const CODEOWNERS_PATH: &str = ".github/CODEOWNERS";
 const CI_WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
+const SECURITY_POLICY_DOC_PATH: &str = ".github/SECURITY.md";
 const SECURITY_THREAT_MODEL_PATH: &str = "docs/adr/0004-sdk-v25-threat-model.md";
 const CRYPTO_AGILITY_ADR_PATH: &str = "docs/adr/0007-crypto-agility-roadmap.md";
 const SECURITY_REVIEW_CHECKLIST_PATH: &str = "docs/runbooks/security-review-checklist.md";
 const SDK_DOCS_CHECKLIST_PATH: &str = "docs/runbooks/sdk-docs-checklist.md";
 const COMPLIANCE_PROFILES_RUNBOOK_PATH: &str = "docs/runbooks/compliance-profiles.md";
+const CVE_RESPONSE_RUNBOOK_PATH: &str = "docs/runbooks/cve-response-workflow.md";
 const INCIDENT_RUNBOOK_PATH: &str = "docs/runbooks/incident-response-playbooks.md";
 const DISASTER_RECOVERY_RUNBOOK_PATH: &str = "docs/runbooks/disaster-recovery-drills.md";
 const EMBEDDED_HIL_RUNBOOK_PATH: &str = "docs/runbooks/embedded-hil-esp32.md";
@@ -71,6 +73,7 @@ const RELEASE_BINARIES: &[&str] = &[
 
 const GOVERNANCE_REQUIRED_CODEOWNER_PATHS: &[&str] = &[
     "/SECURITY.md",
+    "/.github/SECURITY.md",
     "/docs/contracts/",
     "/docs/schemas/",
     "/docs/migrations/",
@@ -1353,6 +1356,40 @@ fn run_governance_check() -> Result<()> {
         if !owners.contains(&"@FreeTAKTeam") {
             bail!("CODEOWNERS entry '{required_path}' must include @FreeTAKTeam");
         }
+    }
+
+    let security_policy = fs::read_to_string(SECURITY_POLICY_DOC_PATH)
+        .with_context(|| format!("missing {SECURITY_POLICY_DOC_PATH}"))?;
+    for marker in [
+        "# Security Policy",
+        "## Reporting a Vulnerability",
+        "## Coordinated Disclosure Workflow",
+        "docs/runbooks/cve-response-workflow.md",
+    ] {
+        if !security_policy.contains(marker) {
+            bail!("security policy missing marker '{marker}' in {SECURITY_POLICY_DOC_PATH}");
+        }
+    }
+
+    let cve_runbook = fs::read_to_string(CVE_RESPONSE_RUNBOOK_PATH)
+        .with_context(|| format!("missing {CVE_RESPONSE_RUNBOOK_PATH}"))?;
+    for marker in [
+        "# CVE Disclosure and Response Workflow",
+        "## Intake and Triage",
+        "## Severity Classification",
+        "## Patch and Backport Process",
+        "## Advisory Publication",
+        "## Evidence Checklist",
+    ] {
+        if !cve_runbook.contains(marker) {
+            bail!("cve runbook missing marker '{marker}' in {CVE_RESPONSE_RUNBOOK_PATH}");
+        }
+    }
+
+    let release_readiness = fs::read_to_string("docs/runbooks/release-readiness.md")
+        .context("missing docs/runbooks/release-readiness.md")?;
+    if !release_readiness.contains("docs/runbooks/cve-response-workflow.md") {
+        bail!("release readiness runbook must reference docs/runbooks/cve-response-workflow.md");
     }
 
     let workflow = fs::read_to_string(CI_WORKFLOW_PATH)
