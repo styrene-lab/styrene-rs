@@ -237,9 +237,9 @@ impl RpcDaemon {
 
         let supported_capabilities = Self::sdk_supported_capabilities_for_profile(profile.as_str());
         let required_capabilities = Self::sdk_required_capabilities_for_profile(profile.as_str());
-        let mut effective_capabilities = required_capabilities.clone();
+        let mut effective_capabilities = required_capabilities;
         if parsed.requested_capabilities.is_empty() {
-            effective_capabilities = supported_capabilities.clone();
+            effective_capabilities = supported_capabilities;
         } else {
             let mut requested_overlap = 0_usize;
             for requested in parsed.requested_capabilities {

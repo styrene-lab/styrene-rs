@@ -400,8 +400,7 @@ impl RpcDaemon {
         let display_name = parsed
             .display_name
             .as_deref()
-            .and_then(Self::normalize_non_empty)
-            .map(|name| name.to_string());
+            .and_then(Self::normalize_non_empty);
         let trust_level = if let Some(level) = parsed.trust_level.as_deref() {
             match Self::normalize_trust_level(level) {
                 Some(value) => Some(value),
@@ -571,7 +570,7 @@ impl RpcDaemon {
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         let _ = parsed.extensions.len();
         let identity = match Self::normalize_non_empty(parsed.identity.as_str()) {
-            Some(value) => value.to_string(),
+            Some(value) => value,
             None => {
                 return Ok(self.sdk_error_response(
                     request.id,
@@ -616,7 +615,7 @@ impl RpcDaemon {
         }
         if parsed.auto_sync {
             let timestamp = now as i64;
-            let _ = self.upsert_peer(identity.clone(), timestamp, contact.display_name.clone(), Some("bootstrap".to_string()));
+            let _ = self.upsert_peer(identity, timestamp, contact.display_name.clone(), Some("bootstrap".to_string()));
         }
         self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {

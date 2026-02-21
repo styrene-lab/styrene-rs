@@ -70,10 +70,10 @@ impl RpcDaemon {
             let source_ip = if allow_forwarded {
                 Self::header_value(headers, "x-forwarded-for")
                     .or_else(|| Self::header_value(headers, "x-real-ip"))
-                    .or(peer_ip.as_deref())
-                    .map(|value| value.split(',').next().unwrap_or(value).trim().to_string())
+                .or(peer_ip.as_deref())
+                .map(|value| value.split(',').next().unwrap_or(value).trim().to_string())
             } else {
-                peer_ip.clone()
+                peer_ip
             }
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "unknown".to_string());
