@@ -41,6 +41,7 @@ This checklist is the publication gate for the Rust workspace.
 - `support-policy-check`
 - `unsafe-audit-check`
 - `release-scorecard-check`
+- `canary-criteria-check`
 - `extension-registry-check`
 - `architecture-lint`
 - `architecture-checks`
@@ -71,6 +72,7 @@ cargo run -p xtask -- compat-kit-check
 cargo run -p xtask -- support-policy-check
 cargo run -p xtask -- unsafe-audit-check
 cargo run -p xtask -- release-scorecard-check
+cargo run -p xtask -- canary-criteria-check
 cargo run -p xtask -- extension-registry-check
 cargo run -p xtask -- architecture-lint-check
 cargo run -p xtask -- architecture-checks
@@ -129,7 +131,29 @@ Embedded footprint report artifact:
 
 - `target/embedded/footprint-report.txt`
 
-## 6. Release metadata
+## 6. Canary Lane and Rollback Criteria
+
+Canary gate command:
+
+```bash
+cargo run -p xtask -- canary-criteria-check
+```
+
+Rollback triggers (objective):
+
+1. `overall_status != PASS` in `target/release-scorecard/release-scorecard.json`
+2. `performance_status != PASS`
+3. `soak_status != pass`
+4. `soak_failures > 0` or `soak_mesh_failures > 0`
+5. security checklist PASS rows below required floor (`CANARY_MIN_SECURITY_PASS_ROWS`, default `8`)
+6. supply-chain artifact count below required floor (`CANARY_MIN_SUPPLY_CHAIN_ARTIFACTS`, default `1`)
+
+Report artifacts:
+
+- `target/release-readiness/canary-criteria-report.md`
+- `target/release-readiness/canary-criteria-report.json`
+
+## 7. Release metadata
 
 - Workspace versions bumped intentionally.
 - `Cargo.lock` committed for reproducible builds.
