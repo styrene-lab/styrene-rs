@@ -58,8 +58,8 @@
     },
     {
       "path": "docs/contracts/sdk-v2-api-stability.md",
-      "bytes": 2536,
-      "sha256": "849e15c6dc00bcde10daa63af7271f916f60d31909cfe461facc6a000bb2751a"
+      "bytes": 2435,
+      "sha256": "f446c8e6f9acb0fdf13876e443095b2ebb901ddc6c48ac8b3fb79aa925ea46c9"
     },
     {
       "path": "docs/contracts/sdk-v2-attachments.md",
