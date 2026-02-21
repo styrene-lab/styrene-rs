@@ -44,6 +44,9 @@ const REPRODUCIBLE_BUILD_REPORT_PATH: &str =
 const EMBEDDED_FOOTPRINT_REPORT_PATH: &str = "target/embedded/footprint-report.txt";
 const EMBEDDED_HIL_REPORT_PATH: &str = "target/hil/esp32-smoke-report.json";
 const LEADER_READINESS_REPORT_PATH: &str = "target/release-readiness/leader-grade-readiness.md";
+const CANARY_CRITERIA_REPORT_PATH: &str = "target/release-readiness/canary-criteria-report.md";
+const CANARY_CRITERIA_REPORT_JSON_PATH: &str =
+    "target/release-readiness/canary-criteria-report.json";
 
 const RELEASE_BINARIES: &[&str] = &[
     "lxmf-cli",
@@ -286,6 +289,7 @@ enum XtaskCommand {
     GovernanceCheck,
     SupportPolicyCheck,
     UnsafeAuditCheck,
+    CanaryCriteriaCheck,
     ReleaseScorecardCheck,
     ExtensionRegistryCheck,
     LeaderReadinessCheck,
@@ -343,6 +347,7 @@ enum CiStage {
     GovernanceCheck,
     SupportPolicyCheck,
     UnsafeAuditCheck,
+    CanaryCriteriaCheck,
     ReleaseScorecardCheck,
     ExtensionRegistryCheck,
     LeaderReadinessCheck,
@@ -408,6 +413,7 @@ fn main() -> Result<()> {
         XtaskCommand::GovernanceCheck => run_governance_check(),
         XtaskCommand::SupportPolicyCheck => run_support_policy_check(),
         XtaskCommand::UnsafeAuditCheck => run_unsafe_audit_check(),
+        XtaskCommand::CanaryCriteriaCheck => run_canary_criteria_check(),
         XtaskCommand::ReleaseScorecardCheck => run_release_scorecard_check(),
         XtaskCommand::ExtensionRegistryCheck => run_extension_registry_check(),
         XtaskCommand::LeaderReadinessCheck => run_leader_readiness_check(),
@@ -477,6 +483,7 @@ fn run_ci(stage: Option<CiStage>) -> Result<()> {
     run_support_policy_check()?;
     run_unsafe_audit_check()?;
     run_release_scorecard_check()?;
+    run_canary_criteria_check()?;
     run_extension_registry_check()?;
     run_security_review_check()?;
     run_sdk_security_check()?;
@@ -538,6 +545,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::GovernanceCheck => run_governance_check(),
         CiStage::SupportPolicyCheck => run_support_policy_check(),
         CiStage::UnsafeAuditCheck => run_unsafe_audit_check(),
+        CiStage::CanaryCriteriaCheck => run_canary_criteria_check(),
         CiStage::ReleaseScorecardCheck => run_release_scorecard_check(),
         CiStage::ExtensionRegistryCheck => run_extension_registry_check(),
         CiStage::LeaderReadinessCheck => run_leader_readiness_check(),
@@ -577,6 +585,7 @@ fn run_release_check() -> Result<()> {
     run_support_policy_check()?;
     run_unsafe_audit_check()?;
     run_release_scorecard_check()?;
+    run_canary_criteria_check()?;
     run_extension_registry_check()?;
     run_sdk_api_break()?;
     run_supply_chain_check()?;
@@ -1387,6 +1396,50 @@ fn run_release_scorecard_check() -> Result<()> {
     for marker in ["\"overall_status\"", "\"performance_status\"", "\"soak_status\""] {
         if !json.contains(marker) {
             bail!("generated scorecard json missing marker '{marker}' in {json_path}");
+        }
+    }
+
+    Ok(())
+}
+
+fn run_canary_criteria_check() -> Result<()> {
+    run_release_scorecard_check()?;
+    run("bash", &["tools/scripts/canary-criteria-check.sh"])?;
+
+    let markdown = fs::read_to_string(CANARY_CRITERIA_REPORT_PATH).with_context(|| {
+        format!("missing generated canary report markdown at {CANARY_CRITERIA_REPORT_PATH}")
+    })?;
+    let json = fs::read_to_string(CANARY_CRITERIA_REPORT_JSON_PATH).with_context(|| {
+        format!("missing generated canary report json at {CANARY_CRITERIA_REPORT_JSON_PATH}")
+    })?;
+
+    for marker in ["# Canary Criteria Report", "## Rollback Triggers"] {
+        if !markdown.contains(marker) {
+            bail!("generated canary report missing marker '{marker}' in {CANARY_CRITERIA_REPORT_PATH}");
+        }
+    }
+    for marker in ["\"status\"", "\"criteria\"", "\"rollback_triggers\""] {
+        if !json.contains(marker) {
+            bail!("generated canary report json missing marker '{marker}' in {CANARY_CRITERIA_REPORT_JSON_PATH}");
+        }
+    }
+
+    let workflow = fs::read_to_string(CI_WORKFLOW_PATH)
+        .with_context(|| format!("missing {CI_WORKFLOW_PATH}"))?;
+    if !workflow.contains("canary-criteria-check:") {
+        bail!("ci workflow must include a 'canary-criteria-check' job");
+    }
+    if !workflow.contains("cargo xtask ci --stage canary-criteria-check") {
+        bail!("ci workflow must execute `cargo xtask ci --stage canary-criteria-check`");
+    }
+
+    let release_readiness = fs::read_to_string("docs/runbooks/release-readiness.md")
+        .context("missing docs/runbooks/release-readiness.md")?;
+    for marker in ["canary-criteria-check", "Canary Lane and Rollback Criteria"] {
+        if !release_readiness.contains(marker) {
+            bail!(
+                "release readiness runbook missing marker '{marker}' for canary criteria workflow"
+            );
         }
     }
 

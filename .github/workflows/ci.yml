@@ -345,6 +345,20 @@ jobs:
             target/release-scorecard/release-scorecard.md
             target/release-scorecard/release-scorecard.json
 
+  canary-criteria-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Canary criteria and rollback trigger gate
+        run: cargo xtask ci --stage canary-criteria-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canary-criteria-report
+          path: |
+            target/release-readiness/canary-criteria-report.md
+            target/release-readiness/canary-criteria-report.json
+
   sdk-memory-budget-check:
     runs-on: ubuntu-latest
     steps:
