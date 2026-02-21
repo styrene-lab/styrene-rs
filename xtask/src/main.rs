@@ -23,6 +23,7 @@ const SECURITY_REVIEW_CHECKLIST_PATH: &str = "docs/runbooks/security-review-chec
 const SDK_DOCS_CHECKLIST_PATH: &str = "docs/runbooks/sdk-docs-checklist.md";
 const INCIDENT_RUNBOOK_PATH: &str = "docs/runbooks/incident-response-playbooks.md";
 const DISASTER_RECOVERY_RUNBOOK_PATH: &str = "docs/runbooks/disaster-recovery-drills.md";
+const EMBEDDED_HIL_RUNBOOK_PATH: &str = "docs/runbooks/embedded-hil-esp32.md";
 const BACKUP_RESTORE_DRILL_SCRIPT_PATH: &str = "tools/scripts/backup-restore-drill.sh";
 const SOAK_REPORT_PATH: &str = "target/soak/soak-report.json";
 const BENCH_SUMMARY_PATH: &str = "target/criterion/bench-summary.txt";
@@ -35,6 +36,7 @@ const SUPPLY_CHAIN_SIGNATURE_PATH: &str =
 const REPRODUCIBLE_BUILD_REPORT_PATH: &str =
     "target/supply-chain/reproducible/reproducible-build-report.txt";
 const EMBEDDED_FOOTPRINT_REPORT_PATH: &str = "target/embedded/footprint-report.txt";
+const EMBEDDED_HIL_REPORT_PATH: &str = "target/hil/esp32-smoke-report.json";
 const LEADER_READINESS_REPORT_PATH: &str = "target/release-readiness/leader-grade-readiness.md";
 
 const RELEASE_BINARIES: &[&str] = &[
@@ -292,6 +294,7 @@ enum XtaskCommand {
     EmbeddedLinkCheck,
     EmbeddedCoreCheck,
     EmbeddedFootprintCheck,
+    EmbeddedHilCheck,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -347,6 +350,7 @@ enum CiStage {
     EmbeddedLinkCheck,
     EmbeddedCoreCheck,
     EmbeddedFootprintCheck,
+    EmbeddedHilCheck,
     MigrationChecks,
     ArchitectureChecks,
     ForbiddenDeps,
@@ -406,6 +410,7 @@ fn main() -> Result<()> {
         XtaskCommand::EmbeddedLinkCheck => run_embedded_link_check(),
         XtaskCommand::EmbeddedCoreCheck => run_embedded_core_check(),
         XtaskCommand::EmbeddedFootprintCheck => run_embedded_footprint_check(),
+        XtaskCommand::EmbeddedHilCheck => run_embedded_hil_check(),
     }
 }
 
@@ -532,6 +537,7 @@ fn run_ci_stage(stage: CiStage) -> Result<()> {
         CiStage::EmbeddedLinkCheck => run_embedded_link_check(),
         CiStage::EmbeddedCoreCheck => run_embedded_core_check(),
         CiStage::EmbeddedFootprintCheck => run_embedded_footprint_check(),
+        CiStage::EmbeddedHilCheck => run_embedded_hil_check(),
         CiStage::MigrationChecks => run_migration_checks(),
         CiStage::ArchitectureChecks => run_architecture_checks(),
         CiStage::ForbiddenDeps => run_forbidden_deps(),
@@ -1901,6 +1907,37 @@ fn run_embedded_footprint_check() -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+fn run_embedded_hil_check() -> Result<()> {
+    let runbook = fs::read_to_string(EMBEDDED_HIL_RUNBOOK_PATH)
+        .with_context(|| format!("missing {EMBEDDED_HIL_RUNBOOK_PATH}"))?;
+    for marker in [
+        "# Embedded HIL ESP32 Smoke Runbook",
+        "## Required Environment",
+        "HIL_SERIAL_PORT",
+        "HIL_SEND_SOURCE",
+        "HIL_SEND_DESTINATION",
+        "## Artifacts",
+        "target/hil/esp32-smoke.log",
+        "target/hil/esp32-smoke-report.json",
+    ] {
+        if !runbook.contains(marker) {
+            bail!(
+                "embedded HIL runbook missing required marker '{marker}' in {EMBEDDED_HIL_RUNBOOK_PATH}"
+            );
+        }
+    }
+
+    run("bash", &["tools/scripts/hil-esp32-smoke.sh"])?;
+
+    let report = fs::read_to_string(EMBEDDED_HIL_REPORT_PATH)
+        .with_context(|| format!("missing {EMBEDDED_HIL_REPORT_PATH}"))?;
+    if !report.contains("\"status\":\"pass\"") {
+        bail!("embedded HIL report does not contain passing status in {EMBEDDED_HIL_REPORT_PATH}");
+    }
+
     Ok(())
 }
 

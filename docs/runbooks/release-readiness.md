@@ -89,6 +89,16 @@ cargo run -p rns-tools --bin rnx -- mesh-sim --nodes 5 --timeout-secs 60
 ./tools/scripts/mesh-sim-rnx.sh
 ```
 
+Nightly ESP32 hardware-in-loop smoke:
+
+- Scheduled workflow: `.github/workflows/nightly-embedded-hil.yml`
+- Runbook: `docs/runbooks/embedded-hil-esp32.md`
+- Local gated command:
+
+```bash
+cargo run -p xtask -- embedded-hil-check
+```
+
 Queue pressure tuning and overflow policy guidance:
 
 - `docs/runbooks/queue-pressure-tuning.md`
