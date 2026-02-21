@@ -220,7 +220,7 @@ impl MessagesStore {
         if count == 0 {
             return Ok(Vec::new());
         }
-        let mut collect_ids = |query: &str, remaining: usize| -> rusqlite::Result<Vec<String>> {
+        let collect_ids = |query: &str, remaining: usize| -> rusqlite::Result<Vec<String>> {
             if remaining == 0 {
                 return Ok(Vec::new());
             }
