@@ -105,6 +105,14 @@ jobs:
       - name: LXMF CLI smoke and tests
         run: cargo xtask ci --stage lxmf-cli-check
 
+  reference-integration-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Reference service/desktop/gateway integration smoke suite
+        run: cargo xtask ci --stage reference-integration-check
+
   dx-bootstrap-check:
     runs-on: ubuntu-latest
     steps:
