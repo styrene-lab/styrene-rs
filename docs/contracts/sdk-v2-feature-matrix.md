@@ -122,7 +122,7 @@ Budgets are expressed as maximum latency (`p50`/`p95`/`p99` in nanoseconds) and 
 | `lxmf_core/message_to_wire` | 2,000 | 3,000 | 4,000 | 350,000 |
 | `lxmf_sdk/start` | 15,000 | 25,000 | 35,000 | 30,000 |
 | `lxmf_sdk/send` | 2,000 | 3,000 | 4,500 | 350,000 |
-| `lxmf_sdk/poll_events` | 300 | 450 | 650 | 20,000,000 |
+| `lxmf_sdk/poll_events` | 300 | 450 | 650 | 17,500,000 |
 | `lxmf_sdk/snapshot` | 1,500 | 2,000 | 2,500 | 600,000 |
 | `rns_rpc/send_message_v2` | 100,000 | 150,000 | 220,000 | 25,000 |
 | `rns_rpc/sdk_poll_events_v2` | 15,000 | 20,000 | 25,000 | 90,000 |

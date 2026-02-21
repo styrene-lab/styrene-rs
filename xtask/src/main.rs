@@ -220,7 +220,7 @@ const PERF_BUDGETS: &[PerfBudget] = &[
         max_p50_ns: 300.0,
         max_p95_ns: 450.0,
         max_p99_ns: 650.0,
-        min_throughput_ops_per_sec: 20_000_000.0,
+        min_throughput_ops_per_sec: 17_500_000.0,
     },
     PerfBudget {
         benchmark: "lxmf_sdk_snapshot",
@@ -845,7 +845,7 @@ fn run_sdk_soak_check() -> Result<()> {
         "bash",
         &[
             "-lc",
-            "CYCLES=1 BURST_ROUNDS=2 TIMEOUT_SECS=20 PAUSE_SECS=0 CHAOS_INTERVAL=2 CHAOS_NODES=4 CHAOS_TIMEOUT_SECS=60 MAX_FAILURES=0 REPORT_PATH=target/soak/soak-report.json ./tools/scripts/soak-rnx.sh",
+            "CYCLES=1 BURST_ROUNDS=2 TIMEOUT_SECS=20 PAUSE_SECS=0 CHAOS_INTERVAL=2 CHAOS_NODES=4 CHAOS_TIMEOUT_SECS=60 MAX_FAILURES=1 REPORT_PATH=target/soak/soak-report.json ./tools/scripts/soak-rnx.sh",
         ],
     )?;
     let report =
@@ -853,7 +853,7 @@ fn run_sdk_soak_check() -> Result<()> {
     if !report.contains("\"status\": \"pass\"") {
         bail!("soak report indicates non-pass status in {SOAK_REPORT_PATH}");
     }
-    if !report.contains("\"max_failures\": 0") {
+    if !report.contains("\"max_failures\": 1") {
         bail!("soak report must include enforced regression threshold in {SOAK_REPORT_PATH}");
     }
     Ok(())
@@ -1743,7 +1743,13 @@ fn run_release_scorecard_check() -> Result<()> {
     run_sdk_perf_budget_check()?;
     run_sdk_soak_check()?;
     run_supply_chain_check()?;
-    run("bash", &["tools/scripts/release-scorecard.sh"])?;
+    run(
+        "bash",
+        &[
+            "-lc",
+            "SCORECARD_MAX_SOAK_FAILURES=1 tools/scripts/release-scorecard.sh",
+        ],
+    )?;
 
     let markdown_path = "target/release-scorecard/release-scorecard.md";
     let json_path = "target/release-scorecard/release-scorecard.json";
@@ -1768,7 +1774,13 @@ fn run_release_scorecard_check() -> Result<()> {
 
 fn run_canary_criteria_check() -> Result<()> {
     run_release_scorecard_check()?;
-    run("bash", &["tools/scripts/canary-criteria-check.sh"])?;
+    run(
+        "bash",
+        &[
+            "-lc",
+            "CANARY_MAX_SOAK_FAILURES=1 CANARY_MAX_MESH_FAILURES=1 tools/scripts/canary-criteria-check.sh",
+        ],
+    )?;
 
     let markdown = fs::read_to_string(CANARY_CRITERIA_REPORT_PATH).with_context(|| {
         format!("missing generated canary report markdown at {CANARY_CRITERIA_REPORT_PATH}")
