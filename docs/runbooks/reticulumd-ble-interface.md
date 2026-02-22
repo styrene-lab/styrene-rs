@@ -48,6 +48,11 @@ interfaces = [
 3. Startup emits a deterministic configuration line with adapter/peripheral/service/characteristic IDs.
 4. Invalid runtime bounds are rejected before backend startup.
 
+Startup policy controls:
+
+- Default mode is best-effort (daemon continues in degraded mode when some interfaces fail).
+- `--strict-interface-startup` makes startup/preflight failures fatal.
+
 ## Health Signals
 
 Expected startup log examples:
@@ -59,6 +64,12 @@ Expected startup log examples:
 Failure signals:
 
 - `ble_gatt startup rejected name=<name> err=<reason>`
+- `interface startup degraded started=<n> failed=<m> strict=<bool>`
+
+Runtime status visibility:
+
+- `list_interfaces` includes `_runtime.startup_status`.
+- Failed interfaces include `_runtime.startup_error`.
 
 ## Incident Response
 

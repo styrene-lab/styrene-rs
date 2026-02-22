@@ -68,6 +68,19 @@ All methods below are required for full CLI feature coverage.
 : Params keys: `interfaces`
 - `reload_config` (no params)
 
+`list_interfaces` response notes:
+
+- `interfaces[*].settings` may include a runtime metadata envelope at `_runtime` with fields:
+  `startup_status`, optional `startup_error`, and optional `iface` (runtime interface id).
+- Known `startup_status` values include: `disabled`, `inactive_transport_disabled`, `failed`,
+  `spawned`, and `active`.
+- This metadata is additive and intended for startup/degraded-mode observability.
+
+Startup policy notes:
+
+- `reticulumd --strict-interface-startup` makes startup/preflight interface failures fatal.
+- Strict preflight currently includes `tcp_client` connect checks (2s timeout) and serial port open checks.
+
 ### Interface mutation policy (`set_interfaces` and `reload_config`)
 
 The following contract is mandatory in v1:
