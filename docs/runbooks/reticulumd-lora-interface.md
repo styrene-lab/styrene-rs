@@ -58,6 +58,11 @@ Fail-closed conditions:
 
 When a fail-closed condition is hit, startup rejects interface activation and logs the reason.
 
+Startup policy controls:
+
+- Default mode is best-effort (daemon continues in degraded mode when some interfaces fail).
+- `--strict-interface-startup` makes startup/preflight failures fatal.
+
 ## Operator Recovery
 
 1. Confirm host clock integrity (NTP/system clock).
@@ -74,6 +79,12 @@ Expected startup log:
 Failure log:
 
 - `lora startup rejected name=<name> err=<fail-closed reason>`
+- `interface startup degraded started=<n> failed=<m> strict=<bool>`
+
+Runtime status visibility:
+
+- `list_interfaces` includes `_runtime.startup_status`.
+- Failed interfaces include `_runtime.startup_error`.
 
 ## Verification Commands
 

@@ -52,6 +52,11 @@ interfaces = [
 4. Malformed HDLC frames are dropped without panicking.
 5. Worker shutdown cancels cleanly when daemon shutdown is requested.
 
+Startup policy controls:
+
+- Default mode is best-effort (daemon continues in degraded mode when some interfaces fail).
+- `--strict-interface-startup` makes startup/preflight failures fatal.
+
 ## Health Signals
 
 Expected startup log examples:
@@ -65,6 +70,12 @@ Degraded/failure signals:
 - `serial: failed to open device=...`
 - `serial: read error ...`
 - `serial: write error ...`
+- `interface startup degraded started=<n> failed=<m> strict=<bool>`
+
+Runtime status visibility:
+
+- `list_interfaces` includes `_runtime.startup_status`.
+- Failed interfaces include `_runtime.startup_error`.
 
 ## Incident Response
 

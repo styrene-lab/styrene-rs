@@ -30,6 +30,8 @@ struct Args {
     announce_interval_secs: u64,
     #[arg(long)]
     transport: Option<String>,
+    #[arg(long, default_value_t = false)]
+    strict_interface_startup: bool,
     #[arg(long)]
     rpc_tls_cert: Option<PathBuf>,
     #[arg(long)]

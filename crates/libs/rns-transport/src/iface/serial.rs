@@ -140,6 +140,28 @@ impl SerialInterface {
         self
     }
 
+    pub fn preflight_open(&self) -> Result<(), String> {
+        tokio_serial::new(self.device.clone(), self.baud_rate)
+            .data_bits(self.data_bits)
+            .parity(self.parity)
+            .stop_bits(self.stop_bits)
+            .flow_control(self.flow_control)
+            .open_native_async()
+            .map(|_| ())
+            .map_err(|err| {
+                format!(
+                    "serial preflight open failed device={} baud_rate={} data_bits={:?} parity={:?} stop_bits={:?} flow_control={:?} err={}",
+                    self.device,
+                    self.baud_rate,
+                    self.data_bits,
+                    self.parity,
+                    self.stop_bits,
+                    self.flow_control,
+                    err
+                )
+            })
+    }
+
     pub async fn spawn(context: InterfaceContext<SerialInterface>) {
         let iface_stop = context.channel.stop.clone();
         let iface_address = context.channel.address;
@@ -465,6 +487,14 @@ mod tests {
             .err()
             .expect("invalid flow control");
         assert!(err.contains("serial.flow_control"));
+    }
+
+    #[test]
+    fn preflight_open_reports_device_open_failures() {
+        let err = SerialInterface::new("__definitely_not_a_device__", 115200)
+            .preflight_open()
+            .expect_err("invalid device should fail preflight");
+        assert!(err.contains("serial preflight open failed"));
     }
 
     #[tokio::test]
