@@ -1,6 +1,6 @@
 # Cross-Platform Interface Rollout PR Roadmap (Serial + BLE + LoRa + Mobile BLE)
 
-Status: in-progress (PR-09 startup policy complete; BLE lifecycle parity hardening in progress)
+Status: in-progress (PR-10 native BLE startup probe lifecycle implemented)
 Date: 2026-02-22
 Owner: platform/networking
 Audience: maintainers of `reticulumd`, `rns-transport`, CI/release engineering
