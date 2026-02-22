@@ -55,8 +55,17 @@ Fail-closed conditions:
 2. Unsupported state schema version.
 3. State marked `uncertain`.
 4. Startup clock rollback beyond uncertainty threshold relative to persisted timestamp.
+5. Persisted `last_updated_unix_ms` is zero/invalid.
+6. Persisted state timestamp is stale beyond compliance threshold.
+7. Persisted `duty_cycle_debt_ms` exceeds compliance maximum.
 
 When a fail-closed condition is hit, startup rejects interface activation and logs the reason.
+
+Debt carryover normalization:
+
+1. On startup, elapsed wall-clock time since the last persisted update is calculated.
+2. Persisted `duty_cycle_debt_ms` is reduced by elapsed time (saturating at zero).
+3. Updated debt/timestamp metadata is persisted atomically before startup returns.
 
 Startup policy controls:
 
@@ -74,7 +83,8 @@ Startup policy controls:
 
 Expected startup log:
 
-- `lora configured name=<name> region=<region> state_path=<path> duty_cycle_debt_ms=<n> uncertain=false`
+- `lora configured name=<name> region=<region> state_path=<path> duty_cycle_debt_ms=<n> debt_elapsed_ms=<m> uncertain=false`
+- `lora compliance gate name=<name> debt_remaining_ms=<n> tx_allowed_after_additional_wait_ms=<n>` (emitted when debt remains)
 
 Failure log:
 
@@ -90,7 +100,7 @@ Runtime status visibility:
 
 ```bash
 cargo test -p reticulumd --test config
-cargo test -p reticulumd --bin reticulumd lora::tests
+cargo test -p reticulumd --bin reticulumd lora_state::tests
 cargo check -p reticulumd --all-targets
 ```
 
