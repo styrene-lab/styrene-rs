@@ -253,7 +253,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
                             });
                         }
                     },
-                    "ble_gatt" => match ble::startup(iface) {
+                    "ble_gatt" => match ble::startup(iface).await {
                         Ok(()) => {
                             mark_interface_startup_status(
                                 &mut configured_interfaces[index],

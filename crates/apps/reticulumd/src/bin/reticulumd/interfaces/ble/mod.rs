@@ -5,6 +5,8 @@ use std::time::Duration;
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+mod native;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -86,41 +88,46 @@ impl BleBackendError {
     }
 }
 
+#[allow(async_fn_in_trait)]
 pub(crate) trait BleBackend {
     fn backend_name(&self) -> &'static str;
 
-    fn scan(&mut self, settings: &BleRuntimeSettings) -> Result<(), BleBackendError>;
+    async fn scan(&mut self, settings: &BleRuntimeSettings) -> Result<(), BleBackendError>;
 
-    fn connect(&mut self, settings: &BleRuntimeSettings) -> Result<(), BleBackendError>;
+    async fn connect(&mut self, settings: &BleRuntimeSettings) -> Result<(), BleBackendError>;
 
-    fn subscribe(&mut self, settings: &BleRuntimeSettings) -> Result<(), BleBackendError>;
+    async fn subscribe(&mut self, settings: &BleRuntimeSettings) -> Result<(), BleBackendError>;
 
-    fn write_probe(
+    async fn write_probe(
         &mut self,
         payload: &[u8],
         settings: &BleRuntimeSettings,
     ) -> Result<(), BleBackendError>;
 
-    fn read_probe_notification(
+    async fn read_probe_notification(
         &mut self,
         settings: &BleRuntimeSettings,
     ) -> Result<Vec<u8>, BleBackendError>;
+
+    async fn cleanup(&mut self, _settings: &BleRuntimeSettings) -> Result<(), BleBackendError> {
+        Ok(())
+    }
 }
 
-pub(crate) fn startup(iface: &InterfaceConfig) -> Result<(), String> {
+pub(crate) async fn startup(iface: &InterfaceConfig) -> Result<(), String> {
     let settings = runtime_settings(iface)?;
 
     #[cfg(target_os = "linux")]
     {
-        return linux::startup(iface, &settings);
+        return linux::startup(iface, &settings).await;
     }
     #[cfg(target_os = "macos")]
     {
-        return macos::startup(iface, &settings);
+        return macos::startup(iface, &settings).await;
     }
     #[cfg(target_os = "windows")]
     {
-        return windows::startup(iface, &settings);
+        return windows::startup(iface, &settings).await;
     }
     #[allow(unreachable_code)]
     Err(format!(
@@ -129,15 +136,7 @@ pub(crate) fn startup(iface: &InterfaceConfig) -> Result<(), String> {
     ))
 }
 
-pub(super) fn synthetic_probe_enabled() -> bool {
-    std::env::var("LXMF_BLE_SYNTHETIC_PROBE")
-        .map(|value| {
-            matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
-        })
-        .unwrap_or(false)
-}
-
-pub(crate) fn run_startup_lifecycle<B: BleBackend>(
+pub(crate) async fn run_startup_lifecycle<B: BleBackend>(
     backend: &mut B,
     settings: &BleRuntimeSettings,
 ) -> Result<BleLifecycleReport, String> {
@@ -153,12 +152,14 @@ pub(crate) fn run_startup_lifecycle<B: BleBackend>(
             backoff,
             attempt < BLE_STARTUP_MAX_RETRY_ATTEMPTS,
             &mut transitions,
-            backend.scan(settings),
+            backend.scan(settings).await,
         ) {
             if should_retry(&err, attempt) {
-                schedule_retry(&mut attempt, &mut backoff, settings.max_reconnect_backoff);
+                cleanup_backend(backend, settings).await;
+                schedule_retry(&mut attempt, &mut backoff, settings.max_reconnect_backoff).await;
                 continue;
             }
+            cleanup_backend(backend, settings).await;
             return Err(format!(
                 "ble_gatt startup failed backend={} phase={} attempt={} err={}",
                 backend.backend_name(),
@@ -175,12 +176,14 @@ pub(crate) fn run_startup_lifecycle<B: BleBackend>(
             backoff,
             attempt < BLE_STARTUP_MAX_RETRY_ATTEMPTS,
             &mut transitions,
-            backend.connect(settings),
+            backend.connect(settings).await,
         ) {
             if should_retry(&err, attempt) {
-                schedule_retry(&mut attempt, &mut backoff, settings.max_reconnect_backoff);
+                cleanup_backend(backend, settings).await;
+                schedule_retry(&mut attempt, &mut backoff, settings.max_reconnect_backoff).await;
                 continue;
             }
+            cleanup_backend(backend, settings).await;
             return Err(format!(
                 "ble_gatt startup failed backend={} phase={} attempt={} err={}",
                 backend.backend_name(),
@@ -197,12 +200,14 @@ pub(crate) fn run_startup_lifecycle<B: BleBackend>(
             backoff,
             attempt < BLE_STARTUP_MAX_RETRY_ATTEMPTS,
             &mut transitions,
-            backend.subscribe(settings),
+            backend.subscribe(settings).await,
         ) {
             if should_retry(&err, attempt) {
-                schedule_retry(&mut attempt, &mut backoff, settings.max_reconnect_backoff);
+                cleanup_backend(backend, settings).await;
+                schedule_retry(&mut attempt, &mut backoff, settings.max_reconnect_backoff).await;
                 continue;
             }
+            cleanup_backend(backend, settings).await;
             return Err(format!(
                 "ble_gatt startup failed backend={} phase={} attempt={} err={}",
                 backend.backend_name(),
@@ -219,12 +224,14 @@ pub(crate) fn run_startup_lifecycle<B: BleBackend>(
             backoff,
             attempt < BLE_STARTUP_MAX_RETRY_ATTEMPTS,
             &mut transitions,
-            backend.write_probe(BLE_STARTUP_PROBE_PAYLOAD, settings),
+            backend.write_probe(BLE_STARTUP_PROBE_PAYLOAD, settings).await,
         ) {
             if should_retry(&err, attempt) {
-                schedule_retry(&mut attempt, &mut backoff, settings.max_reconnect_backoff);
+                cleanup_backend(backend, settings).await;
+                schedule_retry(&mut attempt, &mut backoff, settings.max_reconnect_backoff).await;
                 continue;
             }
+            cleanup_backend(backend, settings).await;
             return Err(format!(
                 "ble_gatt startup failed backend={} phase={} attempt={} err={}",
                 backend.backend_name(),
@@ -234,7 +241,7 @@ pub(crate) fn run_startup_lifecycle<B: BleBackend>(
             ));
         }
 
-        let notification_result = backend.read_probe_notification(settings);
+        let notification_result = backend.read_probe_notification(settings).await;
         if let Some(err) = stage_result(
             backend.backend_name(),
             attempt,
@@ -245,9 +252,11 @@ pub(crate) fn run_startup_lifecycle<B: BleBackend>(
             notification_result.as_ref().map(|_| ()).map_err(Clone::clone),
         ) {
             if should_retry(&err, attempt) {
-                schedule_retry(&mut attempt, &mut backoff, settings.max_reconnect_backoff);
+                cleanup_backend(backend, settings).await;
+                schedule_retry(&mut attempt, &mut backoff, settings.max_reconnect_backoff).await;
                 continue;
             }
+            cleanup_backend(backend, settings).await;
             return Err(format!(
                 "ble_gatt startup failed backend={} phase={} attempt={} err={}",
                 backend.backend_name(),
@@ -259,6 +268,7 @@ pub(crate) fn run_startup_lifecycle<B: BleBackend>(
 
         if let Ok(payload) = notification_result {
             if payload != BLE_STARTUP_PROBE_PAYLOAD {
+                cleanup_backend(backend, settings).await;
                 return Err(format!(
                     "ble_gatt startup failed backend={} phase={} attempt={} err=probe payload mismatch expected_len={} actual_len={}",
                     backend.backend_name(),
@@ -270,6 +280,7 @@ pub(crate) fn run_startup_lifecycle<B: BleBackend>(
             }
         }
 
+        cleanup_backend(backend, settings).await;
         return Ok(BleLifecycleReport {
             backend: backend.backend_name(),
             attempts: attempt,
@@ -282,15 +293,25 @@ fn should_retry(err: &BleBackendError, attempt: u32) -> bool {
     err.retryable && attempt < BLE_STARTUP_MAX_RETRY_ATTEMPTS
 }
 
-fn schedule_retry(attempt: &mut u32, backoff: &mut Duration, max_backoff: Duration) {
-    sleep_before_retry(*backoff);
+async fn schedule_retry(attempt: &mut u32, backoff: &mut Duration, max_backoff: Duration) {
+    sleep_before_retry(*backoff).await;
     *backoff = bounded_backoff_next(*backoff, max_backoff);
     *attempt += 1;
 }
 
-fn sleep_before_retry(backoff: Duration) {
+async fn cleanup_backend<B: BleBackend>(backend: &mut B, settings: &BleRuntimeSettings) {
+    if let Err(err) = backend.cleanup(settings).await {
+        eprintln!(
+            "[daemon] ble_gatt backend={} cleanup err={}",
+            backend.backend_name(),
+            err.message
+        );
+    }
+}
+
+async fn sleep_before_retry(backoff: Duration) {
     #[cfg(not(test))]
-    std::thread::sleep(backoff);
+    tokio::time::sleep(backoff).await;
     #[cfg(test)]
     let _ = backoff;
 }
@@ -440,28 +461,31 @@ mod tests {
             "mock"
         }
 
-        fn scan(&mut self, _settings: &BleRuntimeSettings) -> Result<(), BleBackendError> {
+        async fn scan(&mut self, _settings: &BleRuntimeSettings) -> Result<(), BleBackendError> {
             if let Some(err) = self.maybe_fail(BleLifecyclePhase::Scan) {
                 return Err(err);
             }
             Ok(())
         }
 
-        fn connect(&mut self, _settings: &BleRuntimeSettings) -> Result<(), BleBackendError> {
+        async fn connect(&mut self, _settings: &BleRuntimeSettings) -> Result<(), BleBackendError> {
             if let Some(err) = self.maybe_fail(BleLifecyclePhase::Connect) {
                 return Err(err);
             }
             Ok(())
         }
 
-        fn subscribe(&mut self, _settings: &BleRuntimeSettings) -> Result<(), BleBackendError> {
+        async fn subscribe(
+            &mut self,
+            _settings: &BleRuntimeSettings,
+        ) -> Result<(), BleBackendError> {
             if let Some(err) = self.maybe_fail(BleLifecyclePhase::Subscribe) {
                 return Err(err);
             }
             Ok(())
         }
 
-        fn write_probe(
+        async fn write_probe(
             &mut self,
             payload: &[u8],
             _settings: &BleRuntimeSettings,
@@ -473,7 +497,7 @@ mod tests {
             Ok(())
         }
 
-        fn read_probe_notification(
+        async fn read_probe_notification(
             &mut self,
             _settings: &BleRuntimeSettings,
         ) -> Result<Vec<u8>, BleBackendError> {
@@ -519,12 +543,13 @@ mod tests {
         assert!(err.contains("max_reconnect_backoff_ms"));
     }
 
-    #[test]
-    fn ble_lifecycle_transitions_cover_scan_connect_subscribe_and_probe() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn ble_lifecycle_transitions_cover_scan_connect_subscribe_and_probe() {
         let settings = runtime_settings(&ble_iface()).expect("runtime settings");
         let mut backend = MockBackend::default();
 
-        let report = run_startup_lifecycle(&mut backend, &settings).expect("lifecycle report");
+        let report =
+            run_startup_lifecycle(&mut backend, &settings).await.expect("lifecycle report");
 
         assert_eq!(report.attempts, 1);
         assert_eq!(report.transitions.len(), 5);
@@ -539,8 +564,8 @@ mod tests {
             .all(|transition| transition.outcome == BleLifecycleOutcome::Ok));
     }
 
-    #[test]
-    fn ble_lifecycle_retries_on_retryable_connect_failures_with_bounded_backoff() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn ble_lifecycle_retries_on_retryable_connect_failures_with_bounded_backoff() {
         let settings = runtime_settings(&ble_iface()).expect("runtime settings");
         let mut backend = MockBackend {
             planned_failures: vec![PlannedFailure {
@@ -552,7 +577,8 @@ mod tests {
             ..Default::default()
         };
 
-        let report = run_startup_lifecycle(&mut backend, &settings).expect("lifecycle report");
+        let report =
+            run_startup_lifecycle(&mut backend, &settings).await.expect("lifecycle report");
         assert_eq!(report.attempts, 3);
         assert!(report
             .transitions
@@ -566,8 +592,8 @@ mod tests {
             .all(|backoff_ms| backoff_ms <= settings.max_reconnect_backoff.as_millis() as u64));
     }
 
-    #[test]
-    fn ble_lifecycle_fails_after_retry_budget_exhaustion() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn ble_lifecycle_fails_after_retry_budget_exhaustion() {
         let settings = runtime_settings(&ble_iface()).expect("runtime settings");
         let mut backend = MockBackend {
             planned_failures: vec![PlannedFailure {
@@ -580,6 +606,7 @@ mod tests {
         };
 
         let err = run_startup_lifecycle(&mut backend, &settings)
+            .await
             .expect_err("retryable failures should exhaust startup attempts");
         assert!(err.contains("phase=connect"));
         assert!(err.contains(&format!("attempt={BLE_STARTUP_MAX_RETRY_ATTEMPTS}")));
@@ -606,8 +633,8 @@ mod tests {
         assert_eq!(transitions[0].backoff_ms, None);
     }
 
-    #[test]
-    fn ble_lifecycle_terminal_subscribe_failure_is_not_retried() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn ble_lifecycle_terminal_subscribe_failure_is_not_retried() {
         let settings = runtime_settings(&ble_iface()).expect("runtime settings");
         let mut backend = MockBackend {
             planned_failures: vec![PlannedFailure {
@@ -620,13 +647,14 @@ mod tests {
         };
 
         let err = run_startup_lifecycle(&mut backend, &settings)
+            .await
             .expect_err("terminal subscribe failures should fail immediately");
         assert!(err.contains("phase=subscribe"));
         assert!(err.contains("attempt=1"));
     }
 
-    #[test]
-    fn ble_lifecycle_terminal_notification_failure_is_not_retried() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn ble_lifecycle_terminal_notification_failure_is_not_retried() {
         let settings = runtime_settings(&ble_iface()).expect("runtime settings");
         let mut backend = MockBackend {
             planned_failures: vec![PlannedFailure {
@@ -639,13 +667,14 @@ mod tests {
         };
 
         let err = run_startup_lifecycle(&mut backend, &settings)
+            .await
             .expect_err("terminal notification failures should fail immediately");
         assert!(err.contains("phase=notification_probe"));
         assert!(err.contains("attempt=1"));
     }
 
-    #[test]
-    fn ble_lifecycle_roundtrip_rejects_mismatched_notification_payload() {
+    #[tokio::test(flavor = "current_thread")]
+    async fn ble_lifecycle_roundtrip_rejects_mismatched_notification_payload() {
         let settings = runtime_settings(&ble_iface()).expect("runtime settings");
         let mut backend = MockBackend {
             notification_payload_override: Some(vec![1, 2, 3]),
@@ -653,6 +682,7 @@ mod tests {
         };
 
         let err = run_startup_lifecycle(&mut backend, &settings)
+            .await
             .expect_err("mismatched probe payload should fail lifecycle");
         assert!(err.contains("probe payload mismatch"));
     }

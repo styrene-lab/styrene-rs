@@ -270,6 +270,105 @@ interfaces = [
     assert!(result.is_err(), "strict mode should panic when tcp_client preflight connect fails");
 }
 
+#[test]
+fn bootstrap_best_effort_marks_ble_validation_failure_as_failed() {
+    let temp = TempDir::new().expect("temp dir");
+    let db_path = temp.path().join("reticulum.db");
+    let config_path = temp.path().join("daemon.toml");
+    fs::write(
+        &config_path,
+        r#"
+interfaces = [
+  { type = "ble_gatt", enabled = true, name = "ble-main", adapter = "disabled", peripheral_id = "AA:BB:CC:DD:EE:FF", service_uuid = "12345678-1234-1234-1234-1234567890ab", write_char_uuid = "2A37", notify_char_uuid = "2A38" }
+]
+"#,
+    )
+    .expect("write config");
+
+    let runtime =
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+    let local = tokio::task::LocalSet::new();
+    let context = runtime.block_on(local.run_until(async {
+        bootstrap::bootstrap(test_args(
+            db_path.clone(),
+            Some(config_path.clone()),
+            Some("127.0.0.1:0".to_string()),
+            false,
+        ))
+        .await
+    }));
+    let response = context
+        .daemon
+        .handle_rpc(RpcRequest { id: 1, method: "list_interfaces".to_string(), params: None })
+        .expect("list_interfaces");
+    let interfaces = response
+        .result
+        .expect("result")
+        .get("interfaces")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .expect("interfaces array");
+    let ble_interface = interfaces
+        .iter()
+        .find(|entry| {
+            entry
+                .get("settings")
+                .and_then(|value| value.get("_runtime"))
+                .and_then(|value| value.get("startup_status"))
+                .and_then(|value| value.as_str())
+                == Some("failed")
+        })
+        .expect("failed interface should be present in snapshot");
+    assert_eq!(
+        ble_interface
+            .get("settings")
+            .and_then(|value| value.get("_runtime"))
+            .and_then(|value| value.get("startup_status"))
+            .and_then(|value| value.as_str()),
+        Some("failed")
+    );
+    assert!(
+        ble_interface
+            .get("settings")
+            .and_then(|value| value.get("_runtime"))
+            .and_then(|value| value.get("startup_error"))
+            .and_then(|value| value.as_str())
+            .is_some(),
+        "startup error should be populated for failed BLE startup"
+    );
+}
+
+#[test]
+fn bootstrap_strict_mode_panics_on_ble_validation_failure() {
+    let temp = TempDir::new().expect("temp dir");
+    let db_path = temp.path().join("reticulum.db");
+    let config_path = temp.path().join("daemon.toml");
+    fs::write(
+        &config_path,
+        r#"
+interfaces = [
+  { type = "ble_gatt", enabled = true, name = "ble-main", adapter = "disabled", peripheral_id = "AA:BB:CC:DD:EE:FF", service_uuid = "12345678-1234-1234-1234-1234567890ab", write_char_uuid = "2A37", notify_char_uuid = "2A38" }
+]
+"#,
+    )
+    .expect("write config");
+
+    let runtime =
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.block_on(async {
+            bootstrap::bootstrap(test_args(
+                db_path.clone(),
+                Some(config_path.clone()),
+                Some("127.0.0.1:0".to_string()),
+                true,
+            ))
+            .await;
+        });
+    }));
+    assert!(result.is_err(), "strict mode should panic when BLE startup validation fails");
+}
+
 fn test_args(
     db: PathBuf,
     config: Option<PathBuf>,
