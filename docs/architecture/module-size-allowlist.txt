@@ -18,3 +18,8 @@ crates/libs/rns-rpc/src/rpc/daemon/tests/release_domains.rs
 crates/libs/rns-rpc/src/storage/messages.rs
 crates/libs/test-support/src/sdk_schema/fixtures_contract_tests.rs
 xtask/src/client_codegen.rs
+crates/apps/reticulumd/src/bin/reticulumd/bootstrap.rs
+crates/apps/reticulumd/src/bin/reticulumd/interfaces/ble/mod.rs
+crates/apps/reticulumd/src/bin/reticulumd/interfaces/ble/native.rs
+crates/apps/reticulumd/src/bin/reticulumd/tests.rs
+crates/libs/rns-transport/src/iface/serial.rs

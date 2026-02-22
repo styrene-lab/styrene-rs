@@ -58,9 +58,11 @@ fn parse_destination_hex_required_rejects_invalid_hashes() {
 
 #[test]
 fn serial_builder_rejects_missing_required_fields() {
-    let mut iface = InterfaceConfig::default();
-    iface.kind = "serial".to_string();
-    iface.enabled = Some(true);
+    let iface = InterfaceConfig {
+        kind: "serial".to_string(),
+        enabled: Some(true),
+        ..InterfaceConfig::default()
+    };
     let result = serial::build_adapter(&iface);
     assert!(result.is_err(), "missing device/baud should fail");
     let err = result.err().unwrap_or_default();
@@ -72,12 +74,14 @@ fn lora_startup_persists_state_file() {
     let temp = TempDir::new().expect("temp dir");
     let state_path = temp.path().join("lora-state.json");
 
-    let mut iface = InterfaceConfig::default();
-    iface.kind = "lora".to_string();
-    iface.enabled = Some(true);
-    iface.name = Some("lora-main".to_string());
-    iface.region = Some("US915".to_string());
-    iface.state_path = Some(state_path.to_string_lossy().to_string());
+    let iface = InterfaceConfig {
+        kind: "lora".to_string(),
+        enabled: Some(true),
+        name: Some("lora-main".to_string()),
+        region: Some("US915".to_string()),
+        state_path: Some(state_path.to_string_lossy().to_string()),
+        ..InterfaceConfig::default()
+    };
 
     lora::startup(&iface).expect("lora startup");
     let state = fs::read_to_string(&state_path).expect("state file exists");

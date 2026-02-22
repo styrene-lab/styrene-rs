@@ -106,10 +106,8 @@ impl RpcDaemon {
                     .interfaces
                     .iter()
                     .enumerate()
-                    .filter_map(|(index, iface)| {
-                        (!Self::is_legacy_hot_apply_kind(iface.kind.as_str()))
-                            .then(|| Self::interface_identifier(iface, index))
-                    })
+                    .filter(|(_, iface)| !Self::is_legacy_hot_apply_kind(iface.kind.as_str()))
+                    .map(|(index, iface)| Self::interface_identifier(iface, index))
                     .collect::<Vec<_>>();
                 if !blocked.is_empty() {
                     return Ok(Self::restart_required_response(
@@ -132,7 +130,7 @@ impl RpcDaemon {
 
                 let event = RpcEvent {
                     event_type: "interfaces_updated".into(),
-                    payload: json!({ "interfaces": parsed.interfaces.clone() }),
+                    payload: json!({ "interfaces": parsed.interfaces }),
                 };
                 self.publish_event(event);
 
@@ -180,10 +178,10 @@ impl RpcDaemon {
                             .interfaces
                             .iter()
                             .enumerate()
-                            .filter_map(|(index, iface)| {
-                                (!Self::is_legacy_hot_apply_kind(iface.kind.as_str()))
-                                    .then(|| Self::interface_identifier(iface, index))
+                            .filter(|(_, iface)| {
+                                !Self::is_legacy_hot_apply_kind(iface.kind.as_str())
                             })
+                            .map(|(index, iface)| Self::interface_identifier(iface, index))
                             .collect::<Vec<_>>();
                         if affected.is_empty() {
                             affected = parsed
