@@ -45,8 +45,15 @@ interfaces = [
 
 1. Runtime settings are normalized at startup (timeouts/backoff defaults applied).
 2. Backend dispatch is selected by target OS.
-3. Startup emits a deterministic configuration line with adapter/peripheral/service/characteristic IDs.
-4. Invalid runtime bounds are rejected before backend startup.
+3. Startup executes lifecycle phases in order: `scan -> connect -> subscribe -> write_probe -> notification_probe`.
+4. Retryable phase failures back off using `reconnect_backoff_ms` (bounded by `max_reconnect_backoff_ms`) before retrying.
+5. Startup emits a deterministic configuration line with adapter/peripheral/service/characteristic IDs plus lifecycle attempt/transition counts.
+6. Invalid runtime bounds are rejected before backend startup.
+
+Synthetic probe bypass (development only):
+
+- `LXMF_BLE_SYNTHETIC_PROBE=1` enables a synthetic loopback probe so lifecycle can pass without platform GATT I/O wiring.
+- Without this override, probe phases require platform GATT I/O support and fail closed with deterministic startup errors.
 
 Startup policy controls:
 
@@ -65,6 +72,7 @@ Failure signals:
 
 - `ble_gatt startup rejected name=<name> err=<reason>`
 - `interface startup degraded started=<n> failed=<m> strict=<bool>`
+- `ble_gatt backend=<os> phase=<phase> retrying attempt=<n> backoff_ms=<ms> err=<reason>`
 
 Runtime status visibility:
 
@@ -76,8 +84,9 @@ Runtime status visibility:
 1. Verify UUIDs and peripheral identifier are correct.
 2. Confirm platform BLE stack is enabled and permissions are granted.
 3. Check adapter selection (`adapter`) matches host naming.
-4. If startup rejects repeatedly, disable interface and restart daemon while preserving logs.
-5. If rejection is due to bounds, fix config values and restart.
+4. For development-only simulation, set `LXMF_BLE_SYNTHETIC_PROBE=1` to bypass platform GATT probe wiring.
+5. If startup rejects repeatedly in production mode, disable interface and restart daemon while preserving logs.
+6. If rejection is due to bounds, fix config values and restart.
 
 ## Verification Commands
 
