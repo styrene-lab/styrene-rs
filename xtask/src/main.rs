@@ -2557,7 +2557,7 @@ fn run_correctness_check() -> Result<()> {
     let miri_toolchain =
         std::env::var("SDK_CORRECTNESS_MIRI_TOOLCHAIN").unwrap_or_else(|_| "nightly".to_string());
     let miri_command =
-        format!("cargo +{miri_toolchain} miri test -p lxmf-core --lib -- --nocapture");
+        toolchain_cargo_command(&miri_toolchain, "miri test -p lxmf-core --lib -- --nocapture");
     run("bash", &["-lc", &miri_command])?;
 
     run(

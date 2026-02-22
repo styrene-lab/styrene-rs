@@ -324,7 +324,6 @@ impl BleBackend for NativeBleBackend {
         })?;
         let write_type = self
             .write_type
-            .clone()
             .ok_or_else(|| BleBackendError::terminal("connect phase did not resolve write mode"))?;
 
         peripheral

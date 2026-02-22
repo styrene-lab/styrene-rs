@@ -8,8 +8,8 @@
     },
     {
       "path": "docs/contracts/baselines/lxmf-sdk-public-api.txt",
-      "bytes": 150756,
-      "sha256": "45d09d4d1eea74ca79b282ba435e31e4683d96163e52aaff5bddb62bde2556b1"
+      "bytes": 155266,
+      "sha256": "30f64a6bbd52419615d91e88828e8a5f53cd211084e77ac8dffa288ae97e42df"
     },
     {
       "path": "docs/contracts/baselines/schema-client-generation-baseline.json",
@@ -42,14 +42,19 @@
       "sha256": "68948353601bf5f9c4736ff0a5081255af6208a87750a304cfaa4fb757e56640"
     },
     {
+      "path": "docs/contracts/mobile-ble-host-contract.md",
+      "bytes": 2097,
+      "sha256": "175e24b993eab811ecdda44580df086fad212acd63e390635307fb48fcbb6b3e"
+    },
+    {
       "path": "docs/contracts/payload-contract.md",
       "bytes": 5234,
       "sha256": "decbb4f6745eac2aacd5798c29e27d0ebbd3eada9043c50356b1f51c296d5915"
     },
     {
       "path": "docs/contracts/rpc-contract.md",
-      "bytes": 4853,
-      "sha256": "26370474eb528c4b7cf3c77289fca3ce32f1086f4f171c5baa8879bfb7e8d760"
+      "bytes": 6361,
+      "sha256": "f9159dcfe96fadf0ae62c08e89a44f417fce16952b1f06ec6054eed9b6e5f4e6"
     },
     {
       "path": "docs/contracts/schema-driven-clients.md",
@@ -165,6 +170,21 @@
       "path": "docs/fixtures/interop/v1/golden-corpus.json",
       "bytes": 4846,
       "sha256": "a6995019a6d9138b0936ee94b4d08ca8b600afdb93bfab644f2328edca820619"
+    },
+    {
+      "path": "docs/fixtures/mobile-ble/android/events.sample.json",
+      "bytes": 699,
+      "sha256": "f42739cf63f5d972a1b42dd552904f40f9c1a42b6a596c9b9b246eb23a585d87"
+    },
+    {
+      "path": "docs/fixtures/mobile-ble/ios/events.sample.json",
+      "bytes": 858,
+      "sha256": "98d6660f0707b48de450bc1b8c9c6e41c6786f9917574d0ad593a6dccd62bdee"
+    },
+    {
+      "path": "docs/fixtures/mobile-ble/shared/README.md",
+      "bytes": 238,
+      "sha256": "7a05de64064be12a8870dc77cc2f8a785a09829ca20cfaad43fae87f394ecc51"
     },
     {
       "path": "docs/fixtures/sdk-v2/attachment.meta.valid.json",

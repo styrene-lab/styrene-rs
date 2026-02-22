@@ -694,6 +694,13 @@ pub lxmf_sdk::KeyProviderClass::File
 pub lxmf_sdk::KeyProviderClass::Hsm
 pub lxmf_sdk::KeyProviderClass::InMemory
 pub lxmf_sdk::KeyProviderClass::OsKeystore
+pub enum lxmf_sdk::MobileBleEventKind
+pub lxmf_sdk::MobileBleEventKind::Connected
+pub lxmf_sdk::MobileBleEventKind::Disconnected
+pub lxmf_sdk::MobileBleEventKind::Error
+pub lxmf_sdk::MobileBleEventKind::Notification
+pub lxmf_sdk::MobileBleEventKind::Timeout
+pub lxmf_sdk::MobileBleEventKind::WriteComplete
 #[non_exhaustive] pub enum lxmf_sdk::OverflowPolicy
 pub lxmf_sdk::OverflowPolicy::Block
 pub lxmf_sdk::OverflowPolicy::DropOldest
@@ -1099,6 +1106,47 @@ impl core::convert::From<alloc::string::String> for lxmf_sdk::MessageId
 pub fn lxmf_sdk::MessageId::from(value: alloc::string::String) -> Self
 impl core::fmt::Display for lxmf_sdk::MessageId
 pub fn lxmf_sdk::MessageId::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct lxmf_sdk::MobileBleCapabilities
+pub lxmf_sdk::MobileBleCapabilities::max_notification_queue: usize
+pub lxmf_sdk::MobileBleCapabilities::max_payload_bytes: usize
+pub lxmf_sdk::MobileBleCapabilities::supports_background_restore: bool
+pub lxmf_sdk::MobileBleCapabilities::supports_operation_cancel: bool
+pub lxmf_sdk::MobileBleCapabilities::supports_write_without_response: bool
+pub struct lxmf_sdk::MobileBleConnectRequest
+pub lxmf_sdk::MobileBleConnectRequest::connect_timeout_ms: u64
+pub lxmf_sdk::MobileBleConnectRequest::notify_char_uuid: alloc::string::String
+pub lxmf_sdk::MobileBleConnectRequest::operation_id: alloc::string::String
+pub lxmf_sdk::MobileBleConnectRequest::peripheral_id: alloc::string::String
+pub lxmf_sdk::MobileBleConnectRequest::service_uuid: alloc::string::String
+pub lxmf_sdk::MobileBleConnectRequest::write_char_uuid: alloc::string::String
+pub struct lxmf_sdk::MobileBleEvent
+pub lxmf_sdk::MobileBleEvent::error: core::option::Option<alloc::string::String>
+pub lxmf_sdk::MobileBleEvent::kind: lxmf_sdk::MobileBleEventKind
+pub lxmf_sdk::MobileBleEvent::operation_id: core::option::Option<alloc::string::String>
+pub lxmf_sdk::MobileBleEvent::payload: core::option::Option<alloc::vec::Vec<u8>>
+pub lxmf_sdk::MobileBleEvent::sequence_no: u64
+pub lxmf_sdk::MobileBleEvent::session_id: alloc::string::String
+pub struct lxmf_sdk::MobileBleReadRequest
+pub lxmf_sdk::MobileBleReadRequest::max_bytes: usize
+pub lxmf_sdk::MobileBleReadRequest::operation_id: alloc::string::String
+pub lxmf_sdk::MobileBleReadRequest::read_timeout_ms: u64
+pub lxmf_sdk::MobileBleReadRequest::session_id: alloc::string::String
+pub struct lxmf_sdk::MobileBleReadResult
+pub lxmf_sdk::MobileBleReadResult::operation_id: alloc::string::String
+pub lxmf_sdk::MobileBleReadResult::payload: alloc::vec::Vec<u8>
+pub struct lxmf_sdk::MobileBleSessionDescriptor
+pub lxmf_sdk::MobileBleSessionDescriptor::negotiated_mtu: u16
+pub lxmf_sdk::MobileBleSessionDescriptor::peripheral_id: alloc::string::String
+pub lxmf_sdk::MobileBleSessionDescriptor::session_id: alloc::string::String
+pub struct lxmf_sdk::MobileBleWriteAck
+pub lxmf_sdk::MobileBleWriteAck::bytes_written: usize
+pub lxmf_sdk::MobileBleWriteAck::operation_id: alloc::string::String
+pub struct lxmf_sdk::MobileBleWriteRequest
+pub lxmf_sdk::MobileBleWriteRequest::operation_id: alloc::string::String
+pub lxmf_sdk::MobileBleWriteRequest::payload: alloc::vec::Vec<u8>
+pub lxmf_sdk::MobileBleWriteRequest::require_response: bool
+pub lxmf_sdk::MobileBleWriteRequest::session_id: alloc::string::String
+pub lxmf_sdk::MobileBleWriteRequest::write_timeout_ms: u64
 #[non_exhaustive] pub struct lxmf_sdk::NegotiationRequest
 pub lxmf_sdk::NegotiationRequest::auth_mode: lxmf_sdk::AuthMode
 pub lxmf_sdk::NegotiationRequest::bind_mode: lxmf_sdk::BindMode
@@ -1516,6 +1564,14 @@ impl<B: lxmf_sdk::SdkBackend> lxmf_sdk::LxmfSdkVoiceSignaling for lxmf_sdk::Clie
 pub fn lxmf_sdk::Client<B>::voice_session_close(&self, session_id: lxmf_sdk::domain::VoiceSessionId) -> core::result::Result<lxmf_sdk::Ack, lxmf_sdk::SdkError>
 pub fn lxmf_sdk::Client<B>::voice_session_open(&self, req: lxmf_sdk::domain::VoiceSessionOpenRequest) -> core::result::Result<lxmf_sdk::domain::VoiceSessionId, lxmf_sdk::SdkError>
 pub fn lxmf_sdk::Client<B>::voice_session_update(&self, req: lxmf_sdk::domain::VoiceSessionUpdateRequest) -> core::result::Result<lxmf_sdk::domain::VoiceSessionState, lxmf_sdk::SdkError>
+pub trait lxmf_sdk::MobileBleHostAdapter: core::marker::Send + core::marker::Sync
+pub fn lxmf_sdk::MobileBleHostAdapter::cancel_operation(&self, _operation_id: &str) -> core::result::Result<lxmf_sdk::Ack, lxmf_sdk::SdkError>
+pub fn lxmf_sdk::MobileBleHostAdapter::capabilities(&self) -> lxmf_sdk::MobileBleCapabilities
+pub fn lxmf_sdk::MobileBleHostAdapter::connect(&self, req: lxmf_sdk::MobileBleConnectRequest) -> core::result::Result<lxmf_sdk::MobileBleSessionDescriptor, lxmf_sdk::SdkError>
+pub fn lxmf_sdk::MobileBleHostAdapter::disconnect(&self, session_id: &str) -> core::result::Result<lxmf_sdk::Ack, lxmf_sdk::SdkError>
+pub fn lxmf_sdk::MobileBleHostAdapter::poll_event(&self, timeout_ms: u64) -> core::result::Result<core::option::Option<lxmf_sdk::MobileBleEvent>, lxmf_sdk::SdkError>
+pub fn lxmf_sdk::MobileBleHostAdapter::read(&self, req: lxmf_sdk::MobileBleReadRequest) -> core::result::Result<lxmf_sdk::MobileBleReadResult, lxmf_sdk::SdkError>
+pub fn lxmf_sdk::MobileBleHostAdapter::write(&self, req: lxmf_sdk::MobileBleWriteRequest) -> core::result::Result<lxmf_sdk::MobileBleWriteAck, lxmf_sdk::SdkError>
 pub trait lxmf_sdk::SdkBackend: core::marker::Send + core::marker::Sync
 pub fn lxmf_sdk::SdkBackend::attachment_associate_topic(&self, _attachment_id: lxmf_sdk::domain::AttachmentId, _topic_id: lxmf_sdk::domain::TopicId) -> core::result::Result<lxmf_sdk::Ack, lxmf_sdk::SdkError>
 pub fn lxmf_sdk::SdkBackend::attachment_delete(&self, _attachment_id: lxmf_sdk::domain::AttachmentId) -> core::result::Result<lxmf_sdk::Ack, lxmf_sdk::SdkError>
@@ -1631,4 +1687,7 @@ pub fn lxmf_sdk::negotiate_contract_version(client_supported: &[u16], backend_su
 pub fn lxmf_sdk::negotiate_plugins(requested_plugin_ids: &[alloc::string::String], available_plugins: &[lxmf_sdk::capability::PluginDescriptor], effective_capabilities: &[alloc::string::String]) -> alloc::vec::Vec<alloc::string::String>
 pub fn lxmf_sdk::required_capabilities(profile: lxmf_sdk::Profile) -> &'static [&'static str]
 pub fn lxmf_sdk::supports_capability(profile: lxmf_sdk::Profile, capability_id: &str) -> bool
+pub fn lxmf_sdk::validate_mobile_ble_capabilities(capabilities: &lxmf_sdk::MobileBleCapabilities) -> core::result::Result<(), lxmf_sdk::SdkError>
+pub fn lxmf_sdk::validate_mobile_ble_event_payload_bounds(events: &[lxmf_sdk::MobileBleEvent], capabilities: &lxmf_sdk::MobileBleCapabilities) -> core::result::Result<(), lxmf_sdk::SdkError>
+pub fn lxmf_sdk::validate_mobile_ble_event_sequence(events: &[lxmf_sdk::MobileBleEvent]) -> core::result::Result<(), lxmf_sdk::SdkError>
 pub type lxmf_sdk::ErrorDetails = alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>

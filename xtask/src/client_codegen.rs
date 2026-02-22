@@ -50,6 +50,12 @@ enum OutputValidationMode {
     TargetHashes,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GeneratorRunOptions {
+    mode: SchemaClientMode,
+    validation_mode: OutputValidationMode,
+}
+
 impl OutputValidationMode {
     fn parse(value: &str) -> Result<Self> {
         match value {
@@ -286,6 +292,7 @@ pub fn run_schema_client_generate(
 
     let runtime =
         manifest.generator_runtime.as_ref().context("manifest missing generator_runtime")?;
+    let generator_run_options = GeneratorRunOptions { mode, validation_mode };
     let (target_hashes, generated_output_paths) = run_generators(
         workspace,
         &manifest,
@@ -293,8 +300,7 @@ pub fn run_schema_client_generate(
         &spec_to_use,
         &openapi_version,
         &temp_dir.path,
-        mode,
-        validation_mode,
+        generator_run_options,
     )?;
 
     let mut target_compile_checks = BTreeMap::new();
@@ -311,10 +317,8 @@ pub fn run_schema_client_generate(
         compare_target_hash_baseline(&target_hash_baseline_path, &spec_hash, &target_hashes)?;
     }
 
-    if mode == SchemaClientMode::Write {
-        if validation_mode == OutputValidationMode::TargetHashes {
-            write_generation_baseline(&target_hash_baseline_path, &spec_hash, &target_hashes)?;
-        }
+    if mode == SchemaClientMode::Write && validation_mode == OutputValidationMode::TargetHashes {
+        write_generation_baseline(&target_hash_baseline_path, &spec_hash, &target_hashes)?;
     }
 
     let mut method_names = methods.iter().map(|m| m.method.clone()).collect::<Vec<_>>();
@@ -1534,8 +1538,7 @@ fn run_generators(
     spec_path: &Path,
     openapi_version: &str,
     scratch_dir: &Path,
-    mode: SchemaClientMode,
-    validation_mode: OutputValidationMode,
+    run_options: GeneratorRunOptions,
 ) -> Result<(BTreeMap<String, String>, BTreeMap<String, PathBuf>)> {
     let converted_spec_path = scratch_dir.join("openapi-generator.json");
     let (generator_spec_path, generator_openapi_version) =
@@ -1573,7 +1576,7 @@ fn run_generators(
         target_hashes.insert(target.language.clone(), generated_hash.clone());
         generated_output_paths.insert(target.language.clone(), normalized.clone());
 
-        match (mode, validation_mode) {
+        match (run_options.mode, run_options.validation_mode) {
             (SchemaClientMode::Check, OutputValidationMode::CommittedArtifacts) => {
                 compare_dirs(&normalized, &output_dir)?;
             }
