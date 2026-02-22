@@ -12,6 +12,7 @@ use rns_transport::transport::SendPacketOutcome;
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
 #[test]
@@ -367,6 +368,155 @@ interfaces = [
         });
     }));
     assert!(result.is_err(), "strict mode should panic when BLE startup validation fails");
+}
+
+#[test]
+fn bootstrap_best_effort_marks_lora_stale_state_as_failed() {
+    let temp = TempDir::new().expect("temp dir");
+    let db_path = temp.path().join("reticulum.db");
+    let config_path = temp.path().join("daemon.toml");
+    let state_path = temp.path().join("lora-state.json");
+    let stale_last_updated_unix_ms =
+        now_unix_ms_for_test().saturating_sub(31 * 24 * 60 * 60 * 1000);
+    fs::write(
+        &state_path,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "duty_cycle_debt_ms": 5000,
+            "last_updated_unix_ms": stale_last_updated_unix_ms,
+            "uncertain": false,
+            "uncertainty_reason": null
+        }))
+        .expect("serialize lora state"),
+    )
+    .expect("write lora state");
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+interfaces = [
+  {{ type = "lora", enabled = true, name = "lora-main", region = "US915", state_path = "{}" }}
+]
+"#,
+            state_path.display()
+        ),
+    )
+    .expect("write config");
+
+    let runtime =
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+    let local = tokio::task::LocalSet::new();
+    let context = runtime.block_on(local.run_until(async {
+        bootstrap::bootstrap(test_args(
+            db_path.clone(),
+            Some(config_path.clone()),
+            Some("127.0.0.1:0".to_string()),
+            false,
+        ))
+        .await
+    }));
+    let response = context
+        .daemon
+        .handle_rpc(RpcRequest { id: 1, method: "list_interfaces".to_string(), params: None })
+        .expect("list_interfaces");
+    let interfaces = response
+        .result
+        .expect("result")
+        .get("interfaces")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .expect("interfaces array");
+    let lora_interface = interfaces
+        .iter()
+        .find(|entry| {
+            entry
+                .get("settings")
+                .and_then(|value| value.get("_runtime"))
+                .and_then(|value| value.get("startup_status"))
+                .and_then(|value| value.as_str())
+                == Some("failed")
+                && entry
+                    .get("settings")
+                    .and_then(|value| value.get("_runtime"))
+                    .and_then(|value| value.get("startup_error"))
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|error| error.contains("timestamp too old"))
+        })
+        .expect("lora interface should be present in snapshot");
+    assert_eq!(
+        lora_interface
+            .get("settings")
+            .and_then(|value| value.get("_runtime"))
+            .and_then(|value| value.get("startup_status"))
+            .and_then(|value| value.as_str()),
+        Some("failed")
+    );
+    assert!(
+        lora_interface
+            .get("settings")
+            .and_then(|value| value.get("_runtime"))
+            .and_then(|value| value.get("startup_error"))
+            .and_then(|value| value.as_str())
+            .is_some_and(|error| error.contains("timestamp too old")),
+        "startup_error should include stale timestamp fail-closed reason"
+    );
+}
+
+#[test]
+fn bootstrap_strict_mode_panics_on_lora_debt_overflow_fail_closed() {
+    let temp = TempDir::new().expect("temp dir");
+    let db_path = temp.path().join("reticulum.db");
+    let config_path = temp.path().join("daemon.toml");
+    let state_path = temp.path().join("lora-state.json");
+    fs::write(
+        &state_path,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "duty_cycle_debt_ms": 86_400_001,
+            "last_updated_unix_ms": now_unix_ms_for_test(),
+            "uncertain": false,
+            "uncertainty_reason": null
+        }))
+        .expect("serialize lora state"),
+    )
+    .expect("write lora state");
+    fs::write(
+        &config_path,
+        format!(
+            r#"
+interfaces = [
+  {{ type = "lora", enabled = true, name = "lora-main", region = "US915", state_path = "{}" }}
+]
+"#,
+            state_path.display()
+        ),
+    )
+    .expect("write config");
+
+    let runtime =
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.block_on(async {
+            bootstrap::bootstrap(test_args(
+                db_path.clone(),
+                Some(config_path.clone()),
+                Some("127.0.0.1:0".to_string()),
+                true,
+            ))
+            .await;
+        });
+    }));
+    assert!(
+        result.is_err(),
+        "strict mode should panic when lora state debt exceeds compliance bounds"
+    );
+}
+
+fn now_unix_ms_for_test() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn test_args(
