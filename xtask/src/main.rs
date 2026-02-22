@@ -70,6 +70,41 @@ const REQUIRED_INTERFACE_CI_JOBS: &[&str] = &[
     "interfaces-boundary-check",
     "interfaces-required",
 ];
+const REQUIRED_INTERFACE_CI_JOB_COMMAND_MARKERS: &[(&str, &str)] = &[
+    ("interfaces-build-linux", "cargo check -p reticulumd --all-targets"),
+    ("interfaces-build-macos", "cargo check -p reticulumd --all-targets"),
+    ("interfaces-build-windows", "cargo check -p reticulumd --all-targets"),
+    ("interfaces-test-serial", "cargo test -p rns-transport serial::tests"),
+    (
+        "interfaces-test-ble-linux",
+        "cargo test -p reticulumd --bin reticulumd interfaces::ble::",
+    ),
+    (
+        "interfaces-test-ble-macos",
+        "cargo test -p reticulumd --bin reticulumd interfaces::ble::",
+    ),
+    (
+        "interfaces-test-ble-windows",
+        "cargo test -p reticulumd --bin reticulumd interfaces::ble::",
+    ),
+    (
+        "interfaces-test-lora",
+        "cargo test -p reticulumd --bin reticulumd lora_state::tests",
+    ),
+    (
+        "interfaces-test-mobile-contract",
+        "cargo test -p lxmf-sdk --test mobile_ble_contract",
+    ),
+    (
+        "interfaces-test-mobile-contract",
+        "cargo test -p test-support --test mobile_ble_android_conformance --test mobile_ble_ios_conformance",
+    ),
+    (
+        "interfaces-boundary-check",
+        "bash tools/scripts/check-boundaries.sh",
+    ),
+    ("interfaces-required", "cargo xtask ci --stage interfaces-required"),
+];
 const SCHEMA_CLIENT_SMOKE_REPORT_PATH: &str = "target/interop/schema-client-smoke-report.txt";
 const CERTIFICATION_REPORT_PATH: &str = "target/release-readiness/certification-report.md";
 const CERTIFICATION_REPORT_JSON_PATH: &str = "target/release-readiness/certification-report.json";
@@ -700,6 +735,7 @@ fn run_release_check() -> Result<()> {
 
 fn run_interfaces_required() -> Result<()> {
     ensure_required_interface_ci_jobs_declared()?;
+    ensure_required_interface_ci_commands_declared()?;
     run("cargo", &["check", "-p", "reticulumd", "--all-targets"])?;
     run("cargo", &["check", "-p", "rns-rpc", "--all-targets"])?;
     run("cargo", &["check", "-p", "lxmf-sdk", "--all-targets"])?;
@@ -707,8 +743,8 @@ fn run_interfaces_required() -> Result<()> {
     run("cargo", &["test", "-p", "reticulumd", "--test", "config"])?;
     run("cargo", &["test", "-p", "reticulumd", "--bin", "reticulumd"])?;
     run("cargo", &["test", "-p", "rns-transport", "serial::tests"])?;
-    run("cargo", &["test", "-p", "reticulumd", "--bin", "reticulumd", "runtime_settings"])?;
-    run("cargo", &["test", "-p", "reticulumd", "--bin", "reticulumd", "lora::tests"])?;
+    run("cargo", &["test", "-p", "reticulumd", "--bin", "reticulumd", "interfaces::ble::"])?;
+    run("cargo", &["test", "-p", "reticulumd", "--bin", "reticulumd", "lora_state::tests"])?;
     run(
         "cargo",
         &["test", "-p", "rns-rpc", "set_interfaces_rejects_startup_only_interface_kinds"],
@@ -744,12 +780,193 @@ fn ensure_required_interface_ci_jobs_declared() -> Result<()> {
     let workflow =
         fs::read_to_string(CI_WORKFLOW_PATH).with_context(|| format!("read {CI_WORKFLOW_PATH}"))?;
     for job in REQUIRED_INTERFACE_CI_JOBS {
-        let marker = format!("{job}:");
-        if !workflow.contains(&marker) {
-            bail!("missing required interface CI job in {CI_WORKFLOW_PATH}: {job}");
+        extract_ci_job_block(&workflow, job)?;
+    }
+    Ok(())
+}
+
+fn ensure_required_interface_ci_commands_declared() -> Result<()> {
+    let workflow =
+        fs::read_to_string(CI_WORKFLOW_PATH).with_context(|| format!("read {CI_WORKFLOW_PATH}"))?;
+    for (job, marker) in REQUIRED_INTERFACE_CI_JOB_COMMAND_MARKERS {
+        let block = extract_ci_job_block(&workflow, job)?;
+        let commands = extract_ci_job_commands(block);
+        if !commands.iter().any(|command| command.contains(marker)) {
+            bail!(
+                "missing required interface CI command marker for job '{job}' in {CI_WORKFLOW_PATH}: {marker}"
+            );
+        }
+    }
+    ensure_interfaces_required_needs_declared(&workflow)?;
+    Ok(())
+}
+
+fn ensure_interfaces_required_needs_declared(workflow: &str) -> Result<()> {
+    let block = extract_ci_job_block(workflow, "interfaces-required")?;
+    let declared_needs = extract_ci_job_needs(block);
+    for job in
+        REQUIRED_INTERFACE_CI_JOBS.iter().copied().filter(|job| *job != "interfaces-required")
+    {
+        if !declared_needs.iter().any(|need| need == job) {
+            bail!(
+                "missing required dependency in interfaces-required.needs for {CI_WORKFLOW_PATH}: {job}"
+            );
         }
     }
     Ok(())
+}
+
+fn extract_ci_job_block<'a>(workflow: &'a str, job: &str) -> Result<&'a str> {
+    let mut in_jobs_section = false;
+    let mut jobs_section_end = workflow.len();
+    let mut current_offset = 0usize;
+    let mut found_start = None;
+    for raw_line in workflow.split_inclusive('\n') {
+        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        let uncommented = strip_yaml_inline_comment(line).trim_end();
+        let trimmed = uncommented.trim();
+        if !in_jobs_section {
+            if trimmed == "jobs:" {
+                in_jobs_section = true;
+            }
+        } else {
+            let indent = leading_spaces(uncommented);
+            let is_next_top_level_section =
+                indent == 0 && !trimmed.is_empty() && trimmed.ends_with(':');
+            if is_next_top_level_section {
+                jobs_section_end = current_offset;
+                break;
+            }
+
+            if let Some(job_header) = parse_ci_job_header(uncommented) {
+                if let Some(start) = found_start {
+                    return Ok(&workflow[start..current_offset]);
+                }
+                if job_header == job {
+                    found_start = Some(current_offset);
+                }
+            }
+        }
+        current_offset += raw_line.len();
+    }
+    if !in_jobs_section {
+        bail!("missing 'jobs:' section in {CI_WORKFLOW_PATH}");
+    }
+    if let Some(start) = found_start {
+        return Ok(&workflow[start..jobs_section_end]);
+    }
+    let header = format!("  {job}:");
+    bail!("missing job header '{header}' in {CI_WORKFLOW_PATH}")
+}
+
+fn extract_ci_job_commands(job_block: &str) -> Vec<String> {
+    let mut commands = Vec::new();
+    let lines: Vec<&str> = job_block.lines().collect();
+    let mut index = 0usize;
+    while index < lines.len() {
+        let line = strip_yaml_inline_comment(lines[index]).trim_end();
+        let indent = leading_spaces(line);
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("run:") {
+            let rest = rest.trim();
+            let is_multiline_script =
+                rest.is_empty() || rest.starts_with('|') || rest.starts_with('>');
+            if is_multiline_script {
+                index += 1;
+                while index < lines.len() {
+                    let script_line = strip_yaml_inline_comment(lines[index]).trim_end();
+                    let script_indent = leading_spaces(script_line);
+                    let script = script_line.trim();
+                    if !script.is_empty() && script_indent <= indent {
+                        break;
+                    }
+                    if !script.is_empty() && !script.starts_with('#') {
+                        commands.push(script.to_string());
+                    }
+                    index += 1;
+                }
+                continue;
+            }
+            if !rest.is_empty() && !rest.starts_with('#') {
+                commands.push(rest.to_string());
+            }
+        }
+        index += 1;
+    }
+    commands
+}
+
+fn extract_ci_job_needs(job_block: &str) -> Vec<String> {
+    let mut needs = Vec::new();
+    let lines: Vec<&str> = job_block.lines().collect();
+    let mut index = 0usize;
+    while index < lines.len() {
+        let line = strip_yaml_inline_comment(lines[index]).trim_end();
+        let indent = leading_spaces(line);
+        let trimmed = line.trim();
+        if indent == 4 {
+            if let Some(rest) = trimmed.strip_prefix("needs:") {
+                let rest = rest.trim();
+                if rest.is_empty() {
+                    index += 1;
+                    while index < lines.len() {
+                        let item_line = strip_yaml_inline_comment(lines[index]).trim_end();
+                        let item_indent = leading_spaces(item_line);
+                        let item = item_line.trim();
+                        if !item.is_empty() && item_indent <= indent {
+                            break;
+                        }
+                        if item_indent > indent {
+                            if let Some(value) = item.strip_prefix('-') {
+                                let value = value.trim().trim_matches('"').trim_matches('\'');
+                                if !value.is_empty() {
+                                    needs.push(value.to_string());
+                                }
+                            }
+                        }
+                        index += 1;
+                    }
+                    continue;
+                }
+                if let Some(values) =
+                    rest.strip_prefix('[').and_then(|value| value.strip_suffix(']'))
+                {
+                    for value in values.split(',') {
+                        let value = value.trim().trim_matches('"').trim_matches('\'');
+                        if !value.is_empty() {
+                            needs.push(value.to_string());
+                        }
+                    }
+                } else {
+                    let value = rest.trim_matches('"').trim_matches('\'');
+                    if !value.is_empty() {
+                        needs.push(value.to_string());
+                    }
+                }
+            }
+        }
+        index += 1;
+    }
+    needs
+}
+
+fn strip_yaml_inline_comment(line: &str) -> &str {
+    line.split_once(" #").map(|(head, _)| head).unwrap_or(line)
+}
+
+fn parse_ci_job_header(line: &str) -> Option<&str> {
+    if !line.starts_with("  ") || line.starts_with("    ") {
+        return None;
+    }
+    let trimmed = line.trim();
+    if trimmed == "jobs:" || !trimmed.ends_with(':') {
+        return None;
+    }
+    trimmed.strip_suffix(':').map(str::trim).filter(|job| !job.is_empty())
+}
+
+fn leading_spaces(line: &str) -> usize {
+    line.chars().take_while(|ch| *ch == ' ').count()
 }
 
 fn run_api_diff() -> Result<()> {
