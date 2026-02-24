@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  validate:
+    name: Validate tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag is on main/master
+        run: |
+          git fetch origin main master 2>/dev/null || true
+          TAG_COMMIT=$(git rev-parse HEAD)
+          for branch in main master; do
+            if git rev-parse "origin/$branch" >/dev/null 2>&1; then
+              if git merge-base --is-ancestor "$TAG_COMMIT" "origin/$branch"; then
+                echo "Tag is on $branch"
+                exit 0
+              fi
+            fi
+          done
+          echo "ERROR: Tag is not on main or master"
+          exit 1
+
+  test:
+    name: Full test suite
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
+      - run: cargo test --workspace
+
+  publish:
+    name: Publish to crates.io
+    needs: test
+    runs-on: ubuntu-latest
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cargo publish -p styrene-rns --allow-dirty || echo "styrene-rns already published"
+          sleep 30
+          cargo publish -p styrene-rns-transport --allow-dirty || echo "styrene-rns-transport already published"
+          sleep 30
+          cargo publish -p styrene-lxmf --allow-dirty || echo "styrene-lxmf already published"
+          sleep 30
+          cargo publish -p styrene-mesh --allow-dirty || echo "styrene-mesh already published"
+          sleep 30
+          cargo publish -p styrene --allow-dirty || echo "styrene already published"
+
+  release:
+    name: GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
