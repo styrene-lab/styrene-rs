@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Rust RNS protocol core — identity, destinations, links, cryptographic primitives"
+keywords = ["styrene", "reticulum", "rns", "mesh", "cryptography"]
+categories = ["network-programming", "cryptography"]
 
 [lib]
 name = "rns_core"

@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Rust LXMF messaging protocol — message encoding, stamps, delivery, propagation"
+keywords = ["styrene", "reticulum", "lxmf", "mesh", "messaging"]
+categories = ["network-programming", "encoding"]
 
 [lib]
 name = "lxmf_core"

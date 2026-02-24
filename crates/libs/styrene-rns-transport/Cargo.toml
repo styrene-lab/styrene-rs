@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "RNS transport interfaces for Styrene — TCP, UDP, and future Serial/KISS transports"
+keywords = ["styrene", "reticulum", "rns", "transport", "mesh"]
+categories = ["network-programming"]
 
 [lib]
 name = "rns_transport"
