@@ -1,0 +1,19 @@
+[package]
+name = "styrene"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Styrene mesh communications — meta-crate re-exporting all library crates"
+keywords = ["styrene", "reticulum", "mesh", "lxmf", "protocol"]
+categories = ["network-programming"]
+
+[dependencies]
+styrene-rns = { version = "0.1.0", path = "../../libs/styrene-rns" }
+styrene-rns-transport = { version = "0.1.0", path = "../../libs/styrene-rns-transport" }
+styrene-lxmf = { version = "0.1.0", path = "../../libs/styrene-lxmf" }
+styrene-mesh = { version = "0.1.0", path = "../../libs/styrene-mesh" }
+
+[lints]
+workspace = true
