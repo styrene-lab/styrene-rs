@@ -1,0 +1,31 @@
+[package]
+name = "styrene-mesh"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Styrene wire protocol envelope format for mesh communications"
+keywords = ["styrene", "reticulum", "mesh", "protocol", "lxmf"]
+categories = ["network-programming", "encoding"]
+
+[dependencies]
+styrene-rns = { version = "0.1.0", path = "../styrene-rns" }
+rmp-serde.workspace = true
+rmpv.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_bytes.workspace = true
+rand_core = { workspace = true, features = ["getrandom"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true
+
+[features]
+default = ["std"]
+std = []
+interop-tests = []
+
+[lints]
+workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "interop-test"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Cross-implementation test harness for Python/Rust interop"
+
+[dependencies]
+styrene-mesh = { version = "0.1.0", path = "../../libs/styrene-mesh" }
+styrene-rns = { version = "0.1.0", path = "../../libs/styrene-rns" }
+serde = { workspace = true }
+serde_json.workspace = true
+rmp-serde.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
