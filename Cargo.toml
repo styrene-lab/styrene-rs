@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/libs/lxmf-core",
+  "crates/libs/styrene-lxmf",
   "crates/libs/lxmf-sdk",
-  "crates/libs/rns-core",
-  "crates/libs/rns-transport",
+  "crates/libs/styrene-rns",
+  "crates/libs/styrene-rns-transport",
   "crates/libs/rns-rpc",
   "crates/libs/test-support",
   "crates/apps/lxmf-cli",
@@ -12,10 +12,10 @@ members = [
   "crates/apps/rns-tools",
 ]
 default-members = [
-  "crates/libs/lxmf-core",
+  "crates/libs/styrene-lxmf",
   "crates/libs/lxmf-sdk",
-  "crates/libs/rns-core",
-  "crates/libs/rns-transport",
+  "crates/libs/styrene-rns",
+  "crates/libs/styrene-rns-transport",
   "crates/libs/rns-rpc",
   "crates/libs/test-support",
   "crates/apps/lxmf-cli",
@@ -34,11 +34,11 @@ anyhow = "1"
 clap = { version = "4.5.29", features = ["derive"] }
 clap_complete = "4.5"
 criterion = "0.5"
-lxmf-core = { version = "0.1.0", path = "crates/libs/lxmf-core" }
+styrene-lxmf = { version = "0.1.0", path = "crates/libs/styrene-lxmf" }
 lxmf-sdk = { version = "0.1.0", path = "crates/libs/lxmf-sdk" }
-rns-core = { version = "0.1.0", path = "crates/libs/rns-core" }
+styrene-rns = { version = "0.1.0", path = "crates/libs/styrene-rns" }
 rns-rpc = { version = "0.1.0", path = "crates/libs/rns-rpc" }
-rns-transport = { version = "0.1.0", path = "crates/libs/rns-transport" }
+styrene-rns-transport = { version = "0.1.0", path = "crates/libs/styrene-rns-transport" }
 aes = "0.8.4"
 base64 = "0.22"
 cbc = "0.1.2"
@@ -71,10 +71,10 @@ x25519-dalek = "2.0.1"
 thiserror = "1"
 zeroize = "1.8"
 
-[profile.dev.package.rns-core]
+[profile.dev.package.styrene-rns]
 opt-level = 2
 
-[profile.test.package.rns-core]
+[profile.test.package.styrene-rns]
 opt-level = 2
 
 [workspace.lints.rust]

@@ -1,14 +1,16 @@
 [package]
-name = "lxmf-core"
+name = "styrene-lxmf"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+name = "lxmf_core"
 
 [dependencies]
-rns-core.workspace = true
+rns_core = { package = "styrene-rns", version = "0.1.0", path = "../styrene-rns" }
 base64.workspace = true
 hex.workspace = true
 rand_core = { workspace = true, features = ["getrandom"] }

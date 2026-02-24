@@ -1013,25 +1013,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lxmf-core"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "criterion",
- "ed25519-dalek",
- "hex",
- "rand_core",
- "rmp-serde",
- "rmpv",
- "rns-core",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2",
- "x25519-dalek",
-]
-
-[[package]]
 name = "lxmf-sdk"
 version = "0.1.0"
 dependencies = [
@@ -1416,18 +1397,18 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "hex",
- "lxmf-core",
  "rand_core",
  "rmp-serde",
  "rmpv",
- "rns-core",
  "rns-rpc",
- "rns-transport",
  "rustls",
  "rustls-pemfile",
  "serde",
  "serde_json",
  "sha2",
+ "styrene-lxmf",
+ "styrene-rns",
+ "styrene-rns-transport",
  "tempfile",
  "tokio",
  "tokio-rustls",
@@ -1485,26 +1466,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rns-core"
-version = "0.1.0"
-dependencies = [
- "aes",
- "cbc",
- "crypto-common",
- "ed25519-dalek",
- "hex",
- "hkdf",
- "hmac",
- "rand_core",
- "rmp-serde",
- "serde",
- "serde_bytes",
- "sha2",
- "tempfile",
- "x25519-dalek",
-]
-
-[[package]]
 name = "rns-rpc"
 version = "0.1.0"
 dependencies = [
@@ -1531,35 +1492,6 @@ dependencies = [
  "rns-rpc",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "rns-transport"
-version = "0.1.0"
-dependencies = [
- "aes",
- "bzip2",
- "cbc",
- "crypto-common",
- "ed25519-dalek",
- "hex",
- "hkdf",
- "hmac",
- "log",
- "rand_core",
- "rmp",
- "rmp-serde",
- "rmpv",
- "rns-core",
- "rusqlite",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tokio-util",
- "x25519-dalek",
 ]
 
 [[package]]
@@ -1825,6 +1757,74 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
+name = "styrene-lxmf"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "criterion",
+ "ed25519-dalek",
+ "hex",
+ "rand_core",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2",
+ "styrene-rns",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "styrene-rns"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "cbc",
+ "crypto-common",
+ "ed25519-dalek",
+ "hex",
+ "hkdf",
+ "hmac",
+ "rand_core",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "tempfile",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "styrene-rns-transport"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "bzip2",
+ "cbc",
+ "crypto-common",
+ "ed25519-dalek",
+ "hex",
+ "hkdf",
+ "hmac",
+ "log",
+ "rand_core",
+ "rmp",
+ "rmp-serde",
+ "rmpv",
+ "rusqlite",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2",
+ "styrene-rns",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1872,9 +1872,9 @@ dependencies = [
  "base64 0.22.1",
  "jsonschema",
  "lxmf-sdk",
- "rns-core",
  "rns-rpc",
  "serde_json",
+ "styrene-rns",
  "tempfile",
 ]
 
