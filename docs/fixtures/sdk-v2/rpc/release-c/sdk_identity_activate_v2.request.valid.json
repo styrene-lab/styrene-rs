@@ -1,7 +1,0 @@
-{
-  "id": "req-identity-activate-1",
-  "method": "sdk_identity_activate_v2",
-  "params": {
-    "identity": "id:alpha"
-  }
-}

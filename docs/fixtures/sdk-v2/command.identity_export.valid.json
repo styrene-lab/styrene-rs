@@ -1,7 +1,0 @@
-{
-  "request_id": "req-identity-export-1",
-  "method": "identity_export",
-  "params": {
-    "identity": "id:alpha"
-  }
-}

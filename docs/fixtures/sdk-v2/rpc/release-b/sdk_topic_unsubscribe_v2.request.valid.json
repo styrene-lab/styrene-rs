@@ -1,7 +1,0 @@
-{
-  "id": "req-topic-unsubscribe-1",
-  "method": "sdk_topic_unsubscribe_v2",
-  "params": {
-    "topic_id": "topic-1"
-  }
-}

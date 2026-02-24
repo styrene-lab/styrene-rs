@@ -1,7 +1,0 @@
-{
-  "id": "req-topic-publish-invalid",
-  "method": "sdk_topic_publish_v2",
-  "params": {
-    "topic_id": "topic-1"
-  }
-}

@@ -1,7 +1,0 @@
-{
-  "id": 7,
-  "method": "sdk_snapshot_v2",
-  "params": {
-    "include_counts": true
-  }
-}

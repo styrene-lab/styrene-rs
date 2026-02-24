@@ -1,7 +1,0 @@
-{
-  "id": "req-telemetry-query-invalid",
-  "method": "sdk_telemetry_query_v2",
-  "params": {
-    "limit": 0
-  }
-}

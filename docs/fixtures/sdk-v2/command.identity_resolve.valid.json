@@ -1,7 +1,0 @@
-{
-  "request_id": "req-identity-resolve-1",
-  "method": "identity_resolve",
-  "params": {
-    "hash": "deadbeef"
-  }
-}

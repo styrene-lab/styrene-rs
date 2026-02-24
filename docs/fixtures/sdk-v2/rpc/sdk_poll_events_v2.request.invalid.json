@@ -1,8 +1,0 @@
-{
-  "id": 5,
-  "method": "sdk_poll_events_v2",
-  "params": {
-    "cursor": null,
-    "max": 0
-  }
-}

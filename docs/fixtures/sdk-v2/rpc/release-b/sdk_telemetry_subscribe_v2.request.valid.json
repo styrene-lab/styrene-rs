@@ -1,7 +1,0 @@
-{
-  "id": "req-telemetry-subscribe-1",
-  "method": "sdk_telemetry_subscribe_v2",
-  "params": {
-    "topic_id": "topic-1"
-  }
-}

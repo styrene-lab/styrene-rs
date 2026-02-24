@@ -1,7 +1,0 @@
-{
-  "request_id": "req-paper-decode-invalid",
-  "method": "paper_decode",
-  "params": {
-    "transient_id": "transient-1"
-  }
-}
