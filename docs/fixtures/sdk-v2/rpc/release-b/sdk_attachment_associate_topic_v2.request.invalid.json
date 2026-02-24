@@ -1,7 +1,0 @@
-{
-  "id": "req-attach-assoc-invalid",
-  "method": "sdk_attachment_associate_topic_v2",
-  "params": {
-    "attachment_id": "att-1"
-  }
-}

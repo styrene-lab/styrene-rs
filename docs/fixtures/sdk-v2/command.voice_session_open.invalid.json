@@ -1,7 +1,0 @@
-{
-  "request_id": "req-voice-open-invalid",
-  "method": "voice_session_open",
-  "params": {
-    "codec_hint": "opus"
-  }
-}

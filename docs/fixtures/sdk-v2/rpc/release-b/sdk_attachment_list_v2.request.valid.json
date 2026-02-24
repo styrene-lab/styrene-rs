@@ -1,7 +1,0 @@
-{
-  "id": "req-attachment-list-1",
-  "method": "sdk_attachment_list_v2",
-  "params": {
-    "limit": 25
-  }
-}

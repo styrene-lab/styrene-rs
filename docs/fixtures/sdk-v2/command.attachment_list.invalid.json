@@ -1,7 +1,0 @@
-{
-  "request_id": "req-attachment-list-invalid",
-  "method": "attachment_list",
-  "params": {
-    "limit": 0
-  }
-}

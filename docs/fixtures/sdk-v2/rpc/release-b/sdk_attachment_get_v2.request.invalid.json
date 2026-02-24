@@ -1,5 +1,0 @@
-{
-  "id": "req-attachment-get-invalid",
-  "method": "sdk_attachment_get_v2",
-  "params": {}
-}

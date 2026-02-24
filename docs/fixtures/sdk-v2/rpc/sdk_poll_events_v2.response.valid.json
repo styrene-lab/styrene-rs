@@ -1,8 +1,0 @@
-{
-  "id": 5,
-  "result": {
-    "events": [],
-    "next_cursor": "v2:runtime-1:events:1",
-    "dropped_count": 0
-  }
-}

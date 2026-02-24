@@ -1,7 +1,0 @@
-{
-  "id": "req-identity-import-invalid",
-  "method": "sdk_identity_import_v2",
-  "params": {
-    "passphrase": "secret"
-  }
-}

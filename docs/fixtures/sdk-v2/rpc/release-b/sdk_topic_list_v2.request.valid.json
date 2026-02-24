@@ -1,8 +1,0 @@
-{
-  "id": "req-topic-list-1",
-  "method": "sdk_topic_list_v2",
-  "params": {
-    "cursor": null,
-    "limit": 50
-  }
-}

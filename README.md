@@ -1,125 +1,52 @@
-# LXMF-rs Monorepo
+# styrene-rs
 
-Rust monorepo for LXMF and Reticulum with strict library/app boundaries and enterprise quality gates.
+Rust implementation of the [RNS](https://reticulum.network/) and [LXMF](https://github.com/markqvist/LXMF) protocol stack for the [Styrene](https://github.com/styrene-lab) mesh communications project.
+
+Forked from [FreeTAKTeam/LXMF-rs](https://github.com/FreeTAKTeam/LXMF-rs). See [UPSTREAM.md](UPSTREAM.md) for fork attribution.
+
+## Status
+
+**Phase 1: Fork and Foundation.** Python [styrened](https://github.com/styrene-lab/styrened) remains the primary implementation. This Rust stack is experimental until it passes the interop gate (Phase 3).
+
+## Crates
+
+| Crate | Description |
+|-------|-------------|
+| [`styrene-rns`](crates/libs/styrene-rns/) | RNS protocol core — identity, destinations, links, resources, ratchets |
+| [`styrene-rns-transport`](crates/libs/styrene-rns-transport/) | Transport interfaces — TCP, UDP, future Serial/KISS |
+| [`styrene-lxmf`](crates/libs/styrene-lxmf/) | LXMF messaging — router, propagation, stamps, delivery pipeline |
+| [`styrene-mesh`](crates/libs/styrene-mesh/) | Styrene wire protocol envelope (matches Python `styrene_wire.py`) |
+| [`styrene`](crates/meta/styrene/) | Meta-crate re-exporting all library crates |
+
+## Build
+
+```bash
+# Install just: brew install just / cargo install just
+just validate    # format-check + lint + test
+just test        # cargo test --workspace
+just lint        # cargo clippy
+just docs        # cargo doc --workspace
+```
 
 ## Repository Layout
 
-```text
-LXMF-rs/
+```
+styrene-rs/
 ├── crates/
-│   ├── libs/
-│   │   ├── lxmf-core/
-│   │   ├── lxmf-sdk/
-│   │   ├── rns-core/
-│   │   ├── rns-transport/
-│   │   ├── rns-rpc/
-│   │   └── test-support/
-│   ├── apps/
-│   │   ├── lxmf-cli/
-│   │   ├── reticulumd/
-│   │   └── rns-tools/
-└── docs/
-    ├── adr/
-    ├── architecture/
-    ├── contracts/
-    ├── migrations/
-    └── runbooks/
-├── tools/
-│   └── scripts/
-├── xtask/
-└── target/
-
-Note: legacy migration-only implementation crates are retained under
-`crates/internal/` and are excluded from the active workspace graph.
+│   ├── libs/          # Library crates (published to crates.io)
+│   ├── apps/          # Binary crates (styrened-rs, interop-test)
+│   └── meta/          # Meta-crate re-exports
+├── tests/
+│   └── interop/       # Python<->Rust interop test fixtures
+├── justfile           # Build automation
+├── UPSTREAM.md        # Fork attribution
+└── CLAUDE.md          # Claude Code guidance
 ```
 
-## Public Crates
+## Wire Protocol Contract
 
-- `lxmf-core`: message/payload/identity primitives.
-- `lxmf-sdk`: host-facing client API (`start/send/cancel/status/configure/poll/snapshot/shutdown`).
-- `rns-core`: Reticulum cryptographic and packet primitives.
-- `rns-transport`: transport + iface + receipt/resource API.
-- `rns-rpc`: RPC request/response/event contracts and bridges.
-
-## Build and Validation
-
-```bash
-cargo check --workspace --all-targets
-cargo test --workspace
-cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
-cargo doc --workspace --no-deps
-./tools/scripts/check-boundaries.sh
-```
-
-or via `xtask`:
-
-```bash
-cargo xtask ci
-cargo xtask release-check
-cargo xtask api-diff
-```
-
-## Developer Bootstrap
-
-One-command local setup:
-
-```bash
-make bootstrap
-```
-
-Direct script form:
-
-```bash
-./tools/scripts/bootstrap-dev.sh
-```
-
-Verification-only mode (used by CI):
-
-```bash
-./tools/scripts/bootstrap-dev.sh --check --skip-smoke
-```
-
-## Binaries
-
-- `lxmf-cli`
-- `reticulumd`
-- `rncp`, `rnid`, `rnir`, `rnodeconf`, `rnpath`, `rnpkg`, `rnprobe`, `rnsd`, `rnstatus`, `rnx`
-
-Run examples:
-
-```bash
-cargo run -p lxmf-cli -- --help
-cargo run -p reticulumd -- --help
-cargo run -p rns-tools --bin rnx -- e2e --timeout-secs 20
-```
-
-## Contracts and Runbooks
-
-- Compatibility contract: `docs/contracts/compatibility-contract.md`
-- Compatibility matrix: `docs/contracts/compatibility-matrix.md`
-- Third-party compatibility kit: `docs/contracts/third-party-compatibility-kit.md`
-- Support and LTS policy: `docs/contracts/support-policy.md`
-- Extension registry: `docs/contracts/extension-registry.md`
-- RPC contract: `docs/contracts/rpc-contract.md`
-- Payload contract: `docs/contracts/payload-contract.md`
-- Release readiness: `docs/runbooks/release-readiness.md`
-- Release scorecard process: `docs/architecture/overview.md`
-
-## SDK Guide
-
-- Guide index: `docs/sdk/README.md`
-- Quickstart: `docs/sdk/quickstart.md`
-- Profiles/configuration: `docs/sdk/configuration-profiles.md`
-- Config cookbook: `docs/runbooks/sdk-config-cookbook.md`
-- Lifecycle/events: `docs/sdk/lifecycle-and-events.md`
-- Advanced embedding: `docs/sdk/advanced-embedding.md`
-
-## Governance
-
-- Governance docs: `SECURITY.md`
-- Security policy: `SECURITY.md`
-- Code ownership: `.github/CODEOWNERS`
+The wire protocol is the integration boundary between Python and Rust. Both implementations produce and consume identical byte sequences — no FFI, no shared memory. A Python styrened and a Rust styrened-rs coexist on the same Reticulum mesh without knowing about each other.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

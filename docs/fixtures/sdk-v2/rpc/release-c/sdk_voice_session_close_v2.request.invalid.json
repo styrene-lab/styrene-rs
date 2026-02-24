@@ -1,5 +1,0 @@
-{
-  "id": "req-voice-close-invalid",
-  "method": "sdk_voice_session_close_v2",
-  "params": {}
-}

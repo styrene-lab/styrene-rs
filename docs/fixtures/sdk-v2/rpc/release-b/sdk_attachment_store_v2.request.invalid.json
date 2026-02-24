@@ -1,8 +1,0 @@
-{
-  "id": "req-attachment-store-invalid",
-  "method": "sdk_attachment_store_v2",
-  "params": {
-    "name": "doc.txt",
-    "content_type": "text/plain"
-  }
-}
