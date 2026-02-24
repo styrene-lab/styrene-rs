@@ -152,18 +152,20 @@ impl EncryptIdentity for Identity {
         out_buf: &'a mut [u8],
     ) -> Result<&'a [u8], RnsError> {
         let mut out_offset = 0;
-        let ephemeral_key = EphemeralSecret::random_from_rng(rng);
-        {
-            let ephemeral_public = PublicKey::from(&ephemeral_key);
-            let ephemeral_public_bytes = ephemeral_public.as_bytes();
 
-            if out_buf.len() >= ephemeral_public_bytes.len() {
-                out_buf[..ephemeral_public_bytes.len()].copy_from_slice(ephemeral_public_bytes);
-                out_offset += ephemeral_public_bytes.len();
-            } else {
-                return Err(RnsError::InvalidArgument);
-            }
+        // Use the ephemeral public key that was generated alongside the derived
+        // key's shared secret. Previously this generated a second, unrelated
+        // ephemeral key — breaking the cryptographic binding between the
+        // transmitted public key and the encryption key.
+        let ephemeral_public_bytes = derived_key
+            .ephemeral_public_bytes()
+            .ok_or(RnsError::InvalidArgument)?;
+
+        if out_buf.len() < ephemeral_public_bytes.len() {
+            return Err(RnsError::InvalidArgument);
         }
+        out_buf[..ephemeral_public_bytes.len()].copy_from_slice(ephemeral_public_bytes);
+        out_offset += ephemeral_public_bytes.len();
 
         let token = Fernet::new_from_slices(
             &derived_key.as_bytes()[..16],
@@ -432,6 +434,7 @@ pub struct GroupIdentity {}
 
 pub struct DerivedKey {
     key: [u8; DERIVED_KEY_LENGTH],
+    ephemeral_public: Option<[u8; PUBLIC_KEY_LENGTH]>,
 }
 
 impl DerivedKey {
@@ -440,11 +443,11 @@ impl DerivedKey {
 
         let _ = Hkdf::<Sha256>::new(salt, shared_key.as_bytes()).expand(&[], &mut key[..]);
 
-        Self { key }
+        Self { key, ephemeral_public: None }
     }
 
     pub fn new_empty() -> Self {
-        Self { key: [0u8; DERIVED_KEY_LENGTH] }
+        Self { key: [0u8; DERIVED_KEY_LENGTH], ephemeral_public: None }
     }
 
     pub fn new_from_private_key(
@@ -461,8 +464,17 @@ impl DerivedKey {
         salt: Option<&[u8]>,
     ) -> Self {
         let secret = EphemeralSecret::random_from_rng(rng);
+        let ephemeral_public = PublicKey::from(&secret);
         let shared_key = secret.diffie_hellman(pub_key);
-        Self::new(&shared_key, salt)
+
+        let mut key = [0u8; DERIVED_KEY_LENGTH];
+        let _ = Hkdf::<Sha256>::new(salt, shared_key.as_bytes()).expand(&[], &mut key[..]);
+
+        Self { key, ephemeral_public: Some(*ephemeral_public.as_bytes()) }
+    }
+
+    pub fn ephemeral_public_bytes(&self) -> Option<&[u8; PUBLIC_KEY_LENGTH]> {
+        self.ephemeral_public.as_ref()
     }
 
     pub fn as_bytes(&self) -> &[u8; DERIVED_KEY_LENGTH] {
