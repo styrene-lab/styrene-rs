@@ -12,11 +12,10 @@ Forked from [FreeTAKTeam/LXMF-rs](https://github.com/FreeTAKTeam/LXMF-rs). See [
 
 | Crate | Description |
 |-------|-------------|
-| [`styrene-rns`](crates/libs/styrene-rns/) | RNS protocol core — identity, destinations, links, resources, ratchets |
-| [`styrene-rns-transport`](crates/libs/styrene-rns-transport/) | Transport interfaces — TCP, UDP, future Serial/KISS |
-| [`styrene-lxmf`](crates/libs/styrene-lxmf/) | LXMF messaging — router, propagation, stamps, delivery pipeline |
+| [`styrene-rns`](crates/libs/styrene-rns/) | RNS protocol core — identity, destinations, links, resources, ratchets. Transport layer (TCP, UDP) behind `transport` feature |
+| [`styrene-lxmf`](crates/libs/styrene-lxmf/) | LXMF messaging — router, propagation, stamps, delivery pipeline. SDK domain types behind `sdk` feature |
 | [`styrene-mesh`](crates/libs/styrene-mesh/) | Styrene wire protocol envelope (matches Python `styrene_wire.py`) |
-| [`styrene`](crates/meta/styrene/) | Meta-crate re-exporting all library crates |
+| [`styrened-rs`](crates/apps/styrened-rs/) | Daemon binary — RPC server, message routing, identity management |
 
 ## Build
 
@@ -33,9 +32,8 @@ just docs        # cargo doc --workspace
 ```
 styrene-rs/
 ├── crates/
-│   ├── libs/          # Library crates (published to crates.io)
-│   ├── apps/          # Binary crates (styrened-rs, interop-test)
-│   └── meta/          # Meta-crate re-exports
+│   ├── libs/          # Library crates (styrene-rns, styrene-lxmf, styrene-mesh)
+│   └── apps/          # Binary crates (styrened-rs)
 ├── tests/
 │   └── interop/       # Python<->Rust interop test fixtures
 ├── justfile           # Build automation
