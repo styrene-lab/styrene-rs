@@ -5,7 +5,7 @@ use super::bridge_helpers::{
 use reticulum_daemon::lxmf_bridge::build_wire_message;
 use reticulum_daemon::receipt_bridge::{track_receipt_mapping, ReceiptEvent};
 use rns_core::identity::PrivateIdentity;
-use rns_rpc::{AnnounceBridge, OutboundBridge};
+use reticulum_daemon::rpc::{AnnounceBridge, OutboundBridge};
 use rns_core::transport::delivery::{
     send_outcome_is_sent, send_outcome_status, send_via_link, LinkSendResult,
 };
@@ -252,8 +252,8 @@ impl DeliveryTask {
 impl OutboundBridge for TransportBridge {
     fn deliver(
         &self,
-        record: &rns_rpc::MessageRecord,
-        _options: &rns_rpc::OutboundDeliveryOptions,
+        record: &reticulum_daemon::storage::messages::MessageRecord,
+        _options: &reticulum_daemon::rpc::OutboundDeliveryOptions,
     ) -> Result<(), std::io::Error> {
         let destination = parse_destination_hash_required(&record.destination)?;
         let peer_info =

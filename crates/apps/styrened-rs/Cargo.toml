@@ -1,5 +1,5 @@
 [package]
-name = "reticulumd"
+name = "styrened-rs"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -12,28 +12,30 @@ name = "reticulum_daemon"
 
 [dependencies]
 rns_core = { package = "styrene-rns", path = "../../libs/styrene-rns", version = "0.1.0", features = ["transport"] }
-rns_rpc = { package = "rns-rpc", path = "../../libs/rns-rpc", version = "0.1.0" }
 lxmf = { package = "styrene-lxmf", path = "../../libs/styrene-lxmf", version = "0.1.0", default-features = false, features = ["std"] }
 base64 = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
+hmac.workspace = true
+hex.workspace = true
 rand_core = { workspace = true, features = ["getrandom"] }
-x25519-dalek = { workspace = true }
-tokio = { workspace = true }
-serde_json = { workspace = true }
-rmpv = { workspace = true }
-rmp-serde = { workspace = true }
-sha2 = { workspace = true }
-hex = { workspace = true }
+rmp-serde.workspace = true
+rmpv = { workspace = true, features = ["with-serde"] }
+rusqlite = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
 toml = { workspace = true }
+tokio = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
+x25519-dalek = { workspace = true }
 x509-parser = { workspace = true }
+zeroize.workspace = true
 
 [dev-dependencies]
 tempfile = { workspace = true }
 
 [[bin]]
-name = "reticulumd"
+name = "styrened-rs"
 path = "src/bin/reticulumd/main.rs"
