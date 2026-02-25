@@ -91,19 +91,13 @@ clean:
 # Publish crates in dependency order (dry run)
 publish-dry-run:
     cargo publish -p styrene-rns --dry-run
-    cargo publish -p styrene-rns-transport --dry-run
     cargo publish -p styrene-lxmf --dry-run
     cargo publish -p styrene-mesh --dry-run
-    cargo publish -p styrene --dry-run
 
 # Publish crates in dependency order (live)
 publish:
     cargo publish -p styrene-rns
     sleep 30
-    cargo publish -p styrene-rns-transport
-    sleep 30
     cargo publish -p styrene-lxmf
     sleep 30
     cargo publish -p styrene-mesh
-    sleep 30
-    cargo publish -p styrene
