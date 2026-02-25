@@ -8,12 +8,7 @@ members = [
   "crates/libs/lxmf-sdk",
   "crates/libs/rns-rpc",
   "crates/libs/test-support",
-  "crates/meta/styrene",
-  "crates/apps/styrened-rs",
-  "crates/apps/interop-test",
-  "crates/apps/lxmf-cli",
   "crates/apps/reticulumd",
-  "crates/apps/rns-tools",
 ]
 default-members = [
   "crates/libs/styrene-rns",
@@ -23,12 +18,7 @@ default-members = [
   "crates/libs/lxmf-sdk",
   "crates/libs/rns-rpc",
   "crates/libs/test-support",
-  "crates/meta/styrene",
-  "crates/apps/styrened-rs",
-  "crates/apps/interop-test",
-  "crates/apps/lxmf-cli",
   "crates/apps/reticulumd",
-  "crates/apps/rns-tools",
 ]
 
 [workspace.package]

@@ -359,15 +359,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "clap_complete"
-version = "4.5.66"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c757a3b7e39161a4e56f9365141ada2a6c915a8622c408ab6bb4b5d047371031"
-dependencies = [
- "clap",
-]
-
-[[package]]
 name = "clap_derive"
 version = "4.5.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -857,18 +848,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "interop-test"
-version = "0.1.0"
-dependencies = [
- "rmp-serde",
- "serde",
- "serde_json",
- "styrene-mesh",
- "styrene-rns",
- "tempfile",
-]
-
-[[package]]
 name = "is-terminal"
 version = "0.4.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1011,17 +990,6 @@ dependencies = [
  "scoped-tls",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "lxmf-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "clap_complete",
- "lxmf-sdk",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -1497,16 +1465,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rns-tools"
-version = "0.1.0"
-dependencies = [
- "clap",
- "rns-rpc",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "rusqlite"
 version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1769,16 +1727,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
-name = "styrene"
-version = "0.1.0"
-dependencies = [
- "styrene-lxmf",
- "styrene-mesh",
- "styrene-rns",
- "styrene-rns-transport",
-]
-
-[[package]]
 name = "styrene-lxmf"
 version = "0.1.0"
 dependencies = [
@@ -1859,18 +1807,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "x25519-dalek",
-]
-
-[[package]]
-name = "styrened-rs"
-version = "0.1.0"
-dependencies = [
- "clap",
- "styrene-lxmf",
- "styrene-mesh",
- "styrene-rns",
- "styrene-rns-transport",
- "tokio",
 ]
 
 [[package]]
