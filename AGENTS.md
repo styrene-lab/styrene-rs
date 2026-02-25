@@ -33,17 +33,17 @@ just test-interop
 crates/
   libs/
     styrene-rns/            # RNS protocol core: identity (X25519+Ed25519),
-                            # destinations, links, resources, ratchets, packets
-    styrene-rns-transport/  # Transport interfaces: TCP, UDP, future Serial/KISS
+                            # destinations, links, resources, ratchets, packets.
+                            # Transport layer (TCP, UDP, Serial/KISS) behind
+                            # `features = ["transport"]`
     styrene-lxmf/           # LXMF messaging: router, propagation, stamps,
-                            # delivery pipeline, message packing
+                            # delivery pipeline, message packing.
+                            # SDK domain types behind `features = ["sdk"]`
     styrene-mesh/           # Styrene wire protocol envelope format
                             # (must match styrened's styrene_wire.py byte-for-byte)
   apps/
-    styrened-rs/            # Daemon binary (skeleton — active after interop gate)
-    interop-test/           # Cross-implementation test harness
-  meta/
-    styrene/                # Meta-crate re-exporting all lib crates
+    styrened-rs/            # Daemon binary + RPC server + test harness
+                            # (lib name: reticulum_daemon)
 ```
 
 ## Relationship to Python styrened
@@ -61,6 +61,9 @@ crates/
 | File | Purpose |
 |------|---------|
 | `crates/libs/styrene-mesh/src/wire.rs` | Wire protocol — must match `styrene_wire.py` |
+| `crates/libs/styrene-rns/src/transport/` | Transport layer (feature-gated) |
+| `crates/libs/styrene-lxmf/src/sdk/` | SDK domain types (feature-gated) |
+| `crates/apps/styrened-rs/src/rpc/` | RPC daemon + codec + HTTP |
 | `tests/interop/fixtures/` | Binary test vectors generated from Python |
 | `tests/interop/python/` | Python scripts generating test fixtures |
 | `UPSTREAM.md` | Fork attribution and upstream tracking |
