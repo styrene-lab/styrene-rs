@@ -6,18 +6,18 @@ use reticulum_daemon::lxmf_bridge::build_wire_message;
 use reticulum_daemon::receipt_bridge::{track_receipt_mapping, ReceiptEvent};
 use rns_core::identity::PrivateIdentity;
 use rns_rpc::{AnnounceBridge, OutboundBridge};
-use rns_transport::delivery::{
+use rns_core::transport::delivery::{
     send_outcome_is_sent, send_outcome_status, send_via_link, LinkSendResult,
 };
-use rns_transport::destination::{DestinationDesc, DestinationName, SingleInputDestination};
-use rns_transport::destination_hash::parse_destination_hash_required;
-use rns_transport::hash::AddressHash;
-use rns_transport::identity::Identity;
-use rns_transport::packet::{
+use rns_core::destination::{DestinationDesc, DestinationName, SingleInputDestination};
+use rns_core::destination_hash::parse_destination_hash_required;
+use rns_core::hash::AddressHash;
+use rns_core::identity::Identity;
+use rns_core::packet::{
     ContextFlag, DestinationType, Header, HeaderType, IfacFlag, Packet, PacketContext,
     PacketDataBuffer, PacketType, PropagationType,
 };
-use rns_transport::transport::Transport;
+use rns_core::transport::core_transport::Transport;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 

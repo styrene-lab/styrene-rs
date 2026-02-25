@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
   "crates/libs/styrene-rns",
-  "crates/libs/styrene-rns-transport",
   "crates/libs/styrene-lxmf",
   "crates/libs/styrene-mesh",
   "crates/libs/lxmf-sdk",
@@ -12,7 +11,6 @@ members = [
 ]
 default-members = [
   "crates/libs/styrene-rns",
-  "crates/libs/styrene-rns-transport",
   "crates/libs/styrene-lxmf",
   "crates/libs/styrene-mesh",
   "crates/libs/lxmf-sdk",
@@ -36,7 +34,6 @@ styrene-lxmf = { version = "0.1.0", path = "crates/libs/styrene-lxmf" }
 lxmf-sdk = { version = "0.1.0", path = "crates/libs/lxmf-sdk" }
 styrene-rns = { version = "0.1.0", path = "crates/libs/styrene-rns" }
 rns-rpc = { version = "0.1.0", path = "crates/libs/rns-rpc" }
-styrene-rns-transport = { version = "0.1.0", path = "crates/libs/styrene-rns-transport" }
 styrene-mesh = { version = "0.1.0", path = "crates/libs/styrene-mesh" }
 aes = "0.8.4"
 base64 = "0.22"

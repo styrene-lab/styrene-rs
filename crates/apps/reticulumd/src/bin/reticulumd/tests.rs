@@ -1,7 +1,7 @@
 use crate::bridge_helpers::opportunistic_payload;
-use rns_transport::delivery::send_outcome_status;
-use rns_transport::destination_hash::parse_destination_hash_required;
-use rns_transport::transport::SendPacketOutcome;
+use rns_core::transport::delivery::send_outcome_status;
+use rns_core::destination_hash::parse_destination_hash_required;
+use rns_core::transport::core_transport::SendPacketOutcome;
 
 #[test]
 fn opportunistic_payload_strips_destination_prefix() {

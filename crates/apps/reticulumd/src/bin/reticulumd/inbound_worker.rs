@@ -4,7 +4,7 @@ use reticulum_daemon::inbound_delivery::{
     decode_inbound_payload, decode_inbound_payload_with_diagnostics,
 };
 use rns_rpc::RpcDaemon;
-use rns_transport::transport::{ReceivedPayloadMode, Transport};
+use rns_core::transport::core_transport::{ReceivedPayloadMode, Transport};
 use std::rc::Rc;
 use std::sync::Arc;
 

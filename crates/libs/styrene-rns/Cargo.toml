@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Rust RNS protocol core — identity, destinations, links, cryptographic primitives"
+description = "Rust RNS protocol core — identity, destinations, links, cryptographic primitives, and transport"
 keywords = ["styrene", "reticulum", "rns", "mesh", "cryptography"]
 categories = ["network-programming", "cryptography"]
 
@@ -27,6 +27,16 @@ serde_bytes.workspace = true
 sha2.workspace = true
 x25519-dalek = { workspace = true, features = ["static_secrets"] }
 
+# Transport-only dependencies (optional, gated by "transport" feature)
+bzip2 = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+rmpv = { workspace = true, features = ["with-serde"], optional = true }
+rmp = { version = "0.8.14", optional = true }
+rusqlite = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["full"], optional = true }
+tokio-util = { workspace = true, optional = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
@@ -35,6 +45,17 @@ default = ["std"]
 std = []
 alloc = []
 fernet-aes128 = []
+transport = [
+    "std",
+    "dep:bzip2",
+    "dep:log",
+    "dep:rmpv",
+    "dep:rmp",
+    "dep:rusqlite",
+    "dep:serde_json",
+    "dep:tokio",
+    "dep:tokio-util",
+]
 
 [lints]
 workspace = true
