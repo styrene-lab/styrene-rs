@@ -1,6 +1,6 @@
 use super::bridge_helpers::log_delivery_trace;
 use reticulum_daemon::receipt_bridge::{handle_receipt_event, ReceiptEvent};
-use rns_rpc::RpcDaemon;
+use reticulum_daemon::rpc::RpcDaemon;
 use std::rc::Rc;
 use tokio::sync::mpsc::UnboundedReceiver;
 

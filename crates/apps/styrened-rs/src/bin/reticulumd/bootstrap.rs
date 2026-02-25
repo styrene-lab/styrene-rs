@@ -9,7 +9,8 @@ use reticulum_daemon::announce_names::{
 use reticulum_daemon::config::DaemonConfig;
 use reticulum_daemon::identity_store::load_or_create_identity;
 use reticulum_daemon::receipt_bridge::ReceiptBridge;
-use rns_rpc::{AnnounceBridge, InterfaceRecord, MessagesStore, OutboundBridge, RpcDaemon};
+use reticulum_daemon::rpc::{AnnounceBridge, InterfaceRecord, OutboundBridge, RpcDaemon};
+use reticulum_daemon::storage::messages::MessagesStore;
 use rns_core::destination::{DestinationName, SingleInputDestination};
 use rns_core::transport::iface::tcp_client::TcpClient;
 use rns_core::transport::iface::tcp_server::TcpServer;

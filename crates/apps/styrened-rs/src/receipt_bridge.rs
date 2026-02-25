@@ -1,4 +1,4 @@
-use rns_rpc::RpcDaemon;
+use crate::rpc::RpcDaemon;
 use rns_core::transport::receipt::{
     record_receipt_status, resolve_receipt_message_id,
     track_receipt_mapping as shared_track_receipt_mapping,
@@ -41,7 +41,7 @@ impl ReceiptHandler for ReceiptBridge {
 pub fn handle_receipt_event(daemon: &RpcDaemon, event: ReceiptEvent) -> Result<(), std::io::Error> {
     record_receipt_status(
         &|message_id: &str, status: &str| {
-            let _ = daemon.handle_rpc(rns_rpc::rpc::RpcRequest {
+            let _ = daemon.handle_rpc(crate::rpc::RpcRequest {
                 id: 0,
                 method: "record_receipt".into(),
                 params: Some(serde_json::json!({

@@ -1,6 +1,6 @@
 use super::bootstrap::RpcTlsConfig;
-use rns_rpc::rpc::codec;
-use rns_rpc::{http, RpcDaemon, RpcRequest};
+use reticulum_daemon::rpc::codec;
+use reticulum_daemon::rpc::{http, RpcDaemon, RpcRequest};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{RootCertStore, ServerConfig};
 use rustls_pemfile::private_key;

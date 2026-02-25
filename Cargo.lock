@@ -1121,32 +1121,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a96887878f22d7bad8a3b6dc5b7440e0ada9a245242924394987b21cf2210a4c"
 
 [[package]]
-name = "reticulumd"
-version = "0.1.0"
-dependencies = [
- "base64",
- "clap",
- "hex",
- "rand_core",
- "rmp-serde",
- "rmpv",
- "rns-rpc",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "sha2",
- "styrene-lxmf",
- "styrene-rns",
- "tempfile",
- "tokio",
- "tokio-rustls",
- "toml",
- "x25519-dalek",
- "x509-parser",
-]
-
-[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1192,25 +1166,6 @@ dependencies = [
  "rmp",
  "serde",
  "serde_bytes",
-]
-
-[[package]]
-name = "rns-rpc"
-version = "0.1.0"
-dependencies = [
- "base64",
- "criterion",
- "hex",
- "hmac",
- "rand_core",
- "rmp-serde",
- "rmpv",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "zeroize",
 ]
 
 [[package]]
@@ -1521,6 +1476,34 @@ dependencies = [
  "tokio",
  "tokio-util",
  "x25519-dalek",
+]
+
+[[package]]
+name = "styrened-rs"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "clap",
+ "hex",
+ "hmac",
+ "rand_core",
+ "rmp-serde",
+ "rmpv",
+ "rusqlite",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "sha2",
+ "styrene-lxmf",
+ "styrene-rns",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "toml",
+ "x25519-dalek",
+ "x509-parser",
+ "zeroize",
 ]
 
 [[package]]

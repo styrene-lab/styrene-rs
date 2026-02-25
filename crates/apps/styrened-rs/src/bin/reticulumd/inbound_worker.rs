@@ -3,7 +3,7 @@ use lxmf::inbound_decode::InboundPayloadMode;
 use reticulum_daemon::inbound_delivery::{
     decode_inbound_payload, decode_inbound_payload_with_diagnostics,
 };
-use rns_rpc::RpcDaemon;
+use reticulum_daemon::rpc::RpcDaemon;
 use rns_core::transport::core_transport::{ReceivedPayloadMode, Transport};
 use std::rc::Rc;
 use std::sync::Arc;
