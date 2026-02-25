@@ -87,7 +87,7 @@ pub fn decrypt_with_identity(
     Ok(plain.as_bytes().to_vec())
 }
 
-pub(crate) fn now_secs() -> f64 {
+pub fn now_secs() -> f64 {
     #[cfg(feature = "std")]
     {
         std::time::SystemTime::now()

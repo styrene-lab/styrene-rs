@@ -15,6 +15,9 @@ pub mod ratchets;
 
 pub mod serde;
 
+#[cfg(feature = "transport")]
+pub mod transport;
+
 pub use destination::{group_decrypt, group_encrypt};
 pub use error::RnsError;
 pub use hash::lxmf_address_hash;

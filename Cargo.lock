@@ -1388,7 +1388,6 @@ dependencies = [
  "sha2",
  "styrene-lxmf",
  "styrene-rns",
- "styrene-rns-transport",
  "tempfile",
  "tokio",
  "tokio-rustls",
@@ -1765,26 +1764,6 @@ name = "styrene-rns"
 version = "0.1.0"
 dependencies = [
  "aes",
- "cbc",
- "crypto-common",
- "ed25519-dalek",
- "hex",
- "hkdf",
- "hmac",
- "rand_core",
- "rmp-serde",
- "serde",
- "serde_bytes",
- "sha2",
- "tempfile",
- "x25519-dalek",
-]
-
-[[package]]
-name = "styrene-rns-transport"
-version = "0.1.0"
-dependencies = [
- "aes",
  "bzip2",
  "cbc",
  "crypto-common",
@@ -1802,7 +1781,6 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2",
- "styrene-rns",
  "tempfile",
  "tokio",
  "tokio-util",

@@ -1,11 +1,11 @@
 use rand_core::OsRng;
 use rns_core::identity::PrivateIdentity;
-use rns_transport::delivery::{send_via_link, LinkSendResult};
-use rns_transport::destination::link::Link;
-use rns_transport::destination::{DestinationDesc, DestinationName};
-use rns_transport::iface::{Interface, InterfaceContext};
-use rns_transport::packet::{DestinationType, PacketType};
-use rns_transport::transport::{Transport, TransportConfig};
+use rns_core::transport::delivery::{send_via_link, LinkSendResult};
+use rns_core::transport::destination_ext::link::Link;
+use rns_core::destination::{DestinationDesc, DestinationName};
+use rns_core::transport::iface::{Interface, InterfaceContext};
+use rns_core::packet::{DestinationType, PacketType};
+use rns_core::transport::core_transport::{Transport, TransportConfig};
 use tokio::time::Duration;
 
 struct SinkInterface;
@@ -26,8 +26,8 @@ async fn direct_send_uses_link_payloads() {
     let sender = PrivateIdentity::new_from_rand(OsRng);
     let receiver = PrivateIdentity::new_from_rand(OsRng);
 
-    let sender = rns_transport::identity_bridge::to_transport_private_identity(&sender);
-    let receiver = rns_transport::identity_bridge::to_transport_private_identity(&receiver);
+    let sender = rns_core::transport::identity_bridge::to_transport_private_identity(&sender);
+    let receiver = rns_core::transport::identity_bridge::to_transport_private_identity(&receiver);
 
     let transport = Transport::new(TransportConfig::new("test", &sender, true));
     transport.iface_manager().lock().await.spawn(SinkInterface, sink_worker);

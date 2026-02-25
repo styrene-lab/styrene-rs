@@ -1,5 +1,5 @@
 use reticulum_daemon::receipt_bridge::ReceiptBridge;
-use rns_transport::transport::{DeliveryReceipt, ReceiptHandler};
+use rns_core::transport::core_transport::{DeliveryReceipt, ReceiptHandler};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::unbounded_channel;
