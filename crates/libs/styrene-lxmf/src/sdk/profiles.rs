@@ -1,5 +1,5 @@
-use crate::capability::EffectiveLimits;
-use crate::types::Profile;
+use crate::sdk::capability::EffectiveLimits;
+use crate::sdk::types::Profile;
 
 const CAP_CURSOR_REPLAY: &str = "sdk.capability.cursor_replay";
 const CAP_ASYNC_EVENTS: &str = "sdk.capability.async_events";

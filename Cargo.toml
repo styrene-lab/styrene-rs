@@ -4,18 +4,14 @@ members = [
   "crates/libs/styrene-rns",
   "crates/libs/styrene-lxmf",
   "crates/libs/styrene-mesh",
-  "crates/libs/lxmf-sdk",
   "crates/libs/rns-rpc",
-  "crates/libs/test-support",
   "crates/apps/reticulumd",
 ]
 default-members = [
   "crates/libs/styrene-rns",
   "crates/libs/styrene-lxmf",
   "crates/libs/styrene-mesh",
-  "crates/libs/lxmf-sdk",
   "crates/libs/rns-rpc",
-  "crates/libs/test-support",
   "crates/apps/reticulumd",
 ]
 
@@ -31,7 +27,6 @@ clap = { version = "4.5.29", features = ["derive"] }
 clap_complete = "4.5"
 criterion = "0.5"
 styrene-lxmf = { version = "0.1.0", path = "crates/libs/styrene-lxmf" }
-lxmf-sdk = { version = "0.1.0", path = "crates/libs/lxmf-sdk" }
 styrene-rns = { version = "0.1.0", path = "crates/libs/styrene-rns" }
 rns-rpc = { version = "0.1.0", path = "crates/libs/rns-rpc" }
 styrene-mesh = { version = "0.1.0", path = "crates/libs/styrene-mesh" }

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Rust LXMF messaging protocol — message encoding, stamps, delivery, propagation"
+description = "Rust LXMF messaging protocol — message encoding, stamps, delivery, propagation, SDK domain types"
 keywords = ["styrene", "reticulum", "lxmf", "mesh", "messaging"]
 categories = ["network-programming", "encoding"]
 
@@ -26,10 +26,14 @@ serde_json = { version = "1", default-features = false, features = ["alloc"], op
 sha2.workspace = true
 x25519-dalek.workspace = true
 
+# SDK-only dependencies (optional, gated by "sdk" feature)
+thiserror = { workspace = true, optional = true }
+
 [features]
 default = ["std"]
 std = ["dep:serde_json", "serde_json/std"]
 alloc = []
+sdk = ["std", "dep:thiserror"]
 
 [dev-dependencies]
 criterion.workspace = true

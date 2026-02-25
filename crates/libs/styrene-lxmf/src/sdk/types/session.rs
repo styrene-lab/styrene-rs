@@ -1,6 +1,6 @@
 use super::config::SdkConfig;
-use crate::capability::EffectiveLimits;
-use crate::error::{code, ErrorCategory, SdkError};
+use crate::sdk::capability::EffectiveLimits;
+use crate::sdk::error::{code, ErrorCategory, SdkError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 

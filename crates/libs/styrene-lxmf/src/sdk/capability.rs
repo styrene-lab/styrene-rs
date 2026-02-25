@@ -1,5 +1,5 @@
-use crate::profiles::required_capabilities;
-use crate::types::{AuthMode, BindMode, OverflowPolicy, Profile, RpcBackendConfig};
+use crate::sdk::profiles::required_capabilities;
+use crate::sdk::types::{AuthMode, BindMode, OverflowPolicy, Profile, RpcBackendConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
