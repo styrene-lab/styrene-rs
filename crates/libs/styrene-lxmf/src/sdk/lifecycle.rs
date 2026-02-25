@@ -1,5 +1,5 @@
-use crate::error::{code, ErrorCategory, SdkError};
-use crate::types::{RuntimeState, StartRequest};
+use crate::sdk::error::{code, ErrorCategory, SdkError};
+use crate::sdk::types::{RuntimeState, StartRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -147,7 +147,7 @@ fn legal_states_for_method(method: SdkMethod) -> &'static [RuntimeState] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{
+    use crate::sdk::types::{
         AuthMode, BindMode, EventSinkConfig, EventSinkKind, EventStreamConfig, OverflowPolicy,
         Profile, RedactionConfig, RedactionTransform, SdkConfig, StoreForwardCapacityPolicy,
         StoreForwardConfig, StoreForwardEvictionPriority,

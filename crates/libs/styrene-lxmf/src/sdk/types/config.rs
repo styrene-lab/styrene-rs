@@ -1,4 +1,4 @@
-use crate::error::{code, ErrorCategory, SdkError};
+use crate::sdk::error::{code, ErrorCategory, SdkError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;

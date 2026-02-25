@@ -13,5 +13,8 @@ pub mod payload_fields;
 #[cfg(feature = "std")]
 pub mod wire_fields;
 
+#[cfg(feature = "sdk")]
+pub mod sdk;
+
 pub use error::LxmfError;
 pub use message::{Message, Payload, WireMessage};

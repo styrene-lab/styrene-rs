@@ -46,7 +46,7 @@ fn start_request_rejects_duplicate_contract_versions() {
         config: base_config(),
     };
     let err = request.validate().expect_err("duplicate versions must fail");
-    assert_eq!(err.machine_code, crate::error::code::VALIDATION_INVALID_ARGUMENT);
+    assert_eq!(err.machine_code, crate::sdk::error::code::VALIDATION_INVALID_ARGUMENT);
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn config_rejects_remote_bind_without_token_or_mtls() {
     config.bind_mode = BindMode::Remote;
     config.auth_mode = AuthMode::LocalTrusted;
     let err = config.validate().expect_err("remote bind requires explicit secure auth");
-    assert_eq!(err.machine_code, crate::error::code::SECURITY_REMOTE_BIND_DISALLOWED);
+    assert_eq!(err.machine_code, crate::sdk::error::code::SECURITY_REMOTE_BIND_DISALLOWED);
 }
 
 #[test]
@@ -70,13 +70,13 @@ fn config_rejects_zero_store_forward_limits() {
     config.store_forward.max_messages = 0;
     let err =
         config.validate().expect_err("zero store-forward message capacity should fail validation");
-    assert_eq!(err.machine_code, crate::error::code::VALIDATION_INVALID_ARGUMENT);
+    assert_eq!(err.machine_code, crate::sdk::error::code::VALIDATION_INVALID_ARGUMENT);
 
     let mut config = base_config();
     config.store_forward.max_messages = 1;
     config.store_forward.max_message_age_ms = 0;
     let err = config.validate().expect_err("zero store-forward age limit should fail validation");
-    assert_eq!(err.machine_code, crate::error::code::VALIDATION_INVALID_ARGUMENT);
+    assert_eq!(err.machine_code, crate::sdk::error::code::VALIDATION_INVALID_ARGUMENT);
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn config_rejects_embedded_profile_with_mtls_auth_mode() {
         }),
     });
     let err = config.validate().expect_err("embedded profile must reject mtls");
-    assert_eq!(err.machine_code, crate::error::code::VALIDATION_INVALID_ARGUMENT);
+    assert_eq!(err.machine_code, crate::sdk::error::code::VALIDATION_INVALID_ARGUMENT);
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn config_rejects_mtls_without_client_cert_material_when_required() {
         }),
     });
     let err = config.validate().expect_err("required mtls client cert paths must be provided");
-    assert_eq!(err.machine_code, crate::error::code::SECURITY_AUTH_REQUIRED);
+    assert_eq!(err.machine_code, crate::sdk::error::code::SECURITY_AUTH_REQUIRED);
 }
 
 #[test]
@@ -258,18 +258,18 @@ fn sdk_config_rejects_invalid_event_sink_policy() {
     let mut config = SdkConfig::desktop_full_default();
     config.event_sink.max_event_bytes = 128;
     let err = config.validate().expect_err("event sink max bytes below bound should fail");
-    assert_eq!(err.machine_code, crate::error::code::VALIDATION_INVALID_ARGUMENT);
+    assert_eq!(err.machine_code, crate::sdk::error::code::VALIDATION_INVALID_ARGUMENT);
 
     let mut config = SdkConfig::desktop_full_default();
     config.event_sink.allow_kinds.clear();
     let err = config.validate().expect_err("event sink kinds cannot be empty");
-    assert_eq!(err.machine_code, crate::error::code::VALIDATION_INVALID_ARGUMENT);
+    assert_eq!(err.machine_code, crate::sdk::error::code::VALIDATION_INVALID_ARGUMENT);
 
     let mut config = SdkConfig::desktop_full_default();
     config.event_sink.enabled = true;
     config.redaction.enabled = false;
     let err = config.validate().expect_err("event sink must enforce redaction");
-    assert_eq!(err.machine_code, crate::error::code::SECURITY_REDACTION_REQUIRED);
+    assert_eq!(err.machine_code, crate::sdk::error::code::SECURITY_REDACTION_REQUIRED);
 }
 
 #[test]
