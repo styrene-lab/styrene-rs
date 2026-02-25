@@ -1,0 +1,26 @@
+[package]
+name = "styrene-ipc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Interface boundary traits for the styrene daemon — types, async traits, and stub implementation"
+keywords = ["styrene", "reticulum", "ipc", "daemon", "traits"]
+categories = ["network-programming"]
+
+[lib]
+name = "styrene_ipc"
+
+[dependencies]
+async-trait.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+
+[lints]
+workspace = true
