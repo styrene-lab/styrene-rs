@@ -89,6 +89,14 @@ pub enum StyreneMessageType {
     PqcCapability = 0xD6,
     #[cfg(feature = "pqc")]
     PqcCapabilityAck = 0xD7,
+
+    // Content Distribution (0xE0-0xE3)
+    /// A node announces availability of content chunks.
+    ResourceAvailable   = 0xE0,
+    /// Request a specific chunk from a seeder.
+    ChunkRequest        = 0xE1,
+    /// Response carrying a chunk's raw bytes.
+    ChunkResponse       = 0xE2,
 }
 
 impl StyreneMessageType {
@@ -127,6 +135,9 @@ impl StyreneMessageType {
             0xD6 => Ok(Self::PqcCapability),
             #[cfg(feature = "pqc")]
             0xD7 => Ok(Self::PqcCapabilityAck),
+            0xE0 => Ok(Self::ResourceAvailable),
+            0xE1 => Ok(Self::ChunkRequest),
+            0xE2 => Ok(Self::ChunkResponse),
             _ => Err(WireError::UnknownMessageType(b)),
         }
     }
