@@ -21,6 +21,7 @@ use crate::serde::Serialize;
 use crate::transport::iface::{InterfaceRxSender, InterfaceTxReceiver, RxMessage};
 
 use super::hdlc::Hdlc;
+use super::ifac::IfacConfig;
 
 // Per-interface buffer sizes. 2 KB per buffer; frame accumulator grows
 // dynamically but is capped to prevent unbounded growth on malformed streams.
@@ -31,9 +32,9 @@ const FRAME_BUF_LIMIT: usize = HDLC_BUF * 64;
 /// Run the receive half of an HDLC-framed byte-stream interface.
 ///
 /// Reads bytes from `reader`, accumulates them in a frame buffer, finds and
-/// decodes HDLC frames, deserializes RNS packets, and forwards them on
-/// `rx_channel`. Exits when `cancel` or `stop` is triggered, or when the
-/// reader returns 0 bytes (peer closed).
+/// decodes HDLC frames, optionally strips and verifies IFAC authentication,
+/// deserializes RNS packets, and forwards them on `rx_channel`. Exits when
+/// `cancel` or `stop` is triggered, or when the reader returns 0 bytes.
 ///
 /// Suitable for any transport whose read half implements `AsyncRead + Unpin + Send`.
 pub async fn run_hdlc_rx_loop<R>(
@@ -42,6 +43,7 @@ pub async fn run_hdlc_rx_loop<R>(
     iface_address: AddressHash,
     cancel: CancellationToken,
     stop: CancellationToken,
+    ifac: Option<&IfacConfig>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send,
 {
@@ -68,17 +70,37 @@ pub async fn run_hdlc_rx_loop<R>(
                             let mut output = OutputBuffer::new(&mut hdlc_rx_buffer);
 
                             if Hdlc::decode(frame, &mut output).is_ok() {
-                                if let Ok(packet) =
-                                    Packet::deserialize(&mut InputBuffer::new(output.as_slice()))
-                                {
-                                    let _ = rx_channel
-                                        .send(RxMessage { address: iface_address, packet })
-                                        .await;
-                                } else {
-                                    log::warn!(
-                                        "stream_iface: packet deserialize failed on {}",
+                                let raw = output.as_slice();
+
+                                // IFAC: strip and verify if the interface requires it,
+                                // or drop packets that carry IFAC on an Open interface.
+                                let inner: Option<Vec<u8>> = if let Some(cfg) = ifac {
+                                    // IFAC-enabled interface: must have valid IFAC token.
+                                    super::ifac::ifac_unwrap(raw, cfg)
+                                } else if !raw.is_empty() && raw[0] & 0x80 != 0 {
+                                    // Open interface: reject packets with IFAC flag set.
+                                    log::debug!(
+                                        "stream_iface: dropping IFAC packet on open interface {}",
                                         iface_address
                                     );
+                                    None
+                                } else {
+                                    Some(raw.to_vec())
+                                };
+
+                                if let Some(inner_bytes) = inner {
+                                    if let Ok(packet) = Packet::deserialize(
+                                        &mut InputBuffer::new(&inner_bytes),
+                                    ) {
+                                        let _ = rx_channel
+                                            .send(RxMessage { address: iface_address, packet })
+                                            .await;
+                                    } else {
+                                        log::warn!(
+                                            "stream_iface: packet deserialize failed on {}",
+                                            iface_address
+                                        );
+                                    }
                                 }
                             } else {
                                 log::warn!(
@@ -110,9 +132,9 @@ pub async fn run_hdlc_rx_loop<R>(
 
 /// Run the transmit half of an HDLC-framed byte-stream interface.
 ///
-/// Receives `TxMessage`s from `tx_channel`, serializes packets, HDLC-encodes
-/// them, and writes to `writer`. Exits when `cancel` or `stop` is triggered,
-/// or on write error.
+/// Receives `TxMessage`s from `tx_channel`, serializes packets, optionally
+/// wraps with IFAC authentication, HDLC-encodes, and writes to `writer`.
+/// Exits when `cancel` or `stop` is triggered, or on write error.
 ///
 /// Suitable for any transport whose write half implements `AsyncWrite + Unpin + Send`.
 pub async fn run_hdlc_tx_loop<W>(
@@ -121,6 +143,7 @@ pub async fn run_hdlc_tx_loop<W>(
     iface_address: AddressHash,
     cancel: CancellationToken,
     stop: CancellationToken,
+    ifac: Option<&IfacConfig>,
 ) where
     W: tokio::io::AsyncWrite + Unpin + Send,
 {
@@ -143,9 +166,16 @@ pub async fn run_hdlc_tx_loop<W>(
                 let mut output = OutputBuffer::new(&mut tx_buffer);
 
                 if packet.serialize(&mut output).is_ok() {
+                    // IFAC: wrap the serialized packet if this interface requires it.
+                    let wire_bytes: Vec<u8> = if let Some(cfg) = ifac {
+                        super::ifac::ifac_wrap(output.as_slice(), cfg)
+                    } else {
+                        output.as_slice().to_vec()
+                    };
+
                     let mut hdlc_output = OutputBuffer::new(&mut hdlc_tx_buffer);
 
-                    if Hdlc::encode(output.as_slice(), &mut hdlc_output).is_ok() {
+                    if Hdlc::encode(&wire_bytes, &mut hdlc_output).is_ok() {
                         if let Err(e) = writer.write_all(hdlc_output.as_slice()).await {
                             log::warn!(
                                 "stream_iface: write_all failed on {}: {}",
