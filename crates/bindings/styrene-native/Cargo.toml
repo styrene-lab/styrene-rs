@@ -16,4 +16,6 @@ crate-type = ["cdylib"]
 [dependencies]
 styrene-mesh = { path = "../../libs/styrene-mesh" }
 styrene-rns = { path = "../../libs/styrene-rns" }
+styrene-content = { path = "../../libs/styrene-content", features = ["alloc"] }
 pyo3 = { version = "0.23", features = ["extension-module"] }
+hex = "0.4"

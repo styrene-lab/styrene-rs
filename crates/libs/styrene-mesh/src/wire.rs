@@ -143,6 +143,75 @@ impl StyreneMessageType {
     }
 }
 
+// ── Content Distribution Payloads (0xE0-0xE2) ────────────────────────────────
+
+/// Payload for `ResourceAvailable` (0xE0): announces held chunks for a content item.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceAvailablePayload {
+    /// Blake3 content hash (32 bytes = ContentId).
+    pub content_id: [u8; 32],
+    /// First 16 bytes of Blake3(manifest_bytes) — quick integrity check.
+    pub manifest_hash: [u8; 16],
+    /// 256-bit bitset of chunks currently held (32 bytes = ChunkBitset).
+    #[serde(with = "serde_bytes")]
+    pub chunks_held: Vec<u8>,
+    /// Announcing node's RNS identity_hash (16 bytes).
+    pub seeder_hash: [u8; 16],
+}
+
+impl ResourceAvailablePayload {
+    /// Encode to msgpack bytes for embedding in a `StyreneMessage` payload.
+    pub fn encode(&self) -> Result<Vec<u8>, WireError> {
+        Ok(rmp_serde::to_vec(self)?)
+    }
+
+    /// Decode from msgpack bytes.
+    pub fn decode(data: &[u8]) -> Result<Self, WireError> {
+        Ok(rmp_serde::from_slice(data)?)
+    }
+}
+
+/// Payload for `ChunkRequest` (0xE1): asks a seeder for a specific chunk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkRequestPayload {
+    /// Content being requested.
+    pub content_id: [u8; 32],
+    /// Zero-based chunk index.
+    pub chunk_index: u32,
+}
+
+impl ChunkRequestPayload {
+    pub fn encode(&self) -> Result<Vec<u8>, WireError> {
+        Ok(rmp_serde::to_vec(self)?)
+    }
+    pub fn decode(data: &[u8]) -> Result<Self, WireError> {
+        Ok(rmp_serde::from_slice(data)?)
+    }
+}
+
+/// Payload for `ChunkResponse` (0xE2): carries raw chunk bytes from a seeder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkResponsePayload {
+    /// Content this chunk belongs to.
+    pub content_id: [u8; 32],
+    /// Zero-based chunk index.
+    pub chunk_index: u32,
+    /// Raw chunk bytes (verified against manifest before use).
+    #[serde(with = "serde_bytes")]
+    pub data: Vec<u8>,
+}
+
+impl ChunkResponsePayload {
+    pub fn encode(&self) -> Result<Vec<u8>, WireError> {
+        Ok(rmp_serde::to_vec(self)?)
+    }
+    pub fn decode(data: &[u8]) -> Result<Self, WireError> {
+        Ok(rmp_serde::from_slice(data)?)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// A Styrene wire protocol message.
 #[derive(Debug, Clone)]
 pub struct StyreneMessage {
@@ -274,6 +343,55 @@ mod tests {
         let msg = StyreneMessage::new(StyreneMessageType::Ping, &[]);
         let encoded = msg.encode();
         assert_eq!(encoded.len(), 28); // no payload
+    }
+
+    #[test]
+    fn resource_available_payload_roundtrip() {
+        let p = ResourceAvailablePayload {
+            content_id: [0xABu8; 32],
+            manifest_hash: [0x12u8; 16],
+            chunks_held: vec![0xFFu8; 32],
+            seeder_hash: [0x99u8; 16],
+        };
+        let encoded = p.encode().unwrap();
+        let decoded = ResourceAvailablePayload::decode(&encoded).unwrap();
+        assert_eq!(decoded.content_id, p.content_id);
+        assert_eq!(decoded.manifest_hash, p.manifest_hash);
+        assert_eq!(decoded.chunks_held, p.chunks_held);
+        assert_eq!(decoded.seeder_hash, p.seeder_hash);
+    }
+
+    #[test]
+    fn chunk_request_payload_roundtrip() {
+        let p = ChunkRequestPayload { content_id: [0x01u8; 32], chunk_index: 42 };
+        let decoded = ChunkRequestPayload::decode(&p.encode().unwrap()).unwrap();
+        assert_eq!(decoded.content_id, p.content_id);
+        assert_eq!(decoded.chunk_index, 42);
+    }
+
+    #[test]
+    fn chunk_response_payload_roundtrip() {
+        let p = ChunkResponsePayload {
+            content_id: [0x02u8; 32],
+            chunk_index: 7,
+            data: b"hello world chunk data".to_vec(),
+        };
+        let decoded = ChunkResponsePayload::decode(&p.encode().unwrap()).unwrap();
+        assert_eq!(decoded.chunk_index, 7);
+        assert_eq!(decoded.data, p.data);
+    }
+
+    #[test]
+    fn content_message_types_roundtrip() {
+        for msg_type in [
+            StyreneMessageType::ResourceAvailable,
+            StyreneMessageType::ChunkRequest,
+            StyreneMessageType::ChunkResponse,
+        ] {
+            let msg = StyreneMessage::new(msg_type, &[]);
+            let decoded = StyreneMessage::decode(&msg.encode()).expect("roundtrip failed");
+            assert_eq!(decoded.message_type, msg_type);
+        }
     }
 
     #[test]

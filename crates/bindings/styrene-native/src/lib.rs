@@ -17,6 +17,7 @@
 //! assert decoded.message_type == StyreneMessageType.Ping
 //! ```
 
+mod content;
 mod wire;
 
 use pyo3::prelude::*;
@@ -27,6 +28,12 @@ fn styrene_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Wire protocol types
     m.add_class::<wire::PyStyreneMessage>()?;
     m.add_class::<wire::PyStyreneMessageType>()?;
+
+    // Content distribution types
+    m.add_class::<content::PyContentId>()?;
+    m.add_class::<content::PyChunkProfile>()?;
+    m.add_class::<content::PyStyreneManifest>()?;
+    m.add_class::<content::PyResourceAvailableAnnounce>()?;
 
     // Module metadata
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
