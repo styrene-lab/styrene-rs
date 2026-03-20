@@ -1,0 +1,28 @@
+[package]
+name = "styrene-dx"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Styrene unified UI spike — Dioxus cross-platform (web/desktop/TUI)"
+publish = false
+
+[[bin]]
+name = "styrene-dx"
+path = "src/main.rs"
+
+[dependencies]
+# Dioxus core + platform renderers
+dioxus = { version = "0.7", features = ["desktop", "web"] }
+
+# Protocol crates (no transport — pure data types)
+styrene-rns = { workspace = true }
+
+# Utilities
+hex.workspace = true
+log.workspace = true
+rand_core = { workspace = true, features = ["getrandom"] }
+
+[lints]
+workspace = true

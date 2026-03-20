@@ -1,10 +1,10 @@
 use std::{collections::HashMap, time::Instant};
 
+use crate::transport::error::RnsError;
 use crate::{
     hash::{AddressHash, Hash},
     packet::{DestinationType, Header, HeaderType, Packet, PacketType, PropagationType},
 };
-use crate::transport::error::RnsError;
 use rmp::encode::write_array_len;
 
 pub struct PathEntry {

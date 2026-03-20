@@ -1,15 +1,15 @@
 use super::bridge_helpers::log_delivery_trace;
 use reticulum_daemon::receipt_bridge::{handle_receipt_event, ReceiptEvent};
 use reticulum_daemon::rpc::RpcDaemon;
-use std::rc::Rc;
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 pub(super) fn spawn_receipt_worker(
-    daemon: Rc<RpcDaemon>,
+    daemon: Arc<RpcDaemon>,
     mut receipt_rx: UnboundedReceiver<ReceiptEvent>,
 ) {
     let daemon_receipts = daemon;
-    tokio::task::spawn_local(async move {
+    tokio::spawn(async move {
         while let Some(event) = receipt_rx.recv().await {
             let message_id = event.message_id.clone();
             let status = event.status.clone();

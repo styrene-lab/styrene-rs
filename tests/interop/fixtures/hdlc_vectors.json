@@ -1,0 +1,52 @@
+[
+  {
+    "description": "Empty payload",
+    "decoded_hex": "",
+    "encoded_hex": "7e7e"
+  },
+  {
+    "description": "Simple ASCII",
+    "decoded_hex": "48656c6c6f",
+    "encoded_hex": "7e48656c6c6f7e"
+  },
+  {
+    "description": "Contains 0x7E (frame flag)",
+    "decoded_hex": "017e02",
+    "encoded_hex": "7e017d5e027e"
+  },
+  {
+    "description": "Contains 0x7D (escape byte)",
+    "decoded_hex": "017d02",
+    "encoded_hex": "7e017d5d027e"
+  },
+  {
+    "description": "Contains both 0x7E and 0x7D",
+    "decoded_hex": "7e7d",
+    "encoded_hex": "7e7d5e7d5d7e"
+  },
+  {
+    "description": "All special bytes repeated",
+    "decoded_hex": "7e7d7e7d",
+    "encoded_hex": "7e7d5e7d5d7d5e7d5d7e"
+  },
+  {
+    "description": "Binary payload 0-255",
+    "decoded_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+    "encoded_hex": "7e000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d5d7d5e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff7e"
+  },
+  {
+    "description": "Single 0x7E byte",
+    "decoded_hex": "7e",
+    "encoded_hex": "7e7d5e7e"
+  },
+  {
+    "description": "Single 0x7D byte",
+    "decoded_hex": "7d",
+    "encoded_hex": "7e7d5d7e"
+  },
+  {
+    "description": "Payload ending with 0x7E",
+    "decoded_hex": "01027e",
+    "encoded_hex": "7e01027d5e7e"
+  }
+]

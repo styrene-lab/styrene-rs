@@ -1,8 +1,8 @@
-use crate::transport::destination_ext::link::{Link, LinkEvent, LinkStatus};
 use crate::destination::DestinationDesc;
-use crate::transport::error::RnsError;
 use crate::packet::Packet;
 use crate::transport::core_transport::{SendPacketOutcome, Transport};
+use crate::transport::destination_ext::link::{Link, LinkEvent, LinkStatus};
+use crate::transport::error::RnsError;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;

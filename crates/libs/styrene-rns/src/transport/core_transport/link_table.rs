@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use tokio::time::{Duration, Instant};
 
-use crate::transport::destination_ext::link::LinkId;
 use crate::hash::AddressHash;
 use crate::packet::{Header, HeaderType, IfacFlag, Packet};
+use crate::transport::destination_ext::link::LinkId;
 
 #[allow(dead_code)]
 pub struct LinkEntry {

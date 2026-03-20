@@ -1,0 +1,19 @@
+[package]
+name = "styrene-native"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PyO3 bindings exposing styrene-rs to Python (styrened native acceleration)"
+keywords = ["styrene", "reticulum", "mesh", "pyo3", "ffi"]
+categories = ["api-bindings"]
+
+[lib]
+name = "styrene_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+styrene-mesh = { path = "../../libs/styrene-mesh" }
+styrene-rns = { path = "../../libs/styrene-rns" }
+pyo3 = { version = "0.23", features = ["extension-module"] }

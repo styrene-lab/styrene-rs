@@ -5,7 +5,6 @@ use reticulum_daemon::inbound_delivery::{
 };
 use reticulum_daemon::rpc::RpcDaemon;
 use rns_core::transport::core_transport::{ReceivedPayloadMode, Transport};
-use std::rc::Rc;
 use std::sync::Arc;
 
 fn inbound_payload_mode(mode: ReceivedPayloadMode) -> InboundPayloadMode {
@@ -15,10 +14,10 @@ fn inbound_payload_mode(mode: ReceivedPayloadMode) -> InboundPayloadMode {
     }
 }
 
-pub(super) fn spawn_inbound_worker(daemon: Rc<RpcDaemon>, transport: Arc<Transport>) {
+pub(super) fn spawn_inbound_worker(daemon: Arc<RpcDaemon>, transport: Arc<Transport>) {
     let daemon_inbound = daemon;
     let inbound_transport = transport;
-    tokio::task::spawn_local(async move {
+    tokio::spawn(async move {
         let mut rx = inbound_transport.received_data_events();
         loop {
             if let Ok(event) = rx.recv().await {

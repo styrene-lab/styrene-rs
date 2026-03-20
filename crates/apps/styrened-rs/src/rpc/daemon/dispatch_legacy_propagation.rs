@@ -194,7 +194,7 @@ impl RpcDaemon {
                     .expect("propagation node mutex poisoned")
                     .clone();
                 let announces =
-                    self.store.list_announces(500, None, None).map_err(std::io::Error::other)?;
+                    self.messages().list_announces(500, None, None).map_err(std::io::Error::other)?;
                 let mut by_peer: HashMap<String, PropagationNodeRecord> = HashMap::new();
                 for announce in announces {
                     if !announce.capabilities.iter().any(|cap| cap == "propagation") {

@@ -201,26 +201,47 @@ pub struct TerminalOpenRequest {
     pub shell: Option<String>,
 }
 
+// ── Tunnel management ────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct TunnelInfo {
+    pub peer_hash: String,
+    pub backend: String,
+    pub state: String,
+    pub remote_endpoint: Option<String>,
+    pub interface_name: Option<String>,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+    pub established_at: Option<i64>,
+    pub last_rekey: Option<i64>,
+    pub pqc_session_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct TunnelSaInfo {
+    pub sa_id: String,
+    pub protocol: String,
+    pub cipher_suite: String,
+    pub local_address: Option<String>,
+    pub remote_address: Option<String>,
+    pub established_at: Option<i64>,
+    pub rekey_at: Option<i64>,
+    pub bytes_in: u64,
+    pub bytes_out: u64,
+}
+
 // ── Events ────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
 pub enum DaemonEvent {
-    Message {
-        kind: MessageEventKind,
-        message: MessageInfo,
-    },
-    Device {
-        device: DeviceInfo,
-    },
-    TerminalOutput {
-        session_id: SessionId,
-        data: Vec<u8>,
-    },
-    TerminalStateChange {
-        session_id: SessionId,
-        state: TerminalState,
-    },
+    Message { kind: MessageEventKind, message: MessageInfo },
+    Device { device: DeviceInfo },
+    TerminalOutput { session_id: SessionId, data: Vec<u8> },
+    TerminalStateChange { session_id: SessionId, state: TerminalState },
+    TunnelStateChange { peer_hash: PeerHash, state: String, backend: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

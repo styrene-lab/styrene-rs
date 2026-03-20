@@ -54,14 +54,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install Python RNS/LXMF
-        run: pip install rns lxmf msgpack
+      - name: Install Python dependencies
+        run: pip install -r tests/interop/python/requirements.txt
       - name: Generate test fixtures
-        run: |
-          if [ -f tests/interop/python/generate_fixtures.py ]; then
-            cd tests/interop/python && python3 generate_fixtures.py
-          else
-            echo "No fixture generator yet — skipping"
-          fi
+        run: cd tests/interop/python && python3 generate_fixtures.py
       - name: Run interop tests
-        run: cargo test --workspace --features interop-tests || echo "No interop tests yet — skipping"
+        run: cargo test --package styrene-rns --features interop-tests,transport

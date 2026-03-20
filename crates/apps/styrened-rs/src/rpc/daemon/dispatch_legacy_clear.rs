@@ -2,7 +2,7 @@ impl RpcDaemon {
     fn handle_rpc_legacy_clear(&self, request: RpcRequest) -> Result<RpcResponse, std::io::Error> {
         match request.method.as_str() {
             "clear_messages" => {
-                self.store.clear_messages().map_err(std::io::Error::other)?;
+                self.messages().clear_messages().map_err(std::io::Error::other)?;
                 Ok(RpcResponse {
                     id: request.id,
                     result: Some(json!({ "cleared": "messages" })),
@@ -50,7 +50,7 @@ impl RpcDaemon {
                     let mut guard = self.peers.lock().expect("peers mutex poisoned");
                     guard.clear();
                 }
-                self.store.clear_announces().map_err(std::io::Error::other)?;
+                self.messages().clear_announces().map_err(std::io::Error::other)?;
                 Ok(RpcResponse {
                     id: request.id,
                     result: Some(json!({ "cleared": "peers" })),
@@ -59,8 +59,8 @@ impl RpcDaemon {
             }
             "clear_all" => {
                 let _domain_state_guard = self.lock_and_restore_sdk_domain_snapshot()?;
-                self.store.clear_messages().map_err(std::io::Error::other)?;
-                self.store.clear_announces().map_err(std::io::Error::other)?;
+                self.messages().clear_messages().map_err(std::io::Error::other)?;
+                self.messages().clear_announces().map_err(std::io::Error::other)?;
                 {
                     let mut guard = self.peers.lock().expect("peers mutex poisoned");
                     guard.clear();

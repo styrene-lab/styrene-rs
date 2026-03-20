@@ -1,0 +1,46 @@
+root_intent: >
+  Fix 6 issues from adversarial assessment of PQC tunnel crypto protocol.
+  C1 (nonce reuse), C2 (confirmation reflection), C3 (dead code),
+  W1 (replay window), W2 (unauthenticated close), W3 (unzeroized secret).
+
+complexity:
+  systems: 1  # styrene-tunnel crate (crypto + session modules)
+  modifiers:
+    security_critical: true
+    error_handling: true
+    breaking_changes: true  # session wire protocol changes
+    state_coordination: true  # session state machine
+  score: 6  # (1+1) * (1 + 0.5*4) = 6
+  decision: cleave
+
+strategy: binary
+  # Seam: crypto primitives vs session state machine
+  # Child 0 owns kdf.rs + aead.rs (pure crypto, no state)
+  # Child 1 owns session/mod.rs (state machine, replay, lifecycle)
+  # Integration pass wires Child 0's new API into Child 1's domain
+
+children:
+  - id: 0
+    name: "crypto-protocol-fix"
+    scope: "C1 + C2: Role-bound KDF output + separated confirm nonce space"
+    files:
+      - crates/libs/styrene-tunnel/src/crypto/kdf.rs
+      - crates/libs/styrene-tunnel/src/crypto/aead.rs
+      - crates/libs/styrene-tunnel/src/crypto/mod.rs
+    independent: true
+
+  - id: 1
+    name: "session-hardening"
+    scope: "C3 + W1 + W2 + W3: Dead code, sliding window, auth close, zeroize"
+    files:
+      - crates/libs/styrene-tunnel/src/session/mod.rs
+    independent: true  # non-crypto changes don't depend on child 0
+
+integration:
+  scope: "Wire new role-bound KDF/AEAD API into session handshake methods + tests"
+  depends_on: [0, 1]
+  files:
+    - crates/libs/styrene-tunnel/src/session/mod.rs  # handshake methods only
+
+halt_on_failure: true
+mode: lean
