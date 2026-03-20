@@ -104,8 +104,8 @@ fn sdk_store_forward_drop_oldest_prunes_to_admit_new_message() {
         .expect("second send");
     assert!(second.error.is_none());
 
-    assert!(daemon.store.get_message("sf-drop-1").expect("lookup old").is_none());
-    assert!(daemon.store.get_message("sf-drop-2").expect("lookup new").is_some());
+    assert!(daemon.store.lock().expect("store mutex").get_message("sf-drop-1").expect("lookup old").is_none());
+    assert!(daemon.store.lock().expect("store mutex").get_message("sf-drop-2").expect("lookup new").is_some());
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn sdk_store_forward_expiry_marks_old_non_terminal_records() {
     assert!(configure.error.is_none());
 
     daemon
-        .store
+        .store.lock().expect("store mutex")
         .insert_message(&MessageRecord {
             id: "sf-old".to_string(),
             source: "source.c".to_string(),
@@ -161,7 +161,7 @@ fn sdk_store_forward_expiry_marks_old_non_terminal_records() {
     assert!(send.error.is_none());
 
     let old = daemon
-        .store
+        .store.lock().expect("store mutex")
         .get_message("sf-old")
         .expect("lookup old")
         .expect("old record should still exist after expiry marking");

@@ -1,0 +1,115 @@
+name: Upstream Sync Review
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  upstream-review:
+    name: Upstream Review
+    runs-on: ubuntu-latest
+    if: github.repository == 'styrene-lab/styrene-rs'
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure upstream remotes
+        run: |
+          git remote add beechat https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs.git 2>/dev/null || true
+          git remote add upstream https://github.com/FreeTAKTeam/LXMF-rs.git 2>/dev/null || true
+          git fetch beechat --quiet
+          git fetch upstream --quiet
+
+      - name: Check for drift
+        id: drift
+        run: |
+          chmod +x scripts/upstream-sync-pr.sh
+          if scripts/upstream-sync-pr.sh --check; then
+            echo "has_drift=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No upstream drift. Nothing to do."
+            echo "has_drift=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate report
+        if: steps.drift.outputs.has_drift == 'true'
+        run: |
+          scripts/upstream-sync-pr.sh --report > /tmp/pr-body.md
+          scripts/upstream-sync-pr.sh --sync-log-entry > /tmp/sync-log-entry.md
+
+      - name: Prepare review branch
+        if: steps.drift.outputs.has_drift == 'true'
+        run: |
+          BRANCH="upstream-review/$(date +%Y-%m-%d)"
+
+          # Delete remote branch if it exists (handles same-day re-runs)
+          git push origin --delete "$BRANCH" 2>/dev/null || true
+
+          git checkout -b "$BRANCH"
+
+          # Update tracking file to current upstream HEADs
+          scripts/upstream-sync-pr.sh --update-tracking
+
+          # Append sync-log skeleton
+          echo "" >> docs/upstream-sync-log.md
+          echo "---" >> docs/upstream-sync-log.md
+          echo "" >> docs/upstream-sync-log.md
+          cat /tmp/sync-log-entry.md >> docs/upstream-sync-log.md
+
+          git add .upstream-tracking.json docs/upstream-sync-log.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "$(printf 'chore: upstream sync review %s\n\nAutomated weekly upstream drift report.\nMerging this PR advances tracking markers.' "$(date +%Y-%m-%d)")"
+
+          git push origin "HEAD:${BRANCH}"
+
+      - name: Close stale review PRs
+        if: steps.drift.outputs.has_drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Ensure label exists
+          gh label create "upstream-review" \
+            --description "Weekly upstream sync review" \
+            --color "d876e3" 2>/dev/null || true
+
+          # Close any existing open upstream-review PRs (superseded by this one)
+          OPEN_PRS=$(gh pr list --label upstream-review --state open --json number --jq '.[].number' 2>/dev/null || echo "")
+          for pr in $OPEN_PRS; do
+            gh pr close "$pr" --comment "Superseded by new weekly review." || true
+          done
+
+          # Also close any legacy upstream-drift issues
+          DRIFT_ISSUES=$(gh issue list --label upstream-drift --state open --json number --jq '.[].number' 2>/dev/null || echo "")
+          for issue in $DRIFT_ISSUES; do
+            gh issue close "$issue" --comment "Replaced by upstream-review PR workflow." || true
+          done
+
+      - name: Create pull request
+        if: steps.drift.outputs.has_drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="upstream-review/$(date +%Y-%m-%d)"
+          TITLE="upstream review: $(date +%Y-%m-%d)"
+
+          # Try with team reviewer first; fall back without if team doesn't exist
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "$TITLE" \
+            --body-file /tmp/pr-body.md \
+            --label "upstream-review" \
+            --reviewer "styrene-lab/styrene-admin" \
+            || gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$TITLE" \
+              --body-file /tmp/pr-body.md \
+              --label "upstream-review"

@@ -157,9 +157,8 @@ impl EncryptIdentity for Identity {
         // key's shared secret. Previously this generated a second, unrelated
         // ephemeral key — breaking the cryptographic binding between the
         // transmitted public key and the encryption key.
-        let ephemeral_public_bytes = derived_key
-            .ephemeral_public_bytes()
-            .ok_or(RnsError::InvalidArgument)?;
+        let ephemeral_public_bytes =
+            derived_key.ephemeral_public_bytes().ok_or(RnsError::InvalidArgument)?;
 
         if out_buf.len() < ephemeral_public_bytes.len() {
             return Err(RnsError::InvalidArgument);

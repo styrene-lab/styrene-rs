@@ -2,7 +2,7 @@ impl RpcDaemon {
     fn handle_rpc_legacy_messages(&self, request: RpcRequest) -> Result<RpcResponse, std::io::Error> {
         match request.method.as_str() {
             "list_messages" => {
-                let items = self.store.list_messages(100, None).map_err(std::io::Error::other)?;
+                let items = self.messages().list_messages(100, None).map_err(std::io::Error::other)?;
                 Ok(RpcResponse {
                     id: request.id,
                     result: Some(json!({
@@ -25,9 +25,7 @@ impl RpcDaemon {
                     Some(timestamp) => (Some(timestamp), None),
                     None => parse_announce_cursor(parsed.cursor.as_deref()).unwrap_or((None, None)),
                 };
-                let items = self
-                    .store
-                    .list_announces(limit, before_ts, before_id.as_deref())
+                let items = self.messages().list_announces(limit, before_ts, before_id.as_deref())
                     .map_err(std::io::Error::other)?;
                 let next_cursor = if items.len() >= limit {
                     items.last().map(|record| format!("{}:{}", record.timestamp, record.id))
@@ -243,7 +241,7 @@ impl RpcDaemon {
                         .lock()
                         .expect("delivery_status_lock mutex poisoned");
                     let existing_message =
-                        self.store.get_message(&message_id).map_err(std::io::Error::other)?;
+                        self.messages().get_message(&message_id).map_err(std::io::Error::other)?;
                     let existing_status = existing_message
                         .as_ref()
                         .and_then(|message| message.receipt_status.clone());
@@ -255,7 +253,7 @@ impl RpcDaemon {
                     {
                         (existing_status.unwrap_or(requested_status), false)
                     } else {
-                        self.store
+                        self.messages()
                             .update_receipt_status(&message_id, &requested_status)
                             .map_err(std::io::Error::other)?;
                         (requested_status, true)

@@ -1,0 +1,30 @@
+[package]
+name = "styrene-tui"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Styrene terminal UI spike — Ratatui mesh status display"
+publish = false
+
+[[bin]]
+name = "styrene-tui"
+path = "src/main.rs"
+
+[dependencies]
+# TUI
+ratatui = "0.30"
+crossterm = "0.29"
+
+# Protocol crates (no transport — pure data types)
+styrene-rns = { workspace = true }
+styrene-micron = { workspace = true }
+
+# Utilities
+hex.workspace = true
+rand_core = { workspace = true, features = ["getrandom"] }
+anyhow.workspace = true
+
+[lints]
+workspace = true

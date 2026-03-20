@@ -1,3 +1,6 @@
+// Upstream code — unwrap on mutex locks and bind results is conventional in tokio drivers
+#![allow(clippy::unwrap_used)]
+
 use alloc::string::String;
 use std::sync::Arc;
 

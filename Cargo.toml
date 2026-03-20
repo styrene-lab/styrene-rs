@@ -5,14 +5,22 @@ members = [
   "crates/libs/styrene-lxmf",
   "crates/libs/styrene-mesh",
   "crates/libs/styrene-ipc",
+  "crates/libs/styrene-tunnel",
+  "crates/libs/styrene-micron",
   "crates/apps/styrened-rs",
+  "crates/apps/styrene-dx",
+  "crates/apps/styrene-tui",
 ]
 default-members = [
   "crates/libs/styrene-rns",
   "crates/libs/styrene-lxmf",
   "crates/libs/styrene-mesh",
   "crates/libs/styrene-ipc",
+  "crates/libs/styrene-tunnel",
+  "crates/libs/styrene-micron",
   "crates/apps/styrened-rs",
+  # "crates/apps/styrene-dx",  # spike — build explicitly with -p
+  # "crates/apps/styrene-tui", # spike — build explicitly with -p
 ]
 
 [workspace.package]
@@ -30,7 +38,11 @@ styrene-lxmf = { version = "0.1.0", path = "crates/libs/styrene-lxmf" }
 styrene-rns = { version = "0.1.0", path = "crates/libs/styrene-rns" }
 styrene-mesh = { version = "0.1.0", path = "crates/libs/styrene-mesh" }
 styrene-ipc = { version = "0.1.0", path = "crates/libs/styrene-ipc" }
+styrene-tunnel = { version = "0.1.0", path = "crates/libs/styrene-tunnel" }
+styrene-micron = { version = "0.1.0", path = "crates/libs/styrene-micron" }
 aes = "0.8.4"
+aes-gcm = "0.10"
+ml-kem = "0.2.3"
 base64 = "0.22"
 cbc = "0.1.2"
 crypto-common = "0.1.6"

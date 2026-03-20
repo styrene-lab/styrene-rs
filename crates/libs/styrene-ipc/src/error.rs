@@ -35,16 +35,11 @@ pub enum IpcError {
 impl IpcError {
     /// Returns `true` for transient errors that may succeed on retry.
     pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::Unavailable { .. } | Self::Timeout { .. } | Self::Transport { .. }
-        )
+        matches!(self, Self::Unavailable { .. } | Self::Timeout { .. } | Self::Transport { .. })
     }
 
     /// Convenience constructor for `NotImplemented`.
     pub fn not_implemented(method: impl Into<String>) -> Self {
-        Self::NotImplemented {
-            method: method.into(),
-        }
+        Self::NotImplemented { method: method.into() }
     }
 }

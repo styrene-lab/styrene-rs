@@ -182,8 +182,7 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
 
         // Use constant-time comparison via hmac crate's verify_slice
         // (internally uses subtle::ConstantTimeEq) to prevent timing oracles.
-        hmac.verify_slice(expected_tag)
-            .map_err(|_| RnsError::IncorrectSignature)?;
+        hmac.verify_slice(expected_tag).map_err(|_| RnsError::IncorrectSignature)?;
 
         Ok(VerifiedToken(token_data))
     }
