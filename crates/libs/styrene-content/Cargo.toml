@@ -1,0 +1,34 @@
+[package]
+name = "styrene-content"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+description = "Styrene mesh content distribution — P2P file sharing over RNS/Yggdrasil"
+repository = "https://github.com/styrene-lab/styrene-rs"
+
+[features]
+default = []
+alloc   = []
+std     = ["alloc", "ciborium/std"]
+tokio   = ["std", "dep:tokio"]
+embedded-storage = ["dep:embedded-storage"]
+
+[dependencies]
+# Zone 0 — no_std, no alloc
+blake3            = { version = "1", default-features = false }
+heapless          = { version = "0.8", default-features = false, features = ["serde"] }
+serde             = { version = "1", default-features = false, features = ["derive"] }
+ciborium          = { version = "0.2", default-features = false }
+ciborium-io       = { version = "0.2", default-features = false }
+
+# Zone 2 — feature-gated
+tokio             = { version = "1", features = ["fs", "io-util"], optional = true }
+embedded-storage  = { version = "0.3", default-features = false, optional = true }
+
+[dev-dependencies]
+tokio  = { version = "1", features = ["full"] }
+
+[[test]]
+name    = "distributor"
+required-features = ["alloc"]
