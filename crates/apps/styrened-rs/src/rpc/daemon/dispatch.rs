@@ -35,7 +35,7 @@ impl RpcDaemon {
                 let peer_count = self.peers.lock().expect("peers mutex poisoned").len();
                 let interfaces = self.interfaces.lock().expect("interfaces mutex poisoned").clone();
                 let message_count =
-                    self.store.list_messages(10_000, None).map_err(std::io::Error::other)?.len();
+                    self.messages().list_messages(10_000, None).map_err(std::io::Error::other)?.len();
                 let delivery_policy =
                     self.delivery_policy.lock().expect("policy mutex poisoned").clone();
                 let propagation =

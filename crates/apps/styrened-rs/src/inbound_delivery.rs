@@ -1,5 +1,5 @@
-use lxmf::inbound_decode::{decode_inbound_message, InboundPayloadMode};
 use crate::storage::messages::MessageRecord;
+use lxmf::inbound_decode::{decode_inbound_message, InboundPayloadMode};
 
 use crate::lxmf_bridge::rmpv_to_json;
 

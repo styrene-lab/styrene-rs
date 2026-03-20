@@ -1,3 +1,6 @@
+// Upstream code — unwrap on mutex locks and task joins is conventional in tokio drivers
+#![allow(clippy::unwrap_used)]
+
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -6,10 +9,10 @@ use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::buffer::{InputBuffer, OutputBuffer};
-use crate::transport::error::RnsError;
-use crate::transport::iface::RxMessage;
 use crate::packet::Packet;
 use crate::serde::Serialize;
+use crate::transport::error::RnsError;
+use crate::transport::iface::RxMessage;
 
 use tokio::io::AsyncReadExt;
 

@@ -32,7 +32,9 @@ pub use domain::{
     VoiceSessionState, VoiceSessionUpdateRequest,
 };
 pub use error::{code as error_code, ErrorCategory, ErrorDetails, SdkError};
-pub use event::{EventBatch, EventCursor, EventSubscription, SdkEvent, Severity, SubscriptionStart};
+pub use event::{
+    EventBatch, EventCursor, EventSubscription, SdkEvent, Severity, SubscriptionStart,
+};
 pub use lifecycle::{Lifecycle, SdkMethod};
 pub use profiles::{
     default_effective_limits, default_memory_budget, required_capabilities, supports_capability,

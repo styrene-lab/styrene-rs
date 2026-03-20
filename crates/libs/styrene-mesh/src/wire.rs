@@ -42,6 +42,7 @@ pub enum WireError {
 /// - `0x40-0x5F`: RPC Commands
 /// - `0x60-0x7F`: RPC Responses
 /// - `0xC0-0xCF`: Terminal Sessions
+/// - `0xD0-0xD7`: PQC Sessions (post-quantum cryptography)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum StyreneMessageType {
@@ -70,6 +71,24 @@ pub enum StyreneMessageType {
     TerminalData = 0xC2,
     TerminalResize = 0xC3,
     TerminalClose = 0xC4,
+
+    // PQC Sessions (0xD0-0xD7) — post-quantum tunnel establishment
+    #[cfg(feature = "pqc")]
+    PqcInitiate = 0xD0,
+    #[cfg(feature = "pqc")]
+    PqcRespond = 0xD1,
+    #[cfg(feature = "pqc")]
+    PqcConfirm = 0xD2,
+    #[cfg(feature = "pqc")]
+    PqcRekey = 0xD3,
+    #[cfg(feature = "pqc")]
+    PqcData = 0xD4,
+    #[cfg(feature = "pqc")]
+    PqcClose = 0xD5,
+    #[cfg(feature = "pqc")]
+    PqcCapability = 0xD6,
+    #[cfg(feature = "pqc")]
+    PqcCapabilityAck = 0xD7,
 }
 
 impl StyreneMessageType {
@@ -92,6 +111,22 @@ impl StyreneMessageType {
             0xC2 => Ok(Self::TerminalData),
             0xC3 => Ok(Self::TerminalResize),
             0xC4 => Ok(Self::TerminalClose),
+            #[cfg(feature = "pqc")]
+            0xD0 => Ok(Self::PqcInitiate),
+            #[cfg(feature = "pqc")]
+            0xD1 => Ok(Self::PqcRespond),
+            #[cfg(feature = "pqc")]
+            0xD2 => Ok(Self::PqcConfirm),
+            #[cfg(feature = "pqc")]
+            0xD3 => Ok(Self::PqcRekey),
+            #[cfg(feature = "pqc")]
+            0xD4 => Ok(Self::PqcData),
+            #[cfg(feature = "pqc")]
+            0xD5 => Ok(Self::PqcClose),
+            #[cfg(feature = "pqc")]
+            0xD6 => Ok(Self::PqcCapability),
+            #[cfg(feature = "pqc")]
+            0xD7 => Ok(Self::PqcCapabilityAck),
             _ => Err(WireError::UnknownMessageType(b)),
         }
     }
@@ -115,12 +150,7 @@ impl StyreneMessage {
     pub fn new(message_type: StyreneMessageType, payload: &[u8]) -> Self {
         let mut request_id = [0u8; 16];
         OsRng.fill_bytes(&mut request_id);
-        Self {
-            version: WIRE_VERSION,
-            message_type,
-            request_id,
-            payload: payload.to_vec(),
-        }
+        Self { version: WIRE_VERSION, message_type, request_id, payload: payload.to_vec() }
     }
 
     /// Create a new message with a specific request ID (for responses).
@@ -129,12 +159,7 @@ impl StyreneMessage {
         request_id: [u8; 16],
         payload: &[u8],
     ) -> Self {
-        Self {
-            version: WIRE_VERSION,
-            message_type,
-            request_id,
-            payload: payload.to_vec(),
-        }
+        Self { version: WIRE_VERSION, message_type, request_id, payload: payload.to_vec() }
     }
 
     /// Encode to wire format bytes.
@@ -175,12 +200,7 @@ impl StyreneMessage {
         // Remaining bytes are payload
         let payload = data[28..].to_vec();
 
-        Ok(Self {
-            version,
-            message_type,
-            request_id,
-            payload,
-        })
+        Ok(Self { version, message_type, request_id, payload })
     }
 }
 
@@ -213,11 +233,8 @@ mod tests {
     #[test]
     fn response_preserves_request_id() {
         let request = StyreneMessage::new(StyreneMessageType::Ping, &[]);
-        let response = StyreneMessage::with_request_id(
-            StyreneMessageType::Pong,
-            request.request_id,
-            &[],
-        );
+        let response =
+            StyreneMessage::with_request_id(StyreneMessageType::Pong, request.request_id, &[]);
         assert_eq!(request.request_id, response.request_id);
     }
 
@@ -230,10 +247,7 @@ mod tests {
     fn rejects_wrong_namespace() {
         let mut data = vec![0u8; 28];
         data[..10].copy_from_slice(b"not.styren");
-        assert!(matches!(
-            StyreneMessage::decode(&data),
-            Err(WireError::InvalidNamespace)
-        ));
+        assert!(matches!(StyreneMessage::decode(&data), Err(WireError::InvalidNamespace)));
     }
 
     #[test]
@@ -241,10 +255,7 @@ mod tests {
         let mut data = vec![0u8; 28];
         data[..10].copy_from_slice(b"styrene.io");
         data[10] = 0xFF;
-        assert!(matches!(
-            StyreneMessage::decode(&data),
-            Err(WireError::UnsupportedVersion(0xFF))
-        ));
+        assert!(matches!(StyreneMessage::decode(&data), Err(WireError::UnsupportedVersion(0xFF))));
     }
 
     #[test]
@@ -273,6 +284,22 @@ mod tests {
             StyreneMessageType::TerminalData,
             StyreneMessageType::TerminalResize,
             StyreneMessageType::TerminalClose,
+            #[cfg(feature = "pqc")]
+            StyreneMessageType::PqcInitiate,
+            #[cfg(feature = "pqc")]
+            StyreneMessageType::PqcRespond,
+            #[cfg(feature = "pqc")]
+            StyreneMessageType::PqcConfirm,
+            #[cfg(feature = "pqc")]
+            StyreneMessageType::PqcRekey,
+            #[cfg(feature = "pqc")]
+            StyreneMessageType::PqcData,
+            #[cfg(feature = "pqc")]
+            StyreneMessageType::PqcClose,
+            #[cfg(feature = "pqc")]
+            StyreneMessageType::PqcCapability,
+            #[cfg(feature = "pqc")]
+            StyreneMessageType::PqcCapabilityAck,
         ];
         for msg_type in types {
             let msg = StyreneMessage::new(msg_type, &[]);

@@ -39,12 +39,14 @@ tokio-util = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+serde_json = { workspace = true }
 
 [features]
 default = ["std"]
 std = []
 alloc = []
 fernet-aes128 = []
+interop-tests = ["std"]
 transport = [
     "std",
     "dep:bzip2",

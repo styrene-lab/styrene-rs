@@ -20,22 +20,22 @@ use tokio::sync::Mutex;
 use tokio::sync::MutexGuard;
 use x25519_dalek::PublicKey;
 
-use crate::transport::destination_ext::link::Link;
-use crate::transport::destination_ext::link::LinkEvent;
-use crate::transport::destination_ext::link::LinkEventData;
-use crate::transport::destination_ext::link::LinkHandleResult;
-use crate::transport::destination_ext::link::LinkId;
-use crate::transport::destination_ext::link::LinkStatus;
 use crate::destination::DestinationAnnounce;
 use crate::destination::DestinationDesc;
 use crate::destination::DestinationHandleStatus;
 use crate::destination::DestinationName;
 use crate::destination::SingleInputDestination;
 use crate::destination::SingleOutputDestination;
+use crate::transport::destination_ext::link::Link;
+use crate::transport::destination_ext::link::LinkEvent;
+use crate::transport::destination_ext::link::LinkEventData;
+use crate::transport::destination_ext::link::LinkHandleResult;
+use crate::transport::destination_ext::link::LinkId;
+use crate::transport::destination_ext::link::LinkStatus;
 
-use crate::transport::error::RnsError;
 use crate::hash::{AddressHash, Hash, HASH_SIZE};
 use crate::identity::{Identity, PrivateIdentity};
+use crate::transport::error::RnsError;
 
 use crate::transport::iface::InterfaceManager;
 use crate::transport::iface::InterfaceRxReceiver;

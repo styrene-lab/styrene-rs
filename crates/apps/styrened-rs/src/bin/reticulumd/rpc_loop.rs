@@ -9,7 +9,7 @@ use std::fs::File;
 use std::io::{self, BufReader};
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::server::TlsStream;
@@ -28,7 +28,7 @@ struct RpcRequestLogMeta {
 
 pub(super) async fn run_rpc_loop(
     addr: SocketAddr,
-    daemon: Rc<RpcDaemon>,
+    daemon: Arc<RpcDaemon>,
     tls: Option<RpcTlsConfig>,
 ) {
     match tls {
@@ -37,7 +37,7 @@ pub(super) async fn run_rpc_loop(
     }
 }
 
-async fn run_plain_rpc_loop(addr: SocketAddr, daemon: Rc<RpcDaemon>) {
+async fn run_plain_rpc_loop(addr: SocketAddr, daemon: Arc<RpcDaemon>) {
     let listener = TcpListener::bind(addr).await.expect("bind rpc listener");
     println!("reticulumd listening on http://{}", addr);
 
@@ -47,7 +47,7 @@ async fn run_plain_rpc_loop(addr: SocketAddr, daemon: Rc<RpcDaemon>) {
     }
 }
 
-async fn run_tls_rpc_loop(addr: SocketAddr, daemon: Rc<RpcDaemon>, config: RpcTlsConfig) {
+async fn run_tls_rpc_loop(addr: SocketAddr, daemon: Arc<RpcDaemon>, config: RpcTlsConfig) {
     let tls_server = build_tls_server_config(&config).expect("build rpc tls server config");
     let acceptor = TlsAcceptor::from(tls_server);
     let listener = TcpListener::bind(addr).await.expect("bind tls rpc listener");

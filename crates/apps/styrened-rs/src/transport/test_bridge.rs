@@ -1,29 +1,29 @@
 use crate::storage::messages::MessageRecord;
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex, OnceLock};
 
-type InboundHandler = Rc<dyn Fn(&MessageRecord) -> bool>;
+type InboundHandler = Arc<dyn Fn(&MessageRecord) -> bool + Send + Sync>;
 type BridgeMap = HashMap<String, InboundHandler>;
 
-thread_local! {
-    static BRIDGE: RefCell<BridgeMap> = RefCell::new(HashMap::new());
+fn bridge() -> &'static Mutex<BridgeMap> {
+    static BRIDGE: OnceLock<Mutex<BridgeMap>> = OnceLock::new();
+    BRIDGE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[allow(dead_code)]
 pub fn reset() {
-    BRIDGE.with(|bridge| bridge.borrow_mut().clear());
+    bridge().lock().expect("test bridge mutex").clear();
 }
 
 #[allow(dead_code)]
 pub fn register(identity: impl Into<String>, on_inbound: InboundHandler) {
-    BRIDGE.with(|bridge| {
-        bridge.borrow_mut().insert(identity.into(), on_inbound);
-    });
+    bridge().lock().expect("test bridge mutex").insert(identity.into(), on_inbound);
 }
 
 pub fn deliver_outbound(record: &MessageRecord) -> bool {
-    BRIDGE.with(|bridge| {
-        bridge.borrow().get(&record.destination).is_some_and(|handler| handler(record))
-    })
+    bridge()
+        .lock()
+        .expect("test bridge mutex")
+        .get(&record.destination)
+        .is_some_and(|handler| handler(record))
 }

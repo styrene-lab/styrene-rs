@@ -1,0 +1,12 @@
+{
+  "beechat": {
+    "remote": "beechat",
+    "branch": "main",
+    "last_reviewed": "20bb433d9934071ff9652a5ee3b9ddf92ef51aea"
+  },
+  "upstream": {
+    "remote": "upstream",
+    "branch": "master",
+    "last_reviewed": "0052218f1247c68f8c925988299d33d0678d81b4"
+  }
+}

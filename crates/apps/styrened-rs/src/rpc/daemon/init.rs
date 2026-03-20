@@ -45,7 +45,7 @@ impl RpcDaemon {
         sdk_identities
             .insert(identity_hash.clone(), Self::default_sdk_identity(identity_hash.as_str()));
         let daemon = Self {
-            store,
+            store: Mutex::new(store),
             identity_hash,
             delivery_destination_hash: Mutex::new(None),
             events,
@@ -154,7 +154,7 @@ impl RpcDaemon {
     }
 
     fn store_inbound_record(&self, record: MessageRecord) -> Result<(), std::io::Error> {
-        self.store.insert_message(&record).map_err(std::io::Error::other)?;
+        self.messages().insert_message(&record).map_err(std::io::Error::other)?;
         let event =
             RpcEvent { event_type: "inbound".into(), payload: json!({ "message": record }) };
         self.publish_event(event);
@@ -249,7 +249,7 @@ impl RpcDaemon {
             stamp_cost_flexibility,
             peering_cost,
         };
-        self.store.insert_announce(&announce_record).map_err(std::io::Error::other)?;
+        self.messages().insert_announce(&announce_record).map_err(std::io::Error::other)?;
 
         let event = RpcEvent {
             event_type: "announce_received".into(),
@@ -321,4 +321,11 @@ impl RpcDaemon {
         self.store_inbound_record(record)
     }
 
+}
+
+impl RpcDaemon {
+    /// Acquires the store lock. Use instead of self.store.lock() directly.
+    pub(super) fn messages(&self) -> std::sync::MutexGuard<'_, crate::storage::messages::MessagesStore> {
+        self.store.lock().expect("store lock poisoned")
+    }
 }

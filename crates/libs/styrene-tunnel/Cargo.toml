@@ -1,0 +1,57 @@
+[package]
+name = "styrene-tunnel"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PQC tunnel backends (strongSwan, WireGuard) and orchestrator for styrene mesh"
+keywords = ["styrene", "tunnel", "pqc", "wireguard", "ipsec"]
+categories = ["network-programming", "cryptography"]
+
+[lib]
+name = "styrene_tunnel"
+
+[dependencies]
+# Internal crates
+styrene-rns = { version = "0.1.0", path = "../styrene-rns" }
+styrene-mesh = { version = "0.1.0", path = "../styrene-mesh", features = ["pqc"] }
+
+# PQC crypto
+ml-kem = "0.2.3"
+aes-gcm = "0.10"
+
+# Classical crypto (from workspace)
+hkdf.workspace = true
+sha2.workspace = true
+x25519-dalek = { workspace = true, features = ["static_secrets"] }
+rand_core = { workspace = true, features = ["getrandom"] }
+zeroize = { workspace = true, features = ["derive"] }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+rmp-serde.workspace = true
+hex.workspace = true
+
+# Async runtime
+tokio = { workspace = true, features = ["sync", "time", "net"], optional = true }
+async-trait = { workspace = true, optional = true }
+
+# Logging
+log = { workspace = true, optional = true }
+
+# Error handling
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
+
+[features]
+default = ["std"]
+std = []
+strongswan = ["tokio", "async-trait", "log"]
+wireguard = ["tokio", "async-trait", "log"]
+tunnel = ["strongswan", "wireguard"]
+
+[lints]
+workspace = true

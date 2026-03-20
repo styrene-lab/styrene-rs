@@ -1,3 +1,6 @@
+// Upstream code — unwrap usage is structurally safe in link protocol encoding
+#![allow(clippy::unwrap_used)]
+
 use std::{
     cmp::min,
     time::{Duration, Instant},
@@ -17,8 +20,8 @@ use crate::{
     },
 };
 
-use crate::transport::error::RnsError;
 use super::DestinationDesc;
+use crate::transport::error::RnsError;
 
 const LINK_MTU_SIZE: usize = 3;
 

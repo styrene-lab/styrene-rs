@@ -41,6 +41,9 @@
 
 pub mod wire;
 
+#[cfg(feature = "pqc")]
+pub mod pqc;
+
 pub use wire::{StyreneMessage, StyreneMessageType, WireError};
 
 /// Wire format namespace prefix.

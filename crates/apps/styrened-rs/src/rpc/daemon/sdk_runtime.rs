@@ -19,7 +19,7 @@ impl RpcDaemon {
 
         let _status_guard =
             self.delivery_status_lock.lock().expect("delivery_status_lock mutex poisoned");
-        let message = self.store.get_message(message_id).map_err(std::io::Error::other)?;
+        let message = self.messages().get_message(message_id).map_err(std::io::Error::other)?;
         if message.is_none() {
             return Ok(RpcResponse {
                 id: request.id,
@@ -73,7 +73,7 @@ impl RpcDaemon {
         }
 
         if cancel_result == "Accepted" {
-            self.store
+            self.messages()
                 .update_receipt_status(message_id, "cancelled")
                 .map_err(std::io::Error::other)?;
             self.append_delivery_trace(message_id, "cancelled".to_string());
@@ -108,7 +108,7 @@ impl RpcDaemon {
                 "message_id must not be empty",
             ));
         }
-        let message = self.store.get_message(message_id).map_err(std::io::Error::other)?;
+        let message = self.messages().get_message(message_id).map_err(std::io::Error::other)?;
         Ok(RpcResponse {
             id: request.id,
             result: Some(json!({
@@ -260,7 +260,7 @@ impl RpcDaemon {
             .clone();
 
         let (queued_messages, in_flight_messages) =
-            self.store.count_message_buckets().map_err(std::io::Error::other)?;
+            self.messages().count_message_buckets().map_err(std::io::Error::other)?;
 
         Ok(RpcResponse {
             id: request.id,

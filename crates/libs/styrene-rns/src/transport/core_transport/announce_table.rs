@@ -1,13 +1,16 @@
+// Upstream code — unwrap usage is structurally safe (fields always Some after init)
+#![allow(clippy::unwrap_used)]
+
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use tokio::time::{Duration, Instant};
 
 use crate::hash::AddressHash;
-use crate::transport::iface::{TxMessage, TxMessageType};
 use crate::packet::{
     ContextFlag, DestinationType, Header, HeaderType, IfacFlag, Packet, PacketContext, PacketType,
     PropagationType,
 };
+use crate::transport::iface::{TxMessage, TxMessageType};
 
 #[derive(Clone)]
 pub struct AnnounceEntry {

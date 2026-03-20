@@ -27,7 +27,7 @@ impl RpcDaemon {
                 ))
             }
         };
-        let message = self.store.get_message(message_id.as_str()).map_err(std::io::Error::other)?;
+        let message = self.messages().get_message(message_id.as_str()).map_err(std::io::Error::other)?;
         let Some(message) = message else {
             return Ok(self.sdk_error_response(
                 request.id,

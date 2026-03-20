@@ -1,11 +1,11 @@
 use rand_core::OsRng;
-use rns_core::identity::PrivateIdentity;
-use rns_core::transport::delivery::{send_via_link, LinkSendResult};
-use rns_core::transport::destination_ext::link::Link;
 use rns_core::destination::{DestinationDesc, DestinationName};
-use rns_core::transport::iface::{Interface, InterfaceContext};
+use rns_core::identity::PrivateIdentity;
 use rns_core::packet::{DestinationType, PacketType};
 use rns_core::transport::core_transport::{Transport, TransportConfig};
+use rns_core::transport::delivery::{send_via_link, LinkSendResult};
+use rns_core::transport::destination_ext::link::Link;
+use rns_core::transport::iface::{Interface, InterfaceContext};
 use tokio::time::Duration;
 
 struct SinkInterface;

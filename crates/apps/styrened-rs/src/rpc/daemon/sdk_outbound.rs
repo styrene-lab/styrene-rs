@@ -35,7 +35,7 @@ impl RpcDaemon {
             receipt_status: None,
         };
 
-        self.store.insert_message(&record).map_err(std::io::Error::other)?;
+        self.messages().insert_message(&record).map_err(std::io::Error::other)?;
         self.append_delivery_trace(&id, "sending".to_string());
         let deliver_result = if let Some(bridge) = &self.outbound_bridge {
             bridge.deliver(&record, &options)
@@ -48,23 +48,21 @@ impl RpcDaemon {
             let resolved_status = {
                 let _status_guard =
                     self.delivery_status_lock.lock().expect("delivery_status_lock mutex poisoned");
-                let existing_status = self
-                    .store
-                    .get_message(&id)
+                let existing_status = self.messages().get_message(&id)
                     .map_err(std::io::Error::other)?
                     .and_then(|message| message.receipt_status);
                 if let Some(existing_status) = existing_status {
                     if Self::is_terminal_receipt_status(&existing_status) {
                         existing_status
                     } else {
-                        self.store
+                        self.messages()
                             .update_receipt_status(&id, &status)
                             .map_err(std::io::Error::other)?;
                         self.append_delivery_trace(&id, status.clone());
                         status
                     }
                 } else {
-                    self.store
+                    self.messages()
                         .update_receipt_status(&id, &status)
                         .map_err(std::io::Error::other)?;
                     self.append_delivery_trace(&id, status.clone());
@@ -93,23 +91,21 @@ impl RpcDaemon {
         let resolved_status = {
             let _status_guard =
                 self.delivery_status_lock.lock().expect("delivery_status_lock mutex poisoned");
-            let existing_status = self
-                .store
-                .get_message(&id)
+            let existing_status = self.messages().get_message(&id)
                 .map_err(std::io::Error::other)?
                 .and_then(|message| message.receipt_status);
             if let Some(existing_status) = existing_status {
                 if Self::is_terminal_receipt_status(&existing_status) {
                     existing_status
                 } else {
-                    self.store
+                    self.messages()
                         .update_receipt_status(&id, &sent_status)
                         .map_err(std::io::Error::other)?;
                     self.append_delivery_trace(&id, sent_status.clone());
                     sent_status
                 }
             } else {
-                self.store
+                self.messages()
                     .update_receipt_status(&id, &sent_status)
                     .map_err(std::io::Error::other)?;
                 self.append_delivery_trace(&id, sent_status.clone());
