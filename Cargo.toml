@@ -11,6 +11,7 @@ members = [
   "crates/apps/styrened-rs",
   "crates/apps/styrene-dx",
   "crates/apps/styrene-tui",
+  "crates/bindings/styrene-native",
 ]
 default-members = [
   "crates/libs/styrene-content",
