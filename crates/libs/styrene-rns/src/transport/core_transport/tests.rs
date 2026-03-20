@@ -1,10 +1,10 @@
 use super::announce::handle_announce;
 use super::*;
 
-use crate::transport::destination_ext::link::{LinkEvent, LinkEventData, LinkPayload};
 use crate::destination::{DestinationName, SingleInputDestination};
 use crate::identity::PrivateIdentity;
 use crate::packet::{Header, HeaderType};
+use crate::transport::destination_ext::link::{LinkEvent, LinkEventData, LinkPayload};
 use rand_core::OsRng;
 use tokio::time::{timeout, Duration};
 

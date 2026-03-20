@@ -1,0 +1,29 @@
+[
+  {
+    "description": "Identity derived from 'alice'",
+    "private_key_hex": "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90bd306425d873dc3e9fd1520e693954d6d605e8ad2fae4e48f53a395526f39abe",
+    "public_key_hex": "2e8b2883c27b391359d7d0c15d00815a6693290a38dd8eba341cc07ddaa8ed4d",
+    "verifying_key_hex": "72a0eb4f2ce5f6d28cc0b214eb979903f556c4f43d37a55227900c28232f6967",
+    "address_hash_hex": "92e03a79df086a812ce95323dbb81d22",
+    "sign_data_hex": "74657374206d65737361676520666f7220616c696365",
+    "signature_hex": "95895f5671ce88554551e6872c4011761782b297d11673954b4bfa09cbca67d3257357028466ade3a73820f6aa83bc4e7ea9cc7f41189176f19cfd7fe9006208"
+  },
+  {
+    "description": "Identity derived from 'bob'",
+    "private_key_hex": "81b637d8fcd2c6da6359e6963113a1170de795e4b725b84d1e0b4cfd9ec58ce95779f3efd52f437dcc79eeb5d935a27a3aad9b3ddcefbfadb93405c847bbeede",
+    "public_key_hex": "c0b126b5aa134b84e64625256b8de8973787612b1f3839d2c60526d2114e886d",
+    "verifying_key_hex": "c01eaeb781d7de6eb48c91efbc2a29610b715b04393c1b5de83d97894a9d1163",
+    "address_hash_hex": "2743864f8fd53b3f55fa3e50d7ee0913",
+    "sign_data_hex": "74657374206d65737361676520666f7220626f62",
+    "signature_hex": "fe52adb91e6d50a59bf7c1075493b9640c4f97a6d051cf60b72397a9b97f1f09a7f0e7dcfd79e3fd4a9a47c7c6f03b4bb54bfdad0b25c806c15bd140d5964001"
+  },
+  {
+    "description": "Identity derived from 'carol'",
+    "private_key_hex": "4c26d9074c27d89ede59270c0ac14b71e071b15239519f75474b2f3ba63481f53a6339f322af0414e3d7571a390e37ef0ad92e3c6eee9b8e4a32c10aa75ae075",
+    "public_key_hex": "33fd068f34ed4cb7462825495f1f659b61f046ea7a7a3890332ee73b46ac1425",
+    "verifying_key_hex": "1a50b6b5fb96f21cc1d2588997952a0a06d2031b78ffc922b4a9078b4f7ac6e3",
+    "address_hash_hex": "adffe0bb550c8b0880b36234481026de",
+    "sign_data_hex": "74657374206d65737361676520666f72206361726f6c",
+    "signature_hex": "cae563155596f083e1f44dd3e192a61414164d3d0d1a1f92abee5d4f0b5b5584cfb06a9aabd3e8d1b6dbaee1e6e64519baa2da121b1f64039cd10f715fcc6207"
+  }
+]

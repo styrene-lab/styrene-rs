@@ -12,13 +12,12 @@ use reticulum_daemon::receipt_bridge::ReceiptBridge;
 use reticulum_daemon::rpc::{AnnounceBridge, InterfaceRecord, OutboundBridge, RpcDaemon};
 use reticulum_daemon::storage::messages::MessagesStore;
 use rns_core::destination::{DestinationName, SingleInputDestination};
+use rns_core::transport::core_transport::{Transport, TransportConfig};
 use rns_core::transport::iface::tcp_client::TcpClient;
 use rns_core::transport::iface::tcp_server::TcpServer;
-use rns_core::transport::core_transport::{Transport, TransportConfig};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -31,7 +30,7 @@ pub(super) struct RpcTlsConfig {
 
 pub(super) struct BootstrapContext {
     pub(super) rpc_addr: SocketAddr,
-    pub(super) daemon: Rc<RpcDaemon>,
+    pub(super) daemon: Arc<RpcDaemon>,
     pub(super) rpc_tls: Option<RpcTlsConfig>,
 }
 
@@ -168,7 +167,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     let announce_bridge: Option<Arc<dyn AnnounceBridge>> =
         bridge.as_ref().map(|bridge| bridge.clone() as Arc<dyn AnnounceBridge>);
 
-    let daemon = Rc::new(RpcDaemon::with_store_and_bridges(
+    let daemon = Arc::new(RpcDaemon::with_store_and_bridges(
         store,
         identity_hash,
         outbound_bridge,

@@ -68,6 +68,21 @@ crates/
 | `tests/interop/python/` | Python scripts generating test fixtures |
 | `UPSTREAM.md` | Fork attribution and upstream tracking |
 
+## Planned Migration: MessagePack → CBOR
+
+> Decision date: 2026-02-28. Documented in `misc/osint/docs/architecture.md` (OSINT platform architecture).
+
+`styrene-mesh` currently uses MessagePack (`rmp_serde`) for wire protocol payload encoding. This will migrate to **CBOR (`ciborium`)** — RFC 8949.
+
+**Rationale:**
+- **Deterministic encoding** (RFC 8949 §4.2) — required for content-hash event IDs in the OSINT pipeline. MessagePack's unspecified map key ordering makes identical payloads hash differently across implementations.
+- **COSE (RFC 9052)** — CBOR Object Signing and Encryption provides standard authenticated signing/encryption. Needed for pub/sub channel authentication and Link Coordination Request signatures. No equivalent exists for MessagePack.
+- **IETF governance** — formal RFC process, IANA tag registry, dedicated security considerations section. MessagePack spec lives on a GitHub repo with no formal governance.
+
+**Migration scope:** Mechanical — swap `rmp_serde` for `ciborium` in Cargo.toml, update error types. All serde derives remain identical. Affects `styrene-mesh` (wire.rs, pqc.rs) and any crate that directly encodes/decodes payloads.
+
+**Constraint:** Wire protocol changes must be synchronized with Python `styrened`. The Python side would swap `msgpack` for `cbor2`.
+
 ## Known Issues (Inherited from Fork)
 
 | Issue | Severity | Status |

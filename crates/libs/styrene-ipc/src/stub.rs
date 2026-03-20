@@ -220,6 +220,29 @@ impl DaemonFleet for StubDaemon {
 }
 
 #[async_trait]
+impl DaemonTunnel for StubDaemon {
+    async fn list_tunnels(&self) -> Result<Vec<TunnelInfo>, IpcError> {
+        Err(IpcError::not_implemented("list_tunnels"))
+    }
+
+    async fn tunnel_status(&self, _peer_hash: &str) -> Result<TunnelInfo, IpcError> {
+        Err(IpcError::not_implemented("tunnel_status"))
+    }
+
+    async fn tunnel_rekey(&self, _peer_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("tunnel_rekey"))
+    }
+
+    async fn tunnel_teardown(&self, _peer_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("tunnel_teardown"))
+    }
+
+    async fn list_tunnel_sas(&self, _peer_hash: &str) -> Result<Vec<TunnelSaInfo>, IpcError> {
+        Err(IpcError::not_implemented("list_tunnel_sas"))
+    }
+}
+
+#[async_trait]
 impl DaemonEvents for StubDaemon {
     async fn subscribe_messages(
         &self,
@@ -245,16 +268,9 @@ mod tests {
         let stub = StubDaemon;
 
         // DaemonMessaging
-        let err = stub
-            .send_chat(SendChatRequest::default())
-            .await
-            .expect_err("should be NotImplemented");
-        assert_eq!(
-            err,
-            IpcError::NotImplemented {
-                method: "send_chat".into()
-            }
-        );
+        let err =
+            stub.send_chat(SendChatRequest::default()).await.expect_err("should be NotImplemented");
+        assert_eq!(err, IpcError::NotImplemented { method: "send_chat".into() });
         assert!(!err.is_retryable());
 
         assert!(stub.mark_read("abc").await.is_err());
@@ -290,14 +306,17 @@ mod tests {
         assert!(stub.self_update("abc", None, None).await.is_err());
         assert!(stub.remote_inbox("abc", 10, None).await.is_err());
         assert!(stub.remote_messages("abc", "def", 10, None).await.is_err());
-        assert!(
-            stub.terminal_open(TerminalOpenRequest::default())
-                .await
-                .is_err()
-        );
+        assert!(stub.terminal_open(TerminalOpenRequest::default()).await.is_err());
         assert!(stub.terminal_input("sid", b"data").await.is_err());
         assert!(stub.terminal_resize("sid", 24, 80).await.is_err());
         assert!(stub.terminal_close("sid").await.is_err());
+
+        // DaemonTunnel
+        assert!(stub.list_tunnels().await.is_err());
+        assert!(stub.tunnel_status("abc").await.is_err());
+        assert!(stub.tunnel_rekey("abc").await.is_err());
+        assert!(stub.tunnel_teardown("abc").await.is_err());
+        assert!(stub.list_tunnel_sas("abc").await.is_err());
 
         // DaemonEvents
         assert!(stub.subscribe_messages(&[]).await.is_err());
@@ -316,47 +335,12 @@ mod tests {
     #[test]
     fn error_retryable_variants() {
         assert!(!IpcError::not_implemented("x").is_retryable());
-        assert!(
-            IpcError::Unavailable {
-                reason: "down".into()
-            }
-            .is_retryable()
-        );
-        assert!(
-            IpcError::Timeout {
-                operation: "op".into()
-            }
-            .is_retryable()
-        );
-        assert!(
-            IpcError::Transport {
-                message: "err".into()
-            }
-            .is_retryable()
-        );
-        assert!(
-            !IpcError::InvalidRequest {
-                message: "bad".into()
-            }
-            .is_retryable()
-        );
-        assert!(
-            !IpcError::NotFound {
-                resource: "x".into()
-            }
-            .is_retryable()
-        );
-        assert!(
-            !IpcError::Conflict {
-                message: "x".into()
-            }
-            .is_retryable()
-        );
-        assert!(
-            !IpcError::Internal {
-                message: "x".into()
-            }
-            .is_retryable()
-        );
+        assert!(IpcError::Unavailable { reason: "down".into() }.is_retryable());
+        assert!(IpcError::Timeout { operation: "op".into() }.is_retryable());
+        assert!(IpcError::Transport { message: "err".into() }.is_retryable());
+        assert!(!IpcError::InvalidRequest { message: "bad".into() }.is_retryable());
+        assert!(!IpcError::NotFound { resource: "x".into() }.is_retryable());
+        assert!(!IpcError::Conflict { message: "x".into() }.is_retryable());
+        assert!(!IpcError::Internal { message: "x".into() }.is_retryable());
     }
 }

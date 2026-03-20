@@ -1,19 +1,18 @@
 use super::bridge::PeerCrypto;
 use reticulum_daemon::announce_names::parse_peer_name_from_app_data;
 use reticulum_daemon::rpc::RpcDaemon;
-use rns_core::transport::time::now_epoch_secs_i64;
 use rns_core::transport::core_transport::Transport;
+use rns_core::transport::time::now_epoch_secs_i64;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 pub(super) fn spawn_announce_worker(
-    daemon: Rc<RpcDaemon>,
+    daemon: Arc<RpcDaemon>,
     transport: Arc<Transport>,
     peer_crypto: Arc<Mutex<HashMap<String, PeerCrypto>>>,
 ) {
     let daemon_announce = daemon;
-    tokio::task::spawn_local(async move {
+    tokio::spawn(async move {
         let mut rx = transport.recv_announces().await;
         loop {
             if let Ok(event) = rx.recv().await {

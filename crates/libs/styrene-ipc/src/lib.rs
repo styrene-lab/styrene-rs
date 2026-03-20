@@ -25,7 +25,7 @@ pub mod types;
 
 pub use error::IpcError;
 pub use traits::{
-    Daemon, DaemonEvents, DaemonFleet, DaemonIdentity, DaemonMessaging, DaemonStatus,
+    Daemon, DaemonEvents, DaemonFleet, DaemonIdentity, DaemonMessaging, DaemonStatus, DaemonTunnel,
 };
 pub use types::*;
 

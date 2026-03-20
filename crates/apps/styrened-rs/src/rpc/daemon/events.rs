@@ -370,10 +370,10 @@ impl RpcDaemon {
     }
 
     pub fn start_announce_scheduler(
-        self: std::rc::Rc<Self>,
+        self: Arc<Self>,
         interval_secs: u64,
     ) -> tokio::task::JoinHandle<()> {
-        tokio::task::spawn_local(async move {
+        tokio::task::spawn(async move {
             if interval_secs == 0 {
                 return;
             }
@@ -414,7 +414,7 @@ impl RpcDaemon {
             fields: None,
             receipt_status: None,
         };
-        let _ = self.store.insert_message(&record);
+        let _ = self.messages().insert_message(&record);
         let event =
             RpcEvent { event_type: "inbound".into(), payload: json!({ "message": record }) };
         self.publish_event(event);

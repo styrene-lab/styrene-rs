@@ -519,9 +519,7 @@ impl RpcDaemon {
         let policy = self.sdk_store_forward_policy();
         let max_age = i64::try_from(policy.max_message_age_ms).unwrap_or(i64::MAX);
         let retention_cutoff = now_ts.saturating_sub(max_age);
-        let expired_ids = self
-            .store
-            .expire_outbound_messages_before(retention_cutoff)
+        let expired_ids = self.messages().expire_outbound_messages_before(retention_cutoff)
             .map_err(std::io::Error::other)?;
         if !expired_ids.is_empty() {
             for message_id in expired_ids.iter() {
@@ -539,7 +537,7 @@ impl RpcDaemon {
         }
 
         let outbound_count =
-            self.store.count_outbound_messages().map_err(std::io::Error::other)? as usize;
+            self.messages().count_outbound_messages().map_err(std::io::Error::other)? as usize;
         if outbound_count < policy.max_messages {
             return Ok(false);
         }
@@ -559,9 +557,7 @@ impl RpcDaemon {
         let prune_count = outbound_count
             .saturating_sub(policy.max_messages)
             .saturating_add(1);
-        let pruned_ids = self
-            .store
-            .prune_outbound_messages(prune_count, policy.eviction_priority.as_str())
+        let pruned_ids = self.messages().prune_outbound_messages(prune_count, policy.eviction_priority.as_str())
             .map_err(std::io::Error::other)?;
         if !pruned_ids.is_empty() {
             for message_id in pruned_ids.iter() {
@@ -579,7 +575,7 @@ impl RpcDaemon {
         }
 
         let remaining =
-            self.store.count_outbound_messages().map_err(std::io::Error::other)? as usize;
+            self.messages().count_outbound_messages().map_err(std::io::Error::other)? as usize;
         Ok(remaining >= policy.max_messages)
     }
 
@@ -966,9 +962,7 @@ impl RpcDaemon {
     }
 
     fn restore_sdk_domain_snapshot(&self) -> Result<(), std::io::Error> {
-        let snapshot = self
-            .store
-            .get_sdk_domain_snapshot()
+        let snapshot = self.messages().get_sdk_domain_snapshot()
             .map_err(std::io::Error::other)?;
         let Some(snapshot) = snapshot else {
             return Ok(());
@@ -1042,7 +1036,7 @@ impl RpcDaemon {
     fn persist_sdk_domain_snapshot(&self) -> Result<(), std::io::Error> {
         let snapshot = self.build_sdk_domain_snapshot();
         let value = serde_json::to_value(&snapshot).map_err(std::io::Error::other)?;
-        self.store
+        self.messages()
             .put_sdk_domain_snapshot(&value)
             .map_err(std::io::Error::other)?;
         Ok(())

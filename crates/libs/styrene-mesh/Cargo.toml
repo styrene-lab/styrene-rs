@@ -25,6 +25,7 @@ serde_json.workspace = true
 [features]
 default = ["std"]
 std = []
+pqc = []
 interop-tests = []
 
 [lints]

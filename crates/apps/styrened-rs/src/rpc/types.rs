@@ -246,7 +246,7 @@ struct RpcMetrics {
 }
 
 pub struct RpcDaemon {
-    store: MessagesStore,
+    store: Mutex<MessagesStore>,
     identity_hash: String,
     delivery_destination_hash: Mutex<Option<String>>,
     events: broadcast::Sender<RpcEvent>,
