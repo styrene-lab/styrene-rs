@@ -85,6 +85,10 @@ impl TcpClient {
                 eprintln!("[tp-diag] tcp_client connected iface={}", iface_address);
             }
 
+            // TODO: pass an IfacConfig here when the interface has IFAC configured.
+            // For now all TCP interfaces are Open (no IFAC).
+            let ifac: Option<&super::ifac::IfacConfig> = None;
+
             let rx_task = {
                 let cancel = cancel.clone();
                 let stop = stop.clone();
@@ -95,6 +99,7 @@ impl TcpClient {
                     iface_address,
                     cancel,
                     stop,
+                    ifac,
                 ))
             };
 
@@ -107,6 +112,7 @@ impl TcpClient {
                     iface_address,
                     cancel,
                     stop.clone(),
+                    ifac,
                 ))
             };
 

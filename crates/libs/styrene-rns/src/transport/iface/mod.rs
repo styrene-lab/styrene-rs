@@ -1,5 +1,6 @@
 pub mod driver;
 pub mod hdlc;
+pub mod ifac;
 pub mod serial;
 pub mod stream_iface;
 pub mod tcp_client;
