@@ -103,9 +103,9 @@ async fn multiple_facades_same_context() {
     assert!(admin_facade.query_status().await.is_ok());
     assert!(peer_facade.query_status().await.is_ok());
 
-    // Only admin can exec (but it's not implemented, so we get NotImplemented not Unavailable)
+    // Only admin can exec (returns Internal in test mode — no transport)
     let admin_exec = admin_facade.exec("dest", "ls", vec![], None).await;
-    assert!(matches!(admin_exec, Err(IpcError::NotImplemented { .. })));
+    assert!(matches!(admin_exec, Err(IpcError::Internal { .. })));
 
     let peer_exec = peer_facade.exec("dest", "ls", vec![], None).await;
     assert!(matches!(peer_exec, Err(IpcError::Unavailable { .. })));

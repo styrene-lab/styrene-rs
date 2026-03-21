@@ -385,32 +385,32 @@ impl DaemonStatus for DaemonFacade {
 impl DaemonFleet for DaemonFacade {
     async fn device_status(
         &self,
-        _dest: &str,
-        _timeout: Option<u64>,
+        dest: &str,
+        timeout: Option<u64>,
     ) -> Result<RemoteStatusInfo, IpcError> {
         self.require(&Capability::Status)?;
-        Err(Self::not_implemented("device_status"))
+        self.ctx.fleet().device_status(dest, timeout).await.map_err(internal)
     }
 
     async fn exec(
         &self,
-        _dest: &str,
-        _cmd: &str,
-        _args: Vec<String>,
-        _timeout: Option<u64>,
+        dest: &str,
+        cmd: &str,
+        args: Vec<String>,
+        timeout: Option<u64>,
     ) -> Result<ExecResult, IpcError> {
         self.require(&Capability::Exec)?;
-        Err(Self::not_implemented("exec"))
+        self.ctx.fleet().exec(dest, cmd, &args, timeout).await.map_err(internal)
     }
 
     async fn reboot_device(
         &self,
-        _dest: &str,
-        _delay: Option<u64>,
-        _timeout: Option<u64>,
+        dest: &str,
+        delay: Option<u64>,
+        timeout: Option<u64>,
     ) -> Result<RebootResult, IpcError> {
         self.require(&Capability::Reboot)?;
-        Err(Self::not_implemented("reboot_device"))
+        self.ctx.fleet().reboot_device(dest, delay, timeout).await.map_err(internal)
     }
 
     async fn self_update(
