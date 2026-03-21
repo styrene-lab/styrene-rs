@@ -10,12 +10,13 @@
 //! (Package I), which holds `Arc<AppContext>` and dispatches IPC calls
 //! through it after auth checks.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::services::{
     AuthService, AutoReplyService, ConfigService, DiscoveryService, EventService, FleetService,
     IdentityService, MessagingService, ProtocolService, StatusService, TunnelService,
 };
+use crate::storage::messages::MessagesStore;
 use crate::transport::mesh_transport::MeshTransport;
 
 /// Composition root — wires all daemon services together.
@@ -39,11 +40,16 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    /// Construct all services with the given transport and identity hash.
+    /// Construct all services with the given transport, identity hash, and store.
     ///
-    /// Services are created in startup order. Some services have real
-    /// implementations (identity, config); others are still stubs.
-    pub fn new(transport: Arc<dyn MeshTransport>, identity_hash: String) -> Self {
+    /// Services are created in startup order. Messaging and Discovery share
+    /// the same MessagesStore (single SQLite connection for both messages
+    /// and announces).
+    pub fn new(
+        transport: Arc<dyn MeshTransport>,
+        identity_hash: String,
+        store: Arc<Mutex<MessagesStore>>,
+    ) -> Self {
         // Phase 1: Transport + config (foundation)
         let config = Arc::new(ConfigService::new());
         let auth = Arc::new(AuthService::new());
@@ -54,11 +60,11 @@ impl AppContext {
             transport.clone(),
         ));
 
-        // Phase 3: Discovery + NodeStore (depends on transport)
-        let discovery = Arc::new(DiscoveryService::new());
+        // Phase 3: Discovery (depends on transport, writes to store's announce table)
+        let discovery = Arc::new(DiscoveryService::with_store(store.clone()));
 
-        // Phase 4: Messaging (depends on transport, identity, discovery)
-        let messaging = Arc::new(MessagingService::new());
+        // Phase 4: Messaging (depends on transport, identity, reads/writes store's message table)
+        let messaging = Arc::new(MessagingService::with_store(store));
 
         // Phase 5: Protocol dispatch (depends on messaging)
         let protocol = Arc::new(ProtocolService::new());
