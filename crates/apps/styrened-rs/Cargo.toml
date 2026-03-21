@@ -13,6 +13,7 @@ name = "reticulum_daemon"
 [dependencies]
 rns_core = { package = "styrene-rns", path = "../../libs/styrene-rns", version = "0.1.0", features = ["transport"] }
 lxmf = { package = "styrene-lxmf", path = "../../libs/styrene-lxmf", version = "0.1.0", default-features = false, features = ["std"] }
+styrene-ipc = { path = "../../libs/styrene-ipc", version = "0.1.0" }
 async-trait.workspace = true
 thiserror.workspace = true
 base64 = { workspace = true }
