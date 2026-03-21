@@ -1,0 +1,11 @@
+{
+  "name": "query_conversations",
+  "msg_type": "QUERY_CONVERSATIONS",
+  "msg_type_byte": "0x14",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 35,
+  "length_field": 31,
+  "payload": {
+    "unread_only": false
+  }
+}

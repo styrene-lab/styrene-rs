@@ -1,0 +1,11 @@
+{
+  "name": "cmd_delete_conversation",
+  "msg_type": "CMD_DELETE_CONVERSATION",
+  "msg_type_byte": "0x26",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 66,
+  "length_field": 62,
+  "payload": {
+    "peer_hash": "abcdef0123456789abcdef0123456789"
+  }
+}

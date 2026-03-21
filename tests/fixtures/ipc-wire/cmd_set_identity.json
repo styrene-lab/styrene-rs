@@ -1,0 +1,12 @@
+{
+  "name": "cmd_set_identity",
+  "msg_type": "CMD_SET_IDENTITY",
+  "msg_type_byte": "0x42",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 58,
+  "length_field": 54,
+  "payload": {
+    "display_name": "TestOperator",
+    "icon": "\ud83d\udd11"
+  }
+}

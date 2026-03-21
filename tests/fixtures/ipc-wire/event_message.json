@@ -1,0 +1,14 @@
+{
+  "name": "event_message",
+  "msg_type": "EVENT_MESSAGE",
+  "msg_type_byte": "0xc1",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 103,
+  "length_field": 99,
+  "payload": {
+    "id": "msg_event_1",
+    "source_hash": "1122334455667788",
+    "content": "New message arrived",
+    "kind": "new"
+  }
+}

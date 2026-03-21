@@ -1,0 +1,15 @@
+{
+  "name": "result_ok",
+  "msg_type": "RESULT",
+  "msg_type_byte": "0x81",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 63,
+  "length_field": 59,
+  "payload": {
+    "status": "ok",
+    "data": {
+      "uptime": 3600,
+      "version": "0.15.0"
+    }
+  }
+}

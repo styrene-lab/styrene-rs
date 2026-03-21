@@ -1,0 +1,11 @@
+{
+  "name": "cmd_retry_message",
+  "msg_type": "CMD_RETRY_MESSAGE",
+  "msg_type_byte": "0x28",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 47,
+  "length_field": 43,
+  "payload": {
+    "message_id": "msg_retry_123"
+  }
+}

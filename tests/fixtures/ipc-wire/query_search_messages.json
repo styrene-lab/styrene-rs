@@ -1,0 +1,12 @@
+{
+  "name": "query_search_messages",
+  "msg_type": "QUERY_SEARCH_MESSAGES",
+  "msg_type_byte": "0x16",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 47,
+  "length_field": 43,
+  "payload": {
+    "query": "hello world",
+    "limit": 20
+  }
+}
