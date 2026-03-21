@@ -6,6 +6,7 @@ members = [
   "crates/libs/styrene-lxmf",
   "crates/libs/styrene-mesh",
   "crates/libs/styrene-ipc",
+  "crates/libs/styrene-ipc-server",
   "crates/libs/styrene-tunnel",
   "crates/libs/styrene-micron",
   "crates/apps/styrened-rs",
@@ -19,6 +20,7 @@ default-members = [
   "crates/libs/styrene-lxmf",
   "crates/libs/styrene-mesh",
   "crates/libs/styrene-ipc",
+  "crates/libs/styrene-ipc-server",
   "crates/libs/styrene-tunnel",
   "crates/libs/styrene-micron",
   "crates/apps/styrened-rs",
@@ -41,6 +43,7 @@ styrene-lxmf = { version = "0.1.0", path = "crates/libs/styrene-lxmf" }
 styrene-rns = { version = "0.1.0", path = "crates/libs/styrene-rns" }
 styrene-mesh = { version = "0.1.0", path = "crates/libs/styrene-mesh" }
 styrene-ipc = { version = "0.1.0", path = "crates/libs/styrene-ipc" }
+styrene-ipc-server = { version = "0.1.0", path = "crates/libs/styrene-ipc-server" }
 styrene-tunnel = { version = "0.1.0", path = "crates/libs/styrene-tunnel" }
 styrene-micron = { version = "0.1.0", path = "crates/libs/styrene-micron" }
 aes = "0.8.4"
@@ -57,7 +60,7 @@ log = "0.4.27"
 loom = "0.7"
 serde_bytes = "0.11"
 rmp-serde = "1.3.0"
-rmpv = "1.3.0"
+rmpv = { version = "1.3.0", features = ["with-serde"] }
 rusqlite = "0.31.0"
 time = "0.3.45"
 tokio-util = "0.7.15"
