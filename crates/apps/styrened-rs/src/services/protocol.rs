@@ -66,6 +66,12 @@ impl ProtocolService {
         }
     }
 
+    /// Process an inbound message through protocol dispatch.
+    /// Alias for `dispatch()` used by the inbound worker.
+    pub fn dispatch_inbound(&self, record: &MessageRecord) -> bool {
+        self.dispatch(record)
+    }
+
     /// List registered protocol IDs.
     pub fn registered_protocols(&self) -> Vec<String> {
         self.handlers.lock().unwrap().keys().cloned().collect()

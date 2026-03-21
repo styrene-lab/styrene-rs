@@ -140,16 +140,32 @@ impl AppContext {
         &self.messaging
     }
 
+    pub fn messaging_arc(&self) -> Arc<MessagingService> {
+        self.messaging.clone()
+    }
+
     pub fn discovery(&self) -> &DiscoveryService {
         &self.discovery
+    }
+
+    pub fn discovery_arc(&self) -> Arc<DiscoveryService> {
+        self.discovery.clone()
     }
 
     pub fn protocol(&self) -> &ProtocolService {
         &self.protocol
     }
 
+    pub fn protocol_arc(&self) -> Arc<ProtocolService> {
+        self.protocol.clone()
+    }
+
     pub fn events(&self) -> &EventService {
         &self.events
+    }
+
+    pub fn events_arc(&self) -> Arc<EventService> {
+        self.events.clone()
     }
 
     pub fn tunnel(&self) -> &TunnelService {
