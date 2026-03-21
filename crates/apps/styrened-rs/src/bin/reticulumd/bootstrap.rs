@@ -13,6 +13,7 @@ use reticulum_daemon::identity_store::load_or_create_identity;
 use reticulum_daemon::receipt_bridge::ReceiptBridge;
 use reticulum_daemon::rpc::{AnnounceBridge, InterfaceRecord, OutboundBridge, RpcDaemon};
 use reticulum_daemon::storage::messages::MessagesStore;
+use reticulum_daemon::transport::adapter::TokioTransportAdapter;
 use reticulum_daemon::transport::mesh_transport::MeshTransport;
 use reticulum_daemon::transport::null_transport::NullTransport;
 use rns_core::destination::{DestinationName, SingleInputDestination};
@@ -200,15 +201,40 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         let _handle = daemon.clone().start_announce_scheduler(args.announce_interval_secs);
     }
 
+    // Capture transport and announce destination for service architecture before
+    // they're moved into workers.
+    let transport_for_services = transport.clone();
+    let announce_dest_for_services = announce_destination.clone();
+
     if let Some(transport) = transport {
         spawn_inbound_worker(daemon.clone(), transport.clone());
         spawn_announce_worker(daemon.clone(), transport, peer_crypto);
     }
 
     // --- New service architecture (runs alongside RpcDaemon during migration) ---
-    // Uses NullTransport for now — the TokioTransportAdapter will be wired
-    // when the inbound/announce workers migrate to services.
-    let mesh_transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
+    // Wire TokioTransportAdapter when real transport exists, NullTransport otherwise.
+    // Share the same MessagesStore that RpcDaemon uses (via a new in-memory instance
+    // for now — will share the actual store once RpcDaemon field collapse progresses).
+    let mesh_transport: Arc<dyn MeshTransport> = if let (Some(ref tp), Some(ref ann_dest)) =
+        (&transport_for_services, &announce_dest_for_services)
+    {
+        let mut id_hash = [0u8; 16];
+        id_hash.copy_from_slice(identity.address_hash().as_slice());
+        let adapter = TokioTransportAdapter::new(
+            tp.clone(),
+            rns_core::hash::AddressHash::new(id_hash),
+            rns_core::hash::AddressHash::new(delivery_source_hash),
+            ann_dest.clone(),
+            local_display_name
+                .as_ref()
+                .and_then(|name| encode_delivery_display_name_app_data(name)),
+        )
+        .await;
+        eprintln!("[daemon] TokioTransportAdapter wired into service architecture");
+        Arc::new(adapter)
+    } else {
+        Arc::new(NullTransport::new())
+    };
     let shared_store = Arc::new(std::sync::Mutex::new(
         MessagesStore::in_memory().expect("app_context in-memory store"),
     ));
