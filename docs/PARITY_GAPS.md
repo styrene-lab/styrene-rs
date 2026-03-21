@@ -112,9 +112,25 @@ The wire protocol is the contract between Python and Rust nodes. There are inter
 ### 3.2 PQC Integration
 
 **Status:** `ml-kem` crate in workspace deps, unused  
+**Blocked by:** `styrene-entropy` crate (Gap 3.4) — ML-KEM key generation requires ~800+ bytes of quality entropy per keypair. Activating ml-kem without a verified entropy source silently degrades key quality.  
 **Reference:** Python `crypto/pqc_crypto.py` (unlisted LOC), `services/pqc_session.py` (424 LOC)  
 
 ML-KEM (Kyber) post-quantum key exchange. The dependency is declared but never imported. Python has a working PQC session layer with hybrid key exchange (X25519 + ML-KEM).
+
+Do not activate this dependency until Gap 3.4 (`styrene-entropy`) is in place and wired into `AppContext`. ML-KEM key generation drawing from a weak entropy source produces correlated key material with no visible error.
+
+### 3.4 Entropy Architecture
+
+**Status:** Not started — design complete  
+**Reference:** `docs/entropy-architecture.md`  
+
+`styrene-entropy` — a new lib crate providing a source → pool → DRBG abstraction for all cryptographic key material generation in the daemon and Hub. Sources: hardware TRNG (nRF52840 coprocessor via UART), kernel (`/dev/random`), CPU jitter, mesh Hub pool (via LXMF RPC).
+
+**This is a prerequisite for Gap 3.2 (PQC Integration).** Wire into `AppContext` (Gap S5) when the service registry lands.
+
+Independent of all service layer work — can be built and tested standalone. See `docs/entropy-architecture.md` for full design including hardware coprocessor spec and DRBG policy.
+
+---
 
 ### 3.3 Ratchet Persistence
 
@@ -251,7 +267,9 @@ This is orthogonal to thread count. A single-core Pi Zero 2W runs `tokio::main(f
 | 4 | 1.2: Serial/KISS interface | Feature | Medium | Edge hardware deployment |
 | 5 | S2: `MeshTransport` trait | Structural | Medium | Testability, WASM, service architecture |
 | 6 | S4: `include!()` → modules | Refactor | Small | Developer experience |
-| 7 | S5: `AppContext` service registry | Structural | Large | All Tier 2 services |
-| 8 | 1.3: Propagation backend | Feature | Large | Offline message delivery |
-| 9 | 3.1: Wire interop vectors | Testing | Small | Confidence in cross-impl compat |
-| 10 | 2.1–2.7: Service layer | Feature | Very large | Feature parity |
+| 7 | **3.4: `styrene-entropy` crate** | **Feature** | **Medium** | **PQC activation (3.2), edge identity gen, Hub pool** |
+| 8 | S5: `AppContext` service registry | Structural | Large | All Tier 2 services |
+| 9 | 1.3: Propagation backend | Feature | Large | Offline message delivery, entropy RPC |
+| 10 | 3.1: Wire interop vectors | Testing | Small | Confidence in cross-impl compat |
+| 11 | 3.2: PQC integration | Feature | Medium | Post-quantum mesh — **requires 3.4** |
+| 12 | 2.1–2.7: Service layer | Feature | Very large | Feature parity |
