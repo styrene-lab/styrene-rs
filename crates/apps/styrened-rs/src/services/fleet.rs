@@ -161,6 +161,116 @@ impl FleetService {
         Ok(result)
     }
 
+    /// Query remote device's inbox (conversation list) via RPC.
+    pub async fn remote_inbox(
+        &self,
+        dest_hash: &str,
+        limit: u32,
+        timeout: Option<u64>,
+    ) -> Result<Vec<styrene_ipc::types::ConversationInfo>, std::io::Error> {
+        let timeout_dur = Duration::from_secs(timeout.unwrap_or(30));
+        let payload = rmp_serde::to_vec(&rmpv::Value::Map(vec![
+            (rmpv::Value::from("limit"), rmpv::Value::from(limit as i64)),
+        ]))
+        .unwrap_or_default();
+
+        let response = self
+            .rpc_call(dest_hash, StyreneMessageType::InboxQuery, &payload, timeout_dur)
+            .await?;
+
+        if response.message_type != StyreneMessageType::InboxResponse {
+            return Err(std::io::Error::other(format!(
+                "unexpected response type: {:?}",
+                response.message_type
+            )));
+        }
+
+        // Parse conversation list from response
+        let result: HashMap<String, rmpv::Value> =
+            rmp_serde::from_slice(&response.payload)
+                .map_err(|e| std::io::Error::other(format!("decode inbox: {e}")))?;
+
+        let conversations = result
+            .get("conversations")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        let map = v.as_map()?;
+                        let mut info = styrene_ipc::types::ConversationInfo::default();
+                        for (k, val) in map {
+                            match k.as_str()? {
+                                "peer_hash" => info.peer_hash = val.as_str()?.to_string(),
+                                "unread_count" => info.unread_count = val.as_u64()? as u32,
+                                "message_count" => info.message_count = val.as_u64()? as u32,
+                                _ => {}
+                            }
+                        }
+                        Some(info)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(conversations)
+    }
+
+    /// Query remote device's messages for a specific peer via RPC.
+    pub async fn remote_messages(
+        &self,
+        dest_hash: &str,
+        peer_hash: &str,
+        limit: u32,
+        timeout: Option<u64>,
+    ) -> Result<Vec<styrene_ipc::types::MessageInfo>, std::io::Error> {
+        let timeout_dur = Duration::from_secs(timeout.unwrap_or(30));
+        let payload = rmp_serde::to_vec(&rmpv::Value::Map(vec![
+            (rmpv::Value::from("peer_hash"), rmpv::Value::from(peer_hash)),
+            (rmpv::Value::from("limit"), rmpv::Value::from(limit as i64)),
+        ]))
+        .unwrap_or_default();
+
+        let response = self
+            .rpc_call(dest_hash, StyreneMessageType::MessagesQuery, &payload, timeout_dur)
+            .await?;
+
+        if response.message_type != StyreneMessageType::MessagesResponse {
+            return Err(std::io::Error::other(format!(
+                "unexpected response type: {:?}",
+                response.message_type
+            )));
+        }
+
+        let result: HashMap<String, rmpv::Value> =
+            rmp_serde::from_slice(&response.payload)
+                .map_err(|e| std::io::Error::other(format!("decode messages: {e}")))?;
+
+        let messages = result
+            .get("messages")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        let map = v.as_map()?;
+                        let mut info = styrene_ipc::types::MessageInfo::default();
+                        for (k, val) in map {
+                            match k.as_str()? {
+                                "id" => info.id = val.as_str()?.to_string(),
+                                "source_hash" => info.source_hash = val.as_str()?.to_string(),
+                                "content" => info.content = val.as_str()?.to_string(),
+                                "timestamp" => info.timestamp = val.as_i64()?,
+                                _ => {}
+                            }
+                        }
+                        Some(info)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(messages)
+    }
+
     /// Handle an incoming RPC response (called by ProtocolService).
     /// Correlates with pending requests and resolves them.
     pub fn handle_response(&self, message: StyreneMessage) -> bool {

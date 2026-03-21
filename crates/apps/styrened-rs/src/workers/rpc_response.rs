@@ -48,7 +48,8 @@ impl ProtocolHandler for RpcResponseHandler {
         // Check if this is a response type
         use styrene_mesh::StyreneMessageType::*;
         match message.message_type {
-            StatusResponse | ExecResult | RebootResult | ConfigUpdateResult => {
+            StatusResponse | ExecResult | RebootResult | ConfigUpdateResult
+            | SelfUpdateResult | InboxResponse | MessagesResponse => {
                 self.fleet.handle_response(message)
             }
             _ => false, // Not a response — let other handlers process
