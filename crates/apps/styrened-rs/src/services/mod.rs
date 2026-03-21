@@ -24,8 +24,8 @@ pub mod status;
 pub mod tunnel;
 
 // Re-exports for convenience
-pub use auth::AuthService;
-pub use auto_reply::AutoReplyService;
+pub use auth::{AuthService, Capability, Role};
+pub use auto_reply::{AutoReplyConfig, AutoReplyMode, AutoReplyService};
 pub use config::ConfigService;
 pub use discovery::DiscoveryService;
 pub use events::EventService;
@@ -33,5 +33,5 @@ pub use fleet::FleetService;
 pub use identity::IdentityService;
 pub use messaging::MessagingService;
 pub use protocol::ProtocolService;
-pub use status::StatusService;
+pub use status::{InterfaceRecord, PropagationState, StatusService};
 pub use tunnel::TunnelService;
