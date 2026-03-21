@@ -1,4 +1,5 @@
 pub mod announce_names;
+pub mod app_context;
 pub mod config;
 pub mod e2e_harness;
 pub mod identity_store;
@@ -7,5 +8,6 @@ pub mod lxmf_bridge;
 pub mod receipt_bridge;
 pub mod rns_crypto;
 pub mod rpc;
+pub mod services;
 pub mod storage;
-mod transport;
+pub mod transport;

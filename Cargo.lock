@@ -5807,6 +5807,7 @@ dependencies = [
 name = "styrened-rs"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base64",
  "clap",
  "hex",
@@ -5823,6 +5824,7 @@ dependencies = [
  "styrene-lxmf",
  "styrene-rns",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-rustls",
  "toml",
