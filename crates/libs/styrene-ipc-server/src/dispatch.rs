@@ -33,6 +33,10 @@ pub async fn dispatch(
         MessageType::CmdDeleteMessage => dispatch_delete_message(daemon, &payload).await,
         MessageType::QueryContacts => dispatch_query_contacts(daemon).await,
         MessageType::QueryResolveName => dispatch_resolve_name(daemon, &payload).await,
+        MessageType::CmdSetIdentity => dispatch_set_identity(daemon, &payload).await,
+        MessageType::CmdRetryMessage => dispatch_retry_message(daemon, &payload).await,
+        MessageType::CmdSetAutoReply => dispatch_set_auto_reply(daemon, &payload).await,
+        MessageType::QuerySearchMessages => dispatch_search_messages(daemon, &payload).await,
         _ => Err(format!("unimplemented message type: 0x{:02x}", msg_type as u8)),
     }
 }
@@ -333,5 +337,82 @@ async fn dispatch_resolve_name(
         Some(hash) => p.insert("peer_hash".into(), rmpv::Value::from(hash.as_str())),
         None => p.insert("peer_hash".into(), rmpv::Value::Nil),
     };
+    ok_payload(p)
+}
+
+async fn dispatch_set_identity(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let display_name = val_str(payload, "display_name");
+    let icon = val_str(payload, "icon");
+    let short_name = val_str(payload, "short_name");
+    let changed = daemon
+        .set_identity(display_name, icon, short_name)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("changed".into(), rmpv::Value::Boolean(changed));
+    ok_payload(p)
+}
+
+async fn dispatch_set_auto_reply(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let mode = val_str(payload, "mode").ok_or("missing mode")?;
+    let message = val_str(payload, "message");
+    let cooldown = payload.get("cooldown_secs").and_then(|v| v.as_u64());
+    let changed = daemon
+        .set_auto_reply(mode, message, cooldown)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("changed".into(), rmpv::Value::Boolean(changed));
+    ok_payload(p)
+}
+
+async fn dispatch_search_messages(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let query = val_str(payload, "query").ok_or("missing query")?;
+    let peer_hash = val_str(payload, "peer_hash");
+    let limit = payload.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as u32;
+    let messages = daemon
+        .search_messages(query, peer_hash, limit)
+        .await
+        .map_err(|e| e.to_string())?;
+    let arr: Vec<rmpv::Value> = messages
+        .iter()
+        .map(|m| {
+            let mut item = HashMap::new();
+            item.insert("id".to_string(), rmpv::Value::from(m.id.as_str()));
+            item.insert("source_hash".to_string(), rmpv::Value::from(m.source_hash.as_str()));
+            item.insert("content".to_string(), rmpv::Value::from(m.content.as_str()));
+            item.insert("timestamp".to_string(), rmpv::Value::from(m.timestamp));
+            rmpv::Value::Map(
+                item.into_iter()
+                    .map(|(k, v)| (rmpv::Value::from(k.as_str()), v))
+                    .collect(),
+            )
+        })
+        .collect();
+    let mut p = Payload::new();
+    p.insert("messages".into(), rmpv::Value::Array(arr));
+    ok_payload(p)
+}
+
+async fn dispatch_retry_message(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let message_id = val_str(payload, "message_id").ok_or("missing message_id")?;
+    let retried = daemon
+        .retry_message(message_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("retried".into(), rmpv::Value::Boolean(retried));
     ok_payload(p)
 }
