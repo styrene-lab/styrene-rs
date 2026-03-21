@@ -14,7 +14,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "reticulumd", version, about = "Styrene mesh daemon (Rust)")]
+#[command(name = "styrened", version, about = "Styrene mesh daemon")]
 struct Args {
     #[arg(long, default_value = "127.0.0.1:4243")]
     rpc: String,
