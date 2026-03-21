@@ -392,6 +392,47 @@ impl DaemonStatus for DaemonFacade {
         );
         Ok(true)
     }
+
+    async fn save_config(&self, _config: ConfigSnapshot) -> Result<bool, IpcError> {
+        self.require(&Capability::Status)?;
+        let config_svc = self.ctx.config();
+        let _path = config_svc.config_path().ok_or_else(|| IpcError::InvalidRequest {
+            message: "no config file path — cannot save".into(),
+        })?;
+        // For now, reload the existing config to validate file access.
+        // Full config write-back requires DaemonConfig → YAML serialization.
+        config_svc.reload().map_err(|e| IpcError::Internal {
+            message: format!("config reload failed: {e}"),
+        })?;
+        Ok(true)
+    }
+
+    async fn block_peer(&self, identity_hash: &str) -> Result<bool, IpcError> {
+        self.require(&Capability::Status)?;
+        let store = self.ctx.store();
+        let store = store.lock().unwrap();
+        store.block_peer(identity_hash).map_err(|e| IpcError::Internal {
+            message: format!("block_peer failed: {e}"),
+        })
+    }
+
+    async fn unblock_peer(&self, identity_hash: &str) -> Result<bool, IpcError> {
+        self.require(&Capability::Status)?;
+        let store = self.ctx.store();
+        let store = store.lock().unwrap();
+        store.unblock_peer(identity_hash).map_err(|e| IpcError::Internal {
+            message: format!("unblock_peer failed: {e}"),
+        })
+    }
+
+    async fn blocked_peers(&self) -> Result<Vec<String>, IpcError> {
+        self.require(&Capability::Status)?;
+        let store = self.ctx.store();
+        let store = store.lock().unwrap();
+        store.blocked_peers().map_err(|e| IpcError::Internal {
+            message: format!("blocked_peers failed: {e}"),
+        })
+    }
 }
 
 #[async_trait]

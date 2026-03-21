@@ -28,4 +28,16 @@ pub trait DaemonStatus: Send + Sync {
         message: Option<&str>,
         cooldown_secs: Option<u64>,
     ) -> Result<bool, IpcError>;
+
+    /// Save the current configuration to disk.
+    async fn save_config(&self, config: ConfigSnapshot) -> Result<bool, IpcError>;
+
+    /// Block a peer by identity hash.
+    async fn block_peer(&self, identity_hash: &str) -> Result<bool, IpcError>;
+
+    /// Unblock a peer by identity hash.
+    async fn unblock_peer(&self, identity_hash: &str) -> Result<bool, IpcError>;
+
+    /// List all blocked peer identity hashes.
+    async fn blocked_peers(&self) -> Result<Vec<String>, IpcError>;
 }

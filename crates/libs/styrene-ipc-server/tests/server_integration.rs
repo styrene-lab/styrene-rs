@@ -47,6 +47,18 @@ impl DaemonStatus for TestDaemon {
     ) -> Result<bool, IpcError> {
         Ok(true)
     }
+    async fn save_config(&self, _config: ConfigSnapshot) -> Result<bool, IpcError> {
+        Ok(true)
+    }
+    async fn block_peer(&self, _hash: &str) -> Result<bool, IpcError> {
+        Ok(true)
+    }
+    async fn unblock_peer(&self, _hash: &str) -> Result<bool, IpcError> {
+        Ok(true)
+    }
+    async fn blocked_peers(&self) -> Result<Vec<String>, IpcError> {
+        Ok(vec![])
+    }
 }
 
 #[async_trait]
