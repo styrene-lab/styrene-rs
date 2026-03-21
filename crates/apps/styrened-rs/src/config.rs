@@ -8,7 +8,7 @@ pub struct DaemonConfig {
     pub interfaces: Vec<InterfaceConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct InterfaceConfig {
     #[serde(rename = "type")]
     pub kind: String,

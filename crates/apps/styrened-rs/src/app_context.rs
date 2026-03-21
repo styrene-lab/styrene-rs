@@ -39,18 +39,20 @@ pub struct AppContext {
 }
 
 impl AppContext {
-    /// Construct all services with the given transport.
+    /// Construct all services with the given transport and identity hash.
     ///
-    /// Services are created in startup order. Currently all stubs; later
-    /// packages will inject real dependencies (config, storage, transport
-    /// subscriptions).
-    pub fn new(transport: Arc<dyn MeshTransport>) -> Self {
+    /// Services are created in startup order. Some services have real
+    /// implementations (identity, config); others are still stubs.
+    pub fn new(transport: Arc<dyn MeshTransport>, identity_hash: String) -> Self {
         // Phase 1: Transport + config (foundation)
         let config = Arc::new(ConfigService::new());
         let auth = Arc::new(AuthService::new());
 
-        // Phase 2: Identity (depends on transport, config)
-        let identity = Arc::new(IdentityService::new());
+        // Phase 2: Identity (depends on transport)
+        let identity = Arc::new(IdentityService::with_transport(
+            identity_hash,
+            transport.clone(),
+        ));
 
         // Phase 3: Discovery + NodeStore (depends on transport)
         let discovery = Arc::new(DiscoveryService::new());
