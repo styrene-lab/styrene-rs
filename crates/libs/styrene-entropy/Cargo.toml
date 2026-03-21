@@ -1,0 +1,39 @@
+[package]
+name = "styrene-entropy"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Entropy accumulator, HMAC-DRBG, and hardware source abstraction for Styrene mesh nodes"
+keywords = ["styrene", "entropy", "trng", "drbg", "cryptography"]
+categories = ["cryptography", "hardware-support"]
+
+[features]
+default = ["kernel"]
+# /dev/random via getrandom — on by default for Linux/macOS
+kernel = ["dep:getrandom"]
+# CPU jitter entropy — fallback for constrained devices without hardware TRNG
+jitter = []
+# nRF52840 UART entropy coprocessor
+hardware-trng = ["dep:serialport"]
+# MeshHubSource — ENTROPY_REQUEST RPC to Hub (stub until styrene-ipc wired in)
+mesh-source = []
+
+[dependencies]
+hmac = { workspace = true }
+sha2 = { workspace = true }
+zeroize = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[dependencies.getrandom]
+version = "0.2"
+optional = true
+
+[dependencies.serialport]
+version = "4"
+optional = true
+
+[dev-dependencies]
+tokio = { workspace = true }
