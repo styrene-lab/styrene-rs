@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/libs/styrene-entropy",
   "crates/libs/styrene-content",
+  "crates/libs/styrene-telemetry",
   "crates/libs/styrene-rns",
   "crates/libs/styrene-lxmf",
   "crates/libs/styrene-mesh",
@@ -19,6 +20,7 @@ members = [
 default-members = [
   "crates/libs/styrene-entropy",
   "crates/libs/styrene-content",
+  "crates/libs/styrene-telemetry",
   "crates/libs/styrene-rns",
   "crates/libs/styrene-lxmf",
   "crates/libs/styrene-mesh",
