@@ -118,9 +118,17 @@ impl DaemonIdentity for DaemonFacade {
 
 #[async_trait]
 impl DaemonMessaging for DaemonFacade {
-    async fn send_chat(&self, _request: SendChatRequest) -> Result<MessageId, IpcError> {
+    async fn send_chat(&self, request: SendChatRequest) -> Result<MessageId, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("send_chat")) // Needs delivery pipeline
+        self.ctx
+            .messaging()
+            .send_chat(
+                &request.peer_hash,
+                &request.content,
+                request.title.as_deref(),
+            )
+            .await
+            .map_err(internal)
     }
 
     async fn mark_read(&self, peer_hash: &str) -> Result<u64, IpcError> {
@@ -564,8 +572,9 @@ mod tests {
     #[tokio::test]
     async fn not_implemented_methods_return_correct_error() {
         let facade = make_facade();
+        // send_chat returns Internal (no transport in test mode), not NotImplemented
         let result = facade.send_chat(SendChatRequest::default()).await;
-        assert!(matches!(result, Err(IpcError::NotImplemented { .. })));
+        assert!(matches!(result, Err(IpcError::Internal { .. })));
 
         let result = facade.list_tunnels().await;
         assert!(matches!(result, Err(IpcError::NotImplemented { .. })));

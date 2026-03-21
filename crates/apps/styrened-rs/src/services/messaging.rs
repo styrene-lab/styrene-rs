@@ -16,10 +16,15 @@
 //! transport.request_path → poll resolve_identity → send_via_link → fallback send_raw.
 
 use crate::inbound_delivery::decode_inbound_payload;
+use crate::lxmf_bridge;
 use crate::storage::messages::{MessageRecord, MessagesStore};
+use crate::transport::mesh_transport::{MeshTransport, TransportError};
 use lxmf::inbound_decode::InboundPayloadMode;
+use rns_core::destination::{DestinationDesc, DestinationName};
+use rns_core::hash::AddressHash;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// Service managing chat messaging, conversations, and contacts.
 pub struct MessagingService {
@@ -27,6 +32,10 @@ pub struct MessagingService {
     /// Receipt correlation: packet_hash → message_id.
     /// Populated by send operations, consumed by receipt callbacks.
     receipt_map: Mutex<HashMap<String, String>>,
+    /// Transport for outbound delivery (None in test mode).
+    transport: Option<Arc<dyn MeshTransport>>,
+    /// Signing key for LXMF wire messages (None in test mode).
+    signer: Option<Arc<rns_core::identity::PrivateIdentity>>,
 }
 
 impl MessagingService {
@@ -35,6 +44,22 @@ impl MessagingService {
         Self {
             store,
             receipt_map: Mutex::new(HashMap::new()),
+            transport: None,
+            signer: None,
+        }
+    }
+
+    /// Create with full delivery pipeline support.
+    pub fn with_transport(
+        store: Arc<Mutex<MessagesStore>>,
+        transport: Arc<dyn MeshTransport>,
+        signer: Arc<rns_core::identity::PrivateIdentity>,
+    ) -> Self {
+        Self {
+            store,
+            receipt_map: Mutex::new(HashMap::new()),
+            transport: Some(transport),
+            signer: Some(signer),
         }
     }
 
@@ -44,6 +69,160 @@ impl MessagingService {
         Self {
             store: Arc::new(Mutex::new(store)),
             receipt_map: Mutex::new(HashMap::new()),
+            transport: None,
+            signer: None,
+        }
+    }
+
+    // --- Outbound delivery ---
+
+    /// Send a chat message via the delivery pipeline.
+    ///
+    /// Pipeline: build LXMF wire → persist → request_path → poll identity →
+    /// send_via_link → track receipt. Returns the message ID on successful queue.
+    pub async fn send_chat(
+        &self,
+        peer_hash: &str,
+        content: &str,
+        title: Option<&str>,
+    ) -> Result<String, std::io::Error> {
+        let transport = self.transport.as_ref().ok_or_else(|| {
+            std::io::Error::other("transport not available — cannot send")
+        })?;
+        let signer = self.signer.as_ref().ok_or_else(|| {
+            std::io::Error::other("signer not available — cannot send")
+        })?;
+
+        if !transport.is_connected() {
+            return Err(std::io::Error::other("transport not connected"));
+        }
+
+        // Parse destination hash
+        let dest_bytes: [u8; 16] = hex::decode(peer_hash)
+            .map_err(|e| std::io::Error::other(format!("invalid peer hash: {e}")))?
+            .try_into()
+            .map_err(|_| std::io::Error::other("peer hash must be 16 bytes"))?;
+        let dest_hash = AddressHash::new(dest_bytes);
+
+        // Build LXMF wire message
+        let source_hash = transport.identity_hash();
+        let mut source_bytes = [0u8; 16];
+        source_bytes.copy_from_slice(source_hash.as_slice());
+        let payload = lxmf_bridge::build_wire_message(
+            source_bytes,
+            dest_bytes,
+            title.unwrap_or(""),
+            content,
+            None,
+            signer,
+        )
+        .map_err(|e| std::io::Error::other(format!("wire encode: {e}")))?;
+
+        // Generate message ID and persist
+        let msg_id = hex::encode(&payload[..8]); // First 8 bytes of wire as ID
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let record = MessageRecord {
+            id: msg_id.clone(),
+            source: hex::encode(source_hash.as_slice()),
+            destination: peer_hash.to_string(),
+            title: title.unwrap_or("").to_string(),
+            content: content.to_string(),
+            timestamp: now,
+            direction: "out".to_string(),
+            fields: None,
+            receipt_status: Some("sending".to_string()),
+            read: true, // Outgoing messages are always "read"
+        };
+        self.store
+            .lock()
+            .unwrap()
+            .insert_message(&record)
+            .map_err(std::io::Error::other)?;
+
+        // Run delivery
+        let transport = transport.clone();
+        let store = self.store.clone();
+
+        let delivery_result = Self::deliver(
+            transport.as_ref(),
+            dest_hash,
+            &payload,
+        )
+        .await;
+
+        match &delivery_result {
+            Ok(packet_hash) => {
+                // Track receipt
+                self.receipt_map
+                    .lock()
+                    .unwrap()
+                    .insert(packet_hash.clone(), msg_id.clone());
+                // Update status
+                let _ = store
+                    .lock()
+                    .unwrap()
+                    .update_receipt_status(&msg_id, "sent: direct");
+            }
+            Err(e) => {
+                let status = format!("failed: {e}");
+                let _ = store
+                    .lock()
+                    .unwrap()
+                    .update_receipt_status(&msg_id, &status);
+            }
+        }
+
+        Ok(msg_id)
+    }
+
+    /// Low-level delivery: request path → resolve identity → send via link.
+    async fn deliver(
+        transport: &dyn MeshTransport,
+        dest_hash: AddressHash,
+        payload: &[u8],
+    ) -> Result<String, TransportError> {
+        // Step 1: Request path
+        transport.request_path(&dest_hash).await;
+
+        // Step 2: Poll for peer identity (12s timeout)
+        let mut identity = None;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+        while tokio::time::Instant::now() < deadline {
+            if let Some(found) = transport.resolve_identity(&dest_hash).await {
+                identity = Some(found);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+
+        let identity = identity.ok_or_else(|| {
+            TransportError::SendFailed("peer not announced — identity not resolved".into())
+        })?;
+
+        // Step 3: Build destination descriptor
+        let dest_desc = DestinationDesc {
+            identity,
+            address_hash: dest_hash,
+            name: DestinationName::new("lxmf", "delivery"),
+        };
+
+        // Step 4: Send via link
+        let result = transport
+            .send_via_link(dest_desc, payload, Duration::from_secs(20))
+            .await?;
+
+        // Extract packet hash for receipt tracking
+        match result {
+            rns_core::transport::delivery::LinkSendResult::Packet(packet) => {
+                Ok(hex::encode(packet.hash().to_bytes()))
+            }
+            rns_core::transport::delivery::LinkSendResult::Resource(hash) => {
+                Ok(hex::encode(hash.to_bytes()))
+            }
         }
     }
 
@@ -387,5 +566,16 @@ mod tests {
         svc.clear_messages().unwrap();
 
         assert!(svc.get_message("msg1").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn send_chat_without_transport_returns_error() {
+        let svc = MessagingService::new();
+        let result = svc.send_chat("abcdef0123456789", "hello", None).await;
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("transport not available"),
+            "should fail when no transport"
+        );
     }
 }
