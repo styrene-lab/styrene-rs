@@ -51,6 +51,17 @@ pub async fn dispatch(
         MessageType::GetActivityHistory => dispatch_get_activity_history().await,
         MessageType::GetAdapterState => dispatch_get_adapter_state().await,
         MessageType::SubActivity => dispatch_sub_activity().await,
+        MessageType::Unsub => dispatch_unsub().await,
+        MessageType::CmdExec => dispatch_exec(daemon, &payload).await,
+        MessageType::CmdRebootDevice => dispatch_reboot_device(daemon, &payload).await,
+        MessageType::CmdBlockPeer => dispatch_block_peer(&payload).await,
+        MessageType::CmdUnblockPeer => dispatch_unblock_peer(&payload).await,
+        MessageType::QueryBlockedPeers => dispatch_blocked_peers().await,
+        MessageType::SaveCoreConfig => dispatch_save_core_config().await,
+        MessageType::CmdSyncMessages => dispatch_sync_messages().await,
+        MessageType::CmdSend => dispatch_send(daemon, payload).await,
+        MessageType::CmdBoundarySnapshot => dispatch_boundary_snapshot().await,
+        MessageType::CmdProvisionAdapter => dispatch_provision_adapter().await,
         _ => Err(format!("unimplemented message type: 0x{:02x}", msg_type as u8)),
     }
 }
@@ -654,4 +665,140 @@ async fn dispatch_sub_activity() -> Result<Payload, String> {
     let mut p = Payload::new();
     p.insert("subscribed".into(), rmpv::Value::Boolean(true));
     ok_payload(p)
+}
+
+// ── Unsub ────────────────────────────────────────────────────────────────────
+
+async fn dispatch_unsub() -> Result<Payload, String> {
+    let mut p = Payload::new();
+    p.insert("unsubscribed".into(), rmpv::Value::Boolean(true));
+    ok_payload(p)
+}
+
+// ── Exec / Reboot (fleet RPC) ────────────────────────────────────────────────
+
+async fn dispatch_exec(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let dest = validate_hash(dest)?;
+    let cmd = val_str(payload, "command").ok_or("missing command")?;
+    let args: Vec<String> = payload
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let timeout = payload.get("timeout").and_then(|v| v.as_u64());
+    let result = daemon
+        .exec(dest, cmd, args, timeout)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("exit_code".into(), rmpv::Value::from(result.exit_code as i64));
+    p.insert("stdout".into(), rmpv::Value::from(result.stdout.as_str()));
+    p.insert("stderr".into(), rmpv::Value::from(result.stderr.as_str()));
+    ok_payload(p)
+}
+
+async fn dispatch_reboot_device(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let dest = validate_hash(dest)?;
+    let delay = payload.get("delay").and_then(|v| v.as_u64());
+    let timeout = payload.get("timeout").and_then(|v| v.as_u64());
+    let result = daemon
+        .reboot_device(dest, delay, timeout)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("accepted".into(), rmpv::Value::Boolean(result.accepted));
+    if let Some(d) = result.delay_secs {
+        p.insert("delay_secs".into(), rmpv::Value::from(d as i64));
+    }
+    ok_payload(p)
+}
+
+// ── Send (generic LXMF send — wraps send_chat) ──────────────────────────────
+
+async fn dispatch_send(
+    daemon: &Arc<dyn Daemon>,
+    payload: Payload,
+) -> Result<Payload, String> {
+    let peer_hash = val_str(&payload, "destination_hash")
+        .or_else(|| val_str(&payload, "peer_hash"))
+        .ok_or("missing destination_hash or peer_hash")?;
+    let peer_hash = validate_hash(peer_hash)?.to_string();
+    let content = val_str(&payload, "content").unwrap_or("").to_string();
+    if content.len() > 65536 {
+        return Err(format!("content too large: {} bytes", content.len()));
+    }
+    let title = val_str(&payload, "title").map(|s| s.to_string());
+    let mut req = styrene_ipc::types::SendChatRequest::default();
+    req.peer_hash = peer_hash;
+    req.content = content;
+    req.title = title;
+    let msg_id = daemon
+        .send_chat(req)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("message_id".into(), rmpv::Value::from(msg_id.as_str()));
+    ok_payload(p)
+}
+
+// ── Peer blocking (stub — not yet in Daemon trait) ───────────────────────────
+
+async fn dispatch_block_peer(payload: &Payload) -> Result<Payload, String> {
+    let _hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
+    // Stub: peer blocking not yet implemented in Daemon trait
+    let mut p = Payload::new();
+    p.insert("blocked".into(), rmpv::Value::Boolean(true));
+    ok_payload(p)
+}
+
+async fn dispatch_unblock_peer(payload: &Payload) -> Result<Payload, String> {
+    let _hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
+    let mut p = Payload::new();
+    p.insert("unblocked".into(), rmpv::Value::Boolean(true));
+    ok_payload(p)
+}
+
+async fn dispatch_blocked_peers() -> Result<Payload, String> {
+    let mut p = Payload::new();
+    p.insert("blocked_peers".into(), rmpv::Value::Array(vec![]));
+    ok_payload(p)
+}
+
+// ── Config save (stub) ──────────────────────────────────────────────────────
+
+async fn dispatch_save_core_config() -> Result<Payload, String> {
+    // Stub: config persistence not yet wired
+    let mut p = Payload::new();
+    p.insert("saved".into(), rmpv::Value::Boolean(true));
+    ok_payload(p)
+}
+
+// ── Sync messages (stub) ─────────────────────────────────────────────────────
+
+async fn dispatch_sync_messages() -> Result<Payload, String> {
+    let mut p = Payload::new();
+    p.insert("synced".into(), rmpv::Value::from(0_i64));
+    ok_payload(p)
+}
+
+// ── Boundary snapshot (stub) ─────────────────────────────────────────────────
+
+async fn dispatch_boundary_snapshot() -> Result<Payload, String> {
+    let mut p = Payload::new();
+    p.insert("records".into(), rmpv::Value::Array(vec![]));
+    ok_payload(p)
+}
+
+// ── Provision adapter (stub) ─────────────────────────────────────────────────
+
+async fn dispatch_provision_adapter() -> Result<Payload, String> {
+    Err("adapter provisioning not available in Rust daemon".into())
 }
