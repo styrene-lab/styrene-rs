@@ -438,23 +438,23 @@ impl DaemonFleet for DaemonFacade {
 
     async fn remote_inbox(
         &self,
-        _dest: &str,
-        _limit: u32,
-        _timeout: Option<u64>,
+        dest: &str,
+        limit: u32,
+        timeout: Option<u64>,
     ) -> Result<Vec<ConversationInfo>, IpcError> {
         self.require(&Capability::Status)?;
-        Err(Self::not_implemented("remote_inbox"))
+        self.ctx.fleet().remote_inbox(dest, limit, timeout).await.map_err(internal)
     }
 
     async fn remote_messages(
         &self,
-        _dest: &str,
-        _peer_hash: &str,
-        _limit: u32,
-        _timeout: Option<u64>,
+        dest: &str,
+        peer_hash: &str,
+        limit: u32,
+        timeout: Option<u64>,
     ) -> Result<Vec<MessageInfo>, IpcError> {
         self.require(&Capability::Status)?;
-        Err(Self::not_implemented("remote_messages"))
+        self.ctx.fleet().remote_messages(dest, peer_hash, limit, timeout).await.map_err(internal)
     }
 
     async fn terminal_open(&self, _request: TerminalOpenRequest) -> Result<SessionId, IpcError> {

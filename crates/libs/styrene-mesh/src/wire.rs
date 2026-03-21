@@ -59,11 +59,17 @@ pub enum StyreneMessageType {
     Exec = 0x40,
     Reboot = 0x41,
     ConfigUpdate = 0x42,
+    SelfUpdate = 0x43,
+    InboxQuery = 0x44,
+    MessagesQuery = 0x45,
 
     // RPC Responses (0x60-0x7F)
     ExecResult = 0x60,
     RebootResult = 0x61,
     ConfigUpdateResult = 0x62,
+    SelfUpdateResult = 0x63,
+    InboxResponse = 0x64,
+    MessagesResponse = 0x65,
 
     // Terminal Sessions (0xC0-0xCF)
     TerminalRequest = 0xC0,
@@ -111,9 +117,15 @@ impl StyreneMessageType {
             0x40 => Ok(Self::Exec),
             0x41 => Ok(Self::Reboot),
             0x42 => Ok(Self::ConfigUpdate),
+            0x43 => Ok(Self::SelfUpdate),
+            0x44 => Ok(Self::InboxQuery),
+            0x45 => Ok(Self::MessagesQuery),
             0x60 => Ok(Self::ExecResult),
             0x61 => Ok(Self::RebootResult),
             0x62 => Ok(Self::ConfigUpdateResult),
+            0x63 => Ok(Self::SelfUpdateResult),
+            0x64 => Ok(Self::InboxResponse),
+            0x65 => Ok(Self::MessagesResponse),
             0xC0 => Ok(Self::TerminalRequest),
             0xC1 => Ok(Self::TerminalAccept),
             0xC2 => Ok(Self::TerminalData),

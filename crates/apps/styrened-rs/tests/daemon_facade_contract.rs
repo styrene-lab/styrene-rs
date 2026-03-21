@@ -141,9 +141,10 @@ async fn daemon_trait_object_not_implemented_methods() {
         daemon.send_chat(SendChatRequest::default()).await,
         Err(IpcError::Internal { .. })
     ));
+    // query_path_info returns InvalidRequest for bad hash, not NotImplemented
     assert!(matches!(
         daemon.query_path_info("abc").await,
-        Err(IpcError::NotImplemented { .. })
+        Err(IpcError::InvalidRequest { .. })
     ));
 
     // These should now work (not NotImplemented)
