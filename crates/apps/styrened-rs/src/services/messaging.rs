@@ -180,7 +180,7 @@ impl MessagingService {
     }
 
     /// Low-level delivery: request path → resolve identity → send via link.
-    async fn deliver(
+    pub async fn deliver(
         transport: &dyn MeshTransport,
         dest_hash: AddressHash,
         payload: &[u8],
