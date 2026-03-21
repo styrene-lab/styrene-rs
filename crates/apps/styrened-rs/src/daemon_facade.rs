@@ -474,22 +474,15 @@ impl DaemonFleet for DaemonFacade {
 impl DaemonEvents for DaemonFacade {
     async fn subscribe_messages(
         &self,
-        _peer_hashes: &[String],
+        peer_hashes: &[String],
     ) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
         self.require(&Capability::Status)?;
-        // TODO: filter by peer_hashes and convert RpcEvent → DaemonEvent
-        // For now, return a channel that never sends
-        let (tx, rx) = broadcast::channel(1);
-        drop(tx);
-        Ok(rx)
+        Ok(self.ctx.events().subscribe_messages(peer_hashes))
     }
 
     async fn subscribe_devices(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
         self.require(&Capability::Status)?;
-        // TODO: filter EventService events to device-only DaemonEvents
-        let (tx, rx) = broadcast::channel(1);
-        drop(tx);
-        Ok(rx)
+        Ok(self.ctx.events().subscribe_devices())
     }
 }
 
