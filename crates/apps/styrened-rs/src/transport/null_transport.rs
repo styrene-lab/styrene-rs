@@ -81,6 +81,10 @@ impl MeshTransport for NullTransport {
         self._lifecycle_tx.subscribe()
     }
 
+    async fn query_path(&self, _dest: &AddressHash) -> Option<(u8, AddressHash)> {
+        None
+    }
+
     fn identity_hash(&self) -> AddressHash {
         AddressHash::new([0u8; 16])
     }

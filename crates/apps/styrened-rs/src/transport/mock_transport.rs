@@ -220,6 +220,10 @@ impl MeshTransport for MockTransport {
         self.lifecycle_tx.subscribe()
     }
 
+    async fn query_path(&self, _dest: &AddressHash) -> Option<(u8, AddressHash)> {
+        None // Mock doesn't track paths
+    }
+
     fn identity_hash(&self) -> AddressHash {
         self.identity_addr
     }

@@ -146,6 +146,12 @@ impl Transport {
         }
     }
 
+    /// Query path table entry for a destination.
+    pub async fn path_info(&self, dest: &AddressHash) -> Option<(u8, AddressHash)> {
+        let handler = self.handler.lock().await;
+        handler.path_table.get(dest).map(|e| (e.hops, e.iface))
+    }
+
     pub fn iface_manager(&self) -> Arc<Mutex<InterfaceManager>> {
         self.iface_manager.clone()
     }
