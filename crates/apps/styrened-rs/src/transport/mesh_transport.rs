@@ -24,14 +24,14 @@ pub enum TransportLifecycleEvent {
 }
 
 /// Errors from transport operations.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum TransportError {
     #[error("transport unavailable")]
     Unavailable,
     #[error("send failed: {0}")]
     SendFailed(String),
     #[error("link failed: {0}")]
-    LinkFailed(#[from] std::io::Error),
+    LinkFailed(String),
     #[error("shutdown failed: {0}")]
     ShutdownFailed(String),
 }

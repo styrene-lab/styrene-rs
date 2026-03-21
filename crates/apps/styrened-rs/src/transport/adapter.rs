@@ -104,7 +104,7 @@ impl MeshTransport for TokioTransportAdapter {
     ) -> Result<LinkSendResult, TransportError> {
         rns_core::transport::delivery::send_via_link(&self.transport, dest, data, timeout)
             .await
-            .map_err(TransportError::LinkFailed)
+            .map_err(|e| TransportError::LinkFailed(e.to_string()))
     }
 
     async fn request_path(&self, dest: &AddressHash) {
