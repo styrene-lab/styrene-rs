@@ -1,0 +1,11 @@
+{
+  "name": "cmd_delete_message",
+  "msg_type": "CMD_DELETE_MESSAGE",
+  "msg_type_byte": "0x27",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 44,
+  "length_field": 40,
+  "payload": {
+    "message_id": "msg_abc123"
+  }
+}

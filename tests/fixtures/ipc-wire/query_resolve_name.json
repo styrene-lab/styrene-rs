@@ -1,0 +1,11 @@
+{
+  "name": "query_resolve_name",
+  "msg_type": "QUERY_RESOLVE_NAME",
+  "msg_type_byte": "0x18",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 37,
+  "length_field": 33,
+  "payload": {
+    "name": "AlphaNode"
+  }
+}

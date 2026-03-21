@@ -1,0 +1,9 @@
+{
+  "name": "cmd_announce",
+  "msg_type": "CMD_ANNOUNCE",
+  "msg_type_byte": "0x22",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 22,
+  "length_field": 18,
+  "payload": {}
+}

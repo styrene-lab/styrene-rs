@@ -1,0 +1,11 @@
+{
+  "name": "cmd_remove_contact",
+  "msg_type": "CMD_REMOVE_CONTACT",
+  "msg_type_byte": "0x2a",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 66,
+  "length_field": 62,
+  "payload": {
+    "peer_hash": "abcdef0123456789abcdef0123456789"
+  }
+}

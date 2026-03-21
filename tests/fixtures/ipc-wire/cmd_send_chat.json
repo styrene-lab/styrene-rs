@@ -1,0 +1,12 @@
+{
+  "name": "cmd_send_chat",
+  "msg_type": "CMD_SEND_CHAT",
+  "msg_type_byte": "0x24",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 93,
+  "length_field": 89,
+  "payload": {
+    "peer_hash": "abcdef0123456789abcdef0123456789",
+    "content": "Hello from Python!"
+  }
+}

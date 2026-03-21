@@ -1,0 +1,9 @@
+{
+  "name": "query_auto_reply",
+  "msg_type": "QUERY_AUTO_REPLY",
+  "msg_type_byte": "0x19",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 22,
+  "length_field": 18,
+  "payload": {}
+}

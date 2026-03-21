@@ -1,0 +1,12 @@
+{
+  "name": "error_response",
+  "msg_type": "ERROR",
+  "msg_type_byte": "0x82",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 63,
+  "length_field": 59,
+  "payload": {
+    "error": "not_found",
+    "message": "Device not found"
+  }
+}

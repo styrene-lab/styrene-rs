@@ -1,0 +1,13 @@
+{
+  "name": "event_device",
+  "msg_type": "EVENT_DEVICE",
+  "msg_type_byte": "0xc0",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 80,
+  "length_field": 76,
+  "payload": {
+    "peer_hash": "abcdef0123456789",
+    "name": "RemoteNode",
+    "event": "announce"
+  }
+}

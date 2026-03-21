@@ -1,0 +1,13 @@
+{
+  "name": "cmd_set_auto_reply",
+  "msg_type": "CMD_SET_AUTO_REPLY",
+  "msg_type_byte": "0x2b",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 69,
+  "length_field": 65,
+  "payload": {
+    "mode": "enabled",
+    "message": "I'm away",
+    "cooldown_secs": 300
+  }
+}

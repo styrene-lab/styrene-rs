@@ -1,0 +1,9 @@
+{
+  "name": "sub_devices",
+  "msg_type": "SUB_DEVICES",
+  "msg_type_byte": "0x30",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 22,
+  "length_field": 18,
+  "payload": {}
+}
