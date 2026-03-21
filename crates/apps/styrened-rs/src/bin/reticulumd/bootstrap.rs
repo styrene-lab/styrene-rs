@@ -6,11 +6,15 @@ use super::Args;
 use reticulum_daemon::announce_names::{
     encode_delivery_display_name_app_data, normalize_display_name,
 };
+use reticulum_daemon::app_context::AppContext;
 use reticulum_daemon::config::DaemonConfig;
+use reticulum_daemon::daemon_facade::DaemonFacade;
 use reticulum_daemon::identity_store::load_or_create_identity;
 use reticulum_daemon::receipt_bridge::ReceiptBridge;
 use reticulum_daemon::rpc::{AnnounceBridge, InterfaceRecord, OutboundBridge, RpcDaemon};
 use reticulum_daemon::storage::messages::MessagesStore;
+use reticulum_daemon::transport::mesh_transport::MeshTransport;
+use reticulum_daemon::transport::null_transport::NullTransport;
 use rns_core::destination::{DestinationName, SingleInputDestination};
 use rns_core::transport::core_transport::{Transport, TransportConfig};
 use rns_core::transport::iface::tcp_client::TcpClient;
@@ -32,6 +36,12 @@ pub(super) struct BootstrapContext {
     pub(super) rpc_addr: SocketAddr,
     pub(super) daemon: Arc<RpcDaemon>,
     pub(super) rpc_tls: Option<RpcTlsConfig>,
+    /// New service architecture — runs alongside RpcDaemon during migration.
+    /// Will eventually replace RpcDaemon as the primary dispatch layer.
+    #[allow(dead_code)]
+    pub(super) app_context: Arc<AppContext>,
+    #[allow(dead_code)]
+    pub(super) daemon_facade: Arc<DaemonFacade>,
 }
 
 pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
@@ -195,5 +205,29 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         spawn_announce_worker(daemon.clone(), transport, peer_crypto);
     }
 
-    BootstrapContext { rpc_addr, daemon, rpc_tls }
+    // --- New service architecture (runs alongside RpcDaemon during migration) ---
+    // Uses NullTransport for now — the TokioTransportAdapter will be wired
+    // when the inbound/announce workers migrate to services.
+    let mesh_transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
+    let shared_store = Arc::new(std::sync::Mutex::new(
+        MessagesStore::in_memory().expect("app_context in-memory store"),
+    ));
+    let app_context = Arc::new(AppContext::new(
+        mesh_transport,
+        hex::encode(identity.address_hash().as_slice()),
+        shared_store,
+    ));
+    let daemon_facade = Arc::new(DaemonFacade::new(
+        app_context.clone(),
+        hex::encode(identity.address_hash().as_slice()),
+    ));
+    eprintln!("[daemon] service architecture initialized (AppContext + DaemonFacade)");
+
+    BootstrapContext {
+        rpc_addr,
+        daemon,
+        rpc_tls,
+        app_context,
+        daemon_facade,
+    }
 }
