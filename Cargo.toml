@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/libs/styrene-entropy",
   "crates/libs/styrene-content",
   "crates/libs/styrene-rns",
   "crates/libs/styrene-lxmf",
@@ -16,6 +17,7 @@ members = [
   "crates/bindings/styrene-native",
 ]
 default-members = [
+  "crates/libs/styrene-entropy",
   "crates/libs/styrene-content",
   "crates/libs/styrene-rns",
   "crates/libs/styrene-lxmf",
@@ -41,6 +43,7 @@ anyhow = "1"
 clap = { version = "4.5.29", features = ["derive"] }
 clap_complete = "4.5"
 criterion = "0.5"
+styrene-entropy = { version = "0.1.0", path = "crates/libs/styrene-entropy" }
 styrene-lxmf = { version = "0.1.0", path = "crates/libs/styrene-lxmf" }
 styrene-rns = { version = "0.1.0", path = "crates/libs/styrene-rns" }
 styrene-mesh = { version = "0.1.0", path = "crates/libs/styrene-mesh" }
