@@ -9,7 +9,7 @@ use std::sync::Arc;
 #[test]
 fn app_context_constructs_with_null_transport() {
     let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
-    let ctx = AppContext::new(transport);
+    let ctx = AppContext::new(transport, "test-identity".into());
 
     // Verify transport is the NullTransport
     assert!(!ctx.transport().is_connected());
@@ -18,7 +18,7 @@ fn app_context_constructs_with_null_transport() {
 #[test]
 fn app_context_all_service_accessors_work() {
     let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
-    let ctx = AppContext::new(transport);
+    let ctx = AppContext::new(transport, "test-identity".into());
 
     // All accessors should return valid references without panicking
     let _ = ctx.identity();
@@ -37,7 +37,7 @@ fn app_context_all_service_accessors_work() {
 #[test]
 fn app_context_transport_arc_returns_clone() {
     let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
-    let ctx = AppContext::new(transport);
+    let ctx = AppContext::new(transport, String::new());
 
     // transport_arc() returns a cloned Arc
     let arc = ctx.transport_arc();
@@ -48,10 +48,24 @@ fn app_context_transport_arc_returns_clone() {
 fn app_context_can_be_wrapped_in_arc() {
     // Services will hold Arc<AppContext>, verify it works
     let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
-    let ctx = Arc::new(AppContext::new(transport));
+    let ctx = Arc::new(AppContext::new(transport, "arc-test".into()));
 
     let ctx_clone = ctx.clone();
     assert!(!ctx_clone.transport().is_connected());
     let _ = ctx_clone.identity();
     let _ = ctx_clone.messaging();
+}
+
+#[test]
+fn app_context_identity_service_has_correct_hash() {
+    let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
+    let ctx = AppContext::new(transport, "my-hash-abc123".into());
+    assert_eq!(ctx.identity().identity_hash(), "my-hash-abc123");
+}
+
+#[test]
+fn app_context_config_service_starts_empty() {
+    let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
+    let ctx = AppContext::new(transport, String::new());
+    assert!(!ctx.config().is_loaded());
 }
