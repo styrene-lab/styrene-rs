@@ -5821,6 +5821,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "styrene-ipc",
  "styrene-lxmf",
  "styrene-rns",
  "tempfile",
