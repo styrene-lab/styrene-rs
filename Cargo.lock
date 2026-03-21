@@ -6009,6 +6009,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-telemetry"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "ciborium-io",
+ "heapless",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "styrene-tui"
 version = "0.0.1"
 dependencies = [
