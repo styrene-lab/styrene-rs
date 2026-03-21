@@ -12,7 +12,7 @@ use std::sync::Mutex;
 
 /// Service-layer configuration management.
 pub struct ConfigService {
-    config_path: Option<PathBuf>,
+    config_path: Mutex<Option<PathBuf>>,
     config: Mutex<Option<DaemonConfig>>,
 }
 
@@ -21,7 +21,7 @@ impl ConfigService {
     pub fn with_path(path: &Path) -> Result<Self, std::io::Error> {
         let config = DaemonConfig::from_path(path)?;
         Ok(Self {
-            config_path: Some(path.to_path_buf()),
+            config_path: Mutex::new(Some(path.to_path_buf())),
             config: Mutex::new(Some(config)),
         })
     }
@@ -29,27 +29,36 @@ impl ConfigService {
     /// Create an empty ConfigService (no config file).
     pub fn new() -> Self {
         Self {
-            config_path: None,
+            config_path: Mutex::new(None),
             config: Mutex::new(None),
         }
     }
 
+    /// Load configuration from a path (sets both path and config).
+    pub fn load(&self, path: &Path) -> Result<(), std::io::Error> {
+        let config = DaemonConfig::from_path(path)?;
+        *self.config_path.lock().unwrap() = Some(path.to_path_buf());
+        *self.config.lock().unwrap() = Some(config);
+        Ok(())
+    }
+
     /// Reload configuration from disk.
     pub fn reload(&self) -> Result<(), std::io::Error> {
-        let Some(path) = &self.config_path else {
+        let path = self.config_path.lock().unwrap().clone();
+        let Some(path) = path else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "no config path set",
             ));
         };
-        let config = DaemonConfig::from_path(path)?;
+        let config = DaemonConfig::from_path(&path)?;
         *self.config.lock().unwrap() = Some(config);
         Ok(())
     }
 
     /// Get the config path, if set.
-    pub fn config_path(&self) -> Option<&Path> {
-        self.config_path.as_deref()
+    pub fn config_path(&self) -> Option<PathBuf> {
+        self.config_path.lock().unwrap().clone()
     }
 
     /// Check if a config is loaded.

@@ -97,6 +97,12 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         })
         .unwrap_or_default();
 
+    let node_role = daemon_config
+        .as_ref()
+        .map(|c| c.role)
+        .unwrap_or_default();
+    eprintln!("[daemon] node role: {}", node_role);
+
     let mut transport: Option<Arc<Transport>> = None;
     let peer_crypto: Arc<Mutex<HashMap<String, PeerCrypto>>> = Arc::new(Mutex::new(HashMap::new()));
     let mut announce_destination: Option<Arc<tokio::sync::Mutex<SingleInputDestination>>> = None;
@@ -105,7 +111,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     let receipt_map: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
     let (receipt_tx, receipt_rx) = unbounded_channel();
 
-    if let Some(addr) = args.transport.clone() {
+    if let Some(addr) = args.transport.clone().filter(|_| node_role.runs_transport()) {
         let transport_identity =
             rns_core::transport::identity_bridge::to_transport_private_identity(&identity);
         let config = TransportConfig::new("daemon", &transport_identity, true);
@@ -238,8 +244,11 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     } else {
         Arc::new(NullTransport::new())
     };
+    // Share the real SQLite store with the service architecture.
+    // RpcDaemon holds its own Arc<Mutex<MessagesStore>>; we create a second
+    // handle to the same on-disk database so both codepaths see the same data.
     let shared_store = Arc::new(std::sync::Mutex::new(
-        MessagesStore::in_memory().expect("app_context in-memory store"),
+        MessagesStore::open(&args.db).expect("app_context shared store"),
     ));
     let app_context = Arc::new(AppContext::new(
         mesh_transport,
@@ -250,6 +259,12 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         app_context.clone(),
         hex::encode(identity.address_hash().as_slice()),
     ));
+    // Load config into ConfigService if a config file was provided
+    if let Some(config_path) = args.config.as_ref() {
+        if let Err(e) = app_context.config().load(config_path) {
+            eprintln!("[daemon] failed to load config into ConfigService: {}", e);
+        }
+    }
     // Wire signing identity into services that need outbound delivery
     app_context.set_signer(Arc::new(identity.clone()));
     eprintln!("[daemon] service architecture initialized (AppContext + DaemonFacade + signer)");
