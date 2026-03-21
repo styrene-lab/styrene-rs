@@ -413,6 +413,7 @@ impl RpcDaemon {
             direction: "in".into(),
             fields: None,
             receipt_status: None,
+        read: false,
         };
         let _ = self.messages().insert_message(&record);
         let event =

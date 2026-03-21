@@ -111,6 +111,7 @@ mod tests {
             direction: "in".into(),
             fields: Some(serde_json::json!({"protocol": protocol})),
             receipt_status: None,
+            read: false,
         }
     }
 
@@ -154,6 +155,7 @@ mod tests {
             direction: "in".into(),
             fields: None,
             receipt_status: None,
+            read: false,
         };
         assert!(!svc.dispatch(&record));
     }

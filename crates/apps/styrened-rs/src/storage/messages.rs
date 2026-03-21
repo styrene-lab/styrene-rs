@@ -12,6 +12,28 @@ pub struct MessageRecord {
     pub direction: String,
     pub fields: Option<JsonValue>,
     pub receipt_status: Option<String>,
+    /// Whether the message has been read by the local user.
+    pub read: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ContactRecord {
+    pub peer_hash: String,
+    pub alias: Option<String>,
+    pub notes: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Summary of a conversation with a peer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConversationSummary {
+    pub peer_hash: String,
+    pub peer_name: Option<String>,
+    pub last_message_timestamp: Option<i64>,
+    pub last_message_content: Option<String>,
+    pub unread_count: u32,
+    pub message_count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -31,6 +53,25 @@ pub struct AnnounceRecord {
     pub q: Option<f64>,
     pub stamp_cost_flexibility: Option<u32>,
     pub peering_cost: Option<u32>,
+}
+
+/// Parse a message row from a SELECT that returns 10 columns:
+/// id, source, destination, title, content, timestamp, direction, fields, receipt_status, read
+fn parse_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRecord> {
+    let fields_json: Option<String> = row.get(7)?;
+    let fields = fields_json.as_ref().and_then(|v| serde_json::from_str(v).ok());
+    Ok(MessageRecord {
+        id: row.get(0)?,
+        source: row.get(1)?,
+        destination: row.get(2)?,
+        title: row.get(3)?,
+        content: row.get(4)?,
+        timestamp: row.get(5)?,
+        direction: row.get(6)?,
+        fields,
+        receipt_status: row.get(8)?,
+        read: row.get::<_, i64>(9)? != 0,
+    })
 }
 
 pub struct MessagesStore {
@@ -58,7 +99,7 @@ impl MessagesStore {
         let fields_json =
             record.fields.as_ref().map(|value| serde_json::to_string(value).unwrap_or_default());
         self.conn.execute(
-            "INSERT OR REPLACE INTO messages (id, source, destination, title, content, timestamp, direction, fields, receipt_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT OR REPLACE INTO messages (id, source, destination, title, content, timestamp, direction, fields, receipt_status, read) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 &record.id,
                 &record.source,
@@ -69,6 +110,7 @@ impl MessagesStore {
                 &record.direction,
                 fields_json,
                 &record.receipt_status,
+                record.read as i64,
             ],
         )?;
         Ok(())
@@ -82,47 +124,19 @@ impl MessagesStore {
         let mut records = Vec::new();
         if let Some(ts) = before_ts {
             let mut stmt = self.conn.prepare(
-                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status FROM messages WHERE timestamp < ?1 ORDER BY timestamp DESC LIMIT ?2",
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE timestamp < ?1 ORDER BY timestamp DESC LIMIT ?2",
             )?;
             let mut rows = stmt.query(params![ts, limit as i64])?;
             while let Some(row) = rows.next()? {
-                let fields_json: Option<String> = row.get(7)?;
-                let fields =
-                    fields_json.as_ref().and_then(|value| serde_json::from_str(value).ok());
-                let receipt_status: Option<String> = row.get(8)?;
-                records.push(MessageRecord {
-                    id: row.get(0)?,
-                    source: row.get(1)?,
-                    destination: row.get(2)?,
-                    title: row.get(3)?,
-                    content: row.get(4)?,
-                    timestamp: row.get(5)?,
-                    direction: row.get(6)?,
-                    fields,
-                    receipt_status,
-                });
+                records.push(parse_message_row(row)?);
             }
         } else {
             let mut stmt = self.conn.prepare(
-                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status FROM messages ORDER BY timestamp DESC LIMIT ?1",
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages ORDER BY timestamp DESC LIMIT ?1",
             )?;
             let mut rows = stmt.query(params![limit as i64])?;
             while let Some(row) = rows.next()? {
-                let fields_json: Option<String> = row.get(7)?;
-                let fields =
-                    fields_json.as_ref().and_then(|value| serde_json::from_str(value).ok());
-                let receipt_status: Option<String> = row.get(8)?;
-                records.push(MessageRecord {
-                    id: row.get(0)?,
-                    source: row.get(1)?,
-                    destination: row.get(2)?,
-                    title: row.get(3)?,
-                    content: row.get(4)?,
-                    timestamp: row.get(5)?,
-                    direction: row.get(6)?,
-                    fields,
-                    receipt_status,
-                });
+                records.push(parse_message_row(row)?);
             }
         }
         Ok(records)
@@ -130,25 +144,174 @@ impl MessagesStore {
 
     pub fn get_message(&self, message_id: &str) -> rusqlite::Result<Option<MessageRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status FROM messages WHERE id = ?1 LIMIT 1",
+            "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE id = ?1 LIMIT 1",
         )?;
-        stmt.query_row(params![message_id], |row| {
-            let fields_json: Option<String> = row.get(7)?;
-            let fields = fields_json.as_ref().and_then(|value| serde_json::from_str(value).ok());
-            let receipt_status: Option<String> = row.get(8)?;
-            Ok(MessageRecord {
-                id: row.get(0)?,
-                source: row.get(1)?,
-                destination: row.get(2)?,
-                title: row.get(3)?,
-                content: row.get(4)?,
-                timestamp: row.get(5)?,
-                direction: row.get(6)?,
-                fields,
-                receipt_status,
-            })
+        stmt.query_row(params![message_id], parse_message_row)
+            .optional()
+    }
+
+    /// List messages filtered by peer hash (source or destination matches).
+    pub fn list_messages_for_peer(
+        &self,
+        peer_hash: &str,
+        limit: usize,
+        before_ts: Option<i64>,
+    ) -> rusqlite::Result<Vec<MessageRecord>> {
+        let mut records = Vec::new();
+        if let Some(ts) = before_ts {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE (source = ?1 OR destination = ?1) AND timestamp < ?2 ORDER BY timestamp DESC LIMIT ?3",
+            )?;
+            let mut rows = stmt.query(params![peer_hash, ts, limit as i64])?;
+            while let Some(row) = rows.next()? {
+                records.push(parse_message_row(row)?);
+            }
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE (source = ?1 OR destination = ?1) ORDER BY timestamp DESC LIMIT ?2",
+            )?;
+            let mut rows = stmt.query(params![peer_hash, limit as i64])?;
+            while let Some(row) = rows.next()? {
+                records.push(parse_message_row(row)?);
+            }
+        }
+        Ok(records)
+    }
+
+    /// Mark all messages from a peer as read. Returns count of updated rows.
+    pub fn mark_read(&self, peer_hash: &str) -> rusqlite::Result<u64> {
+        let count = self.conn.execute(
+            "UPDATE messages SET read = 1 WHERE (source = ?1 OR destination = ?1) AND COALESCE(read, 0) = 0",
+            params![peer_hash],
+        )?;
+        Ok(count as u64)
+    }
+
+    /// Delete all messages in a conversation with a peer. Returns count.
+    pub fn delete_conversation(&self, peer_hash: &str) -> rusqlite::Result<u64> {
+        let count = self.conn.execute(
+            "DELETE FROM messages WHERE source = ?1 OR destination = ?1",
+            params![peer_hash],
+        )?;
+        Ok(count as u64)
+    }
+
+    /// Delete a single message by ID. Returns true if deleted.
+    pub fn delete_message(&self, message_id: &str) -> rusqlite::Result<bool> {
+        let count = self.conn.execute(
+            "DELETE FROM messages WHERE id = ?1",
+            params![message_id],
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Search messages by content substring, optionally scoped to a peer.
+    pub fn search_messages(
+        &self,
+        query: &str,
+        peer_hash: Option<&str>,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<MessageRecord>> {
+        let pattern = format!("%{query}%");
+        let mut records = Vec::new();
+        if let Some(peer) = peer_hash {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE (source = ?1 OR destination = ?1) AND content LIKE ?2 ORDER BY timestamp DESC LIMIT ?3",
+            )?;
+            let mut rows = stmt.query(params![peer, pattern, limit as i64])?;
+            while let Some(row) = rows.next()? {
+                records.push(parse_message_row(row)?);
+            }
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE content LIKE ?1 ORDER BY timestamp DESC LIMIT ?2",
+            )?;
+            let mut rows = stmt.query(params![pattern, limit as i64])?;
+            while let Some(row) = rows.next()? {
+                records.push(parse_message_row(row)?);
+            }
+        }
+        Ok(records)
+    }
+
+    /// List conversation summaries grouped by peer.
+    pub fn list_conversations(&self, unread_only: bool) -> rusqlite::Result<Vec<ConversationSummary>> {
+        // For each unique peer (source or destination), aggregate message stats.
+        // The peer is the "other side" — for outgoing messages it's destination, for incoming it's source.
+        let sql = if unread_only {
+            "SELECT peer, MAX(timestamp) as last_ts, MAX(content) as last_content, SUM(CASE WHEN COALESCE(read, 0) = 0 THEN 1 ELSE 0 END) as unread, COUNT(*) as total FROM (SELECT CASE WHEN direction = 'out' THEN destination ELSE source END as peer, timestamp, content, read FROM messages) GROUP BY peer HAVING unread > 0 ORDER BY last_ts DESC"
+        } else {
+            "SELECT peer, MAX(timestamp) as last_ts, MAX(content) as last_content, SUM(CASE WHEN COALESCE(read, 0) = 0 THEN 1 ELSE 0 END) as unread, COUNT(*) as total FROM (SELECT CASE WHEN direction = 'out' THEN destination ELSE source END as peer, timestamp, content, read FROM messages) GROUP BY peer ORDER BY last_ts DESC"
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let mut rows = stmt.query([])?;
+        let mut summaries = Vec::new();
+        while let Some(row) = rows.next()? {
+            summaries.push(ConversationSummary {
+                peer_hash: row.get(0)?,
+                peer_name: None, // Resolved at service layer via announces
+                last_message_timestamp: row.get(1)?,
+                last_message_content: row.get(2)?,
+                unread_count: row.get::<_, i64>(3)? as u32,
+                message_count: row.get::<_, i64>(4)? as u32,
+            });
+        }
+        Ok(summaries)
+    }
+
+    // ── Contacts ────────────────────────────────────────────────────────
+
+    /// Upsert a contact record. Returns the saved record.
+    pub fn set_contact(
+        &self,
+        peer_hash: &str,
+        alias: Option<&str>,
+        notes: Option<&str>,
+    ) -> rusqlite::Result<ContactRecord> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        self.conn.execute(
+            "INSERT INTO contacts (peer_hash, alias, notes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)
+             ON CONFLICT(peer_hash) DO UPDATE SET alias = ?2, notes = ?3, updated_at = ?4",
+            params![peer_hash, alias, notes, now],
+        )?;
+        Ok(ContactRecord {
+            peer_hash: peer_hash.to_string(),
+            alias: alias.map(String::from),
+            notes: notes.map(String::from),
+            created_at: now,
+            updated_at: now,
         })
-        .optional()
+    }
+
+    /// Remove a contact by peer hash. Returns true if deleted.
+    pub fn remove_contact(&self, peer_hash: &str) -> rusqlite::Result<bool> {
+        let count = self.conn.execute(
+            "DELETE FROM contacts WHERE peer_hash = ?1",
+            params![peer_hash],
+        )?;
+        Ok(count > 0)
+    }
+
+    /// List all contacts.
+    pub fn list_contacts(&self) -> rusqlite::Result<Vec<ContactRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT peer_hash, alias, notes, created_at, updated_at FROM contacts ORDER BY updated_at DESC",
+        )?;
+        let mut rows = stmt.query([])?;
+        let mut contacts = Vec::new();
+        while let Some(row) = rows.next()? {
+            contacts.push(ContactRecord {
+                peer_hash: row.get(0)?,
+                alias: row.get(1)?,
+                notes: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            });
+        }
+        Ok(contacts)
     }
 
     pub fn count_message_buckets(&self) -> rusqlite::Result<(u64, u64)> {
@@ -478,6 +641,17 @@ impl MessagesStore {
             .conn
             .execute("ALTER TABLE announces ADD COLUMN stamp_cost_flexibility INTEGER", []);
         let _ = self.conn.execute("ALTER TABLE announces ADD COLUMN peering_cost INTEGER", []);
+        // v2 migrations: read column + contacts table
+        let _ = self.conn.execute("ALTER TABLE messages ADD COLUMN read INTEGER DEFAULT 0", []);
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS contacts (
+                peer_hash TEXT PRIMARY KEY,
+                alias TEXT,
+                notes TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );",
+        )?;
         Ok(())
     }
 }
@@ -498,6 +672,7 @@ mod tests {
             direction: "out".to_string(),
             fields: None,
             receipt_status: receipt_status.map(ToString::to_string),
+            read: false,
         }
     }
 
@@ -571,5 +746,144 @@ mod tests {
             store.get_message("msg-non-terminal").expect("load non-terminal").is_some(),
             "non-terminal record should remain when terminal records satisfy prune count"
         );
+    }
+
+    // ── New store method tests ──────────────────────────────────────────
+
+    fn chat_message(id: &str, source: &str, dest: &str, ts: i64) -> MessageRecord {
+        MessageRecord {
+            id: id.to_string(),
+            source: source.to_string(),
+            destination: dest.to_string(),
+            title: String::new(),
+            content: format!("message {id}"),
+            timestamp: ts,
+            direction: if source == "me" { "out".to_string() } else { "in".to_string() },
+            fields: None,
+            receipt_status: None,
+            read: false,
+        }
+    }
+
+    #[test]
+    fn mark_read_updates_unread_messages() {
+        let store = MessagesStore::in_memory().expect("store");
+        store.insert_message(&chat_message("m1", "alice", "me", 1)).expect("insert");
+        store.insert_message(&chat_message("m2", "alice", "me", 2)).expect("insert");
+        store.insert_message(&chat_message("m3", "bob", "me", 3)).expect("insert");
+
+        let count = store.mark_read("alice").expect("mark_read");
+        assert_eq!(count, 2);
+
+        let m1 = store.get_message("m1").expect("get").expect("exists");
+        assert!(m1.read);
+        let m3 = store.get_message("m3").expect("get").expect("exists");
+        assert!(!m3.read); // Bob's message unchanged
+    }
+
+    #[test]
+    fn delete_conversation_removes_all_peer_messages() {
+        let store = MessagesStore::in_memory().expect("store");
+        store.insert_message(&chat_message("m1", "alice", "me", 1)).expect("insert");
+        store.insert_message(&chat_message("m2", "me", "alice", 2)).expect("insert");
+        store.insert_message(&chat_message("m3", "bob", "me", 3)).expect("insert");
+
+        let count = store.delete_conversation("alice").expect("delete");
+        assert_eq!(count, 2);
+        assert!(store.get_message("m1").expect("get").is_none());
+        assert!(store.get_message("m2").expect("get").is_none());
+        assert!(store.get_message("m3").expect("get").is_some());
+    }
+
+    #[test]
+    fn delete_message_removes_single_record() {
+        let store = MessagesStore::in_memory().expect("store");
+        store.insert_message(&chat_message("m1", "alice", "me", 1)).expect("insert");
+        assert!(store.delete_message("m1").expect("delete"));
+        assert!(!store.delete_message("m1").expect("delete again"));
+    }
+
+    #[test]
+    fn search_messages_finds_by_content() {
+        let store = MessagesStore::in_memory().expect("store");
+        let mut msg = chat_message("m1", "alice", "me", 1);
+        msg.content = "hello world".to_string();
+        store.insert_message(&msg).expect("insert");
+        let mut msg2 = chat_message("m2", "bob", "me", 2);
+        msg2.content = "goodbye".to_string();
+        store.insert_message(&msg2).expect("insert");
+
+        let results = store.search_messages("hello", None, 10).expect("search");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "m1");
+
+        let scoped = store.search_messages("hello", Some("bob"), 10).expect("search");
+        assert_eq!(scoped.len(), 0);
+    }
+
+    #[test]
+    fn list_conversations_groups_by_peer() {
+        let store = MessagesStore::in_memory().expect("store");
+        store.insert_message(&chat_message("m1", "alice", "me", 1)).expect("insert");
+        store.insert_message(&chat_message("m2", "me", "alice", 2)).expect("insert");
+        store.insert_message(&chat_message("m3", "bob", "me", 3)).expect("insert");
+
+        let convos = store.list_conversations(false).expect("list");
+        assert_eq!(convos.len(), 2);
+        // Most recent first
+        assert_eq!(convos[0].peer_hash, "bob");
+        assert_eq!(convos[0].message_count, 1);
+        assert_eq!(convos[1].peer_hash, "alice");
+        assert_eq!(convos[1].message_count, 2);
+    }
+
+    #[test]
+    fn list_conversations_unread_only() {
+        let store = MessagesStore::in_memory().expect("store");
+        store.insert_message(&chat_message("m1", "alice", "me", 1)).expect("insert");
+        store.mark_read("alice").expect("mark");
+        store.insert_message(&chat_message("m2", "bob", "me", 2)).expect("insert");
+
+        let convos = store.list_conversations(true).expect("list");
+        assert_eq!(convos.len(), 1);
+        assert_eq!(convos[0].peer_hash, "bob");
+    }
+
+    #[test]
+    fn contacts_crud() {
+        let store = MessagesStore::in_memory().expect("store");
+
+        // Create
+        let contact = store.set_contact("alice", Some("Alice"), Some("friend")).expect("set");
+        assert_eq!(contact.peer_hash, "alice");
+        assert_eq!(contact.alias.as_deref(), Some("Alice"));
+
+        // List
+        let contacts = store.list_contacts().expect("list");
+        assert_eq!(contacts.len(), 1);
+
+        // Update
+        store.set_contact("alice", Some("Alice B"), None).expect("update");
+        let contacts = store.list_contacts().expect("list");
+        assert_eq!(contacts[0].alias.as_deref(), Some("Alice B"));
+
+        // Remove
+        assert!(store.remove_contact("alice").expect("remove"));
+        assert!(!store.remove_contact("alice").expect("remove again"));
+        assert!(store.list_contacts().expect("list").is_empty());
+    }
+
+    #[test]
+    fn list_messages_for_peer_filters_correctly() {
+        let store = MessagesStore::in_memory().expect("store");
+        store.insert_message(&chat_message("m1", "alice", "me", 1)).expect("insert");
+        store.insert_message(&chat_message("m2", "me", "alice", 2)).expect("insert");
+        store.insert_message(&chat_message("m3", "bob", "me", 3)).expect("insert");
+
+        let msgs = store.list_messages_for_peer("alice", 10, None).expect("list");
+        assert_eq!(msgs.len(), 2);
+        // Most recent first
+        assert_eq!(msgs[0].id, "m2");
+        assert_eq!(msgs[1].id, "m1");
     }
 }

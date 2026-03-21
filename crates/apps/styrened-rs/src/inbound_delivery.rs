@@ -71,6 +71,7 @@ fn decode_inbound_payload_mode(
         direction: "in".into(),
         fields: message.fields.as_ref().and_then(rmpv_to_json),
         receipt_status: None,
+        read: false,
     })
 }
 

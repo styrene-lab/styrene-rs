@@ -94,6 +94,7 @@ fn app_context_messaging_and_discovery_share_store() {
         direction: "out".into(),
         fields: None,
         receipt_status: None,
+            read: false,
     };
     ctx.messaging().accept_inbound_record(&record).unwrap();
     assert!(ctx.messaging().get_message("msg1").unwrap().is_some());

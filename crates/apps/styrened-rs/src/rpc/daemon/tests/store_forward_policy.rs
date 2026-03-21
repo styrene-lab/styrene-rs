@@ -143,6 +143,7 @@ fn sdk_store_forward_expiry_marks_old_non_terminal_records() {
             direction: "out".to_string(),
             fields: None,
             receipt_status: None,
+            read: false,
         })
         .expect("insert old record");
 

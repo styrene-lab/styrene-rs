@@ -19,6 +19,27 @@ use styrene_ipc::types::*;
 
 use crate::app_context::AppContext;
 use crate::services::{AutoReplyMode, Capability};
+use crate::storage::messages::MessageRecord;
+
+/// Convert an io::Error to IpcError::Internal.
+fn internal(e: std::io::Error) -> IpcError {
+    IpcError::Internal { message: e.to_string() }
+}
+
+/// Convert a MessageRecord to a MessageInfo IPC type.
+fn record_to_message_info(r: MessageRecord) -> MessageInfo {
+    let mut info = MessageInfo::default();
+    info.id = r.id;
+    info.source_hash = r.source;
+    info.destination_hash = r.destination;
+    info.timestamp = r.timestamp;
+    info.content = r.content;
+    info.title = if r.title.is_empty() { None } else { Some(r.title) };
+    info.status = r.receipt_status.unwrap_or_default();
+    info.is_outgoing = r.direction == "out";
+    info.read = r.read;
+    info
+}
 
 /// Thin IPC-facing facade implementing the `Daemon` composite trait.
 ///
@@ -99,40 +120,53 @@ impl DaemonIdentity for DaemonFacade {
 impl DaemonMessaging for DaemonFacade {
     async fn send_chat(&self, _request: SendChatRequest) -> Result<MessageId, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("send_chat"))
+        Err(Self::not_implemented("send_chat")) // Needs delivery pipeline
     }
 
-    async fn mark_read(&self, _peer_hash: &str) -> Result<u64, IpcError> {
+    async fn mark_read(&self, peer_hash: &str) -> Result<u64, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("mark_read"))
+        self.ctx.messaging().mark_read(peer_hash).map_err(internal)
     }
 
-    async fn delete_conversation(&self, _peer_hash: &str) -> Result<u64, IpcError> {
+    async fn delete_conversation(&self, peer_hash: &str) -> Result<u64, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("delete_conversation"))
+        self.ctx.messaging().delete_conversation(peer_hash).map_err(internal)
     }
 
-    async fn delete_message(&self, _message_id: &str) -> Result<bool, IpcError> {
+    async fn delete_message(&self, message_id: &str) -> Result<bool, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("delete_message"))
+        self.ctx.messaging().delete_message(message_id).map_err(internal)
     }
 
     async fn retry_message(&self, _message_id: &str) -> Result<bool, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("retry_message"))
+        Err(Self::not_implemented("retry_message")) // Needs delivery pipeline
     }
 
     async fn query_conversations(
         &self,
-        _include_unread: bool,
+        include_unread: bool,
     ) -> Result<Vec<ConversationInfo>, IpcError> {
         self.require(&Capability::Status)?;
-        Err(Self::not_implemented("query_conversations"))
+        let summaries = self.ctx.messaging().list_conversations(include_unread).map_err(internal)?;
+        Ok(summaries
+            .into_iter()
+            .map(|s| {
+                let mut info = ConversationInfo::default();
+                info.peer_hash = s.peer_hash;
+                info.peer_name = s.peer_name;
+                info.last_message_timestamp = s.last_message_timestamp;
+                info.last_message_content = s.last_message_content;
+                info.unread_count = s.unread_count;
+                info.message_count = s.message_count;
+                info
+            })
+            .collect())
     }
 
     async fn query_messages(
         &self,
-        _peer_hash: &str,
+        peer_hash: &str,
         limit: u32,
         before_ts: Option<i64>,
     ) -> Result<Vec<MessageInfo>, IpcError> {
@@ -140,60 +174,68 @@ impl DaemonMessaging for DaemonFacade {
         let records = self
             .ctx
             .messaging()
-            .list_messages(limit as usize, before_ts)
-            .map_err(|e| IpcError::Internal {
-                message: e.to_string(),
-            })?;
-        Ok(records
-            .into_iter()
-            .map(|r| {
-                let mut info = MessageInfo::default();
-                info.id = r.id;
-                info.source_hash = r.source;
-                info.destination_hash = r.destination;
-                info.timestamp = r.timestamp;
-                info.content = r.content;
-                info.title = if r.title.is_empty() { None } else { Some(r.title) };
-                info.status = r.receipt_status.unwrap_or_default();
-                info.is_outgoing = r.direction == "out";
-                info
-            })
-            .collect())
+            .list_messages_for_peer(peer_hash, limit as usize, before_ts)
+            .map_err(internal)?;
+        Ok(records.into_iter().map(record_to_message_info).collect())
     }
 
     async fn search_messages(
         &self,
-        _query: &str,
-        _peer_hash: Option<&str>,
-        _limit: u32,
+        query: &str,
+        peer_hash: Option<&str>,
+        limit: u32,
     ) -> Result<Vec<MessageInfo>, IpcError> {
         self.require(&Capability::Status)?;
-        Err(Self::not_implemented("search_messages"))
+        let records = self
+            .ctx
+            .messaging()
+            .search_messages(query, peer_hash, limit as usize)
+            .map_err(internal)?;
+        Ok(records.into_iter().map(record_to_message_info).collect())
     }
 
     async fn query_attachment(&self, _message_id: &str) -> Result<Vec<u8>, IpcError> {
         self.require(&Capability::Status)?;
-        Err(Self::not_implemented("query_attachment"))
+        Err(Self::not_implemented("query_attachment")) // Needs attachment storage
     }
 
     async fn set_contact(
         &self,
-        _peer_hash: &str,
-        _alias: Option<&str>,
-        _notes: Option<&str>,
+        peer_hash: &str,
+        alias: Option<&str>,
+        notes: Option<&str>,
     ) -> Result<ContactInfo, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("set_contact"))
+        let c = self.ctx.messaging().set_contact(peer_hash, alias, notes).map_err(internal)?;
+        let mut info = ContactInfo::default();
+        info.peer_hash = c.peer_hash;
+        info.alias = c.alias;
+        info.notes = c.notes;
+        info.created_at = Some(c.created_at);
+        info.updated_at = Some(c.updated_at);
+        Ok(info)
     }
 
-    async fn remove_contact(&self, _peer_hash: &str) -> Result<bool, IpcError> {
+    async fn remove_contact(&self, peer_hash: &str) -> Result<bool, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("remove_contact"))
+        self.ctx.messaging().remove_contact(peer_hash).map_err(internal)
     }
 
     async fn query_contacts(&self) -> Result<Vec<ContactInfo>, IpcError> {
         self.require(&Capability::Status)?;
-        Err(Self::not_implemented("query_contacts"))
+        let contacts = self.ctx.messaging().list_contacts().map_err(internal)?;
+        Ok(contacts
+            .into_iter()
+            .map(|c| {
+                let mut info = ContactInfo::default();
+                info.peer_hash = c.peer_hash;
+                info.alias = c.alias;
+                info.notes = c.notes;
+                info.created_at = Some(c.created_at);
+                info.updated_at = Some(c.updated_at);
+                info
+            })
+            .collect())
     }
 
     async fn resolve_name(
@@ -202,7 +244,7 @@ impl DaemonMessaging for DaemonFacade {
         _prefix: Option<&str>,
     ) -> Result<Option<PeerHash>, IpcError> {
         self.require(&Capability::Status)?;
-        Err(Self::not_implemented("resolve_name"))
+        Err(Self::not_implemented("resolve_name")) // Needs announce name index
     }
 }
 
