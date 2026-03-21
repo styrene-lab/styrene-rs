@@ -96,17 +96,25 @@ impl DaemonIdentity for DaemonFacade {
         info.identity_hash = svc.identity_hash().to_string();
         info.destination_hash = dest.clone();
         info.lxmf_destination_hash = dest;
+        info.display_name = svc.display_name().unwrap_or_default();
+        info.icon = svc.icon();
+        info.short_name = svc.short_name();
         Ok(info)
     }
 
     async fn set_identity(
         &self,
-        _display_name: Option<&str>,
-        _icon: Option<&str>,
-        _short_name: Option<&str>,
+        display_name: Option<&str>,
+        icon: Option<&str>,
+        short_name: Option<&str>,
     ) -> Result<bool, IpcError> {
         self.require(&Capability::Status)?;
-        Err(Self::not_implemented("set_identity"))
+        let changed = self.ctx.identity().set_identity(display_name, icon, short_name);
+        if changed {
+            // Re-announce with updated identity
+            self.ctx.identity().announce(None).await;
+        }
+        Ok(changed)
     }
 
     async fn announce(&self) -> Result<bool, IpcError> {
@@ -146,9 +154,26 @@ impl DaemonMessaging for DaemonFacade {
         self.ctx.messaging().delete_message(message_id).map_err(internal)
     }
 
-    async fn retry_message(&self, _message_id: &str) -> Result<bool, IpcError> {
+    async fn retry_message(&self, message_id: &str) -> Result<bool, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("retry_message")) // Needs delivery pipeline
+        // Look up the original message, re-deliver if outbound and failed
+        let msg = self
+            .ctx
+            .messaging()
+            .get_message(message_id)
+            .map_err(internal)?
+            .ok_or_else(|| IpcError::not_found("message", message_id))?;
+        if msg.direction != "out" {
+            return Err(IpcError::invalid_request("can only retry outbound messages"));
+        }
+        // Re-send via the delivery pipeline
+        let _new_id = self
+            .ctx
+            .messaging()
+            .send_chat(&msg.destination, &msg.content, Some(&msg.title))
+            .await
+            .map_err(internal)?;
+        Ok(true)
     }
 
     async fn query_conversations(
@@ -248,11 +273,11 @@ impl DaemonMessaging for DaemonFacade {
 
     async fn resolve_name(
         &self,
-        _name: &str,
-        _prefix: Option<&str>,
+        name: &str,
+        prefix: Option<&str>,
     ) -> Result<Option<PeerHash>, IpcError> {
         self.require(&Capability::Status)?;
-        Err(Self::not_implemented("resolve_name")) // Needs announce name index
+        Ok(self.ctx.discovery().resolve_name(name, prefix))
     }
 }
 
@@ -577,9 +602,6 @@ mod tests {
         assert!(matches!(result, Err(IpcError::Internal { .. })));
 
         let result = facade.list_tunnels().await;
-        assert!(matches!(result, Err(IpcError::NotImplemented { .. })));
-
-        let result = facade.set_identity(Some("name"), None, None).await;
         assert!(matches!(result, Err(IpcError::NotImplemented { .. })));
     }
 

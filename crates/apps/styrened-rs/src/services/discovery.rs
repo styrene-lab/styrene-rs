@@ -116,6 +116,27 @@ impl DiscoveryService {
         self.peers.lock().unwrap().get(hash).cloned()
     }
 
+    /// Resolve a peer name to a hash. Case-insensitive prefix match.
+    /// If `prefix` is provided, peer hash must start with it.
+    pub fn resolve_name(&self, name: &str, prefix: Option<&str>) -> Option<String> {
+        let name_lower = name.to_lowercase();
+        let peers = self.peers.lock().unwrap();
+        for peer in peers.values() {
+            if let Some(ref peer_name) = peer.name {
+                if peer_name.to_lowercase() == name_lower {
+                    if let Some(pfx) = prefix {
+                        if peer.peer.starts_with(pfx) {
+                            return Some(peer.peer.clone());
+                        }
+                    } else {
+                        return Some(peer.peer.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Number of known peers.
     pub fn peer_count(&self) -> usize {
         self.peers.lock().unwrap().len()
@@ -243,6 +264,30 @@ mod tests {
 
         let announces = svc.list_announces(10).unwrap();
         assert_eq!(announces.len(), 2);
+    }
+
+    #[test]
+    fn resolve_name_finds_peer() {
+        let svc = DiscoveryService::new();
+        svc.accept_announce_with_details("abcdef01".into(), 1000, Some("Alpha".into()), None, None)
+            .unwrap();
+        svc.accept_announce_with_details("12345678".into(), 2000, Some("Beta".into()), None, None)
+            .unwrap();
+
+        assert_eq!(svc.resolve_name("Alpha", None), Some("abcdef01".into()));
+        assert_eq!(svc.resolve_name("alpha", None), Some("abcdef01".into())); // case-insensitive
+        assert_eq!(svc.resolve_name("Beta", None), Some("12345678".into()));
+        assert_eq!(svc.resolve_name("Gamma", None), None); // not found
+    }
+
+    #[test]
+    fn resolve_name_with_prefix() {
+        let svc = DiscoveryService::new();
+        svc.accept_announce_with_details("abcdef01".into(), 1000, Some("Node".into()), None, None)
+            .unwrap();
+
+        assert_eq!(svc.resolve_name("Node", Some("abc")), Some("abcdef01".into()));
+        assert_eq!(svc.resolve_name("Node", Some("xyz")), None); // prefix mismatch
     }
 
     #[test]
