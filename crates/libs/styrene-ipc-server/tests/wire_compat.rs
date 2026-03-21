@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use styrene_ipc_server::wire::{self, MessageType};
+use styrene_ipc_server::wire::MessageType;
 
 fn fixtures_dir() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

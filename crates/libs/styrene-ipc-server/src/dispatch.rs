@@ -37,6 +37,20 @@ pub async fn dispatch(
         MessageType::CmdRetryMessage => dispatch_retry_message(daemon, &payload).await,
         MessageType::CmdSetAutoReply => dispatch_set_auto_reply(daemon, &payload).await,
         MessageType::QuerySearchMessages => dispatch_search_messages(daemon, &payload).await,
+        MessageType::QueryConfig => dispatch_query_config(daemon).await,
+        MessageType::CmdSetContact => dispatch_set_contact(daemon, &payload).await,
+        MessageType::CmdRemoveContact => dispatch_remove_contact(daemon, &payload).await,
+        MessageType::CmdDeviceStatus => dispatch_device_status(daemon, &payload).await,
+        MessageType::SubDevices => dispatch_sub_devices(daemon).await,
+        MessageType::SubMessages => dispatch_sub_messages(daemon, &payload).await,
+        // TUI-specific types — return sensible defaults without Daemon trait
+        MessageType::GetHubStatus => dispatch_get_hub_status().await,
+        MessageType::GetUnreadCounts => dispatch_get_unread_counts(daemon).await,
+        MessageType::GetNodes => dispatch_get_nodes(daemon, &payload).await,
+        MessageType::GetCoreConfig => dispatch_get_core_config(daemon).await,
+        MessageType::GetActivityHistory => dispatch_get_activity_history().await,
+        MessageType::GetAdapterState => dispatch_get_adapter_state().await,
+        MessageType::SubActivity => dispatch_sub_activity().await,
         _ => Err(format!("unimplemented message type: 0x{:02x}", msg_type as u8)),
     }
 }
@@ -414,5 +428,230 @@ async fn dispatch_retry_message(
         .map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("retried".into(), rmpv::Value::Boolean(retried));
+    ok_payload(p)
+}
+
+// ── Query Config ─────────────────────────────────────────────────────────────
+
+async fn dispatch_query_config(
+    daemon: &Arc<dyn Daemon>,
+) -> Result<Payload, String> {
+    let config = daemon.query_config().await.map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    // Flatten config values into response payload
+    for (k, v) in &config.values {
+        if let Ok(rv) = serde_json::from_value::<rmpv::Value>(v.clone()) {
+            p.insert(k.clone(), rv);
+        } else {
+            p.insert(k.clone(), rmpv::Value::from(v.to_string().as_str()));
+        }
+    }
+    ok_payload(p)
+}
+
+// ── Set/Remove Contact ───────────────────────────────────────────────────────
+
+async fn dispatch_set_contact(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let peer_hash = validate_hash(peer_hash)?;
+    let alias = val_str(payload, "alias");
+    let notes = val_str(payload, "notes");
+    daemon
+        .set_contact(peer_hash, alias, notes)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("ok".into(), rmpv::Value::Boolean(true));
+    ok_payload(p)
+}
+
+async fn dispatch_remove_contact(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let peer_hash = validate_hash(peer_hash)?;
+    let removed = daemon
+        .remove_contact(peer_hash)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("removed".into(), rmpv::Value::Boolean(removed));
+    ok_payload(p)
+}
+
+// ── Device Status (fleet RPC) ────────────────────────────────────────────────
+
+async fn dispatch_device_status(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let dest = validate_hash(dest)?;
+    let timeout = payload.get("timeout").and_then(|v| v.as_u64());
+    let info = daemon
+        .device_status(dest, timeout)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("destination_hash".into(), rmpv::Value::from(info.destination_hash.as_str()));
+    if let Some(uptime) = info.uptime {
+        p.insert("uptime".into(), rmpv::Value::from(uptime as i64));
+    }
+    if let Some(ver) = &info.daemon_version {
+        p.insert("version".into(), rmpv::Value::from(ver.as_str()));
+    }
+    ok_payload(p)
+}
+
+// ── Subscriptions ────────────────────────────────────────────────────────────
+
+async fn dispatch_sub_devices(
+    daemon: &Arc<dyn Daemon>,
+) -> Result<Payload, String> {
+    let _ = daemon.subscribe_devices().await.map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("subscribed".into(), rmpv::Value::Boolean(true));
+    ok_payload(p)
+}
+
+async fn dispatch_sub_messages(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let peer_hashes: Vec<String> = payload
+        .get("peer_hashes")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let _ = daemon
+        .subscribe_messages(&peer_hashes)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("subscribed".into(), rmpv::Value::Boolean(true));
+    ok_payload(p)
+}
+
+// ── TUI-specific types (not in Daemon trait) ─────────────────────────────────
+// These return sensible defaults. As the Rust daemon gains capabilities,
+// these can be wired to real service data.
+
+async fn dispatch_get_hub_status() -> Result<Payload, String> {
+    let mut p = Payload::new();
+    p.insert("is_connected".into(), rmpv::Value::Boolean(false));
+    p.insert("status".into(), rmpv::Value::from("disabled"));
+    p.insert("hub_address".into(), rmpv::Value::Nil);
+    ok_payload(p)
+}
+
+async fn dispatch_get_unread_counts(
+    daemon: &Arc<dyn Daemon>,
+) -> Result<Payload, String> {
+    // Build unread counts from conversations
+    let convos = daemon
+        .query_conversations(true) // unread_only
+        .await
+        .unwrap_or_default();
+    let mut counts = HashMap::new();
+    for c in &convos {
+        if c.unread_count > 0 {
+            counts.insert(
+                c.peer_hash.clone(),
+                rmpv::Value::from(c.unread_count as i64),
+            );
+        }
+    }
+    let mut p = Payload::new();
+    p.insert(
+        "counts".into(),
+        rmpv::Value::Map(
+            counts
+                .into_iter()
+                .map(|(k, v)| (rmpv::Value::from(k.as_str()), v))
+                .collect(),
+        ),
+    );
+    ok_payload(p)
+}
+
+async fn dispatch_get_nodes(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    // GET_NODES returns persisted nodes — same data as QUERY_DEVICES
+    let styrene_only = payload
+        .get("styrene_only")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let devices = daemon
+        .query_devices(styrene_only)
+        .await
+        .map_err(|e| e.to_string())?;
+    let arr: Vec<rmpv::Value> = devices
+        .iter()
+        .map(|d| {
+            let mut item = HashMap::new();
+            item.insert("destination_hash".to_string(), rmpv::Value::from(d.destination_hash.as_str()));
+            item.insert("name".to_string(), rmpv::Value::from(d.name.as_str()));
+            item.insert("status".to_string(), rmpv::Value::from(d.status.as_str()));
+            item.insert("is_styrene_node".to_string(), rmpv::Value::Boolean(d.is_styrene_node));
+            if let Some(ts) = d.last_announce {
+                item.insert("last_announce".to_string(), rmpv::Value::from(ts));
+            }
+            rmpv::Value::Map(
+                item.into_iter()
+                    .map(|(k, v)| (rmpv::Value::from(k.as_str()), v))
+                    .collect(),
+            )
+        })
+        .collect();
+    let mut p = Payload::new();
+    p.insert("nodes".into(), rmpv::Value::Array(arr));
+    ok_payload(p)
+}
+
+async fn dispatch_get_core_config(
+    daemon: &Arc<dyn Daemon>,
+) -> Result<Payload, String> {
+    // Return config snapshot — same data as QUERY_CONFIG, wrapped in "config" key
+    let config = daemon.query_config().await.map_err(|e| e.to_string())?;
+    let mut config_map: Vec<(rmpv::Value, rmpv::Value)> = Vec::new();
+    for (k, v) in &config.values {
+        let rv = serde_json::from_value::<rmpv::Value>(v.clone())
+            .unwrap_or_else(|_| rmpv::Value::from(v.to_string().as_str()));
+        config_map.push((rmpv::Value::from(k.as_str()), rv));
+    }
+    let mut p = Payload::new();
+    p.insert("config".into(), rmpv::Value::Map(config_map));
+    ok_payload(p)
+}
+
+async fn dispatch_get_activity_history() -> Result<Payload, String> {
+    // Return empty activity history — EventService ring can be wired later
+    let mut p = Payload::new();
+    p.insert("events".into(), rmpv::Value::Array(vec![]));
+    p.insert("count".into(), rmpv::Value::from(0_i64));
+    ok_payload(p)
+}
+
+async fn dispatch_get_adapter_state() -> Result<Payload, String> {
+    // Return empty adapter list — no adapters in standalone Rust daemon
+    let mut p = Payload::new();
+    p.insert("adapters".into(), rmpv::Value::Array(vec![]));
+    ok_payload(p)
+}
+
+async fn dispatch_sub_activity() -> Result<Payload, String> {
+    // Acknowledge activity subscription — events pushed via connection writer
+    let mut p = Payload::new();
+    p.insert("subscribed".into(), rmpv::Value::Boolean(true));
     ok_payload(p)
 }
