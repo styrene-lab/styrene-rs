@@ -43,5 +43,5 @@ dirs = "6.0.0"
 tempfile = { workspace = true }
 
 [[bin]]
-name = "styrened-rs"
-path = "src/bin/reticulumd/main.rs"
+name = "styrened"
+path = "src/bin/styrened/main.rs"
