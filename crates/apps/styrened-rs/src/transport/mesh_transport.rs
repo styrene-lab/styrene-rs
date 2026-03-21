@@ -51,6 +51,11 @@ pub trait MeshTransport: Send + Sync {
     // --- Sending ---
 
     /// Opportunistic single-packet send (broadcast, no link setup).
+    ///
+    /// Sends raw bytes as a SINGLE packet to the destination. The caller is
+    /// responsible for LXMF wire format details (e.g., stripping the
+    /// destination prefix for opportunistic delivery). This is a transport
+    /// primitive, not a message delivery method.
     async fn send_raw(
         &self,
         dest: AddressHash,
