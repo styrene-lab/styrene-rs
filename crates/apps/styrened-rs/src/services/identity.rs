@@ -28,7 +28,7 @@ impl IdentityService {
         }
     }
 
-    /// Create a stub for tests (no transport).
+    /// Create a stub for tests (no transport). Also used as `Default`.
     pub fn new() -> Self {
         Self {
             identity_hash: String::new(),
@@ -82,6 +82,12 @@ impl IdentityService {
     /// Request path discovery for a destination.
     pub async fn request_path(&self, dest: &AddressHash) {
         self.transport.request_path(dest).await;
+    }
+}
+
+impl Default for IdentityService {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

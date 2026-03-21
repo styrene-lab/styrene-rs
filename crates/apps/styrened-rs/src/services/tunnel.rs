@@ -3,6 +3,7 @@
 //! Owns: tunnel lifecycle. Wraps styrene-tunnel crate.
 //! Package: H
 
+#[derive(Default)]
 pub struct TunnelService {
     // Fields will be added in Package H
 }
