@@ -238,12 +238,15 @@ impl MessagesStore {
     pub fn list_conversations(&self, unread_only: bool) -> rusqlite::Result<Vec<ConversationSummary>> {
         // For each unique peer (source or destination), aggregate message stats.
         // The peer is the "other side" — for outgoing messages it's destination, for incoming it's source.
+        // Use a correlated subquery to get the content of the most recent message
+        // per peer (MAX(content) would give lexicographic max, not most-recent).
+        let base = "SELECT g.peer, g.last_ts, (SELECT m2.content FROM messages m2 WHERE (CASE WHEN m2.direction = 'out' THEN m2.destination ELSE m2.source END) = g.peer ORDER BY m2.timestamp DESC LIMIT 1) as last_content, g.unread, g.total FROM (SELECT CASE WHEN direction = 'out' THEN destination ELSE source END as peer, MAX(timestamp) as last_ts, SUM(CASE WHEN COALESCE(read, 0) = 0 THEN 1 ELSE 0 END) as unread, COUNT(*) as total FROM messages GROUP BY peer) g";
         let sql = if unread_only {
-            "SELECT peer, MAX(timestamp) as last_ts, MAX(content) as last_content, SUM(CASE WHEN COALESCE(read, 0) = 0 THEN 1 ELSE 0 END) as unread, COUNT(*) as total FROM (SELECT CASE WHEN direction = 'out' THEN destination ELSE source END as peer, timestamp, content, read FROM messages) GROUP BY peer HAVING unread > 0 ORDER BY last_ts DESC"
+            format!("{base} WHERE g.unread > 0 ORDER BY g.last_ts DESC")
         } else {
-            "SELECT peer, MAX(timestamp) as last_ts, MAX(content) as last_content, SUM(CASE WHEN COALESCE(read, 0) = 0 THEN 1 ELSE 0 END) as unread, COUNT(*) as total FROM (SELECT CASE WHEN direction = 'out' THEN destination ELSE source END as peer, timestamp, content, read FROM messages) GROUP BY peer ORDER BY last_ts DESC"
+            format!("{base} ORDER BY g.last_ts DESC")
         };
-        let mut stmt = self.conn.prepare(sql)?;
+        let mut stmt = self.conn.prepare(&sql)?;
         let mut rows = stmt.query([])?;
         let mut summaries = Vec::new();
         while let Some(row) = rows.next()? {
@@ -835,6 +838,25 @@ mod tests {
         assert_eq!(convos[0].message_count, 1);
         assert_eq!(convos[1].peer_hash, "alice");
         assert_eq!(convos[1].message_count, 2);
+    }
+
+    #[test]
+    fn list_conversations_last_content_is_most_recent() {
+        let store = MessagesStore::in_memory().expect("store");
+        let mut m1 = chat_message("m1", "alice", "me", 1);
+        m1.content = "zzz first".to_string(); // Lexicographically greater
+        store.insert_message(&m1).expect("insert");
+        let mut m2 = chat_message("m2", "me", "alice", 2);
+        m2.content = "aaa second".to_string(); // Lexicographically smaller but more recent
+        store.insert_message(&m2).expect("insert");
+
+        let convos = store.list_conversations(false).expect("list");
+        assert_eq!(convos.len(), 1);
+        assert_eq!(
+            convos[0].last_message_content.as_deref(),
+            Some("aaa second"),
+            "should return most recent content, not lexicographic max"
+        );
     }
 
     #[test]

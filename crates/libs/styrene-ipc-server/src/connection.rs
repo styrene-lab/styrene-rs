@@ -234,8 +234,16 @@ async fn event_to_frame(
             );
             (MessageType::EventDevice, SubTopic::Devices, p)
         }
-        DaemonEvent::Message { kind: _, message } => {
+        DaemonEvent::Message { kind, message } => {
+            let kind_str = match kind {
+                styrene_ipc::types::MessageEventKind::New => "new",
+                styrene_ipc::types::MessageEventKind::StatusChanged => "status_changed",
+                styrene_ipc::types::MessageEventKind::Delivered => "delivered",
+                styrene_ipc::types::MessageEventKind::Failed => "failed",
+                _ => "unknown",
+            };
             let mut p = HashMap::new();
+            p.insert("kind".to_string(), rmpv::Value::from(kind_str));
             p.insert("id".to_string(), rmpv::Value::from(message.id.as_str()));
             p.insert(
                 "source_hash".to_string(),
