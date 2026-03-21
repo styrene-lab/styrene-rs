@@ -42,4 +42,12 @@ impl IpcError {
     pub fn not_implemented(method: impl Into<String>) -> Self {
         Self::NotImplemented { method: method.into() }
     }
+
+    pub fn not_found(resource: &str, id: &str) -> Self {
+        Self::NotFound { resource: format!("{resource} '{id}'") }
+    }
+
+    pub fn invalid_request(message: impl Into<String>) -> Self {
+        Self::InvalidRequest { message: message.into() }
+    }
 }
