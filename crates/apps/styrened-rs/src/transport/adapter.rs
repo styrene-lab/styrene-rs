@@ -28,6 +28,8 @@ pub struct TokioTransportAdapter {
     announce_destination: Arc<tokio::sync::Mutex<SingleInputDestination>>,
     announce_app_data: Option<Vec<u8>>,
     lifecycle_tx: broadcast::Sender<TransportLifecycleEvent>,
+    /// Cached announce sender — subscribing is sync via sender.subscribe().
+    announce_tx: broadcast::Sender<AnnounceEvent>,
 }
 
 impl TokioTransportAdapter {
@@ -38,7 +40,10 @@ impl TokioTransportAdapter {
     /// - `destination_addr`: our delivery destination hash
     /// - `announce_destination`: the LXMF delivery destination for announcing
     /// - `announce_app_data`: optional app_data bytes for announces
-    pub fn new(
+    ///
+    /// This is an async constructor because it needs to subscribe to the
+    /// transport's announce channel (which requires the handler lock).
+    pub async fn new(
         transport: Arc<Transport>,
         identity_addr: AddressHash,
         destination_addr: AddressHash,
@@ -46,6 +51,23 @@ impl TokioTransportAdapter {
         announce_app_data: Option<Vec<u8>>,
     ) -> Self {
         let (lifecycle_tx, _) = broadcast::channel(16);
+        // Forward transport announces through our own broadcast sender so
+        // subscribe_announces() can return synchronously (no async lock needed).
+        let (our_announce_tx, _) = broadcast::channel(64);
+        let fwd_tx = our_announce_tx.clone();
+        let fwd_transport = transport.clone();
+        tokio::spawn(async move {
+            let mut rx = fwd_transport.recv_announces().await;
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let _ = fwd_tx.send(event);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                }
+            }
+        });
         Self {
             transport,
             identity_addr,
@@ -53,6 +75,7 @@ impl TokioTransportAdapter {
             announce_destination,
             announce_app_data,
             lifecycle_tx,
+            announce_tx: our_announce_tx,
         }
     }
 
@@ -129,23 +152,7 @@ impl MeshTransport for TokioTransportAdapter {
     }
 
     fn subscribe_announces(&self) -> broadcast::Receiver<AnnounceEvent> {
-        // Note: Transport::recv_announces() is async, but we need to return
-        // synchronously. We use a blocking approach via tokio::task::block_in_place
-        // which is acceptable since this is called during initialization, not in
-        // hot paths.
-        //
-        // Alternative: store the receiver during construction. For now, we create
-        // a new subscription each time (broadcast supports multiple subscribers).
-        let transport = self.transport.clone();
-        // This works because broadcast::Sender::subscribe() is sync under the hood;
-        // recv_announces() wraps it in an async fn. We can replicate the subscription
-        // directly via the transport's internal sender.
-        //
-        // SAFETY: This relies on the announce channel being already initialized,
-        // which is guaranteed after Transport::new().
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(transport.recv_announces())
-        })
+        self.announce_tx.subscribe()
     }
 
     fn subscribe_lifecycle(&self) -> broadcast::Receiver<TransportLifecycleEvent> {

@@ -3,6 +3,7 @@
 //! Owns: 4.1 RPC server dispatch, 4.2 RPC client, exec/reboot/update, terminal sessions.
 //! Package: E
 
+#[derive(Default)]
 pub struct FleetService {
     // Fields will be added in Package E
 }

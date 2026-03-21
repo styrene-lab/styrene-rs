@@ -54,9 +54,8 @@ pub struct MockTransport {
     send_link_results: Mutex<VecDeque<Result<LinkSendResult, TransportError>>>,
     resolve_results: Mutex<VecDeque<Option<Identity>>>,
 
-    // Default behaviors
+    // Default behavior for send_raw when queue is exhausted
     default_send_raw: Mutex<Result<SendPacketOutcome, TransportError>>,
-    default_send_link: Mutex<Result<(), TransportError>>,
 
     // Event injection channels
     inbound_tx: broadcast::Sender<ReceivedData>,
@@ -82,7 +81,6 @@ impl MockTransport {
             send_link_results: Mutex::new(VecDeque::new()),
             resolve_results: Mutex::new(VecDeque::new()),
             default_send_raw: Mutex::new(Ok(SendPacketOutcome::SentDirect)),
-            default_send_link: Mutex::new(Err(TransportError::Unavailable)),
             inbound_tx,
             announce_tx,
             lifecycle_tx,

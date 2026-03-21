@@ -3,6 +3,7 @@
 //! Owns: 3.1-3.6 full messaging pipeline. Owns receipt correlation map (packet_hash to message_id).
 //! Package: F
 
+#[derive(Default)]
 pub struct MessagingService {
     // Fields will be added in Package F
 }
