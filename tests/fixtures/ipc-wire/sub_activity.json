@@ -1,0 +1,8 @@
+{
+  "name": "sub_activity",
+  "msg_type": "SUB_ACTIVITY",
+  "msg_type_byte": "0x32",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 22,
+  "length_field": 18
+}

@@ -167,6 +167,17 @@ wire_compat_test!(error_response, 0x82);
 wire_compat_test!(event_device, 0xC0);
 wire_compat_test!(event_message, 0xC1);
 
+// TUI-specific types (newly dispatched)
+wire_compat_test!(query_config, 0x13);
+wire_compat_test!(cmd_device_status, 0x23);
+wire_compat_test!(get_hub_status, 0x4E);
+wire_compat_test!(get_unread_counts, 0x4F);
+wire_compat_test!(get_nodes, 0x1E);
+wire_compat_test!(get_core_config, 0x1F);
+wire_compat_test!(get_activity_history, 0x73);
+wire_compat_test!(get_adapter_state, 0x72);
+wire_compat_test!(sub_activity, 0x32);
+
 // ── Payload content validation ───────────────────────────────────────────────
 
 #[test]

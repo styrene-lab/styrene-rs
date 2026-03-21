@@ -1,0 +1,8 @@
+{
+  "name": "get_adapter_state",
+  "msg_type": "GET_ADAPTER_STATE",
+  "msg_type_byte": "0x72",
+  "request_id_hex": "000102030405060708090a0b0c0d0e0f",
+  "frame_length": 22,
+  "length_field": 18
+}
