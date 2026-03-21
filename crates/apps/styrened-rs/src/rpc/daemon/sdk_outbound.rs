@@ -33,6 +33,7 @@ impl RpcDaemon {
             direction: "out".into(),
             fields: merge_fields_with_options(fields, method.clone(), stamp_cost, include_ticket),
             receipt_status: None,
+            read: false,
         };
 
         self.messages().insert_message(&record).map_err(std::io::Error::other)?;

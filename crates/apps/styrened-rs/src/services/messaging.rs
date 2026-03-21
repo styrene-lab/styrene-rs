@@ -110,6 +110,109 @@ impl MessagingService {
             .map_err(std::io::Error::other)
     }
 
+    // --- Conversations & contacts (new store methods) ---
+
+    /// List messages for a specific peer with pagination.
+    pub fn list_messages_for_peer(
+        &self,
+        peer_hash: &str,
+        limit: usize,
+        before_ts: Option<i64>,
+    ) -> Result<Vec<MessageRecord>, std::io::Error> {
+        self.store
+            .lock()
+            .unwrap()
+            .list_messages_for_peer(peer_hash, limit, before_ts)
+            .map_err(std::io::Error::other)
+    }
+
+    /// Mark all messages from a peer as read.
+    pub fn mark_read(&self, peer_hash: &str) -> Result<u64, std::io::Error> {
+        self.store
+            .lock()
+            .unwrap()
+            .mark_read(peer_hash)
+            .map_err(std::io::Error::other)
+    }
+
+    /// Delete all messages in a conversation with a peer.
+    pub fn delete_conversation(&self, peer_hash: &str) -> Result<u64, std::io::Error> {
+        self.store
+            .lock()
+            .unwrap()
+            .delete_conversation(peer_hash)
+            .map_err(std::io::Error::other)
+    }
+
+    /// Delete a single message by ID.
+    pub fn delete_message(&self, message_id: &str) -> Result<bool, std::io::Error> {
+        self.store
+            .lock()
+            .unwrap()
+            .delete_message(message_id)
+            .map_err(std::io::Error::other)
+    }
+
+    /// Search messages by content substring.
+    pub fn search_messages(
+        &self,
+        query: &str,
+        peer_hash: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MessageRecord>, std::io::Error> {
+        self.store
+            .lock()
+            .unwrap()
+            .search_messages(query, peer_hash, limit)
+            .map_err(std::io::Error::other)
+    }
+
+    /// List conversation summaries.
+    pub fn list_conversations(
+        &self,
+        unread_only: bool,
+    ) -> Result<Vec<crate::storage::messages::ConversationSummary>, std::io::Error> {
+        self.store
+            .lock()
+            .unwrap()
+            .list_conversations(unread_only)
+            .map_err(std::io::Error::other)
+    }
+
+    /// Set a contact (upsert).
+    pub fn set_contact(
+        &self,
+        peer_hash: &str,
+        alias: Option<&str>,
+        notes: Option<&str>,
+    ) -> Result<crate::storage::messages::ContactRecord, std::io::Error> {
+        self.store
+            .lock()
+            .unwrap()
+            .set_contact(peer_hash, alias, notes)
+            .map_err(std::io::Error::other)
+    }
+
+    /// Remove a contact.
+    pub fn remove_contact(&self, peer_hash: &str) -> Result<bool, std::io::Error> {
+        self.store
+            .lock()
+            .unwrap()
+            .remove_contact(peer_hash)
+            .map_err(std::io::Error::other)
+    }
+
+    /// List all contacts.
+    pub fn list_contacts(
+        &self,
+    ) -> Result<Vec<crate::storage::messages::ContactRecord>, std::io::Error> {
+        self.store
+            .lock()
+            .unwrap()
+            .list_contacts()
+            .map_err(std::io::Error::other)
+    }
+
     // --- Receipt tracking ---
 
     /// Track a receipt mapping (packet_hash → message_id).
@@ -197,6 +300,7 @@ mod tests {
             direction: "out".into(),
             fields: None,
             receipt_status: None,
+            read: false,
         }
     }
 

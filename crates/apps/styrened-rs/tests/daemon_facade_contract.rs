@@ -18,6 +18,7 @@ use reticulum_daemon::transport::null_transport::NullTransport;
 use std::sync::{Arc, Mutex};
 use styrene_ipc::error::IpcError;
 use styrene_ipc::traits::Daemon;
+use styrene_ipc::types::SendChatRequest;
 
 fn make_ctx() -> Arc<AppContext> {
     let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
@@ -136,11 +137,16 @@ async fn daemon_trait_object_not_implemented_methods() {
         Err(IpcError::NotImplemented { .. })
     ));
     assert!(matches!(
-        daemon.search_messages("test", None, 10).await,
+        daemon.send_chat(SendChatRequest::default()).await,
         Err(IpcError::NotImplemented { .. })
     ));
     assert!(matches!(
         daemon.query_path_info("abc").await,
         Err(IpcError::NotImplemented { .. })
     ));
+
+    // These should now work (not NotImplemented)
+    let _results = daemon.search_messages("test", None, 10).await.expect("search works");
+    let _convos = daemon.query_conversations(false).await.expect("conversations work");
+    let _contacts = daemon.query_contacts().await.expect("contacts work");
 }

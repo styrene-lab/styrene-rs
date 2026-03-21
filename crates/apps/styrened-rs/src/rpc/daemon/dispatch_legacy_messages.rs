@@ -219,6 +219,7 @@ impl RpcDaemon {
                     direction: "in".into(),
                     fields: parsed.fields,
                     receipt_status: None,
+        read: false,
                 };
                 self.store_inbound_record(record)?;
                 Ok(RpcResponse {
