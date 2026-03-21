@@ -28,10 +28,10 @@ pub(crate) struct PendingRequest {
 pub struct FleetService {
     /// Pending requests keyed by 16-byte request_id.
     pub(crate) pending: Mutex<HashMap<[u8; 16], PendingRequest>>,
-    /// Transport for sending RPC messages (None in test mode).
-    transport: Option<Arc<dyn MeshTransport>>,
+    /// Transport for sending RPC messages (None until signer wired).
+    transport: Mutex<Option<Arc<dyn MeshTransport>>>,
     /// Signing key for LXMF messages.
-    signer: Option<Arc<rns_core::identity::PrivateIdentity>>,
+    signer: Mutex<Option<Arc<rns_core::identity::PrivateIdentity>>>,
 }
 
 impl FleetService {
@@ -39,21 +39,20 @@ impl FleetService {
     pub fn new() -> Self {
         Self {
             pending: Mutex::new(HashMap::new()),
-            transport: None,
-            signer: None,
+            transport: Mutex::new(None),
+            signer: Mutex::new(None),
         }
     }
 
-    /// Create with transport and signer for live RPC.
-    pub fn with_transport(
+    /// Wire transport and signer for outbound RPC.
+    /// Called by AppContext.set_signer() when identity becomes available.
+    pub fn set_signer(
+        &self,
         transport: Arc<dyn MeshTransport>,
         signer: Arc<rns_core::identity::PrivateIdentity>,
-    ) -> Self {
-        Self {
-            pending: Mutex::new(HashMap::new()),
-            transport: Some(transport),
-            signer: Some(signer),
-        }
+    ) {
+        *self.transport.lock().unwrap() = Some(transport);
+        *self.signer.lock().unwrap() = Some(signer);
     }
 
     /// Query remote device status via RPC.
@@ -182,10 +181,10 @@ impl FleetService {
         payload: &[u8],
         timeout: Duration,
     ) -> Result<StyreneMessage, std::io::Error> {
-        let transport = self.transport.as_ref().ok_or_else(|| {
+        let transport = self.transport.lock().unwrap().clone().ok_or_else(|| {
             std::io::Error::other("transport not available for RPC")
         })?;
-        let signer = self.signer.as_ref().ok_or_else(|| {
+        let signer = self.signer.lock().unwrap().clone().ok_or_else(|| {
             std::io::Error::other("signer not available for RPC")
         })?;
 
@@ -221,7 +220,7 @@ impl FleetService {
             "",    // no title for RPC
             "",    // no content for RPC
             Some(fields),
-            signer,
+            &signer,
         )
         .map_err(|e| std::io::Error::other(format!("wire encode: {e}")))?;
 

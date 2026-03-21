@@ -32,10 +32,10 @@ pub struct MessagingService {
     /// Receipt correlation: packet_hash → message_id.
     /// Populated by send operations, consumed by receipt callbacks.
     receipt_map: Mutex<HashMap<String, String>>,
-    /// Transport for outbound delivery (None in test mode).
-    transport: Option<Arc<dyn MeshTransport>>,
-    /// Signing key for LXMF wire messages (None in test mode).
-    signer: Option<Arc<rns_core::identity::PrivateIdentity>>,
+    /// Transport for outbound delivery (None until signer wired).
+    transport: Mutex<Option<Arc<dyn MeshTransport>>>,
+    /// Signing key for LXMF wire messages (None until signer wired).
+    signer: Mutex<Option<Arc<rns_core::identity::PrivateIdentity>>>,
 }
 
 impl MessagingService {
@@ -44,23 +44,20 @@ impl MessagingService {
         Self {
             store,
             receipt_map: Mutex::new(HashMap::new()),
-            transport: None,
-            signer: None,
+            transport: Mutex::new(None),
+            signer: Mutex::new(None),
         }
     }
 
-    /// Create with full delivery pipeline support.
-    pub fn with_transport(
-        store: Arc<Mutex<MessagesStore>>,
+    /// Wire transport and signer for outbound delivery.
+    /// Called by AppContext.set_signer() when identity becomes available.
+    pub fn set_signer(
+        &self,
         transport: Arc<dyn MeshTransport>,
         signer: Arc<rns_core::identity::PrivateIdentity>,
-    ) -> Self {
-        Self {
-            store,
-            receipt_map: Mutex::new(HashMap::new()),
-            transport: Some(transport),
-            signer: Some(signer),
-        }
+    ) {
+        *self.transport.lock().unwrap() = Some(transport);
+        *self.signer.lock().unwrap() = Some(signer);
     }
 
     /// Create a stub for tests (in-memory store).
@@ -69,8 +66,8 @@ impl MessagingService {
         Self {
             store: Arc::new(Mutex::new(store)),
             receipt_map: Mutex::new(HashMap::new()),
-            transport: None,
-            signer: None,
+            transport: Mutex::new(None),
+            signer: Mutex::new(None),
         }
     }
 
@@ -86,10 +83,10 @@ impl MessagingService {
         content: &str,
         title: Option<&str>,
     ) -> Result<String, std::io::Error> {
-        let transport = self.transport.as_ref().ok_or_else(|| {
+        let transport = self.transport.lock().unwrap().clone().ok_or_else(|| {
             std::io::Error::other("transport not available — cannot send")
         })?;
-        let signer = self.signer.as_ref().ok_or_else(|| {
+        let signer = self.signer.lock().unwrap().clone().ok_or_else(|| {
             std::io::Error::other("signer not available — cannot send")
         })?;
 
@@ -114,7 +111,7 @@ impl MessagingService {
             title.unwrap_or(""),
             content,
             None,
-            signer,
+            &signer,
         )
         .map_err(|e| std::io::Error::other(format!("wire encode: {e}")))?;
 
@@ -144,7 +141,6 @@ impl MessagingService {
             .map_err(std::io::Error::other)?;
 
         // Run delivery
-        let transport = transport.clone();
         let store = self.store.clone();
 
         let delivery_result = Self::deliver(

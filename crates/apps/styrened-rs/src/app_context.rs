@@ -18,6 +18,7 @@ use crate::services::{
 };
 use crate::storage::messages::MessagesStore;
 use crate::transport::mesh_transport::MeshTransport;
+use rns_core::identity::PrivateIdentity;
 
 /// Composition root — wires all daemon services together.
 ///
@@ -70,6 +71,7 @@ impl AppContext {
         let protocol = Arc::new(ProtocolService::new());
 
         // Phase 6: Fleet/RPC (depends on protocol, auth)
+        // Note: Fleet and Messaging gain send capability via set_signer()
         let fleet = Arc::new(FleetService::new());
 
         // Phase 7: Auto-reply (depends on config, messaging)
@@ -98,6 +100,15 @@ impl AppContext {
             events,
             tunnel,
         }
+    }
+
+    /// Wire a signing identity into services that need outbound delivery.
+    ///
+    /// Call after construction when the identity is available (after transport init).
+    /// Enables MessagingService.send_chat() and FleetService RPC calls.
+    pub fn set_signer(&self, signer: Arc<PrivateIdentity>) {
+        self.messaging.set_signer(self.transport.clone(), signer.clone());
+        self.fleet.set_signer(self.transport.clone(), signer);
     }
 
     // --- Accessors ---

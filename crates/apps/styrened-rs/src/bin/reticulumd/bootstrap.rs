@@ -250,7 +250,9 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         app_context.clone(),
         hex::encode(identity.address_hash().as_slice()),
     ));
-    eprintln!("[daemon] service architecture initialized (AppContext + DaemonFacade)");
+    // Wire signing identity into services that need outbound delivery
+    app_context.set_signer(Arc::new(identity.clone()));
+    eprintln!("[daemon] service architecture initialized (AppContext + DaemonFacade + signer)");
 
     // --- Service-layer workers (inbound + announce processing) ---
     reticulum_daemon::workers::inbound::spawn_inbound_worker(
