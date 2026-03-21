@@ -291,7 +291,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
 
     // --- Unix socket IPC server ---
     let ipc_config = styrene_ipc_server::IpcServerConfig {
-        socket_path: styrene_ipc_server::default_socket_path(),
+        socket_path: args.socket.clone().unwrap_or_else(styrene_ipc_server::default_socket_path),
         event_capacity: 256,
     };
     let mut ipc_server = styrene_ipc_server::IpcServer::new(
