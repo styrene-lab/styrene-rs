@@ -41,6 +41,40 @@ pub async fn dispatch(
         MessageType::CmdSetContact => dispatch_set_contact(daemon, &payload).await,
         MessageType::CmdRemoveContact => dispatch_remove_contact(daemon, &payload).await,
         MessageType::QueryPathInfo => dispatch_query_path_info(daemon, &payload).await,
+        MessageType::CmdRemoteInbox => dispatch_remote_inbox(daemon, &payload).await,
+        MessageType::CmdRemoteMessages => dispatch_remote_messages(daemon, &payload).await,
+        MessageType::CmdSelfUpdate => dispatch_self_update(daemon, &payload).await,
+        MessageType::CmdPqcStatus => {
+            // PQC status — return stub until post-quantum is implemented
+            let mut p = Payload::new();
+            p.insert("pqc_available".into(), rmpv::Value::Boolean(false));
+            p.insert("pqc_active".into(), rmpv::Value::Boolean(false));
+            ok_payload(p)
+        },
+        MessageType::QueryAttachment => {
+            // Attachment queries — not yet implemented
+            Err("attachment storage not yet implemented".into())
+        },
+        MessageType::QueryPage | MessageType::QueryPageServerStatus |
+        MessageType::CmdPageListSites | MessageType::CmdPageGetCached |
+        MessageType::CmdPageSaveSite | MessageType::CmdPageRemoveSite |
+        MessageType::CmdPageCrawlSite | MessageType::CmdPageRegenerate |
+        MessageType::CmdPageDisconnect => {
+            // Page browser — delegated to Python TUI's page browser service
+            Err("page browser not available in Rust daemon".into())
+        },
+        MessageType::CmdTerminalOpen | MessageType::CmdTerminalInput |
+        MessageType::CmdTerminalResize | MessageType::CmdTerminalClose => {
+            // Remote terminal — P3, not yet implemented
+            Err("remote terminal not yet implemented".into())
+        },
+        MessageType::CmdDatalinkEstablish | MessageType::CmdDatalinkTeardown |
+        MessageType::CmdDatalinkQuery | MessageType::CmdDatalinkInfo |
+        MessageType::CmdDatalinkStatus | MessageType::CmdDatalinkMeta |
+        MessageType::CmdDatalinkSpeedtest => {
+            // Datalink management — P3, not yet implemented
+            Err("datalink management not yet implemented".into())
+        },
         MessageType::CmdDeviceStatus => dispatch_device_status(daemon, &payload).await,
         MessageType::SubDevices => dispatch_sub_devices(daemon).await,
         MessageType::SubMessages => dispatch_sub_messages(daemon, &payload).await,
@@ -820,6 +854,86 @@ async fn dispatch_query_path_info(
     }
     if let Some(iface) = &info.interface {
         p.insert("interface".into(), rmpv::Value::from(iface.as_str()));
+    }
+    ok_payload(p)
+}
+
+// ── Remote Fleet Queries ─────────────────────────────────────────────────────
+
+async fn dispatch_remote_inbox(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let limit = val_u64(payload, "limit").unwrap_or(50) as u32;
+    let timeout = val_u64(payload, "timeout");
+    let conversations = daemon
+        .remote_inbox(dest, limit, timeout)
+        .await
+        .map_err(|e| e.to_string())?;
+    let items: Vec<rmpv::Value> = conversations
+        .iter()
+        .map(|c| {
+            rmpv::Value::Map(vec![
+                (rmpv::Value::from("peer_hash"), rmpv::Value::from(c.peer_hash.as_str())),
+                (rmpv::Value::from("unread_count"), rmpv::Value::from(c.unread_count as i64)),
+                (rmpv::Value::from("message_count"), rmpv::Value::from(c.message_count as i64)),
+            ])
+        })
+        .collect();
+    let mut p = Payload::new();
+    p.insert("conversations".into(), rmpv::Value::Array(items));
+    ok_payload(p)
+}
+
+async fn dispatch_remote_messages(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let peer = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let limit = val_u64(payload, "limit").unwrap_or(50) as u32;
+    let timeout = val_u64(payload, "timeout");
+    let messages = daemon
+        .remote_messages(dest, peer, limit, timeout)
+        .await
+        .map_err(|e| e.to_string())?;
+    let items: Vec<rmpv::Value> = messages
+        .iter()
+        .map(|m| {
+            rmpv::Value::Map(vec![
+                (rmpv::Value::from("id"), rmpv::Value::from(m.id.as_str())),
+                (rmpv::Value::from("source_hash"), rmpv::Value::from(m.source_hash.as_str())),
+                (rmpv::Value::from("content"), rmpv::Value::from(m.content.as_str())),
+                (rmpv::Value::from("timestamp"), rmpv::Value::from(m.timestamp)),
+            ])
+        })
+        .collect();
+    let mut p = Payload::new();
+    p.insert("messages".into(), rmpv::Value::Array(items));
+    ok_payload(p)
+}
+
+// ── Self Update ──────────────────────────────────────────────────────────────
+
+async fn dispatch_self_update(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let version = val_str(payload, "version");
+    let timeout = val_u64(payload, "timeout");
+    let result = daemon
+        .self_update(dest, version, timeout)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("accepted".into(), rmpv::Value::Boolean(result.accepted));
+    if let Some(v) = &result.current_version {
+        p.insert("current_version".into(), rmpv::Value::from(v.as_str()));
+    }
+    if let Some(v) = &result.target_version {
+        p.insert("target_version".into(), rmpv::Value::from(v.as_str()));
     }
     ok_payload(p)
 }
