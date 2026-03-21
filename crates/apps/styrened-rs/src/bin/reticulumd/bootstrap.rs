@@ -43,6 +43,9 @@ pub(super) struct BootstrapContext {
     pub(super) app_context: Arc<AppContext>,
     #[allow(dead_code)]
     pub(super) daemon_facade: Arc<DaemonFacade>,
+    /// Unix socket IPC server — serves the Daemon trait to TUI and CLI clients.
+    #[allow(dead_code)]
+    pub(super) ipc_server: styrene_ipc_server::IpcServer,
 }
 
 pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
@@ -249,11 +252,29 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     ));
     eprintln!("[daemon] service architecture initialized (AppContext + DaemonFacade)");
 
+    // --- Unix socket IPC server ---
+    let ipc_config = styrene_ipc_server::IpcServerConfig {
+        socket_path: styrene_ipc_server::default_socket_path(),
+        event_capacity: 256,
+    };
+    let mut ipc_server = styrene_ipc_server::IpcServer::new(
+        daemon_facade.clone() as Arc<dyn styrene_ipc::traits::Daemon>,
+        ipc_config,
+    );
+    match ipc_server.start().await {
+        Ok(()) => eprintln!(
+            "[daemon] IPC server listening on {}",
+            ipc_server.socket_path().display()
+        ),
+        Err(e) => eprintln!("[daemon] IPC server failed to start: {e}"),
+    }
+
     BootstrapContext {
         rpc_addr,
         daemon,
         rpc_tls,
         app_context,
         daemon_facade,
+        ipc_server,
     }
 }
