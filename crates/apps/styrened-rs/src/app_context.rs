@@ -124,10 +124,6 @@ impl AppContext {
         &self.status
     }
 
-    pub fn fleet(&self) -> &FleetService {
-        &self.fleet
-    }
-
     pub fn auth(&self) -> &AuthService {
         &self.auth
     }
@@ -158,6 +154,14 @@ impl AppContext {
 
     pub fn protocol_arc(&self) -> Arc<ProtocolService> {
         self.protocol.clone()
+    }
+
+    pub fn fleet(&self) -> &FleetService {
+        &self.fleet
+    }
+
+    pub fn fleet_arc(&self) -> Arc<FleetService> {
+        self.fleet.clone()
     }
 
     pub fn events(&self) -> &EventService {
