@@ -8,6 +8,7 @@
 //! with a bounded activity ring for backfill on connect.
 
 use crate::rpc::RpcEvent;
+use crate::storage::messages::MessageRecord;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use tokio::sync::broadcast;
@@ -73,6 +74,45 @@ impl EventService {
     /// Number of live subscribers.
     pub fn subscriber_count(&self) -> usize {
         self.tx.receiver_count()
+    }
+
+    // --- Typed event emitters ---
+
+    /// Emit a new inbound message event.
+    pub fn emit_message_new(&self, record: &MessageRecord) {
+        self.publish(RpcEvent {
+            event_type: "message_received".into(),
+            payload: serde_json::json!({
+                "id": record.id,
+                "source": record.source,
+                "destination": record.destination,
+                "content": record.content,
+                "timestamp": record.timestamp,
+                "kind": "new",
+            }),
+        });
+    }
+
+    /// Emit a message status change event.
+    pub fn emit_message_status(&self, message_id: &str, status: &str) {
+        self.publish(RpcEvent {
+            event_type: "message_status".into(),
+            payload: serde_json::json!({
+                "id": message_id,
+                "status": status,
+                "kind": "status_changed",
+            }),
+        });
+    }
+
+    /// Emit a device/peer update event (announce received or status change).
+    pub fn emit_device_update(&self, peer_hash: &str) {
+        self.publish(RpcEvent {
+            event_type: "announce_received".into(),
+            payload: serde_json::json!({
+                "peer_hash": peer_hash,
+            }),
+        });
     }
 }
 

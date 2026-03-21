@@ -12,3 +12,4 @@ pub mod rpc;
 pub mod services;
 pub mod storage;
 pub mod transport;
+pub mod workers;

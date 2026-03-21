@@ -252,6 +252,20 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     ));
     eprintln!("[daemon] service architecture initialized (AppContext + DaemonFacade)");
 
+    // --- Service-layer workers (inbound + announce processing) ---
+    reticulum_daemon::workers::inbound::spawn_inbound_worker(
+        app_context.transport_arc(),
+        app_context.messaging_arc(),
+        app_context.protocol_arc(),
+        app_context.events_arc(),
+    );
+    reticulum_daemon::workers::announce::spawn_announce_worker(
+        app_context.transport_arc(),
+        app_context.discovery_arc(),
+        app_context.events_arc(),
+    );
+    eprintln!("[daemon] service workers started (inbound + announce)");
+
     // --- Unix socket IPC server ---
     let ipc_config = styrene_ipc_server::IpcServerConfig {
         socket_path: styrene_ipc_server::default_socket_path(),
