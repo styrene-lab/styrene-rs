@@ -396,15 +396,17 @@ impl DaemonStatus for DaemonFacade {
     async fn save_config(&self, _config: ConfigSnapshot) -> Result<bool, IpcError> {
         self.require(&Capability::Status)?;
         let config_svc = self.ctx.config();
-        let _path = config_svc.config_path().ok_or_else(|| IpcError::InvalidRequest {
+        let path = config_svc.config_path().ok_or_else(|| IpcError::InvalidRequest {
             message: "no config file path — cannot save".into(),
         })?;
-        // For now, reload the existing config to validate file access.
-        // Full config write-back requires DaemonConfig → YAML serialization.
-        config_svc.reload().map_err(|e| IpcError::Internal {
-            message: format!("config reload failed: {e}"),
-        })?;
-        Ok(true)
+        // TODO: merge ConfigSnapshot fields into DaemonConfig and serialize.
+        // For now, return an honest error rather than silently discarding changes.
+        Err(IpcError::Internal {
+            message: format!(
+                "config write-back not yet implemented (config at {})",
+                path.display()
+            ),
+        })
     }
 
     async fn block_peer(&self, identity_hash: &str) -> Result<bool, IpcError> {
