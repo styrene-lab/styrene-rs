@@ -90,6 +90,9 @@ impl MessagesStore {
 
     pub fn open(path: &std::path::Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
+        // WAL mode is required for concurrent readers (RpcDaemon + AppContext
+        // hold separate connections to the same database file).
+        conn.pragma_update(None, "journal_mode", "wal")?;
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)

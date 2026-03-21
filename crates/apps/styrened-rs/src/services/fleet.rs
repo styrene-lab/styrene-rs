@@ -28,10 +28,10 @@ pub(crate) struct PendingRequest {
 pub struct FleetService {
     /// Pending requests keyed by 16-byte request_id.
     pub(crate) pending: Mutex<HashMap<[u8; 16], PendingRequest>>,
-    /// Transport for sending RPC messages (None until signer wired).
-    transport: Mutex<Option<Arc<dyn MeshTransport>>>,
+    /// Transport for sending RPC messages (set once via set_signer).
+    transport: std::sync::OnceLock<Arc<dyn MeshTransport>>,
     /// Signing key for LXMF messages.
-    signer: Mutex<Option<Arc<rns_core::identity::PrivateIdentity>>>,
+    signer: std::sync::OnceLock<Arc<rns_core::identity::PrivateIdentity>>,
 }
 
 impl FleetService {
@@ -39,20 +39,19 @@ impl FleetService {
     pub fn new() -> Self {
         Self {
             pending: Mutex::new(HashMap::new()),
-            transport: Mutex::new(None),
-            signer: Mutex::new(None),
+            transport: std::sync::OnceLock::new(),
+            signer: std::sync::OnceLock::new(),
         }
     }
 
-    /// Wire transport and signer for outbound RPC.
-    /// Called by AppContext.set_signer() when identity becomes available.
+    /// Wire transport and signer for outbound RPC (called once during bootstrap).
     pub fn set_signer(
         &self,
         transport: Arc<dyn MeshTransport>,
         signer: Arc<rns_core::identity::PrivateIdentity>,
     ) {
-        *self.transport.lock().unwrap() = Some(transport);
-        *self.signer.lock().unwrap() = Some(signer);
+        let _ = self.transport.set(transport);
+        let _ = self.signer.set(signer);
     }
 
     /// Query remote device status via RPC.
@@ -291,11 +290,11 @@ impl FleetService {
         payload: &[u8],
         timeout: Duration,
     ) -> Result<StyreneMessage, std::io::Error> {
-        let transport = self.transport.lock().unwrap().clone().ok_or_else(|| {
-            std::io::Error::other("transport not available for RPC")
+        let transport = self.transport.get().cloned().ok_or_else(|| {
+            std::io::Error::other("transport not available — call set_signer() first")
         })?;
-        let signer = self.signer.lock().unwrap().clone().ok_or_else(|| {
-            std::io::Error::other("signer not available for RPC")
+        let signer = self.signer.get().cloned().ok_or_else(|| {
+            std::io::Error::other("signer not available — call set_signer() first")
         })?;
 
         if !transport.is_connected() {
@@ -453,5 +452,37 @@ mod tests {
         let result = svc.device_status("abcdef0123456789", None).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("transport not available"));
+    }
+
+    #[tokio::test]
+    async fn remote_inbox_without_transport_returns_error() {
+        let svc = FleetService::new();
+        let result = svc.remote_inbox("abcdef0123456789", 50, None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("transport not available"));
+    }
+
+    #[tokio::test]
+    async fn remote_messages_without_transport_returns_error() {
+        let svc = FleetService::new();
+        let result = svc
+            .remote_messages("abcdef0123456789", "deadbeef01234567", 50, None)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("transport not available"));
+    }
+
+    #[tokio::test]
+    async fn exec_without_transport_returns_error() {
+        let svc = FleetService::new();
+        let result = svc.exec("abcdef0123456789", "uptime", &[], None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn reboot_without_transport_returns_error() {
+        let svc = FleetService::new();
+        let result = svc.reboot_device("abcdef0123456789", None, None).await;
+        assert!(result.is_err());
     }
 }

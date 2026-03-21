@@ -66,23 +66,10 @@ pub trait IdentitySigner: Send + Sync {
 
     /// Sign arbitrary data with the identity's Ed25519 key.
     ///
-    /// Default implementation derives the signing key from root_secret via HKDF,
-    /// then signs. Hardware signers can override to use on-device signing.
-    async fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignerError> {
-        let secret = self.root_secret().await?;
-        let signing_key = crate::derive::derive_key(
-            secret.as_bytes(),
-            crate::derive::KeyPurpose::RnsSigning,
-        );
-        // Ed25519 sign using the derived key
-        // For now, return the derived key XOR'd with data hash as placeholder
-        // Real implementation needs ed25519-dalek
-        let _ = data;
-        let _ = signing_key;
-        Err(SignerError::Unavailable(
-            "Ed25519 signing requires ed25519-dalek (not yet wired)".into(),
-        ))
-    }
+    /// Implementations must derive or use the signing key appropriate to their tier.
+    /// Hardware signers (Tier A/B) use on-device signing.
+    /// Software signers (Tier C/D) derive via HKDF then sign with ed25519-dalek.
+    async fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignerError>;
 }
 
 /// A 32-byte root secret that zeroizes on drop.

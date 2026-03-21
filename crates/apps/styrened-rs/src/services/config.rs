@@ -10,10 +10,15 @@ use crate::config::{DaemonConfig, InterfaceConfig, NodeRole};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// Interior state — guarded by a single Mutex to prevent TOCTOU races.
+struct ConfigState {
+    path: Option<PathBuf>,
+    config: Option<DaemonConfig>,
+}
+
 /// Service-layer configuration management.
 pub struct ConfigService {
-    config_path: Mutex<Option<PathBuf>>,
-    config: Mutex<Option<DaemonConfig>>,
+    state: Mutex<ConfigState>,
 }
 
 impl ConfigService {
@@ -21,30 +26,38 @@ impl ConfigService {
     pub fn with_path(path: &Path) -> Result<Self, std::io::Error> {
         let config = DaemonConfig::from_path(path)?;
         Ok(Self {
-            config_path: Mutex::new(Some(path.to_path_buf())),
-            config: Mutex::new(Some(config)),
+            state: Mutex::new(ConfigState {
+                path: Some(path.to_path_buf()),
+                config: Some(config),
+            }),
         })
     }
 
     /// Create an empty ConfigService (no config file).
     pub fn new() -> Self {
         Self {
-            config_path: Mutex::new(None),
-            config: Mutex::new(None),
+            state: Mutex::new(ConfigState {
+                path: None,
+                config: None,
+            }),
         }
     }
 
-    /// Load configuration from a path (sets both path and config).
+    /// Load configuration from a path (sets both path and config atomically).
     pub fn load(&self, path: &Path) -> Result<(), std::io::Error> {
         let config = DaemonConfig::from_path(path)?;
-        *self.config_path.lock().unwrap() = Some(path.to_path_buf());
-        *self.config.lock().unwrap() = Some(config);
+        let mut s = self.state.lock().unwrap();
+        s.path = Some(path.to_path_buf());
+        s.config = Some(config);
         Ok(())
     }
 
     /// Reload configuration from disk.
     pub fn reload(&self) -> Result<(), std::io::Error> {
-        let path = self.config_path.lock().unwrap().clone();
+        let path = {
+            let s = self.state.lock().unwrap();
+            s.path.clone()
+        };
         let Some(path) = path else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -52,25 +65,26 @@ impl ConfigService {
             ));
         };
         let config = DaemonConfig::from_path(&path)?;
-        *self.config.lock().unwrap() = Some(config);
+        self.state.lock().unwrap().config = Some(config);
         Ok(())
     }
 
     /// Get the config path, if set.
     pub fn config_path(&self) -> Option<PathBuf> {
-        self.config_path.lock().unwrap().clone()
+        self.state.lock().unwrap().path.clone()
     }
 
     /// Check if a config is loaded.
     pub fn is_loaded(&self) -> bool {
-        self.config.lock().unwrap().is_some()
+        self.state.lock().unwrap().config.is_some()
     }
 
     /// Get the list of configured TCP client endpoints.
     pub fn tcp_client_endpoints(&self) -> Vec<(String, u16)> {
-        self.config
+        self.state
             .lock()
             .unwrap()
+            .config
             .as_ref()
             .map(|c| c.tcp_client_endpoints())
             .unwrap_or_default()
@@ -78,9 +92,10 @@ impl ConfigService {
 
     /// Get the configured node role (default: FullNode).
     pub fn node_role(&self) -> NodeRole {
-        self.config
+        self.state
             .lock()
             .unwrap()
+            .config
             .as_ref()
             .map(|c| c.role)
             .unwrap_or_default()
@@ -88,9 +103,10 @@ impl ConfigService {
 
     /// Get all configured interfaces.
     pub fn interfaces(&self) -> Vec<InterfaceConfig> {
-        self.config
+        self.state
             .lock()
             .unwrap()
+            .config
             .as_ref()
             .map(|c| c.interfaces.clone())
             .unwrap_or_default()
@@ -171,5 +187,49 @@ port = 4242
 
         svc.reload().unwrap();
         assert_eq!(svc.interfaces().len(), 1);
+    }
+
+    #[test]
+    fn load_on_empty_service() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+role = "hub"
+
+[[interfaces]]
+type = "tcp_server"
+enabled = true
+host = "0.0.0.0"
+port = 4242
+"#,
+        )
+        .unwrap();
+
+        let svc = ConfigService::new();
+        assert!(!svc.is_loaded());
+
+        svc.load(&path).unwrap();
+        assert!(svc.is_loaded());
+        assert_eq!(svc.config_path(), Some(path));
+        assert_eq!(svc.node_role(), NodeRole::Hub);
+        assert_eq!(svc.interfaces().len(), 1);
+    }
+
+    #[test]
+    fn load_then_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "").unwrap();
+
+        let svc = ConfigService::new();
+        svc.load(&path).unwrap();
+        assert_eq!(svc.node_role(), NodeRole::FullNode);
+
+        // Overwrite with hub
+        std::fs::write(&path, r#"role = "hub""#).unwrap();
+        svc.reload().unwrap();
+        assert_eq!(svc.node_role(), NodeRole::Hub);
     }
 }

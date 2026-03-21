@@ -2,27 +2,51 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Default Styrene data directory: ~/.styrene/
-pub fn default_data_dir() -> PathBuf {
+fn home_dir() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
-        .join(".styrene")
 }
 
-/// Default config file path: ~/.styrene/config.toml
+/// Config directory: $STYRENE_CONFIG_DIR or ~/.config/styrene/
+/// Matches Python's styrened.paths.config_dir().
+pub fn default_config_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("STYRENE_CONFIG_DIR") {
+        return PathBuf::from(d);
+    }
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        return PathBuf::from(xdg).join("styrene");
+    }
+    home_dir().join(".config").join("styrene")
+}
+
+/// Data directory: $STYRENE_DATA_DIR or ~/.local/share/styrene/
+/// Matches Python's styrened.paths.data_dir().
+pub fn default_data_dir() -> PathBuf {
+    if let Ok(d) = std::env::var("STYRENE_DATA_DIR") {
+        return PathBuf::from(d);
+    }
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        return PathBuf::from(xdg).join("styrene");
+    }
+    home_dir().join(".local").join("share").join("styrene")
+}
+
+/// Default config file path: ~/.config/styrene/config.yaml
+/// Matches Python's styrened.paths.core_config().
 pub fn default_config_path() -> PathBuf {
-    default_data_dir().join("config.toml")
+    default_config_dir().join("config.yaml")
 }
 
-/// Default database path: ~/.styrene/store.db
+/// Default database path: ~/.local/share/styrene/messages.db
 pub fn default_db_path() -> PathBuf {
-    default_data_dir().join("store.db")
+    default_data_dir().join("messages.db")
 }
 
-/// Default identity path: ~/.styrene/identity
+/// Default identity path: ~/.config/styrene/identity
+/// Matches Python's styrened.paths.identity_file().
 pub fn default_identity_path() -> PathBuf {
-    default_data_dir().join("identity")
+    default_config_dir().join("identity")
 }
 
 /// Node role — determines what transport and protocol features are active.
@@ -56,7 +80,7 @@ impl NodeRole {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DaemonConfig {
     #[serde(default)]
     pub interfaces: Vec<InterfaceConfig>,
@@ -64,7 +88,7 @@ pub struct DaemonConfig {
     pub role: NodeRole,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InterfaceConfig {
     #[serde(rename = "type")]
     pub kind: String,
@@ -151,12 +175,19 @@ mod tests {
     }
 
     #[test]
-    fn default_paths_are_under_styrene_dir() {
-        let data = super::default_data_dir();
-        assert!(data.ends_with(".styrene"));
-        assert!(super::default_config_path().ends_with(".styrene/config.toml"));
-        assert!(super::default_db_path().ends_with(".styrene/store.db"));
-        assert!(super::default_identity_path().ends_with(".styrene/identity"));
+    fn default_paths_match_python_layout() {
+        // config dir: ~/.config/styrene/
+        let config_dir = super::default_config_dir();
+        assert!(config_dir.ends_with("styrene"), "config_dir={config_dir:?}");
+        // data dir: ~/.local/share/styrene/
+        let data_dir = super::default_data_dir();
+        assert!(data_dir.ends_with("styrene"), "data_dir={data_dir:?}");
+        // config file in config dir
+        assert!(super::default_config_path().ends_with("styrene/config.yaml"));
+        // db in data dir
+        assert!(super::default_db_path().ends_with("styrene/messages.db"));
+        // identity in config dir
+        assert!(super::default_identity_path().ends_with("styrene/identity"));
     }
 
     #[test]

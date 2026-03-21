@@ -15,11 +15,10 @@ async-trait = "0.1"
 # Tier D: EncryptedFile backend
 argon2 = { version = "0.5", optional = true }
 chacha20poly1305 = { version = "0.10", optional = true }
-dirs = { version = "5", optional = true }
 
 [features]
 default = ["file-signer"]
-file-signer = ["argon2", "chacha20poly1305", "dirs"]
+file-signer = ["argon2", "chacha20poly1305"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }

@@ -43,12 +43,14 @@ impl FileSigner {
         Self { path, label }
     }
 
-    /// Default identity file path: `~/.styrene/identity.key`.
+    /// Default identity file path: `~/.config/styrene/identity.key`.
+    ///
+    /// Uses $HOME directly (consistent with styrened-rs config module).
     pub fn default_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".styrene")
-            .join("identity.key")
+        let home = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."));
+        home.join(".config").join("styrene").join("identity.key")
     }
 
     /// Create with the default path.
@@ -171,15 +173,24 @@ impl IdentitySigner for FileSigner {
         self.path.exists()
     }
 
+    async fn sign(&self, _data: &[u8]) -> Result<Vec<u8>, SignerError> {
+        // Ed25519 signing requires ed25519-dalek — not yet wired.
+        // When added, this will: derive signing key via HKDF, then sign.
+        Err(SignerError::Unavailable(
+            "Ed25519 signing not yet implemented (needs ed25519-dalek)".into(),
+        ))
+    }
+
     async fn root_secret(&self) -> Result<RootSecret, SignerError> {
-        // In a real deployment, the passphrase comes from:
-        // - Environment variable (STYRENE_PASSPHRASE)
-        // - Config file
-        // - Interactive prompt
-        // For now, check env var
         let passphrase = std::env::var("STYRENE_PASSPHRASE")
             .map(|s| s.into_bytes())
-            .unwrap_or_else(|_| b"styrene-default-dev-passphrase".to_vec());
+            .map_err(|_| {
+                SignerError::AuthRequired(
+                    "STYRENE_PASSPHRASE environment variable not set — \
+                     required to decrypt identity file"
+                        .into(),
+                )
+            })?;
         self.load(&passphrase)
     }
 }
