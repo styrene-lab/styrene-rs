@@ -17,17 +17,17 @@ use styrene_mesh::{StyreneMessage, StyreneMessageType};
 use tokio::sync::oneshot;
 
 /// A pending RPC request awaiting response.
-struct PendingRequest {
-    tx: oneshot::Sender<StyreneMessage>,
-    created_at: std::time::Instant,
+pub(crate) struct PendingRequest {
+    pub(crate) tx: oneshot::Sender<StyreneMessage>,
+    pub(crate) created_at: std::time::Instant,
     #[allow(dead_code)]
-    dest_hash: String,
+    pub(crate) dest_hash: String,
 }
 
 /// Service managing fleet RPC operations (status, exec, reboot, etc.).
 pub struct FleetService {
     /// Pending requests keyed by 16-byte request_id.
-    pending: Mutex<HashMap<[u8; 16], PendingRequest>>,
+    pub(crate) pending: Mutex<HashMap<[u8; 16], PendingRequest>>,
     /// Transport for sending RPC messages (None in test mode).
     transport: Option<Arc<dyn MeshTransport>>,
     /// Signing key for LXMF messages.

@@ -264,7 +264,13 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         app_context.discovery_arc(),
         app_context.events_arc(),
     );
-    eprintln!("[daemon] service workers started (inbound + announce)");
+    // Register RPC response handler for StyreneProtocol responses
+    app_context.protocol().register(Box::new(
+        reticulum_daemon::workers::rpc_response::RpcResponseHandler::new(
+            app_context.fleet_arc(),
+        ),
+    ));
+    eprintln!("[daemon] service workers started (inbound + announce + rpc-response)");
 
     // --- Unix socket IPC server ---
     let ipc_config = styrene_ipc_server::IpcServerConfig {
