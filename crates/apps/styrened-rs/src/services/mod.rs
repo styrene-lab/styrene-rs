@@ -7,7 +7,7 @@
 //!
 //! Service graph:
 //! - Package E: identity, config, status, fleet, auth, auto_reply
-//! - Package F: messaging, discovery (+ storage/node_store)
+//! - Package F: messaging, discovery (+ shared MessagesStore)
 //! - Package G: protocol
 //! - Package H: events, tunnel
 
@@ -32,6 +32,6 @@ pub use events::EventService;
 pub use fleet::FleetService;
 pub use identity::IdentityService;
 pub use messaging::MessagingService;
-pub use protocol::ProtocolService;
+pub use protocol::{ProtocolHandler, ProtocolService};
 pub use status::{InterfaceRecord, PropagationState, StatusService};
 pub use tunnel::TunnelService;
