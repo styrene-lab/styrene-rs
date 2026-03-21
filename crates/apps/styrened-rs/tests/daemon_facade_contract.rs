@@ -136,9 +136,10 @@ async fn daemon_trait_object_not_implemented_methods() {
         daemon.list_tunnels().await,
         Err(IpcError::NotImplemented { .. })
     ));
+    // send_chat returns Internal error (no transport) rather than NotImplemented
     assert!(matches!(
         daemon.send_chat(SendChatRequest::default()).await,
-        Err(IpcError::NotImplemented { .. })
+        Err(IpcError::Internal { .. })
     ));
     assert!(matches!(
         daemon.query_path_info("abc").await,
