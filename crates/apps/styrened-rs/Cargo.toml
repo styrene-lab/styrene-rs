@@ -37,6 +37,7 @@ rustls-pemfile = { workspace = true }
 x25519-dalek = { workspace = true }
 x509-parser = { workspace = true }
 zeroize.workspace = true
+dirs = "6.0.0"
 
 [dev-dependencies]
 tempfile = { workspace = true }

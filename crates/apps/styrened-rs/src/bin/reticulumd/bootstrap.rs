@@ -62,10 +62,18 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
             }
             _ => panic!("--rpc-tls-cert and --rpc-tls-key must be provided together"),
         };
-    let store = MessagesStore::open(&args.db).expect("open sqlite");
+    let db_path = args
+        .db
+        .clone()
+        .unwrap_or_else(reticulum_daemon::config::default_db_path);
+    // Ensure data directory exists
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let store = MessagesStore::open(&db_path).expect("open sqlite");
 
     let identity_path = args.identity.clone().unwrap_or_else(|| {
-        let mut path = args.db.clone();
+        let mut path = db_path.clone();
         path.set_extension("identity");
         path
     });
@@ -73,7 +81,12 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     let identity_hash = hex::encode(identity.address_hash().as_slice());
     let local_display_name =
         std::env::var("LXMF_DISPLAY_NAME").ok().and_then(|value| normalize_display_name(&value));
-    let daemon_config = args.config.as_ref().and_then(|path| match DaemonConfig::from_path(path) {
+    // Try explicit --config, then default path
+    let config_path = args.config.clone().or_else(|| {
+        let default = reticulum_daemon::config::default_config_path();
+        if default.exists() { Some(default) } else { None }
+    });
+    let daemon_config = config_path.as_ref().and_then(|path| match DaemonConfig::from_path(path) {
         Ok(config) => Some(config),
         Err(err) => {
             eprintln!("[daemon] failed to load config {}: {}", path.display(), err);
@@ -248,7 +261,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     // RpcDaemon holds its own Arc<Mutex<MessagesStore>>; we create a second
     // handle to the same on-disk database so both codepaths see the same data.
     let shared_store = Arc::new(std::sync::Mutex::new(
-        MessagesStore::open(&args.db).expect("app_context shared store"),
+        MessagesStore::open(&db_path).expect("app_context shared store"),
     ));
     let app_context = Arc::new(AppContext::new(
         mesh_transport,
@@ -260,7 +273,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         hex::encode(identity.address_hash().as_slice()),
     ));
     // Load config into ConfigService if a config file was provided
-    if let Some(config_path) = args.config.as_ref() {
+    if let Some(config_path) = config_path.as_ref() {
         if let Err(e) = app_context.config().load(config_path) {
             eprintln!("[daemon] failed to load config into ConfigService: {}", e);
         }

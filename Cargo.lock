@@ -6000,6 +6000,7 @@ dependencies = [
  "async-trait",
  "base64",
  "clap",
+ "dirs 6.0.0",
  "hex",
  "hmac",
  "rand_core 0.6.4",

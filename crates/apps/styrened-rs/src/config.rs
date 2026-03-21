@@ -1,6 +1,29 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Default Styrene data directory: ~/.styrene/
+pub fn default_data_dir() -> PathBuf {
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".styrene")
+}
+
+/// Default config file path: ~/.styrene/config.toml
+pub fn default_config_path() -> PathBuf {
+    default_data_dir().join("config.toml")
+}
+
+/// Default database path: ~/.styrene/store.db
+pub fn default_db_path() -> PathBuf {
+    default_data_dir().join("store.db")
+}
+
+/// Default identity path: ~/.styrene/identity
+pub fn default_identity_path() -> PathBuf {
+    default_data_dir().join("identity")
+}
 
 /// Node role — determines what transport and protocol features are active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -125,6 +148,15 @@ mod tests {
         assert!(NodeRole::FullNode.runs_transport());
         assert!(NodeRole::FullNode.accepts_inbound());
         assert!(!NodeRole::FullNode.is_propagation_store());
+    }
+
+    #[test]
+    fn default_paths_are_under_styrene_dir() {
+        let data = super::default_data_dir();
+        assert!(data.ends_with(".styrene"));
+        assert!(super::default_config_path().ends_with(".styrene/config.toml"));
+        assert!(super::default_db_path().ends_with(".styrene/store.db"));
+        assert!(super::default_identity_path().ends_with(".styrene/identity"));
     }
 
     #[test]

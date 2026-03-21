@@ -18,8 +18,9 @@ use std::path::PathBuf;
 struct Args {
     #[arg(long, default_value = "127.0.0.1:4243")]
     rpc: String,
-    #[arg(long, default_value = "reticulum.db")]
-    db: PathBuf,
+    /// Database path (default: ~/.styrene/store.db)
+    #[arg(long)]
+    db: Option<PathBuf>,
     #[arg(long)]
     config: Option<PathBuf>,
     #[arg(long)]
