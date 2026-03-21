@@ -14,7 +14,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "reticulumd")]
+#[command(name = "reticulumd", version, about = "Styrene mesh daemon (Rust)")]
 struct Args {
     #[arg(long, default_value = "127.0.0.1:4243")]
     rpc: String,
@@ -24,7 +24,7 @@ struct Args {
     config: Option<PathBuf>,
     #[arg(long)]
     identity: Option<PathBuf>,
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, alias = "announce-interval", default_value_t = 0)]
     announce_interval_secs: u64,
     #[arg(long)]
     transport: Option<String>,
@@ -34,6 +34,9 @@ struct Args {
     rpc_tls_key: Option<PathBuf>,
     #[arg(long)]
     rpc_tls_client_ca: Option<PathBuf>,
+    /// Unix socket path for IPC server (default: ~/.styrene/daemon.sock)
+    #[arg(long)]
+    socket: Option<PathBuf>,
 }
 
 #[tokio::main]
