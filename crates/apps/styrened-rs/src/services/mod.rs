@@ -27,7 +27,7 @@ pub mod tunnel;
 pub use auth::{AuthService, Capability, Role};
 pub use auto_reply::{AutoReplyConfig, AutoReplyMode, AutoReplyService};
 pub use config::ConfigService;
-pub use discovery::DiscoveryService;
+pub use discovery::{DiscoveryService, PeerRecord};
 pub use events::EventService;
 pub use fleet::FleetService;
 pub use identity::IdentityService;
