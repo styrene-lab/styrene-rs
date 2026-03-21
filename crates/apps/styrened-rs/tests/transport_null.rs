@@ -60,6 +60,13 @@ async fn null_transport_shutdown_succeeds() {
 }
 
 #[tokio::test]
+async fn null_transport_query_path_returns_none() {
+    let transport = NullTransport::new();
+    let dest = AddressHash::new([0xDD; 16]);
+    assert!(transport.query_path(&dest).await.is_none());
+}
+
+#[tokio::test]
 async fn null_transport_as_dyn_mesh_transport() {
     // Verify NullTransport can be used as Arc<dyn MeshTransport>
     let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());

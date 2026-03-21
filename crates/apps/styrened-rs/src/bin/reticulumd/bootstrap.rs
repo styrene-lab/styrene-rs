@@ -66,17 +66,17 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         .db
         .clone()
         .unwrap_or_else(reticulum_daemon::config::default_db_path);
-    // Ensure data directory exists
+    // Ensure data and config directories exist
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
+    std::fs::create_dir_all(reticulum_daemon::config::default_config_dir()).ok();
     let store = MessagesStore::open(&db_path).expect("open sqlite");
 
-    let identity_path = args.identity.clone().unwrap_or_else(|| {
-        let mut path = db_path.clone();
-        path.set_extension("identity");
-        path
-    });
+    let identity_path = args
+        .identity
+        .clone()
+        .unwrap_or_else(reticulum_daemon::config::default_identity_path);
     let identity = load_or_create_identity(&identity_path).expect("load identity");
     let identity_hash = hex::encode(identity.address_hash().as_slice());
     let local_display_name =

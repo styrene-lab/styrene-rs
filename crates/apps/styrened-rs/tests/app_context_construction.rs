@@ -99,3 +99,30 @@ fn app_context_messaging_and_discovery_share_store() {
     ctx.messaging().accept_inbound_record(&record).unwrap();
     assert!(ctx.messaging().get_message("msg1").unwrap().is_some());
 }
+
+#[test]
+fn app_context_set_signer_wires_transport() {
+    let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
+    let ctx = AppContext::new(transport.clone(), "signer-test".into(), test_store());
+
+    // Before set_signer, send_chat should fail with "transport not available"
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let err = rt.block_on(ctx.messaging().send_chat("deadbeef01020304deadbeef01020304", "hello", None));
+    assert!(err.is_err());
+    assert!(
+        err.unwrap_err().to_string().contains("transport not available"),
+        "should fail before set_signer"
+    );
+
+    // After set_signer, send_chat should fail with a different error (not connected)
+    // because NullTransport.is_connected() returns false
+    let identity = rns_core::identity::PrivateIdentity::new_from_name("test-signer");
+    ctx.set_signer(Arc::new(identity));
+
+    let err2 = rt.block_on(ctx.messaging().send_chat("deadbeef01020304deadbeef01020304", "hello", None));
+    assert!(err2.is_err());
+    assert!(
+        err2.unwrap_err().to_string().contains("not connected"),
+        "should fail with transport-not-connected after set_signer, not transport-not-available"
+    );
+}

@@ -86,7 +86,8 @@ pub async fn dispatch(
         MessageType::GetActivityHistory => dispatch_get_activity_history().await,
         MessageType::GetAdapterState => dispatch_get_adapter_state().await,
         MessageType::SubActivity => dispatch_sub_activity().await,
-        MessageType::Unsub => dispatch_unsub().await,
+        // Unsub is handled in connection.rs before dispatch — this is unreachable
+        MessageType::Unsub => ok_payload(Payload::new()),
         MessageType::CmdExec => dispatch_exec(daemon, &payload).await,
         MessageType::CmdRebootDevice => dispatch_reboot_device(daemon, &payload).await,
         MessageType::CmdBlockPeer => dispatch_block_peer(&payload).await,
@@ -94,7 +95,7 @@ pub async fn dispatch(
         MessageType::QueryBlockedPeers => dispatch_blocked_peers().await,
         MessageType::SaveCoreConfig => dispatch_save_core_config().await,
         MessageType::CmdSyncMessages => dispatch_sync_messages().await,
-        MessageType::CmdSend => dispatch_send(daemon, payload).await,
+        MessageType::CmdSend => dispatch_send(daemon, &payload).await,
         MessageType::CmdBoundarySnapshot => dispatch_boundary_snapshot().await,
         MessageType::CmdProvisionAdapter => dispatch_provision_adapter().await,
         _ => Err(format!("unimplemented message type: 0x{:02x}", msg_type as u8)),
@@ -702,14 +703,6 @@ async fn dispatch_sub_activity() -> Result<Payload, String> {
     ok_payload(p)
 }
 
-// ── Unsub ────────────────────────────────────────────────────────────────────
-
-async fn dispatch_unsub() -> Result<Payload, String> {
-    let mut p = Payload::new();
-    p.insert("unsubscribed".into(), rmpv::Value::Boolean(true));
-    ok_payload(p)
-}
-
 // ── Exec / Reboot (fleet RPC) ────────────────────────────────────────────────
 
 async fn dispatch_exec(
@@ -760,17 +753,17 @@ async fn dispatch_reboot_device(
 
 async fn dispatch_send(
     daemon: &Arc<dyn Daemon>,
-    payload: Payload,
+    payload: &Payload,
 ) -> Result<Payload, String> {
-    let peer_hash = val_str(&payload, "destination_hash")
-        .or_else(|| val_str(&payload, "peer_hash"))
+    let peer_hash = val_str(payload, "destination_hash")
+        .or_else(|| val_str(payload, "peer_hash"))
         .ok_or("missing destination_hash or peer_hash")?;
     let peer_hash = validate_hash(peer_hash)?.to_string();
-    let content = val_str(&payload, "content").unwrap_or("").to_string();
+    let content = val_str(payload, "content").unwrap_or("").to_string();
     if content.len() > 65536 {
         return Err(format!("content too large: {} bytes", content.len()));
     }
-    let title = val_str(&payload, "title").map(|s| s.to_string());
+    let title = val_str(payload, "title").map(|s| s.to_string());
     let mut req = styrene_ipc::types::SendChatRequest::default();
     req.peer_hash = peer_hash;
     req.content = content;
@@ -788,40 +781,28 @@ async fn dispatch_send(
 
 async fn dispatch_block_peer(payload: &Payload) -> Result<Payload, String> {
     let _hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
-    // Stub: peer blocking not yet implemented in Daemon trait
-    let mut p = Payload::new();
-    p.insert("blocked".into(), rmpv::Value::Boolean(true));
-    ok_payload(p)
+    Err("peer blocking not yet implemented".into())
 }
 
 async fn dispatch_unblock_peer(payload: &Payload) -> Result<Payload, String> {
     let _hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
-    let mut p = Payload::new();
-    p.insert("unblocked".into(), rmpv::Value::Boolean(true));
-    ok_payload(p)
+    Err("peer unblocking not yet implemented".into())
 }
 
 async fn dispatch_blocked_peers() -> Result<Payload, String> {
-    let mut p = Payload::new();
-    p.insert("blocked_peers".into(), rmpv::Value::Array(vec![]));
-    ok_payload(p)
+    Err("peer blocking not yet implemented".into())
 }
 
 // ── Config save (stub) ──────────────────────────────────────────────────────
 
 async fn dispatch_save_core_config() -> Result<Payload, String> {
-    // Stub: config persistence not yet wired
-    let mut p = Payload::new();
-    p.insert("saved".into(), rmpv::Value::Boolean(true));
-    ok_payload(p)
+    Err("config persistence not yet implemented".into())
 }
 
 // ── Sync messages (stub) ─────────────────────────────────────────────────────
 
 async fn dispatch_sync_messages() -> Result<Payload, String> {
-    let mut p = Payload::new();
-    p.insert("synced".into(), rmpv::Value::from(0_i64));
-    ok_payload(p)
+    Err("message sync not yet implemented".into())
 }
 
 // ── Boundary snapshot (stub) ─────────────────────────────────────────────────

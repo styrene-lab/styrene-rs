@@ -32,10 +32,10 @@ pub struct MessagingService {
     /// Receipt correlation: packet_hash → message_id.
     /// Populated by send operations, consumed by receipt callbacks.
     receipt_map: Mutex<HashMap<String, String>>,
-    /// Transport for outbound delivery (None until signer wired).
-    transport: Mutex<Option<Arc<dyn MeshTransport>>>,
-    /// Signing key for LXMF wire messages (None until signer wired).
-    signer: Mutex<Option<Arc<rns_core::identity::PrivateIdentity>>>,
+    /// Transport for outbound delivery (set once via set_signer).
+    transport: std::sync::OnceLock<Arc<dyn MeshTransport>>,
+    /// Signing key for LXMF wire messages (set once via set_signer).
+    signer: std::sync::OnceLock<Arc<rns_core::identity::PrivateIdentity>>,
 }
 
 impl MessagingService {
@@ -44,20 +44,19 @@ impl MessagingService {
         Self {
             store,
             receipt_map: Mutex::new(HashMap::new()),
-            transport: Mutex::new(None),
-            signer: Mutex::new(None),
+            transport: std::sync::OnceLock::new(),
+            signer: std::sync::OnceLock::new(),
         }
     }
 
-    /// Wire transport and signer for outbound delivery.
-    /// Called by AppContext.set_signer() when identity becomes available.
+    /// Wire transport and signer for outbound delivery (called once during bootstrap).
     pub fn set_signer(
         &self,
         transport: Arc<dyn MeshTransport>,
         signer: Arc<rns_core::identity::PrivateIdentity>,
     ) {
-        *self.transport.lock().unwrap() = Some(transport);
-        *self.signer.lock().unwrap() = Some(signer);
+        let _ = self.transport.set(transport);
+        let _ = self.signer.set(signer);
     }
 
     /// Create a stub for tests (in-memory store).
@@ -66,8 +65,8 @@ impl MessagingService {
         Self {
             store: Arc::new(Mutex::new(store)),
             receipt_map: Mutex::new(HashMap::new()),
-            transport: Mutex::new(None),
-            signer: Mutex::new(None),
+            transport: std::sync::OnceLock::new(),
+            signer: std::sync::OnceLock::new(),
         }
     }
 
@@ -83,11 +82,11 @@ impl MessagingService {
         content: &str,
         title: Option<&str>,
     ) -> Result<String, std::io::Error> {
-        let transport = self.transport.lock().unwrap().clone().ok_or_else(|| {
-            std::io::Error::other("transport not available — cannot send")
+        let transport = self.transport.get().cloned().ok_or_else(|| {
+            std::io::Error::other("transport not available — call set_signer() first")
         })?;
-        let signer = self.signer.lock().unwrap().clone().ok_or_else(|| {
-            std::io::Error::other("signer not available — cannot send")
+        let signer = self.signer.get().cloned().ok_or_else(|| {
+            std::io::Error::other("signer not available — call set_signer() first")
         })?;
 
         if !transport.is_connected() {
