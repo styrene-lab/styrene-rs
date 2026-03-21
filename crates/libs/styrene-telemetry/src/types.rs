@@ -337,8 +337,9 @@ mod tests {
             raw_bytes: HVec::new(),
         })
         .unwrap();
-        let aircraft: alloc::vec::Vec<_> = b
+        let aircraft: heapless::Vec<_, MAX_BATCH_RECORDS> = b
             .of_type(TelemetryType::AircraftPosition as u16)
+            .cloned()
             .collect();
         assert_eq!(aircraft.len(), 1);
     }
