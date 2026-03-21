@@ -6,7 +6,7 @@
 //! Note: this wraps the `DaemonConfig` model from `crate::config`,
 //! adding service-layer operations (load, reload, interface enumeration).
 
-use crate::config::{DaemonConfig, InterfaceConfig};
+use crate::config::{DaemonConfig, InterfaceConfig, NodeRole};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -64,6 +64,16 @@ impl ConfigService {
             .unwrap()
             .as_ref()
             .map(|c| c.tcp_client_endpoints())
+            .unwrap_or_default()
+    }
+
+    /// Get the configured node role (default: FullNode).
+    pub fn node_role(&self) -> NodeRole {
+        self.config
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|c| c.role)
             .unwrap_or_default()
     }
 

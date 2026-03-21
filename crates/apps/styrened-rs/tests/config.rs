@@ -21,6 +21,7 @@ interfaces = [
 #[test]
 fn filters_enabled_tcp_clients() {
     let cfg = DaemonConfig {
+        role: Default::default(),
         interfaces: vec![
             InterfaceConfig {
                 kind: "tcp_client".into(),
