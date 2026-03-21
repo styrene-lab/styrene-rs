@@ -43,6 +43,18 @@ fn val_str<'a>(payload: &'a HashMap<String, rmpv::Value>, key: &str) -> Option<&
     payload.get(key).and_then(|v| v.as_str())
 }
 
+/// Validate a hex hash string (16-32 hex chars).
+fn validate_hash(s: &str) -> Result<&str, String> {
+    if s.len() >= 16
+        && s.len() <= 64
+        && s.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        Ok(s)
+    } else {
+        Err(format!("invalid hash: expected 16-64 hex chars, got '{s}'"))
+    }
+}
+
 fn val_u64(payload: &HashMap<String, rmpv::Value>, key: &str) -> Option<u64> {
     payload.get(key).and_then(|v| v.as_u64())
 }
@@ -185,6 +197,7 @@ async fn dispatch_query_messages(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let peer_hash = validate_hash(peer_hash)?;
     let limit = val_u64(payload, "limit").unwrap_or(50) as u32;
     let before_ts = val_i64(payload, "before_ts");
     let msgs = daemon
@@ -215,12 +228,13 @@ async fn dispatch_send_chat(
     daemon: &Arc<dyn Daemon>,
     payload: Payload,
 ) -> Result<Payload, String> {
-    let peer_hash = val_str(&payload, "peer_hash")
-        .ok_or("missing peer_hash")?
-        .to_string();
-    let content = val_str(&payload, "content")
-        .ok_or("missing content")?
-        .to_string();
+    let peer_hash = val_str(&payload, "peer_hash").ok_or("missing peer_hash")?;
+    let peer_hash = validate_hash(peer_hash)?.to_string();
+    let content = val_str(&payload, "content").ok_or("missing content")?;
+    if content.len() > 65536 {
+        return Err(format!("content too large: {} bytes (max 65536)", content.len()));
+    }
+    let content = content.to_string();
     let title = val_str(&payload, "title").map(String::from);
     let delivery_method = val_str(&payload, "delivery_method").map(String::from);
 
@@ -242,6 +256,7 @@ async fn dispatch_mark_read(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let peer_hash = validate_hash(peer_hash)?;
     let count = daemon.mark_read(peer_hash).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("count".into(), rmpv::Value::from(count));
@@ -255,6 +270,7 @@ async fn dispatch_delete_conversation(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let peer_hash = validate_hash(peer_hash)?;
     let count = daemon
         .delete_conversation(peer_hash)
         .await
