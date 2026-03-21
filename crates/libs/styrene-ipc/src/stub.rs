@@ -138,6 +138,22 @@ impl DaemonStatus for StubDaemon {
     ) -> Result<bool, IpcError> {
         Err(IpcError::not_implemented("set_auto_reply"))
     }
+
+    async fn save_config(&self, _config: ConfigSnapshot) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("save_config"))
+    }
+
+    async fn block_peer(&self, _identity_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("block_peer"))
+    }
+
+    async fn unblock_peer(&self, _identity_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("unblock_peer"))
+    }
+
+    async fn blocked_peers(&self) -> Result<Vec<String>, IpcError> {
+        Err(IpcError::not_implemented("blocked_peers"))
+    }
 }
 
 #[async_trait]

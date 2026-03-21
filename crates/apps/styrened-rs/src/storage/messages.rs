@@ -656,9 +656,56 @@ impl MessagesStore {
                 notes TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS blocked_peers (
+                identity_hash TEXT PRIMARY KEY,
+                blocked_at INTEGER NOT NULL
             );",
         )?;
         Ok(())
+    }
+
+    // ── Blocklist ────────────────────────────────────────────────────────
+
+    /// Block a peer. Returns true if newly blocked, false if already blocked.
+    pub fn block_peer(&self, identity_hash: &str) -> rusqlite::Result<bool> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let changed = self.conn.execute(
+            "INSERT OR IGNORE INTO blocked_peers (identity_hash, blocked_at) VALUES (?1, ?2)",
+            rusqlite::params![identity_hash, now],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Unblock a peer. Returns true if was blocked, false if wasn't.
+    pub fn unblock_peer(&self, identity_hash: &str) -> rusqlite::Result<bool> {
+        let changed = self.conn.execute(
+            "DELETE FROM blocked_peers WHERE identity_hash = ?1",
+            rusqlite::params![identity_hash],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// List all blocked peer identity hashes.
+    pub fn blocked_peers(&self) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT identity_hash FROM blocked_peers ORDER BY blocked_at")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// Check if a peer is blocked.
+    pub fn is_blocked(&self, identity_hash: &str) -> rusqlite::Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM blocked_peers WHERE identity_hash = ?1",
+            rusqlite::params![identity_hash],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 }
 
@@ -910,5 +957,36 @@ mod tests {
         // Most recent first
         assert_eq!(msgs[0].id, "m2");
         assert_eq!(msgs[1].id, "m1");
+    }
+
+    // ── Blocklist tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn block_and_unblock_peer() {
+        let store = MessagesStore::in_memory().expect("store");
+        assert!(!store.is_blocked("abc123").unwrap());
+        assert!(store.block_peer("abc123").unwrap()); // newly blocked
+        assert!(store.is_blocked("abc123").unwrap());
+        assert!(!store.block_peer("abc123").unwrap()); // already blocked
+        assert!(store.unblock_peer("abc123").unwrap()); // was blocked
+        assert!(!store.is_blocked("abc123").unwrap());
+        assert!(!store.unblock_peer("abc123").unwrap()); // wasn't blocked
+    }
+
+    #[test]
+    fn blocked_peers_list() {
+        let store = MessagesStore::in_memory().expect("store");
+        store.block_peer("peer_a").unwrap();
+        store.block_peer("peer_b").unwrap();
+        store.block_peer("peer_c").unwrap();
+        let blocked = store.blocked_peers().unwrap();
+        assert_eq!(blocked.len(), 3);
+        assert!(blocked.contains(&"peer_a".to_string()));
+        assert!(blocked.contains(&"peer_b".to_string()));
+        assert!(blocked.contains(&"peer_c".to_string()));
+        store.unblock_peer("peer_b").unwrap();
+        let blocked = store.blocked_peers().unwrap();
+        assert_eq!(blocked.len(), 2);
+        assert!(!blocked.contains(&"peer_b".to_string()));
     }
 }

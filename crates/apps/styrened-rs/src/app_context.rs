@@ -27,6 +27,7 @@ use rns_core::identity::PrivateIdentity;
 /// add constructor parameters as services gain real dependencies.
 pub struct AppContext {
     transport: Arc<dyn MeshTransport>,
+    store: Arc<Mutex<MessagesStore>>,
     identity: Arc<IdentityService>,
     config: Arc<ConfigService>,
     status: Arc<StatusService>,
@@ -65,6 +66,7 @@ impl AppContext {
         let discovery = Arc::new(DiscoveryService::with_store(store.clone()));
 
         // Phase 4: Messaging (depends on transport, identity, reads/writes store's message table)
+        let store_ref = store.clone();
         let messaging = Arc::new(MessagingService::with_store(store));
 
         // Phase 5: Protocol dispatch (depends on messaging)
@@ -88,6 +90,7 @@ impl AppContext {
 
         Self {
             transport,
+            store: store_ref,
             identity,
             config,
             status,
@@ -112,6 +115,11 @@ impl AppContext {
     }
 
     // --- Accessors ---
+
+    /// Shared store handle for direct access (blocklist, etc.).
+    pub fn store(&self) -> &Arc<Mutex<MessagesStore>> {
+        &self.store
+    }
 
     /// The transport abstraction (real or null).
     pub fn transport(&self) -> &dyn MeshTransport {

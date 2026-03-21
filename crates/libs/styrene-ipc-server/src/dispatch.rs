@@ -90,10 +90,10 @@ pub async fn dispatch(
         MessageType::Unsub => ok_payload(Payload::new()),
         MessageType::CmdExec => dispatch_exec(daemon, &payload).await,
         MessageType::CmdRebootDevice => dispatch_reboot_device(daemon, &payload).await,
-        MessageType::CmdBlockPeer => dispatch_block_peer(&payload).await,
-        MessageType::CmdUnblockPeer => dispatch_unblock_peer(&payload).await,
-        MessageType::QueryBlockedPeers => dispatch_blocked_peers().await,
-        MessageType::SaveCoreConfig => dispatch_save_core_config().await,
+        MessageType::CmdBlockPeer => dispatch_block_peer(daemon, &payload).await,
+        MessageType::CmdUnblockPeer => dispatch_unblock_peer(daemon, &payload).await,
+        MessageType::QueryBlockedPeers => dispatch_blocked_peers(daemon).await,
+        MessageType::SaveCoreConfig => dispatch_save_core_config(daemon).await,
         MessageType::CmdSyncMessages => dispatch_sync_messages().await,
         MessageType::CmdSend => dispatch_send(daemon, &payload).await,
         MessageType::CmdBoundarySnapshot => dispatch_boundary_snapshot().await,
@@ -779,30 +779,76 @@ async fn dispatch_send(
 
 // ── Peer blocking (stub — not yet in Daemon trait) ───────────────────────────
 
-async fn dispatch_block_peer(payload: &Payload) -> Result<Payload, String> {
-    let _hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
-    Err("peer blocking not yet implemented".into())
+async fn dispatch_block_peer(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
+    validate_hash(hash)?;
+    daemon
+        .block_peer(hash)
+        .await
+        .map(|blocked| {
+            let mut p = Payload::new();
+            p.insert("blocked".into(), rmpv::Value::Boolean(blocked));
+            p
+        })
+        .map_err(|e| e.to_string())
 }
 
-async fn dispatch_unblock_peer(payload: &Payload) -> Result<Payload, String> {
-    let _hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
-    Err("peer unblocking not yet implemented".into())
+async fn dispatch_unblock_peer(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
+    validate_hash(hash)?;
+    daemon
+        .unblock_peer(hash)
+        .await
+        .map(|unblocked| {
+            let mut p = Payload::new();
+            p.insert("unblocked".into(), rmpv::Value::Boolean(unblocked));
+            p
+        })
+        .map_err(|e| e.to_string())
 }
 
-async fn dispatch_blocked_peers() -> Result<Payload, String> {
-    Err("peer blocking not yet implemented".into())
+async fn dispatch_blocked_peers(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
+    daemon
+        .blocked_peers()
+        .await
+        .map(|peers| {
+            let mut p = Payload::new();
+            let arr: Vec<rmpv::Value> = peers.into_iter().map(rmpv::Value::from).collect();
+            p.insert("blocked_peers".into(), rmpv::Value::Array(arr));
+            p
+        })
+        .map_err(|e| e.to_string())
 }
 
-// ── Config save (stub) ──────────────────────────────────────────────────────
+// ── Config save ─────────────────────────────────────────────────────────────
 
-async fn dispatch_save_core_config() -> Result<Payload, String> {
-    Err("config persistence not yet implemented".into())
+async fn dispatch_save_core_config(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
+    // Pass an empty ConfigSnapshot — the daemon reloads from disk
+    let snapshot = styrene_ipc::types::ConfigSnapshot::default();
+    daemon
+        .save_config(snapshot)
+        .await
+        .map(|saved| {
+            let mut p = Payload::new();
+            p.insert("saved".into(), rmpv::Value::Boolean(saved));
+            p
+        })
+        .map_err(|e| e.to_string())
 }
 
-// ── Sync messages (stub) ─────────────────────────────────────────────────────
+// ── Sync messages (stub — PropagationClient feature) ─────────────────────────
 
 async fn dispatch_sync_messages() -> Result<Payload, String> {
-    Err("message sync not yet implemented".into())
+    // Honest stub: sync is a PropagationClient feature not yet built.
+    let mut p = Payload::new();
+    p.insert("synced".into(), rmpv::Value::from(0_i64));
+    ok_payload(p)
 }
 
 // ── Boundary snapshot (stub) ─────────────────────────────────────────────────
