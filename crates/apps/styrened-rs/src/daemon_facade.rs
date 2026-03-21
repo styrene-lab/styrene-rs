@@ -330,9 +330,22 @@ impl DaemonStatus for DaemonFacade {
             .collect())
     }
 
-    async fn query_path_info(&self, _dest_hash: &str) -> Result<PathInfo, IpcError> {
+    async fn query_path_info(&self, dest_hash: &str) -> Result<PathInfo, IpcError> {
         self.require(&Capability::Status)?;
-        Err(Self::not_implemented("query_path_info"))
+        let dest_bytes: [u8; 16] = hex::decode(dest_hash)
+            .map_err(|e| IpcError::invalid_request(format!("invalid hash: {e}")))?
+            .try_into()
+            .map_err(|_| IpcError::invalid_request("hash must be 16 bytes"))?;
+        let dest = rns_core::hash::AddressHash::new(dest_bytes);
+
+        let path = self.ctx.transport().query_path(&dest).await;
+        let mut info = PathInfo::default();
+        info.destination_hash = dest_hash.to_string();
+        if let Some((hops, iface)) = path {
+            info.hops = Some(hops as u32);
+            info.interface = Some(hex::encode(iface.as_slice()));
+        }
+        Ok(info)
     }
 
     async fn query_auto_reply(&self) -> Result<AutoReplyConfig, IpcError> {

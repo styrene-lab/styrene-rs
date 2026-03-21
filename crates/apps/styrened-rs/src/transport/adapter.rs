@@ -159,6 +159,10 @@ impl MeshTransport for TokioTransportAdapter {
         self.lifecycle_tx.subscribe()
     }
 
+    async fn query_path(&self, dest: &AddressHash) -> Option<(u8, AddressHash)> {
+        self.transport.path_info(dest).await
+    }
+
     fn identity_hash(&self) -> AddressHash {
         self.identity_addr
     }

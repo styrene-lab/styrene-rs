@@ -40,6 +40,7 @@ pub async fn dispatch(
         MessageType::QueryConfig => dispatch_query_config(daemon).await,
         MessageType::CmdSetContact => dispatch_set_contact(daemon, &payload).await,
         MessageType::CmdRemoveContact => dispatch_remove_contact(daemon, &payload).await,
+        MessageType::QueryPathInfo => dispatch_query_path_info(daemon, &payload).await,
         MessageType::CmdDeviceStatus => dispatch_device_status(daemon, &payload).await,
         MessageType::SubDevices => dispatch_sub_devices(daemon).await,
         MessageType::SubMessages => dispatch_sub_messages(daemon, &payload).await,
@@ -801,4 +802,24 @@ async fn dispatch_boundary_snapshot() -> Result<Payload, String> {
 
 async fn dispatch_provision_adapter() -> Result<Payload, String> {
     Err("adapter provisioning not available in Rust daemon".into())
+}
+
+// ── Path Info ────────────────────────────────────────────────────────────────
+
+async fn dispatch_query_path_info(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let info = daemon.query_path_info(dest).await.map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("destination_hash".into(), rmpv::Value::from(info.destination_hash.as_str()));
+    p.insert("found".into(), rmpv::Value::Boolean(info.hops.is_some()));
+    if let Some(hops) = info.hops {
+        p.insert("hops".into(), rmpv::Value::from(hops as i64));
+    }
+    if let Some(iface) = &info.interface {
+        p.insert("interface".into(), rmpv::Value::from(iface.as_str()));
+    }
+    ok_payload(p)
 }

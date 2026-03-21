@@ -98,6 +98,10 @@ pub trait MeshTransport: Send + Sync {
 
     // --- State queries ---
 
+    /// Query path table for hop count and next-hop interface.
+    /// Returns `None` if no path is known for the destination.
+    async fn query_path(&self, dest: &AddressHash) -> Option<(u8, AddressHash)>;
+
     /// Our identity address hash.
     fn identity_hash(&self) -> AddressHash;
 
