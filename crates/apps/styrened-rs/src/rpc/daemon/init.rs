@@ -223,7 +223,7 @@ impl RpcDaemon {
         source_identity: Option<String>,
         source_node: Option<String>,
     ) -> Result<(), std::io::Error> {
-        let _ = stamp_cost;
+        let stamp_cost = stamp_cost;
         let stamp_cost_flexibility = stamp_cost_flexibility.flatten();
         let peering_cost = peering_cost.flatten();
         let record = self.upsert_peer(peer, timestamp, name, name_source);
@@ -246,6 +246,7 @@ impl RpcDaemon {
             rssi,
             snr,
             q,
+            stamp_cost,
             stamp_cost_flexibility,
             peering_cost,
         };
@@ -266,6 +267,7 @@ impl RpcDaemon {
                 "rssi": rssi,
                 "snr": snr,
                 "q": q,
+                "stamp_cost": stamp_cost,
                 "stamp_cost_flexibility": stamp_cost_flexibility,
                 "peering_cost": peering_cost,
                 "aspect": aspect,

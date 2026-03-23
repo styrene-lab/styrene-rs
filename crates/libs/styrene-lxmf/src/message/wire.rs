@@ -193,15 +193,36 @@ impl WireMessage {
         timestamp: f64,
         rng: R,
     ) -> Result<Vec<u8>, LxmfError> {
+        let (envelope, _) =
+            self.pack_propagation_with_options_and_rng(destination, timestamp, None, rng)?;
+        Ok(envelope)
+    }
+
+    pub fn pack_propagation_with_options_and_rng<R: CryptoRngCore + Copy>(
+        &self,
+        destination: &Identity,
+        timestamp: f64,
+        propagation_stamp: Option<&[u8]>,
+        rng: R,
+    ) -> Result<(Vec<u8>, [u8; 32]), LxmfError> {
         let packed = self.pack()?;
         let encrypted = encrypt_for_identity(destination, &packed[16..], rng)?;
 
         let mut lxmf_data = Vec::with_capacity(16 + encrypted.len());
         lxmf_data.extend_from_slice(&packed[..16]);
         lxmf_data.extend_from_slice(&encrypted);
+        let transient_id = Sha256::digest(&lxmf_data);
+        let mut transient_payload = lxmf_data;
+        if let Some(stamp) = propagation_stamp {
+            transient_payload.extend_from_slice(stamp);
+        }
 
-        let envelope = (timestamp, vec![serde_bytes::ByteBuf::from(lxmf_data)]);
-        rmp_serde::to_vec(&envelope).map_err(|e| LxmfError::Encode(e.to_string()))
+        let envelope = (timestamp, vec![serde_bytes::ByteBuf::from(transient_payload)]);
+        let packed =
+            rmp_serde::to_vec(&envelope).map_err(|e| LxmfError::Encode(e.to_string()))?;
+        let mut transient_id_bytes = [0u8; 32];
+        transient_id_bytes.copy_from_slice(transient_id.as_slice());
+        Ok((packed, transient_id_bytes))
     }
 
     pub fn pack_paper_with_rng<R: CryptoRngCore + Copy>(
@@ -266,4 +287,69 @@ fn encrypt_for_identity<R: CryptoRngCore + Copy>(
     let total = PUBLIC_KEY_LENGTH + token.len();
     out.truncate(total);
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WireMessage;
+    use crate::message::Payload;
+    use rand_core::OsRng;
+    use rns_core::identity::PrivateIdentity;
+    use serde_bytes::ByteBuf;
+    use sha2::{Digest, Sha256};
+
+    fn address_hash_bytes(identity: &PrivateIdentity) -> [u8; 16] {
+        let mut out = [0u8; 16];
+        out.copy_from_slice(identity.address_hash().as_slice());
+        out
+    }
+
+    #[test]
+    fn propagation_pack_derives_transient_id_from_lxm_data() {
+        let sender = PrivateIdentity::new_from_name("propagation-pack-sender");
+        let receiver = PrivateIdentity::new_from_name("propagation-pack-receiver");
+        let payload =
+            Payload::new(1.0, Some(b"content".to_vec()), Some(b"title".to_vec()), None, None);
+        let mut wire =
+            WireMessage::new(address_hash_bytes(&receiver), address_hash_bytes(&sender), payload);
+        wire.sign(&sender).expect("sign");
+
+        let (envelope, transient_id) = wire
+            .pack_propagation_with_options_and_rng(receiver.as_identity(), 2.0, None, OsRng)
+            .expect("pack propagation");
+        let (_timestamp, entries): (f64, Vec<ByteBuf>) =
+            rmp_serde::from_slice(&envelope).expect("decode propagation envelope");
+        assert_eq!(entries.len(), 1);
+
+        let expected = Sha256::digest(entries[0].as_ref());
+        assert_eq!(transient_id.as_slice(), expected.as_slice());
+    }
+
+    #[test]
+    fn propagation_pack_appends_optional_stamp_after_lxm_data() {
+        let sender = PrivateIdentity::new_from_name("propagation-pack-stamp-sender");
+        let receiver = PrivateIdentity::new_from_name("propagation-pack-stamp-receiver");
+        let payload = Payload::new(1.0, Some(vec![0x55; 48]), Some(b"title".to_vec()), None, None);
+        let mut wire =
+            WireMessage::new(address_hash_bytes(&receiver), address_hash_bytes(&sender), payload);
+        wire.sign(&sender).expect("sign");
+
+        let propagation_stamp = vec![0xAB; 32];
+        let (envelope, transient_id) = wire
+            .pack_propagation_with_options_and_rng(
+                receiver.as_identity(),
+                3.0,
+                Some(propagation_stamp.as_slice()),
+                OsRng,
+            )
+            .expect("pack propagation with stamp");
+        let (_timestamp, entries): (f64, Vec<ByteBuf>) =
+            rmp_serde::from_slice(&envelope).expect("decode propagation envelope");
+        let transient_payload = entries[0].as_ref();
+
+        assert!(transient_payload.ends_with(propagation_stamp.as_slice()));
+        let lxm_data = &transient_payload[..transient_payload.len() - propagation_stamp.len()];
+        let expected = Sha256::digest(lxm_data);
+        assert_eq!(transient_id.as_slice(), expected.as_slice());
+    }
 }

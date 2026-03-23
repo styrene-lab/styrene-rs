@@ -1,5 +1,6 @@
 use rand_core::OsRng;
 use rns_core::destination::{DestinationDesc, DestinationName};
+use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use rns_core::packet::{DestinationType, PacketType};
 use rns_core::transport::core_transport::{Transport, TransportConfig};
@@ -47,7 +48,7 @@ async fn direct_send_uses_link_payloads() {
             .expect("input link");
     let proof = input_link.prove();
 
-    link.lock().await.handle_packet(&proof);
+    link.lock().await.handle_packet(&proof, AddressHash::new_from_rand(OsRng));
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let result = send_via_link(&transport, destination, b"hello link", Duration::from_secs(1))

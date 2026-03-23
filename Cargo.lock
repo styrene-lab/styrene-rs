@@ -6064,6 +6064,7 @@ dependencies = [
  "clap",
  "dirs",
  "hex",
+ "hkdf",
  "hmac",
  "rand_core 0.6.4",
  "rmp-serde",
