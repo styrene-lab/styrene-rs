@@ -10,6 +10,7 @@
 
 mod app;
 mod daemon;
+mod mesh_state;
 mod micron_widget; // Micron markup widget — used by Config tab in Phase 4
 mod tui;
 
@@ -124,6 +125,16 @@ fn run(terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::S
 /// Returns true if the app should quit.
 fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     match (key.code, key.modifiers) {
+        // Sidebar toggle
+        (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+            app.toggle_sidebar();
+        }
+
+        // Sidebar key routing when active
+        (_, _) if app.topology.sidebar_active && !app.composing => {
+            app.topology.handle_key(key);
+        }
+
         // Quit
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
             let now = std::time::Instant::now();
