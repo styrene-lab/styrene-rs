@@ -3,6 +3,7 @@
 //! This module is gated behind the `transport` feature.
 
 pub mod channel;
+pub mod channel_buffer;
 pub mod config;
 pub mod core_transport;
 pub mod delivery;
