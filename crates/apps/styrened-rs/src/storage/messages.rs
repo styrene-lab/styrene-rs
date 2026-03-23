@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value as JsonValue;
+use sha2::Digest;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MessageRecord {
@@ -628,7 +629,18 @@ impl MessagesStore {
             CREATE TABLE IF NOT EXISTS sdk_domain_state (
                 domain TEXT PRIMARY KEY,
                 state_json TEXT NOT NULL
-            );",
+            );
+            CREATE TABLE IF NOT EXISTS propagation_store (
+                id TEXT PRIMARY KEY,
+                dest_hash TEXT NOT NULL,
+                lxmf_bytes BLOB NOT NULL,
+                source_hash TEXT,
+                received_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                size_bytes INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_prop_dest ON propagation_store(dest_hash);
+            CREATE INDEX IF NOT EXISTS idx_prop_expires ON propagation_store(expires_at);",
         )?;
         let _ = self.conn.execute("ALTER TABLE messages ADD COLUMN title TEXT", []);
         let _ = self.conn.execute("UPDATE messages SET title = '' WHERE title IS NULL", []);
@@ -706,6 +718,102 @@ impl MessagesStore {
             |row| row.get(0),
         )?;
         Ok(count > 0)
+    }
+
+    /// Store an LXMF propagation packet for later delivery.
+    ///
+    /// Returns `Ok(false)` when the packet is already stored (deduplicated by
+    /// deterministic packet id).
+    pub fn propagation_ingest(
+        &self,
+        dest_hash: &str,
+        lxmf_bytes: &[u8],
+        source_hash: Option<&str>,
+        max_age_secs: u64,
+    ) -> rusqlite::Result<bool> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let expires_at = now.saturating_add(max_age_secs.min(i64::MAX as u64) as i64);
+        let digest = sha2::Sha256::digest(lxmf_bytes);
+        let packet_id = hex::encode(&digest[..16]);
+        let changed = self.conn.execute(
+            "INSERT OR IGNORE INTO propagation_store
+             (id, dest_hash, lxmf_bytes, source_hash, received_at, expires_at, size_bytes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                packet_id,
+                dest_hash,
+                lxmf_bytes,
+                source_hash,
+                now,
+                expires_at,
+                lxmf_bytes.len() as i64,
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Fetch raw propagation packets queued for a destination.
+    pub fn propagation_fetch(&self, dest_hash: &str) -> rusqlite::Result<Vec<Vec<u8>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT lxmf_bytes FROM propagation_store
+             WHERE dest_hash = ?1
+             ORDER BY received_at ASC",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![dest_hash], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// Fetch propagation packet ids with payloads for delivery/deletion.
+    pub fn propagation_fetch_with_ids(
+        &self,
+        dest_hash: &str,
+    ) -> rusqlite::Result<Vec<(String, Vec<u8>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, lxmf_bytes FROM propagation_store
+             WHERE dest_hash = ?1
+             ORDER BY received_at ASC",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![dest_hash], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+        rows.collect()
+    }
+
+    /// Delete expired propagation packets.
+    pub fn propagation_expire(&self) -> rusqlite::Result<usize> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let changed = self.conn.execute(
+            "DELETE FROM propagation_store WHERE expires_at <= ?1",
+            rusqlite::params![now],
+        )?;
+        Ok(changed)
+    }
+
+    /// Count queued propagation packets and their total stored size.
+    pub fn propagation_stats(&self) -> rusqlite::Result<(usize, u64)> {
+        let (count, total): (i64, Option<i64>) = self.conn.query_row(
+            "SELECT COUNT(*), SUM(size_bytes) FROM propagation_store",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((count.max(0) as usize, total.unwrap_or(0).max(0) as u64))
+    }
+
+    /// Delete propagation packets by id after successful delivery.
+    pub fn propagation_delete(&self, ids: &[String]) -> rusqlite::Result<()> {
+        let mut stmt = self
+            .conn
+            .prepare("DELETE FROM propagation_store WHERE id = ?1")?;
+        for id in ids {
+            stmt.execute(rusqlite::params![id])?;
+        }
+        Ok(())
     }
 }
 
@@ -988,5 +1096,59 @@ mod tests {
         let blocked = store.blocked_peers().unwrap();
         assert_eq!(blocked.len(), 2);
         assert!(!blocked.contains(&"peer_b".to_string()));
+    }
+
+    #[test]
+    fn propagation_ingest_and_fetch_roundtrip() {
+        let store = MessagesStore::in_memory().expect("store");
+        let payload = b"lxmf-packet-1";
+        assert!(store
+            .propagation_ingest("dest-a", payload, Some("src-a"), 60)
+            .expect("ingest"));
+        let fetched = store.propagation_fetch("dest-a").expect("fetch");
+        assert_eq!(fetched, vec![payload.to_vec()]);
+    }
+
+    #[test]
+    fn propagation_deduplicates_identical_packets() {
+        let store = MessagesStore::in_memory().expect("store");
+        let payload = b"same-packet";
+        assert!(store
+            .propagation_ingest("dest-a", payload, None, 60)
+            .expect("first ingest"));
+        assert!(!store
+            .propagation_ingest("dest-a", payload, None, 60)
+            .expect("second ingest"));
+        let stats = store.propagation_stats().expect("stats");
+        assert_eq!(stats.0, 1);
+    }
+
+    #[test]
+    fn propagation_expire_removes_stale_packets() {
+        let store = MessagesStore::in_memory().expect("store");
+        store
+            .propagation_ingest("dest-a", b"stale-packet", None, 0)
+            .expect("ingest");
+        let deleted = store.propagation_expire().expect("expire");
+        assert_eq!(deleted, 1);
+        assert!(store.propagation_fetch("dest-a").expect("fetch").is_empty());
+    }
+
+    #[test]
+    fn propagation_delete_removes_delivered_packets() {
+        let store = MessagesStore::in_memory().expect("store");
+        store
+            .propagation_ingest("dest-a", b"packet-1", None, 60)
+            .expect("ingest one");
+        store
+            .propagation_ingest("dest-a", b"packet-2", None, 60)
+            .expect("ingest two");
+        let fetched = store
+            .propagation_fetch_with_ids("dest-a")
+            .expect("fetch with ids");
+        let ids: Vec<String> = fetched.into_iter().map(|(id, _)| id).collect();
+        store.propagation_delete(&ids).expect("delete");
+        let stats = store.propagation_stats().expect("stats");
+        assert_eq!(stats, (0, 0));
     }
 }

@@ -13,7 +13,7 @@ use x25519_dalek::StaticSecret;
 
 use crate::{
     buffer::OutputBuffer,
-    hash::{AddressHash, Hash, ADDRESS_HASH_SIZE},
+    hash::{AddressHash, Hash, ADDRESS_HASH_SIZE, HASH_SIZE},
     identity::{DecryptIdentity, DerivedKey, EncryptIdentity, Identity, PrivateIdentity},
     packet::{
         DestinationType, Header, Packet, PacketContext, PacketDataBuffer, PacketType, PACKET_MDU,
@@ -77,6 +77,7 @@ pub struct Link {
     status: LinkStatus,
     request_time: Instant,
     rtt: Duration,
+    ingress_iface: Option<AddressHash>,
     event_tx: tokio::sync::broadcast::Sender<LinkEventData>,
 }
 
@@ -95,6 +96,7 @@ impl Link {
             status: LinkStatus::Pending,
             request_time: Instant::now(),
             rtt: Duration::from_secs(0),
+            ingress_iface: None,
             event_tx,
         }
     }
@@ -137,6 +139,7 @@ impl Link {
             status: LinkStatus::Pending,
             request_time: Instant::now(),
             rtt: Duration::from_secs(0),
+            ingress_iface: None,
             event_tx,
         };
 
@@ -287,9 +290,20 @@ impl Link {
         LinkHandleResult::None
     }
 
-    pub fn handle_packet(&mut self, packet: &Packet) -> LinkHandleResult {
+    pub fn handle_packet(&mut self, packet: &Packet, iface: AddressHash) -> LinkHandleResult {
         if packet.destination != self.id {
             return LinkHandleResult::None;
+        }
+        if let Some(expected_iface) = self.ingress_iface {
+            if expected_iface != iface {
+                log::warn!(
+                    "link({}): dropping packet from iface {} expected {}",
+                    self.id,
+                    iface,
+                    expected_iface
+                );
+                return LinkHandleResult::None;
+            }
         }
 
         match packet.header.packet_type {
@@ -298,7 +312,7 @@ impl Link {
                 if self.status == LinkStatus::Pending
                     && packet.context == PacketContext::LinkRequestProof
                 {
-                    if let Ok(identity) = validate_proof_packet(&self.destination, &self.id, packet)
+                    if let Ok(identity) = validate_link_request_proof_packet(&self.destination, &self.id, packet)
                     {
                         log::debug!("link({}): has been proved", self.id);
 
@@ -459,6 +473,14 @@ impl Link {
 
     pub fn id(&self) -> &LinkId {
         &self.id
+    }
+
+    pub fn set_ingress_iface(&mut self, iface: AddressHash) {
+        self.ingress_iface = Some(iface);
+    }
+
+    pub fn validate_packet_proof(&self, packet: &Packet) -> Result<Hash, RnsError> {
+        validate_link_packet_proof(&self.peer_identity, &self.id, packet)
     }
 }
 

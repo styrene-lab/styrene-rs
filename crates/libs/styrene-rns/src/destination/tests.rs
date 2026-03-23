@@ -10,6 +10,9 @@ use crate::hash::Hash;
 use crate::identity::PrivateIdentity;
 use crate::serde::Serialize;
 
+use crate::hash::AddressHash;
+use crate::packet::ContextFlag;
+
 use super::DestinationAnnounce;
 use super::DestinationName;
 use super::SingleInputDestination;
@@ -210,4 +213,45 @@ fn announce_random_blob_matches_python_layout() {
     let emitted = u64::from_be_bytes(ts_bytes);
     assert!(emitted >= before.saturating_sub(1));
     assert!(emitted <= after.saturating_add(1));
+}
+
+#[test]
+fn announce_destination_hash_mismatch_is_rejected() {
+    let priv_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut destination = SingleInputDestination::new(
+        priv_identity,
+        DestinationName::new("example_utilities", "announcesample.fruits"),
+    );
+
+    let mut announce = destination.announce(OsRng, None).expect("valid announce packet");
+    announce.destination = AddressHash::new_from_slice(&[0xAAu8; 16]).into();
+
+    match DestinationAnnounce::validate(&announce) {
+        Ok(_) => panic!("mismatched destination hash must fail validation"),
+        Err(err) => assert!(matches!(err, RnsError::IncorrectHash)),
+    }
+}
+
+#[test]
+fn announce_with_ratchet_bytes_but_unset_flag_is_rejected() {
+    let temp = TempDir::new().expect("temp dir");
+    let priv_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut destination = SingleInputDestination::new(
+        priv_identity,
+        DestinationName::new("example_utilities", "announcesample.fruits"),
+    );
+    let ratchet_path = temp
+        .path()
+        .join("ratchets")
+        .join(format!("{}.ratchets", destination.desc.address_hash.to_hex_string()));
+    destination.enable_ratchets(&ratchet_path).expect("enable ratchets");
+
+    let mut announce = destination.announce(OsRng, None).expect("valid announce packet");
+    // Flip the ratchet context flag off after the announce was built with ratchets
+    announce.header.context_flag = ContextFlag::Unset;
+
+    match DestinationAnnounce::validate(&announce) {
+        Ok(_) => panic!("ratchet bytes without ratchet flag must fail validation"),
+        Err(_) => {} // Any error is acceptable — sig mismatch or parse failure
+    }
 }
