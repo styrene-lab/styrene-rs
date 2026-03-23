@@ -4,6 +4,7 @@
 //!   - `tui/`       — all ratatui rendering code (theme, widgets, segments)
 //!   - `app.rs`     — AppState and event handling
 //!   - `daemon.rs`  — RPC channel bridge (feeds DaemonEvents into App)
+//!   - `mesh_state.rs` — shared data model (PeerRecord, LinkRecord, ActivityLog)
 //!
 //! Run: `cargo run -p styrene-tui`
 //! Quit: `q`, `Esc`, or Ctrl+C twice
@@ -22,12 +23,15 @@ use crossterm::terminal::{
 };
 use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 use app::App;
 use tui::splash;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Seed spinner from process start
     tui::spinner::seed(
         std::time::SystemTime::now()
@@ -49,17 +53,19 @@ fn main() -> Result<()> {
         original(info);
     }));
 
-    let result = run(&mut terminal);
+    let result = run(&mut terminal).await;
 
     disable_raw_mode()?;
     execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
     result
 }
 
-fn run(terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>) -> Result<()> {
+async fn run(
+    terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+) -> Result<()> {
     let mut app = App::new();
 
-    // Splash
+    // ── Splash ──────────────────────────────────────────────────────────────
     let size = terminal.size()?;
     if let Some(mut splash) = splash::SplashScreen::new(size.width, size.height) {
         let start = std::time::Instant::now();
@@ -86,15 +92,51 @@ fn run(terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::S
         }
     }
 
-    // Queue startup reveal effects, populate welcome message
+    // ── Startup effects + welcome ────────────────────────────────────────────
     {
         let t = app.theme.as_ref();
         app.effects.queue_startup(t);
     }
     app.push_welcome();
 
-    // Main event loop — 60fps
+    // ── Daemon connection (non-blocking, degrades gracefully) ────────────────
+    // Channel for daemon events → App
+    let (daemon_tx, mut daemon_rx) = tokio::sync::mpsc::channel::<daemon::TuiEvent>(128);
+
+    match daemon::connect(None).await {
+        Ok((handle, mut event_rx)) => {
+            app.conversation.push_system("⬡ daemon connected");
+
+            let handle = Arc::new(Mutex::new(handle));
+
+            // Forward socket events → daemon_tx
+            let tx_clone = daemon_tx.clone();
+            tokio::spawn(async move {
+                while let Some(ev) = event_rx.recv().await {
+                    if tx_clone.send(ev).await.is_err() { break; }
+                }
+            });
+
+            // Periodic poll for identity + status + device snapshots
+            daemon::spawn_poll_task(handle, daemon_tx, 10);
+        }
+        Err(e) => {
+            app.conversation.push_system(
+                &format!("⬡ daemon unavailable ({e}) — demo mode"),
+            );
+        }
+    }
+
+    // ── Main event loop — 60fps ──────────────────────────────────────────────
     loop {
+        // Drain pending daemon events before drawing
+        loop {
+            match daemon_rx.try_recv() {
+                Ok(ev) => daemon::apply_event(&mut app, ev),
+                Err(_) => break,
+            }
+        }
+
         terminal.draw(|f| app.draw(f))?;
 
         if event::poll(Duration::from_millis(16))? {
@@ -109,7 +151,7 @@ fn run(terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::S
                 }
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     if handle_key(&mut app, key) {
-                        break; // quit
+                        break;
                     }
                 }
                 _ => {}
@@ -135,7 +177,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.topology.handle_key(key);
         }
 
-        // Quit
+        // Quit — Ctrl+C twice
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
             let now = std::time::Instant::now();
             if let Some(last) = app.last_ctrl_c {
@@ -162,10 +204,12 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         (KeyCode::Tab, _) => app.next_tab(),
         (KeyCode::BackTab, _) => app.prev_tab(),
 
-        // Compose mode: Enter starts, Esc cancels, second Enter submits
+        // Compose mode
         (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
             app.composing = true;
-            app.conversation.push_system("Compose mode — type your message, Enter to send, Esc to cancel");
+            app.conversation.push_system(
+                "Compose mode — type your message, Enter to send, Esc to cancel",
+            );
         }
         (KeyCode::Esc, _) if app.composing => {
             app.composing = false;
@@ -178,7 +222,6 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             }
             app.composing = false;
         }
-        // Editor input while composing
         (KeyCode::Char(c), mods) if app.composing && !mods.contains(KeyModifiers::CONTROL) => {
             app.editor.insert(c);
         }
@@ -193,9 +236,9 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.editor.kill_to_end();
         }
 
-        // Quick demo triggers
-        (KeyCode::Char('r'), KeyModifiers::NONE) => app.demo_announce(),
-        (KeyCode::Char('l'), KeyModifiers::NONE) => app.demo_link(),
+        // Demo triggers (when not composing)
+        (KeyCode::Char('r'), KeyModifiers::NONE) if !app.composing => app.demo_announce(),
+        (KeyCode::Char('l'), KeyModifiers::NONE) if !app.composing => app.demo_link(),
 
         _ => {}
     }
