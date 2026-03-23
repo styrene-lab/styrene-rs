@@ -1,14 +1,26 @@
+const MAX_AWAITING_PROOF_RETRIES: u8 = 3;
+
 #[derive(Debug, Clone)]
 struct ResourceSender {
+    link_id: AddressHash,
     resource_hash: Hash,
-    random_hash: [u8; RANDOM_HASH_SIZE],
-    original_hash: Hash,
     parts: Vec<Vec<u8>>,
+    sent_parts: Vec<bool>,
     map_hashes: Vec<[u8; MAPHASH_LEN]>,
     expected_proof: Hash,
-    data_size: u64,
-    has_metadata: bool,
+    advertisement_packet: Packet,
+    last_activity: Instant,
+    adv_sent: Instant,
+    last_part_sent: Instant,
+    max_retries: u8,
+    retries_left: u8,
     status: ResourceStatus,
+}
+
+enum OutboundResourcePoll {
+    None,
+    Send(Box<Packet>),
+    Failed,
 }
 
 impl ResourceSender {
@@ -58,53 +70,131 @@ impl ResourceSender {
             map_hashes.push(map_hash(part, &random_hash));
         }
 
-        Ok(Self {
-            resource_hash,
+        let advertisement = ResourceAdvertisement {
+            transfer_size: parts.iter().map(|part| part.len() as u64).sum(),
+            data_size,
+            parts: parts.len() as u32,
+            hash: resource_hash,
             random_hash,
             original_hash: resource_hash,
+            segment_index: 1,
+            total_segments: 1,
+            request_id: None,
+            flags: {
+                let mut flags = FLAG_ENCRYPTED;
+                if has_metadata {
+                    flags |= FLAG_METADATA;
+                }
+                flags
+            },
+            hashmap: slice_hashmap_segment(&map_hashes, 0),
+        };
+        let advertisement_packet = build_link_packet(
+            link,
+            PacketType::Data,
+            PacketContext::ResourceAdvrtisement,
+            &advertisement.pack()?,
+        )?;
+        let now = Instant::now();
+
+        Ok(Self {
+            link_id: *link.id(),
+            resource_hash,
             parts,
+            sent_parts: vec![false; map_hashes.len()],
             map_hashes,
             expected_proof,
-            data_size,
-            has_metadata,
-            status: ResourceStatus::Advertised,
+            advertisement_packet,
+            last_activity: now,
+            adv_sent: now,
+            last_part_sent: now,
+            max_retries: 0,
+            retries_left: 0,
+            status: ResourceStatus::None,
         })
     }
 
-    fn advertisement(&self, segment: usize) -> ResourceAdvertisement {
-        let hashmap = slice_hashmap_segment(&self.map_hashes, segment);
-        let mut flags = FLAG_ENCRYPTED;
-        if self.has_metadata {
-            flags |= FLAG_METADATA;
-        }
-        ResourceAdvertisement {
-            transfer_size: self.parts.iter().map(|part| part.len() as u64).sum(),
-            data_size: self.data_size,
-            parts: self.parts.len() as u32,
-            hash: self.resource_hash,
-            random_hash: self.random_hash,
-            original_hash: self.original_hash,
-            segment_index: segment as u32 + 1,
-            total_segments: 1,
-            request_id: None,
-            flags,
-            hashmap,
+    fn advertisement_packet(&self) -> Packet {
+        self.advertisement_packet
+    }
+
+    fn mark_advertised(&mut self, retry_limit: u8) {
+        let now = Instant::now();
+        self.last_activity = now;
+        self.adv_sent = now;
+        self.last_part_sent = now;
+        self.max_retries = retry_limit;
+        self.retries_left = retry_limit;
+        self.status = ResourceStatus::Advertised;
+    }
+
+    fn poll(&mut self, now: Instant, retry_interval: Duration) -> OutboundResourcePoll {
+        match self.status {
+            ResourceStatus::Advertised => {
+                if now.duration_since(self.adv_sent) < retry_interval {
+                    return OutboundResourcePoll::None;
+                }
+                if self.retries_left == 0 {
+                    return OutboundResourcePoll::Failed;
+                }
+                self.retries_left -= 1;
+                self.last_activity = now;
+                self.adv_sent = now;
+                OutboundResourcePoll::Send(Box::new(self.advertisement_packet()))
+            }
+            ResourceStatus::Transferring => {
+                if now.duration_since(self.last_activity) < retry_interval {
+                    return OutboundResourcePoll::None;
+                }
+                if self.retries_left == 0 {
+                    return OutboundResourcePoll::Failed;
+                }
+                self.retries_left -= 1;
+                self.last_activity = now;
+                OutboundResourcePoll::None
+            }
+            ResourceStatus::AwaitingProof => {
+                if now.duration_since(self.last_part_sent) < retry_interval {
+                    return OutboundResourcePoll::None;
+                }
+                if self.retries_left == 0 {
+                    return OutboundResourcePoll::Failed;
+                }
+                self.retries_left -= 1;
+                self.last_part_sent = now;
+                OutboundResourcePoll::None
+            }
+            _ => OutboundResourcePoll::None,
         }
     }
 
-    fn handle_request(&mut self, request: &ResourceRequest, link: &Link) -> Vec<Packet> {
+    fn handle_request_into(
+        &mut self,
+        request: &ResourceRequest,
+        link: &Link,
+        packets: &mut Vec<Packet>,
+    ) {
         if request.resource_hash != self.resource_hash {
-            return Vec::new();
+            return;
         }
 
-        let mut packets = Vec::new();
+        let mut sent_any = false;
+        let mut scratch_packet = Packet::default();
         for hash in &request.requested_hashes {
             if let Some(index) = self.map_hashes.iter().position(|entry| entry == hash) {
                 if let Some(part) = self.parts.get(index) {
-                    if let Ok(packet) =
-                        build_link_packet(link, PacketType::Data, PacketContext::Resource, part)
+                    if build_link_packet_into(
+                        link,
+                        PacketType::Data,
+                        PacketContext::Resource,
+                        part,
+                        &mut scratch_packet,
+                    )
+                    .is_ok()
                     {
-                        packets.push(packet);
+                        self.sent_parts[index] = true;
+                        sent_any = true;
+                        packets.push(scratch_packet);
                     } else {
                         log::warn!("resource: failed to build resource packet");
                     }
@@ -141,12 +231,25 @@ impl ResourceSender {
             }
         }
 
-        if self.status == ResourceStatus::Advertised || self.status == ResourceStatus::Transferring
+        if self.status == ResourceStatus::Advertised
+            || self.status == ResourceStatus::Transferring
+            || self.status == ResourceStatus::AwaitingProof
         {
-            self.status = ResourceStatus::Transferring;
+            let now = Instant::now();
+            self.last_activity = now;
+            self.retries_left = self.max_retries;
+            if sent_any {
+                self.last_part_sent = now;
+            }
+            if self.sent_parts.iter().all(|sent| *sent) {
+                self.status = ResourceStatus::AwaitingProof;
+                // Once all parts are sent, only wait a small, bounded number of
+                // retry intervals for the terminal proof before timing out.
+                self.retries_left = self.max_retries.clamp(1, MAX_AWAITING_PROOF_RETRIES);
+            } else {
+                self.status = ResourceStatus::Transferring;
+            }
         }
-
-        packets
     }
 
     fn handle_proof(&mut self, proof: &ResourceProof) -> bool {
