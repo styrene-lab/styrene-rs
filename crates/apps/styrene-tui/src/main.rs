@@ -10,7 +10,7 @@
 
 mod app;
 mod daemon;
-mod micron_widget;
+mod micron_widget; // Micron markup widget — used by Config tab in Phase 4
 mod tui;
 
 use anyhow::Result;
@@ -20,7 +20,6 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
-use ratatui::DefaultTerminal;
 use std::io;
 use std::time::Duration;
 
@@ -86,7 +85,11 @@ fn run(terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::S
         }
     }
 
-    // Populate welcome message
+    // Queue startup reveal effects, populate welcome message
+    {
+        let t = app.theme.as_ref();
+        app.effects.queue_startup(t);
+    }
     app.push_welcome();
 
     // Main event loop — 60fps

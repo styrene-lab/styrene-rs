@@ -1,4 +1,6 @@
-//! LXMF conversation state — segment list and push/mutation methods.
+//! LXMF conversation state
+#![allow(dead_code)]
+// — segment list and push/mutation methods.
 //!
 //! Holds the data model. Rendering is handled by `conv_widget`.
 
