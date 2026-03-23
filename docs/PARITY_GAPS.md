@@ -14,10 +14,9 @@
 
 The Rust port has strong protocol-layer coverage (identity, crypto, packets, links, LXMF wire format) and an extensive RPC surface (60+ methods). What it lacks is the **service layer** — the application logic that makes styrened a mesh communications platform rather than a raw protocol daemon.
 
-**⚠️ Upstream parity work (2026-03-23):** FreeTAKTeam upstream assembled a 41-issue Rust/Python
-compatibility list and merged fixes for 15 of them (see `docs/upstream-sync-log.md`). These fixes
-land in `styrene-rns` and `styrene-lxmf` territory. **None have been ported yet.** The adoption
-queue in the sync log is the top priority before new service-layer work.
+**✅ Upstream parity porting complete (2026-03-23):** FreeTAKTeam upstream assembled a 41-issue
+Rust/Python compatibility list and merged fixes for 15 of them. All 28 priority adoption commits
+have been ported in session 2026-03-23. See `docs/upstream-sync-log.md` and `docs/COMPAT_ISSUES.md`.
 
 ---
 
@@ -63,8 +62,9 @@ Additionally, these upstream fixes address issues that appear in our **Tier 2/3*
 Also new: a **complete interop test harness** (PRs #116, #127) — `python_compat_matrix.rs` +
 shell smoke script — is the scaffold for our own interop gate.
 
-**Porting these is higher priority than new service-layer work.** Ship correct protocol
-semantics before shipping new features.
+**All ported (2026-03-23).** Protocol correctness now matches upstream. Service-layer work is
+next in priority order. Open issues (3, 4, 18, 20–43 minus those closed above) are tracked in
+`docs/COMPAT_ISSUES.md`.
 
 ---
 
