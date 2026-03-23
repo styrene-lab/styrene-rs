@@ -1,11 +1,12 @@
-//! Styrene splash screen — CRT noise convergence on the ⬡ mesh sigil.
+//! Styrene splash screen
+#![allow(dead_code)]
+// — CRT noise convergence on the ⬡ mesh sigil.
 //!
 //! Each character unlocks frame by frame (center-out weighted).
 //! Before unlock: CRT noise glyph. After unlock: final character.
 
 use std::time::Duration;
 use ratatui::prelude::*;
-use ratatui::widgets::Paragraph;
 
 use super::theme::Theme;
 
@@ -77,7 +78,7 @@ impl SplashScreen {
         let art_width = art_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
         let art_height = art_lines.len();
 
-        let mut art: Vec<Vec<char>> = art_lines.iter()
+        let art: Vec<Vec<char>> = art_lines.iter()
             .map(|l| {
                 let mut chars: Vec<char> = l.chars().collect();
                 chars.resize(art_width, ' ');
@@ -88,11 +89,11 @@ impl SplashScreen {
         // Compute center
         let cy = art_height as f64 / 2.0;
         let cx = art_width as f64 / 2.0;
-        let max_dist = ((cx * cx + cy * cy) as f64).sqrt().max(1.0);
+        let max_dist = (cx * cx + cy * cy).sqrt().max(1.0);
 
         // Assign unlock frames — center-biased
         let mut rng = SimpleRng::new(42);
-        let mut unlock_frames: Vec<Vec<u32>> = (0..art_height)
+        let unlock_frames: Vec<Vec<u32>> = (0..art_height)
             .map(|y| {
                 (0..art_width).map(|x| {
                     let dy = y as f64 - cy;

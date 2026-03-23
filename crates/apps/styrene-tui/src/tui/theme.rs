@@ -1,4 +1,5 @@
-//! TUI Theme — Alpharius-derived color system for the Styrene mesh UI.
+//! TUI Theme — Alpharius-derived color system
+#![allow(dead_code)]
 //!
 //! Trait-based so the same rendering code works against any theme.
 //! The `StyreneTheme` default uses the navy → teal → amber ramp from

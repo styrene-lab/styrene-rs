@@ -31,7 +31,8 @@ pub struct FooterData {
     // Messages card
     pub unread_messages: usize,
     pub total_messages: usize,
-    pub store_size_kb: usize,
+    #[allow(dead_code)]
+    pub store_size_kb: usize, // Phase 5: wire from MessagesStore
 
     // Status flash
     pub flash_ticks: u8,
@@ -100,11 +101,6 @@ impl FooterData {
     }
 
     fn render_links_card(&self, area: Rect, frame: &mut Frame, t: &dyn Theme) {
-        let quality_pct = self.link_quality * 100.0;
-        let quality_color = if self.link_quality > 0.7 { t.success() }
-            else if self.link_quality > 0.4 { t.warning() }
-            else { t.error() };
-
         let bar_w = area.width.saturating_sub(6) as usize;
         let bar_spans = widgets::gauge_bar(
             &GaugeConfig { percent: self.link_quality * 100.0, bar_width: bar_w.max(4), memory_blocks: 0 },

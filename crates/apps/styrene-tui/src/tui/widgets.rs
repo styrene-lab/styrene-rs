@@ -1,4 +1,5 @@
-//! Shared TUI widget primitives — DRY building blocks for all views.
+//! Shared TUI widget primitives
+#![allow(dead_code)]
 //!
 //! Every visual pattern that appears in 2+ places (footer, dashboard,
 //! conversation, raised mode) lives here. All functions produce ratatui

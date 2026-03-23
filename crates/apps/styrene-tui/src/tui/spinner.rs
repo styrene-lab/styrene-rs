@@ -1,4 +1,6 @@
-//! Spinner verbs — mesh-themed action phrases during daemon operations.
+//! Spinner verbs
+#![allow(dead_code)]
+// — mesh-themed action phrases during daemon operations.
 //!
 //! Rotates through themed verb phrases on each announce, link event,
 //! or background operation. Displayed in the compose area while working.

@@ -1,4 +1,5 @@
-//! Segment types and per-type rendering for the LXMF message view.
+//! Segment types and per-type rendering
+#![allow(dead_code)]
 //!
 //! Each segment renders as an independent widget. The ConvWidget
 //! composes these into a scrollable view. Segment types map
@@ -114,15 +115,15 @@ impl DeliveryStatus {
 
 impl Segment {
     /// Compute the terminal rows this segment occupies at the given width.
-    pub fn height(&self, width: u16, t: &dyn Theme) -> u16 {
+    pub fn height(&self, width: u16, _t: &dyn Theme) -> u16 {
         let inner = width.saturating_sub(4); // borders + padding
         match self {
             Segment::SentMessage { text, .. } => {
                 2 + wrapped_line_count(text, inner)
             }
             Segment::ReceivedMessage { title, text, .. } => {
-                let title_lines = title.as_ref().map(|_| 1).unwrap_or(0);
-                2 + title_lines + wrapped_line_count(text, inner)
+                let title_rows = u16::from(title.is_some());
+                2 + title_rows + wrapped_line_count(text, inner)
             }
             Segment::ProtocolEvent { detail, .. } => {
                 1 + wrapped_line_count(detail, inner).max(1)
@@ -147,8 +148,9 @@ impl Segment {
                 render_sent(area, buf, t, dest_hash, dest_name.as_deref(), text, delivery_status)
             }
             Segment::ReceivedMessage { source_hash, source_name, title, text, timestamp } => {
+                let ts = format_timestamp(*timestamp);
                 render_received(area, buf, t, source_hash, source_name.as_deref(),
-                    title.as_deref(), text, *timestamp)
+                    title.as_deref(), text, &ts)
             }
             Segment::ProtocolEvent { kind, peer_hash, peer_name, detail } => {
                 render_protocol_event(area, buf, t, kind, peer_hash.as_deref(),
@@ -203,11 +205,11 @@ fn render_sent(
 fn render_received(
     area: Rect, buf: &mut Buffer, t: &dyn Theme,
     source_hash: &str, source_name: Option<&str>,
-    title: Option<&str>, text: &str, timestamp: i64,
+    title: Option<&str>, text: &str, ts: &str,
 ) {
     let label = source_name.unwrap_or(source_hash);
     let short = &source_hash[..source_hash.len().min(8)];
-    let ts = format_timestamp(timestamp);
+    let ts = ts;
     let title_line = Line::from(vec![
         Span::styled(" ← ", Style::default().fg(t.success())),
         Span::styled(label, Style::default().fg(t.fg()).add_modifier(Modifier::BOLD)),
@@ -290,20 +292,18 @@ fn render_separator(area: Rect, buf: &mut Buffer, t: &dyn Theme) {
 
 fn wrapped_line_count(text: &str, width: u16) -> u16 {
     if width == 0 { return text.lines().count() as u16; }
+    let w = width as usize;
     text.lines()
-        .map(|line| {
-            let w = line.len().max(1);
-            ((w + width as usize - 1) / width as usize).max(1) as u16
-        })
+        .map(|line| (line.len().max(1)).div_ceil(w) as u16)
         .sum::<u16>()
         .max(1)
 }
 
 fn format_timestamp(ts: i64) -> String {
-    // Simple formatting: show time if today, else date
     if ts == 0 { return String::new(); }
-    let secs = ts;
-    let h = (secs / 3600) % 24;
-    let m = (secs / 60) % 60;
+    // Extract time-of-day from UTC epoch seconds
+    let day_secs = ts % 86400;
+    let h = day_secs / 3600;
+    let m = (day_secs % 3600) / 60;
     format!("{h:02}:{m:02}")
 }

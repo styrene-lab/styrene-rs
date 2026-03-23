@@ -10,7 +10,6 @@ use crate::tui::effects::Effects;
 use crate::tui::footer::FooterData;
 use crate::tui::segments::{DeliveryStatus, ProtocolEventKind};
 use crate::tui::theme::{self, Theme};
-use crate::tui::widgets;
 
 // ─── Tab ────────────────────────────────────────────────────────────────
 

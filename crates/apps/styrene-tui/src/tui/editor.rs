@@ -1,4 +1,5 @@
-//! Terminal-style text editor backed by ratatui-textarea.
+//! Terminal-style text editor
+#![allow(dead_code)]
 //!
 //! Wraps `ratatui_textarea::TextArea` with our API surface:
 //! - Single-line default (Enter submits, not inserts newline)

@@ -1,4 +1,5 @@
 //! TUI effects — tachyonfx-powered visual polish.
+#![allow(dead_code)]
 //!
 //! Each TUI zone (conversation, footer, editor) has its own `EffectManager`
 //! so effects are processed against the correct screen area. Effects run as

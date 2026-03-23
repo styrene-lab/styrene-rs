@@ -2,6 +2,9 @@
 //!
 //! Converts a parsed `styrene_micron::Document` into ratatui `Text`
 //! with proper styling, section indentation, and alignment.
+//!
+//! Used by the Config tab (Phase 4) and NomadNet BBS rendering.
+#![allow(dead_code, clippy::all)]
 
 use ratatui::style::{Color, Modifier, Style as RStyle};
 use ratatui::text::{Line, Span, Text};
