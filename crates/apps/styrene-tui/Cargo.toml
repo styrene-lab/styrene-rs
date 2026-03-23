@@ -28,13 +28,15 @@ styrene-rns = { workspace = true }
 styrene-micron = { workspace = true }
 
 # Daemon integration
-reticulum_daemon = { package = "styrened-rs", path = "../styrened-rs" }
+styrene-ipc = { path = "../../libs/styrene-ipc", version = "0.1.0" }
+styrene-ipc-server = { path = "../../libs/styrene-ipc-server", version = "0.1.0" }
 
 # Utilities
 hex.workspace = true
 rand_core = { workspace = true, features = ["getrandom"] }
 serde.workspace = true
 serde_json.workspace = true
+rmpv = { workspace = true, features = ["with-serde"] }
 tokio = { workspace = true }
 anyhow.workspace = true
 
