@@ -31,7 +31,7 @@ default-members = [
   "crates/libs/styrene-micron",
   "crates/apps/styrened-rs",
   # "crates/apps/styrene-dx",  # spike — build explicitly with -p
-  # "crates/apps/styrene-tui", # spike — build explicitly with -p
+  "crates/apps/styrene-tui",
 ]
 
 [workspace.package]

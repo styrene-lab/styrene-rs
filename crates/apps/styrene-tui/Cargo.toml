@@ -1,8 +1,8 @@
 [package]
 name = "styrene-tui"
 version = "0.0.1"
-edition.workspace = true
-rust-version.workspace = true
+edition = "2024"
+rust-version = "1.85"
 license.workspace = true
 repository.workspace = true
 description = "Styrene terminal UI spike — Ratatui mesh status display"
@@ -13,17 +13,29 @@ name = "styrene-tui"
 path = "src/main.rs"
 
 [dependencies]
-# TUI
+# TUI core
 ratatui = "0.30"
 crossterm = "0.29"
+ratatui-textarea = { version = "0.8", features = ["crossterm"] }
+tui-tree-widget = "0.24"
+ratatui-toaster = "0.1"
+tachyonfx = { version = "0.25.0", features = ["sendable"] }
+tui-syntax-highlight = "0.2"
+unicode-width = "0.2"
 
 # Protocol crates (no transport — pure data types)
 styrene-rns = { workspace = true }
 styrene-micron = { workspace = true }
 
+# Daemon integration
+reticulum_daemon = { package = "styrened-rs", path = "../styrened-rs" }
+
 # Utilities
 hex.workspace = true
 rand_core = { workspace = true, features = ["getrandom"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true }
 anyhow.workspace = true
 
 [lints]
