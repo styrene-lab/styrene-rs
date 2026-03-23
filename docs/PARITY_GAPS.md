@@ -10,12 +10,63 @@
 | Tests | 212 passing (unit + interop) |
 | Fork date | 2026-02-24 (from FreeTAKTeam/LXMF-rs) |
 | Python styrened LOC | ~35K (services, protocols, terminal, TUI, IPC, RPC, daemon) |
+| Upstream drift | 89 commits reviewed 2026-03-23 — adoption queue in `docs/upstream-sync-log.md` |
 
 The Rust port has strong protocol-layer coverage (identity, crypto, packets, links, LXMF wire format) and an extensive RPC surface (60+ methods). What it lacks is the **service layer** — the application logic that makes styrened a mesh communications platform rather than a raw protocol daemon.
+
+**⚠️ Upstream parity work (2026-03-23):** FreeTAKTeam upstream assembled a 41-issue Rust/Python
+compatibility list and merged fixes for 15 of them (see `docs/upstream-sync-log.md`). These fixes
+land in `styrene-rns` and `styrene-lxmf` territory. **None have been ported yet.** The adoption
+queue in the sync log is the top priority before new service-layer work.
 
 ---
 
 ## Tier 1: Core Gaps (Blocks Real Deployment)
+
+### 1.0 Upstream Protocol Correctness Backlog (NEW — 2026-03-23)
+
+**Status:** Open, 15 fixes available to port immediately  
+**Source:** FreeTAKTeam upstream PRs #106–#131 — see `docs/upstream-sync-log.md` for full triage  
+
+Upstream assembled and addressed a 41-issue Rust/Python compatibility list. The following gaps
+**already have working fixes in the upstream repo** and need to be ported to styrene-rs:
+
+| Issue | Description | Upstream PR | styrene-rs crate |
+|-------|-------------|-------------|-----------------|
+| 1 | Announce validation accepts hash mismatch | #106 | `styrene-rns` |
+| 2 | Packet receipts satisfied by forged proofs | #106 | `styrene-rns` |
+| 5 | Link activation has proof race | #107 | `styrene-rns` |
+| 6 | Resource startup reports success prematurely | #112 | `styrene-rns` |
+| 7 | Outbound resources lack retry/timeout/cleanup | #112 | `styrene-rns` |
+| 8 | Failed inbound resources stuck forever | #112 | `styrene-rns` |
+| 9 | Duplicate resource adverts reset receive progress | #112 | `styrene-rns` |
+| 11 | Known-destination pubkey stability check missing | #106 | `styrene-rns` |
+| 12 | Ratchet-bearing announce parsing too permissive | #106 | `styrene-rns` |
+| 13 | Transported link-request proofs skip Python gates | #106 | `styrene-rns` |
+| 14 | Link interface binding not enforced | #107 | `styrene-rns` |
+| 15 | Channel packet semantics not implemented | #109+#123+#111 | `styrene-rns` |
+| 16 | Link proof behavior differs from Python | #107 | `styrene-rns` |
+| 17 | Link watchdog timing fixed-interval not RTT | #107 | `styrene-rns` |
+| 19 | Inbound worker assumes every resource is LXMF | #112 | `styrene-rns` |
+
+Additionally, these upstream fixes address issues that appear in our **Tier 2/3** gaps:
+
+| Issue | Description | Upstream PR | styrene-rs crate |
+|-------|-------------|-------------|-----------------|
+| 20, 21, 22 | Path tag not preserved, duplicate suppression unbounded | #115 | `styrene-rns` |
+| 23, 24, 25 | Announce throttling/queueing/ingress not interface-aware | #117, #121 | `styrene-rns` |
+| 27, 28 | Announce retry timing and rate limiting wrong | #122, #125 | `styrene-rns` |
+| 30, 31 | Stamp/ticket options ignored in send path | #126 | `styrened-rs` |
+| 33, 34 | Propagation stamp validation and cost retention | #129, #119 | `styrene-lxmf` |
+| 36 | Propagation transient-id lifecycle incomplete | #130, #131 | `styrene-lxmf` |
+
+Also new: a **complete interop test harness** (PRs #116, #127) — `python_compat_matrix.rs` +
+shell smoke script — is the scaffold for our own interop gate.
+
+**Porting these is higher priority than new service-layer work.** Ship correct protocol
+semantics before shipping new features.
+
+---
 
 ### 1.1 IFAC Multi-Hop Bug (Inherited)
 

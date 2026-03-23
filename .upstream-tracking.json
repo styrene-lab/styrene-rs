@@ -6,7 +6,7 @@
   },
   "upstream": {
     "remote": "upstream",
-    "branch": "master",
-    "last_reviewed": "0052218f1247c68f8c925988299d33d0678d81b4"
+    "branch": "main",
+    "last_reviewed": "3a2d46bbea174a1049d5d3e06f00c6ea20254085"
   }
 }
