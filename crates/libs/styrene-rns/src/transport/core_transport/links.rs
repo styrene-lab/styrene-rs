@@ -1,6 +1,29 @@
 use super::*;
 
 impl Transport {
+    pub async fn send_channel_to_all_out_links(&self, payload: &[u8]) {
+        let packets = {
+            let handler = self.handler.lock().await;
+            let mut packets = Vec::new();
+            for link in handler.out_links.values() {
+                let link = link.lock().await;
+                if link.status() == LinkStatus::Active {
+                    if let Ok(packet) = link.channel_packet(payload) {
+                        packets.push(packet);
+                    }
+                }
+            }
+            packets
+        };
+        if packets.is_empty() {
+            return;
+        }
+        let mut handler = self.handler.lock().await;
+        for packet in packets {
+            handler.send_packet(packet).await;
+        }
+    }
+
     pub async fn send_to_all_out_links(&self, payload: &[u8]) {
         let packets = {
             let handler = self.handler.lock().await;
