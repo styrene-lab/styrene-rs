@@ -25,6 +25,20 @@ use crate::transport::error::RnsError;
 
 const LINK_MTU_SIZE: usize = 3;
 
+const KEEPALIVE_MAX_RTT: f32 = 1.75;
+const KEEPALIVE_MAX_SECS: f32 = 360.0;
+const KEEPALIVE_MIN_SECS: f32 = 5.0;
+const STALE_FACTOR: f32 = 2.0;
+const KEEPALIVE_TIMEOUT_FACTOR: f32 = 4.0;
+const STALE_GRACE_SECS: f32 = 5.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkWatchdogAction {
+    None,
+    SendKeepAlive,
+    Close,
+}
+
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum LinkStatus {
     Pending = 0x00,
@@ -78,6 +92,13 @@ pub struct Link {
     request_time: Instant,
     rtt: Duration,
     ingress_iface: Option<AddressHash>,
+    activated_at: Option<Instant>,
+    last_inbound: Option<Instant>,
+    last_keepalive: Option<Instant>,
+    last_proof: Option<Instant>,
+    stale_since: Option<Instant>,
+    keepalive: Duration,
+    stale_time: Duration,
     event_tx: tokio::sync::broadcast::Sender<LinkEventData>,
 }
 
@@ -97,6 +118,13 @@ impl Link {
             request_time: Instant::now(),
             rtt: Duration::from_secs(0),
             ingress_iface: None,
+            activated_at: None,
+            last_inbound: None,
+            last_keepalive: None,
+            last_proof: None,
+            stale_since: None,
+            keepalive: Duration::from_secs_f32(KEEPALIVE_MAX_SECS),
+            stale_time: Duration::from_secs_f32(KEEPALIVE_MAX_SECS * STALE_FACTOR),
             event_tx,
         }
     }
@@ -140,6 +168,13 @@ impl Link {
             request_time: Instant::now(),
             rtt: Duration::from_secs(0),
             ingress_iface: None,
+            activated_at: None,
+            last_inbound: None,
+            last_keepalive: None,
+            last_proof: None,
+            stale_since: None,
+            keepalive: Duration::from_secs_f32(KEEPALIVE_MAX_SECS),
+            stale_time: Duration::from_secs_f32(KEEPALIVE_MAX_SECS * STALE_FACTOR),
             event_tx,
         };
 
@@ -237,10 +272,13 @@ impl Link {
             log::warn!("link({}): handling data packet in inactive state", self.id);
         }
 
+        self.note_inbound(packet.context);
+
         match packet.context {
             PacketContext::None
             | PacketContext::Request
             | PacketContext::Response
+            | PacketContext::Channel
             | PacketContext::LinkIdentify => {
                 let mut buffer = [0u8; PACKET_MDU];
                 if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
@@ -251,7 +289,6 @@ impl Link {
                         bytes_to_hex(&plain_text[..preview_len])
                     );
                     log::trace!("link({}): data {}B", self.id, plain_text.len());
-                    self.request_time = Instant::now();
                     let request_id = if packet.context == PacketContext::Request {
                         let hash = packet.hash().to_bytes();
                         let mut id = [0u8; ADDRESS_HASH_SIZE];
@@ -267,20 +304,21 @@ impl Link {
                             request_id,
                         ),
                     )));
-                    return LinkHandleResult::Proof(self.prove_packet(packet));
+                    if matches!(packet.context, PacketContext::None | PacketContext::Channel) {
+                        return LinkHandleResult::Proof(self.prove_packet(packet));
+                    }
+                    return LinkHandleResult::None;
                 } else {
                     log::error!("link({}): can't decrypt packet", self.id);
                 }
             }
             PacketContext::KeepAlive => {
                 if !packet.data.is_empty() && packet.data.as_slice()[0] == 0xFF {
-                    self.request_time = Instant::now();
                     log::trace!("link({}): keep-alive request", self.id);
                     return LinkHandleResult::KeepAlive;
                 }
                 if !packet.data.is_empty() && packet.data.as_slice()[0] == 0xFE {
                     log::trace!("link({}): keep-alive response", self.id);
-                    self.request_time = Instant::now();
                     return LinkHandleResult::None;
                 }
             }
@@ -320,6 +358,12 @@ impl Link {
 
                         self.status = LinkStatus::Active;
                         self.rtt = self.request_time.elapsed();
+                        self.ingress_iface.get_or_insert(iface);
+                        let activated_at = Instant::now();
+                        self.activated_at = Some(activated_at);
+                        self.last_proof = Some(activated_at);
+                        self.stale_since = None;
+                        self.update_keepalive_timing();
 
                         log::debug!("link({}): activated", self.id);
 
@@ -331,6 +375,20 @@ impl Link {
                     }
                 }
             }
+            PacketType::Data if packet.context == PacketContext::LinkRTT => {
+                let mut buffer = [0u8; PACKET_MDU];
+                if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
+                    let mut cursor = std::io::Cursor::new(plain_text);
+                    if let Ok(peer_rtt) = rmp::decode::read_f32(&mut cursor) {
+                        let measured_rtt = self.request_time.elapsed().as_secs_f32();
+                        self.rtt = Duration::from_secs_f32(measured_rtt.max(peer_rtt));
+                        self.update_keepalive_timing();
+                        if self.activated_at.is_none() {
+                            self.activated_at = Some(Instant::now());
+                        }
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -338,6 +396,14 @@ impl Link {
     }
 
     pub fn data_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
+        self.packet_with_context(data, PacketContext::None)
+    }
+
+    pub fn channel_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
+        self.packet_with_context(data, PacketContext::Channel)
+    }
+
+    fn packet_with_context(&self, data: &[u8], context: PacketContext) -> Result<Packet, RnsError> {
         if self.status != LinkStatus::Active {
             log::warn!("link: can't create data packet for closed link");
         }
@@ -360,7 +426,7 @@ impl Link {
             ifac: None,
             destination: self.id,
             transport: None,
-            context: PacketContext::None,
+            context,
             data: packet_data,
         })
     }
@@ -449,6 +515,70 @@ impl Link {
             event,
         });
     }
+    fn note_inbound(&mut self, context: PacketContext) {
+        let now = Instant::now();
+        self.last_inbound = Some(now);
+        if self.status == LinkStatus::Stale {
+            self.status = LinkStatus::Active;
+            self.stale_since = None;
+        }
+        if context != PacketContext::KeepAlive {
+            self.request_time = now;
+        }
+    }
+
+    fn update_keepalive_timing(&mut self) {
+        let keepalive_secs = (self.rtt.as_secs_f32() * (KEEPALIVE_MAX_SECS / KEEPALIVE_MAX_RTT))
+            .clamp(KEEPALIVE_MIN_SECS, KEEPALIVE_MAX_SECS);
+        self.keepalive = Duration::from_secs_f32(keepalive_secs);
+        self.stale_time = Duration::from_secs_f32(keepalive_secs * STALE_FACTOR);
+    }
+
+    fn inbound_anchor(&self) -> Instant {
+        [self.activated_at, self.last_proof, self.last_inbound]
+            .into_iter()
+            .flatten()
+            .max()
+            .unwrap_or(self.request_time)
+    }
+
+    pub fn check_watchdog(&mut self, initiator: bool) -> LinkWatchdogAction {
+        let now = Instant::now();
+        match self.status {
+            LinkStatus::Active => {
+                let inbound_anchor = self.inbound_anchor();
+                let keepalive_due = now.duration_since(inbound_anchor) >= self.keepalive;
+                if keepalive_due {
+                    if now.duration_since(inbound_anchor) >= self.stale_time {
+                        self.status = LinkStatus::Stale;
+                        self.stale_since = Some(now);
+                    }
+                    if initiator {
+                        let keepalive_anchor = self.last_keepalive.unwrap_or(inbound_anchor);
+                        if now.duration_since(keepalive_anchor) >= self.keepalive {
+                            self.last_keepalive = Some(now);
+                            return LinkWatchdogAction::SendKeepAlive;
+                        }
+                    }
+                }
+                LinkWatchdogAction::None
+            }
+            LinkStatus::Stale => {
+                let stale_timeout = Duration::from_secs_f32(
+                    (self.rtt.as_secs_f32() * KEEPALIVE_TIMEOUT_FACTOR) + STALE_GRACE_SECS,
+                );
+                if let Some(stale_since) = self.stale_since {
+                    if now.duration_since(stale_since) >= stale_timeout {
+                        self.close();
+                        return LinkWatchdogAction::Close;
+                    }
+                }
+                LinkWatchdogAction::None
+            }
+            _ => LinkWatchdogAction::None,
+        }
+    }
+
     pub fn close(&mut self) {
         self.status = LinkStatus::Closed;
 
@@ -461,6 +591,13 @@ impl Link {
         log::warn!("link({}): restart after {}s", self.id, self.request_time.elapsed().as_secs());
 
         self.status = LinkStatus::Pending;
+        self.activated_at = None;
+        self.last_inbound = None;
+        self.last_keepalive = None;
+        self.last_proof = None;
+        self.stale_since = None;
+        self.keepalive = Duration::from_secs_f32(KEEPALIVE_MAX_SECS);
+        self.stale_time = Duration::from_secs_f32(KEEPALIVE_MAX_SECS * STALE_FACTOR);
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -477,6 +614,10 @@ impl Link {
 
     pub fn set_ingress_iface(&mut self, iface: AddressHash) {
         self.ingress_iface = Some(iface);
+    }
+
+    pub fn ingress_iface(&self) -> Option<AddressHash> {
+        self.ingress_iface
     }
 
     pub fn validate_packet_proof(&self, packet: &Packet) -> Result<Hash, RnsError> {
