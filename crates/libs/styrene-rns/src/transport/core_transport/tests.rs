@@ -189,3 +189,88 @@ async fn send_packet_with_outcome_drops_announce_without_route() {
 
     assert_eq!(outcome, SendPacketOutcome::DroppedNoRoute);
 }
+
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+
+struct CountingReceiptHandler {
+    count: Arc<AtomicUsize>,
+}
+
+impl ReceiptHandler for CountingReceiptHandler {
+    fn on_receipt(&self, _receipt: &DeliveryReceipt) {
+        self.count.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test]
+async fn handle_inbound_for_test_rejects_forged_destination_proof() {
+    let local_identity = PrivateIdentity::new_from_rand(OsRng);
+    let config = TransportConfig::new("test", &local_identity, true);
+    let mut transport = Transport::new(config);
+    let handler = transport.get_handler();
+
+    let remote_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut remote_destination =
+        SingleInputDestination::new(remote_identity, DestinationName::new("lxmf", "delivery"));
+    let announce = remote_destination.announce(OsRng, None).expect("valid announce packet");
+    handle_announce(&announce, handler.lock().await, AddressHash::new_from_rand(OsRng)).await;
+
+    let count = Arc::new(AtomicUsize::new(0));
+    transport
+        .set_receipt_handler(Box::new(CountingReceiptHandler { count: count.clone() }))
+        .await;
+
+    let mut data = PacketDataBuffer::new();
+    data.safe_write(&[0x44u8; HASH_SIZE]);
+    data.safe_write(&[0xAAu8; ed25519_dalek::SIGNATURE_LENGTH]);
+    let packet = Packet {
+        header: Header { packet_type: PacketType::Proof, ..Default::default() },
+        destination: announce.destination,
+        context: PacketContext::None,
+        data,
+        ..Default::default()
+    };
+
+    transport.handle_inbound_for_test(packet).await;
+
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn handle_inbound_for_test_accepts_valid_destination_proof() {
+    let local_identity = PrivateIdentity::new_from_rand(OsRng);
+    let config = TransportConfig::new("test", &local_identity, true);
+    let mut transport = Transport::new(config);
+    let handler = transport.get_handler();
+
+    let remote_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut remote_destination =
+        SingleInputDestination::new(remote_identity, DestinationName::new("lxmf", "delivery"));
+    let announce = remote_destination.announce(OsRng, None).expect("valid announce packet");
+    handle_announce(&announce, handler.lock().await, AddressHash::new_from_rand(OsRng)).await;
+
+    let count = Arc::new(AtomicUsize::new(0));
+    transport
+        .set_receipt_handler(Box::new(CountingReceiptHandler { count: count.clone() }))
+        .await;
+
+    let packet_hash = [0x55u8; HASH_SIZE];
+    let signature = remote_destination.identity.sign(&packet_hash).to_bytes();
+    let mut data = PacketDataBuffer::new();
+    data.safe_write(&packet_hash);
+    data.safe_write(&signature);
+    let packet = Packet {
+        header: Header { packet_type: PacketType::Proof, ..Default::default() },
+        destination: announce.destination,
+        context: PacketContext::None,
+        data,
+        ..Default::default()
+    };
+
+    transport.handle_inbound_for_test(packet).await;
+
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+}
