@@ -86,6 +86,7 @@ pub async fn dispatch(
         MessageType::GetActivityHistory => dispatch_get_activity_history().await,
         MessageType::GetAdapterState => dispatch_get_adapter_state().await,
         MessageType::SubActivity => dispatch_sub_activity().await,
+        MessageType::SubLinks => dispatch_sub_links().await,
         // Unsub is handled in connection.rs before dispatch — this is unreachable
         MessageType::Unsub => ok_payload(Payload::new()),
         MessageType::CmdExec => dispatch_exec(daemon, &payload).await,
@@ -698,6 +699,14 @@ async fn dispatch_get_adapter_state() -> Result<Payload, String> {
 
 async fn dispatch_sub_activity() -> Result<Payload, String> {
     // Acknowledge activity subscription — events pushed via connection writer
+    let mut p = Payload::new();
+    p.insert("subscribed".into(), rmpv::Value::Boolean(true));
+    ok_payload(p)
+}
+
+async fn dispatch_sub_links() -> Result<Payload, String> {
+    // Acknowledge link telemetry subscription — EventLink frames pushed when
+    // link status or RTT changes. The daemon emits these from the transport layer.
     let mut p = Payload::new();
     p.insert("subscribed".into(), rmpv::Value::Boolean(true));
     ok_payload(p)

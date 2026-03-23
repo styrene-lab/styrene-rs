@@ -16,11 +16,31 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 
 /// Transport lifecycle events — services subscribe to react to connectivity changes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TransportLifecycleEvent {
     Connected,
     Disconnected,
     Reconnected,
+    /// An outbound link became active (proof received, RTT measured).
+    LinkActivated {
+        /// Short hex link ID (16 chars).
+        link_id: String,
+        /// Destination peer hash (32 chars).
+        peer_hash: String,
+        /// RTT in milliseconds if already measured, else 0.0.
+        rtt_ms: f64,
+    },
+    /// A link closed (stale timeout or explicit close).
+    LinkClosed {
+        link_id: String,
+        peer_hash: String,
+    },
+    /// Link RTT updated (from an RTT probe response).
+    LinkRttUpdated {
+        link_id: String,
+        peer_hash: String,
+        rtt_ms: f64,
+    },
 }
 
 /// Errors from transport operations.

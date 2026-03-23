@@ -93,6 +93,7 @@ pub enum MessageType {
     SubDevices = 0x30,
     SubMessages = 0x31,
     SubActivity = 0x32,
+    SubLinks = 0x33,
     Unsub = 0x3F,
 
     // Extended commands (0x40-0x4F)
@@ -146,6 +147,7 @@ pub enum MessageType {
     EventTerminalError = 0xC4,
     EventTerminalReady = 0xC5,
     EventActivity = 0xC6,
+    EventLink = 0xC7,
 }
 
 impl MessageType {
@@ -188,6 +190,7 @@ impl MessageType {
             0x30 => Ok(Self::SubDevices),
             0x31 => Ok(Self::SubMessages),
             0x32 => Ok(Self::SubActivity),
+            0x33 => Ok(Self::SubLinks),
             0x3F => Ok(Self::Unsub),
             0x40 => Ok(Self::CmdRemoteMessages),
             0x41 => Ok(Self::CmdSelfUpdate),
@@ -230,6 +233,7 @@ impl MessageType {
             0xC4 => Ok(Self::EventTerminalError),
             0xC5 => Ok(Self::EventTerminalReady),
             0xC6 => Ok(Self::EventActivity),
+            0xC7 => Ok(Self::EventLink),
             other => Err(WireError::UnknownType(other)),
         }
     }
@@ -475,7 +479,9 @@ mod tests {
         assert_eq!(MessageType::SubDevices as u8, 0x30);
         assert_eq!(MessageType::SubMessages as u8, 0x31);
         assert_eq!(MessageType::SubActivity as u8, 0x32);
+        assert_eq!(MessageType::SubLinks as u8, 0x33);
         assert_eq!(MessageType::Unsub as u8, 0x3F);
+        assert_eq!(MessageType::EventLink as u8, 0xC7);
         assert_eq!(MessageType::EventDevice as u8, 0xC0);
         assert_eq!(MessageType::EventMessage as u8, 0xC1);
         assert_eq!(MessageType::EventActivity as u8, 0xC6);

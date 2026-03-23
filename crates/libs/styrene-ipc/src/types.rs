@@ -242,6 +242,46 @@ pub enum DaemonEvent {
     TerminalOutput { session_id: SessionId, data: Vec<u8> },
     TerminalStateChange { session_id: SessionId, state: TerminalState },
     TunnelStateChange { peer_hash: PeerHash, state: String, backend: String },
+    Link { event: LinkEvent },
+}
+
+/// Link telemetry event.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct LinkEvent {
+    /// Short hex ID of the link (16 chars).
+    pub link_id: String,
+    /// Destination peer hash (32 chars).
+    pub peer_hash: String,
+    /// Cached peer display name, if known.
+    pub peer_name: Option<String>,
+    /// New lifecycle state: "active", "stale", "closed", "pending".
+    pub status: String,
+    /// Round-trip time in milliseconds, if measured.
+    pub rtt_ms: Option<f64>,
+    /// Epoch seconds of the event.
+    pub timestamp: i64,
+}
+
+impl LinkEvent {
+    pub fn new(
+        link_id: impl Into<String>,
+        peer_hash: impl Into<String>,
+        status: impl Into<String>,
+        rtt_ms: Option<f64>,
+    ) -> Self {
+        Self {
+            link_id: link_id.into(),
+            peer_hash: peer_hash.into(),
+            peer_name: None,
+            status: status.into(),
+            rtt_ms,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

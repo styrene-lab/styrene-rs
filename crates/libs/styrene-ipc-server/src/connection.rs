@@ -24,6 +24,7 @@ pub enum SubTopic {
     Devices,
     Messages,
     Activity,
+    Links,
 }
 
 /// Run a single client connection to completion.
@@ -117,6 +118,10 @@ async fn handle_frame(
             subscriptions.lock().await.insert(SubTopic::Activity);
             some_result(request_id, HashMap::new())
         }
+        MessageType::SubLinks => {
+            subscriptions.lock().await.insert(SubTopic::Links);
+            some_result(request_id, HashMap::new())
+        }
         MessageType::Unsub => {
             // Unsubscribe from the topic specified in payload, or all
             let mut subs = subscriptions.lock().await;
@@ -125,6 +130,7 @@ async fn handle_frame(
                     "devices" => { subs.remove(&SubTopic::Devices); }
                     "messages" => { subs.remove(&SubTopic::Messages); }
                     "activity" => { subs.remove(&SubTopic::Activity); }
+                    "links" => { subs.remove(&SubTopic::Links); }
                     _ => {}
                 }
             } else {
@@ -285,6 +291,20 @@ async fn event_to_frame(
             p.insert("state".to_string(), rmpv::Value::from(state.as_str()));
             p.insert("backend".to_string(), rmpv::Value::from(backend.as_str()));
             (MessageType::EventActivity, SubTopic::Activity, p)
+        }
+        DaemonEvent::Link { event } => {
+            let mut p = HashMap::new();
+            p.insert("link_id".to_string(), rmpv::Value::from(event.link_id.as_str()));
+            p.insert("peer_hash".to_string(), rmpv::Value::from(event.peer_hash.as_str()));
+            if let Some(name) = &event.peer_name {
+                p.insert("peer_name".to_string(), rmpv::Value::from(name.as_str()));
+            }
+            p.insert("status".to_string(), rmpv::Value::from(event.status.as_str()));
+            if let Some(rtt) = event.rtt_ms {
+                p.insert("rtt_ms".to_string(), rmpv::Value::F64(rtt));
+            }
+            p.insert("timestamp".to_string(), rmpv::Value::Integer(event.timestamp.into()));
+            (MessageType::EventLink, SubTopic::Links, p)
         }
         // Future event variants — skip unknown
         _ => return None,

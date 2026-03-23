@@ -55,6 +55,14 @@ pub enum TuiEvent {
     Message(MessageInfo),
     /// Message delivery status changed.
     MessageStatus { id: String, status: String },
+    /// Link telemetry event (activated, closed, rtt_updated).
+    LinkUpdate {
+        link_id: String,
+        peer_hash: String,
+        peer_name: Option<String>,
+        status: String,
+        rtt_ms: Option<f64>,
+    },
     /// Daemon disconnected or unreachable.
     Disconnected(String),
 }
@@ -134,6 +142,13 @@ impl DaemonHandle {
             .map(|_| ())
     }
 
+    /// Subscribe to link telemetry events (activated, closed, RTT updated).
+    pub async fn subscribe_links(&mut self) -> Result<(), String> {
+        self.rpc(MessageType::SubLinks, &HashMap::new())
+            .await
+            .map(|_| ())
+    }
+
     /// Send a ping. Returns true if pong received.
     pub async fn ping(&mut self) -> bool {
         self.rpc(MessageType::Ping, &HashMap::new())
@@ -175,9 +190,10 @@ pub async fn connect(
         return Err("daemon did not respond to ping".into());
     }
 
-    // Subscribe to events before spawning the reader
+    // Subscribe to all event streams before spawning the reader
     let _ = handle.subscribe_devices().await;
     let _ = handle.subscribe_messages().await;
+    let _ = handle.subscribe_links().await;
 
     // Spawn the event reader task
     let (tx, rx) = mpsc::channel::<TuiEvent>(128);
@@ -235,6 +251,20 @@ fn frame_to_tui_event(frame: Frame) -> Option<TuiEvent> {
                 now,
             );
             Some(TuiEvent::PeerAnnounce(peer))
+        }
+        MessageType::EventLink => {
+            let link_id = frame.payload.get("link_id")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let peer_hash = frame.payload.get("peer_hash")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let peer_name = frame.payload.get("peer_name")
+                .and_then(|v| v.as_str()).map(|s| s.to_string());
+            let status = frame.payload.get("status")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let rtt_ms = frame.payload.get("rtt_ms")
+                .and_then(|v| v.as_f64());
+            if link_id.is_empty() || status.is_empty() { return None; }
+            Some(TuiEvent::LinkUpdate { link_id, peer_hash, peer_name, status, rtt_ms })
         }
         MessageType::EventMessage => {
             let msg = parse_message_from_payload(&frame.payload)?;
@@ -376,6 +406,58 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
                 _ => DeliveryStatus::Sent,
             };
             app.conversation.update_last_sent_status(ds);
+        }
+
+        TuiEvent::LinkUpdate { link_id, peer_hash, peer_name, status, rtt_ms } => {
+            use crate::mesh_state::{LinkRecord, LinkStatus};
+
+            match status.as_str() {
+                "active" => {
+                    if !app.links.iter().any(|l| l.id == link_id) {
+                        let mut link = LinkRecord::new(
+                            link_id.clone(),
+                            peer_hash.clone(),
+                            peer_name.clone(),
+                            crate::mesh_state::epoch_secs(),
+                        );
+                        if let Some(rtt) = rtt_ms { link.rtt_ms = rtt; }
+                        link.pluck();
+                        app.links.push(link);
+                        app.activity.push(ActivityEntry::new(
+                            ActivityKind::LinkUp,
+                            peer_name.as_deref().unwrap_or(&peer_hash[..8.min(peer_hash.len())]),
+                            "link established",
+                        ));
+                    }
+                }
+                "rtt_updated" => {
+                    if let Some(link) = app.links.iter_mut().find(|l| l.id == link_id) {
+                        if let Some(rtt) = rtt_ms {
+                            link.rtt_ms = rtt;
+                            link.pluck();
+                        }
+                    }
+                }
+                "closed" | "stale" => {
+                    if let Some(link) = app.links.iter_mut().find(|l| l.id == link_id) {
+                        link.status = if status == "stale" {
+                            LinkStatus::Stale
+                        } else {
+                            LinkStatus::Closed
+                        };
+                    }
+                    if status == "closed" {
+                        app.links.retain(|l| l.id != link_id);
+                        app.activity.push(ActivityEntry::new(
+                            ActivityKind::LinkDown,
+                            peer_name.as_deref().unwrap_or(&peer_hash[..8.min(peer_hash.len())]),
+                            "link closed",
+                        ));
+                    }
+                }
+                _ => {}
+            }
+            app.footer.trigger_flash();
         }
 
         TuiEvent::Disconnected(reason) => {

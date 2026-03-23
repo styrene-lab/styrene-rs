@@ -12,7 +12,7 @@ use crate::storage::messages::MessageRecord;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use styrene_ipc::types::{
-    DaemonEvent, DeviceInfo, MessageEventKind, MessageInfo,
+    DaemonEvent, DeviceInfo, LinkEvent, MessageEventKind, MessageInfo,
 };
 use tokio::sync::broadcast;
 
@@ -149,6 +149,30 @@ impl EventService {
             kind,
             message: msg,
         });
+    }
+
+    /// Emit a link lifecycle event (activated, closed, RTT updated).
+    pub fn emit_link_event(&self, event: LinkEvent) {
+        self.publish(RpcEvent {
+            event_type: match event.status.as_str() {
+                "active" => "link_activated".into(),
+                "closed" => "link_closed".into(),
+                "rtt_updated" => "link_rtt_updated".into(),
+                other => format!("link_{other}"),
+            },
+            payload: serde_json::json!({
+                "link_id": event.link_id,
+                "peer_hash": event.peer_hash,
+                "status": event.status,
+                "rtt_ms": event.rtt_ms,
+            }),
+        });
+        let _ = self.daemon_tx.send(DaemonEvent::Link { event });
+    }
+
+    /// Subscribe to link events only (backed by the same daemon_tx channel).
+    pub fn subscribe_links(&self) -> broadcast::Receiver<DaemonEvent> {
+        self.daemon_tx.subscribe()
     }
 
     /// Emit a device/peer update event (announce received or status change).

@@ -231,6 +231,13 @@ impl DaemonEvents for TestDaemon {
         drop(tx);
         Ok(rx)
     }
+    async fn subscribe_links(
+        &self,
+    ) -> Result<tokio::sync::broadcast::Receiver<DaemonEvent>, IpcError> {
+        let (tx, rx) = tokio::sync::broadcast::channel(16);
+        drop(tx);
+        Ok(rx)
+    }
 }
 
 #[async_trait]
