@@ -10,3 +10,5 @@ pub mod conv_widget;
 pub mod editor;
 pub mod footer;
 pub mod splash;
+pub mod topology;
+pub mod signal;
