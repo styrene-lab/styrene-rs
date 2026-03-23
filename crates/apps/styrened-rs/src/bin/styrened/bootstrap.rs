@@ -294,6 +294,10 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         app_context.discovery_arc(),
         app_context.events_arc(),
     );
+    reticulum_daemon::workers::link::spawn_link_worker(
+        app_context.transport_arc(),
+        app_context.events_arc(),
+    );
     // Register RPC response handler for StyreneProtocol responses
     app_context.protocol().register(Box::new(
         reticulum_daemon::workers::rpc_response::RpcResponseHandler::new(

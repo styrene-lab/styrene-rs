@@ -1,3 +1,5 @@
+// Propagation stamp validation — used when ingest path (Phase 3) is wired.
+
 impl RpcDaemon {
     fn handle_rpc_legacy_propagation(&self, request: RpcRequest) -> Result<RpcResponse, std::io::Error> {
         match request.method.as_str() {
@@ -241,11 +243,15 @@ impl RpcDaemon {
 
 // --- Propagation stamp validation (compat issues 33, 36) ---
 // Ported from FreeTAKTeam/LXMF-rs@493fa42, @40d63f9, @3a2d46b
-
+// Wired into ingest path in Phase 3 (propagation backend).
+#[allow(dead_code)]
 const PROPAGATION_STAMP_SIZE: usize = 32;
+#[allow(dead_code)]
 const PROPAGATION_STAMP_WORKBLOCK_ROUNDS: usize = 1000;
+#[allow(dead_code)]
 const MIN_PROPAGATION_STAMPED_PAYLOAD_SIZE: usize = 112 + PROPAGATION_STAMP_SIZE;
 
+#[allow(dead_code)]
 pub(crate) fn normalize_propagation_payload_hex(
     payload_hex: &str,
     target_cost: u32,
@@ -256,6 +262,7 @@ pub(crate) fn normalize_propagation_payload_hex(
     Ok((hex::encode(transient_id), hex::encode(payload)))
 }
 
+#[allow(dead_code)]
 fn decode_propagation_payload_hex(payload_hex: &str) -> Result<Vec<u8>, std::io::Error> {
     hex::decode(payload_hex.trim()).map_err(|err| {
         std::io::Error::new(
@@ -265,6 +272,7 @@ fn decode_propagation_payload_hex(payload_hex: &str) -> Result<Vec<u8>, std::io:
     })
 }
 
+#[allow(dead_code)]
 fn normalize_propagation_payload_bytes(
     transient_data: &[u8],
     target_cost: u32,
@@ -276,6 +284,7 @@ fn normalize_propagation_payload_bytes(
     Ok((transient_id, lxm_data))
 }
 
+#[allow(dead_code)]
 fn propagation_payload_hash_input<'a>(
     transient_data: &'a [u8],
     target_cost: u32,
@@ -305,6 +314,7 @@ fn propagation_payload_hash_input<'a>(
     Ok(lxm_data)
 }
 
+#[allow(dead_code)]
 fn split_propagation_stamp(transient_data: &[u8]) -> Option<(&[u8], &[u8])> {
     if transient_data.len() <= MIN_PROPAGATION_STAMPED_PAYLOAD_SIZE {
         return None;
@@ -313,6 +323,7 @@ fn split_propagation_stamp(transient_data: &[u8]) -> Option<(&[u8], &[u8])> {
     Some((&transient_data[..split_at], &transient_data[split_at..]))
 }
 
+#[allow(dead_code)]
 fn propagation_stamp_workblock(material: &[u8]) -> Vec<u8> {
     use hkdf::Hkdf;
     use sha2::Sha256;
@@ -333,10 +344,12 @@ fn propagation_stamp_workblock(material: &[u8]) -> Vec<u8> {
     workblock
 }
 
+#[allow(dead_code)]
 fn propagation_stamp_valid(stamp: &[u8], target_cost: u32, workblock: &[u8]) -> bool {
     propagation_stamp_value(workblock, stamp) >= target_cost
 }
 
+#[allow(dead_code)]
 fn propagation_stamp_value(workblock: &[u8], stamp: &[u8]) -> u32 {
     use sha2::{Digest, Sha256};
     let mut material = Vec::with_capacity(workblock.len() + stamp.len());

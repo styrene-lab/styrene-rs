@@ -270,6 +270,10 @@ impl DaemonEvents for StubDaemon {
     async fn subscribe_devices(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
         Err(IpcError::not_implemented("subscribe_devices"))
     }
+
+    async fn subscribe_links(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
+        Err(IpcError::not_implemented("subscribe_links"))
+    }
 }
 
 #[cfg(test)]

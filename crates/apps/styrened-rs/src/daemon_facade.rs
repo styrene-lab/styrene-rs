@@ -540,6 +540,11 @@ impl DaemonEvents for DaemonFacade {
         self.require(&Capability::Status)?;
         Ok(self.ctx.events().subscribe_devices())
     }
+
+    async fn subscribe_links(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
+        self.require(&Capability::Status)?;
+        Ok(self.ctx.events().subscribe_links())
+    }
 }
 
 #[async_trait]

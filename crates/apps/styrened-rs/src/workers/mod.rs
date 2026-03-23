@@ -6,4 +6,5 @@
 
 pub mod inbound;
 pub mod announce;
+pub mod link;
 pub mod rpc_response;

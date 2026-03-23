@@ -15,6 +15,7 @@ use rns_core::packet::{
 use rns_core::transport::core_transport::{
     AnnounceEvent, ReceivedData, SendPacketOutcome, Transport,
 };
+use rns_core::transport::destination_ext::link::LinkEvent;
 use rns_core::transport::delivery::LinkSendResult;
 use std::sync::Arc;
 use std::time::Duration;
@@ -68,6 +69,39 @@ impl TokioTransportAdapter {
                 }
             }
         });
+        // Forward out-link events as lifecycle events so callers can subscribe
+        // without holding a reference to the raw Transport.
+        let lifecycle_fwd = lifecycle_tx.clone();
+        let link_transport = transport.clone();
+        tokio::spawn(async move {
+            let mut rx = link_transport.out_link_events();
+            loop {
+                match rx.recv().await {
+                    Ok(ev) => {
+                        let link_id = hex::encode(ev.id.as_slice());
+                        let peer_hash = hex::encode(ev.address_hash.as_slice());
+                        let lc_ev = match ev.event {
+                            LinkEvent::Activated => {
+                                TransportLifecycleEvent::LinkActivated {
+                                    link_id,
+                                    peer_hash,
+                                    rtt_ms: 0.0, // RTT arrives via LinkRTT packet later
+                                }
+                            }
+                            LinkEvent::Closed => {
+                                TransportLifecycleEvent::LinkClosed { link_id, peer_hash }
+                            }
+                            // Data events are not lifecycle events — skip
+                            LinkEvent::Data(_) => continue,
+                        };
+                        let _ = lifecycle_fwd.send(lc_ev);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                }
+            }
+        });
+
         Self {
             transport,
             identity_addr,
