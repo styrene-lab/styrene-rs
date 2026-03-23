@@ -93,6 +93,7 @@ impl DiscoveryService {
             rssi: None,
             snr: None,
             q: None,
+            stamp_cost: None,
             stamp_cost_flexibility: None,
             peering_cost: None,
         };

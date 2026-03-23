@@ -5,6 +5,7 @@ extern crate alloc;
 mod constants;
 mod error;
 
+pub mod announce;
 pub mod errors;
 pub mod identity;
 pub mod inbound_decode;
