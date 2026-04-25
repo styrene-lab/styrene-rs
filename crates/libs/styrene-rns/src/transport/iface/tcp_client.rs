@@ -64,9 +64,9 @@ impl TcpClient {
                     running = false;
                     Ok(s)
                 }
-                None => TcpStream::connect(addr.clone())
-                    .await
-                    .map_err(|_| RnsError::ConnectionError),
+                None => {
+                    TcpStream::connect(addr.clone()).await.map_err(|_| RnsError::ConnectionError)
+                }
             };
 
             if stream.is_err() {
@@ -85,14 +85,11 @@ impl TcpClient {
                 eprintln!("[tp-diag] tcp_client connected iface={}", iface_address);
             }
 
-            // TODO: pass an IfacConfig here when the interface has IFAC configured.
-            // For now all TCP interfaces are Open (no IFAC).
-            let ifac: Option<&super::ifac::IfacConfig> = None;
-
             let rx_task = {
                 let cancel = cancel.clone();
                 let stop = stop.clone();
                 let rx_channel = rx_channel.clone();
+                let ifac = context.ifac.clone();
                 tokio::spawn(run_hdlc_rx_loop(
                     read_half,
                     rx_channel,
@@ -106,6 +103,7 @@ impl TcpClient {
             let tx_task = {
                 let cancel = cancel.clone();
                 let tx_channel = tx_channel.clone();
+                let ifac = context.ifac.clone();
                 tokio::spawn(run_hdlc_tx_loop(
                     write_half,
                     tx_channel,

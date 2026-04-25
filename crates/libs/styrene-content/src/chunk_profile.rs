@@ -18,17 +18,17 @@
 #[derive(Debug, Copy, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
 pub enum ChunkProfile {
-    LoRa     = 0,
+    LoRa = 0,
     Balanced = 1,
-    WiFi     = 2,
+    WiFi = 2,
 }
 
 impl ChunkProfile {
     pub const fn chunk_size(self) -> u32 {
         match self {
-            Self::LoRa     => 4   * 1024,
-            Self::Balanced => 32  * 1024,
-            Self::WiFi     => 256 * 1024,
+            Self::LoRa => 4 * 1024,
+            Self::Balanced => 32 * 1024,
+            Self::WiFi => 256 * 1024,
         }
     }
 

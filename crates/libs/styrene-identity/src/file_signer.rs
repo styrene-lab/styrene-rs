@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
-use argon2::Argon2;
+use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
     ChaCha20Poly1305, Nonce,
@@ -27,62 +27,149 @@ const SALT_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
 const SECRET_LEN: usize = 32;
 const TAG_LEN: usize = 16;
-const FILE_LEN: usize = SALT_LEN + NONCE_LEN + SECRET_LEN + TAG_LEN;
+/// Expected file size for an encrypted identity file (salt + nonce + ciphertext + tag).
+pub const FILE_LEN: usize = SALT_LEN + NONCE_LEN + SECRET_LEN + TAG_LEN;
+
+/// Hardened Argon2id parameters.
+/// m=65536 KiB (64 MiB), t=3 iterations, p=1 parallelism.
+/// Exceeds OWASP minimum recommendation (m=47104, t=1, p=1).
+fn argon2_params() -> Argon2<'static> {
+    let params = Params::new(65536, 3, 1, Some(32)).expect("valid argon2 params");
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+}
 
 /// Tier D file-based identity signer.
+///
+/// Requires a passphrase to decrypt the identity file. The passphrase is
+/// provided via a [`PassphraseProvider`] — never read from environment
+/// variables, which are visible to co-tenant processes.
 pub struct FileSigner {
     path: PathBuf,
     label: String,
+    passphrase_provider: Box<dyn PassphraseProvider>,
+}
+
+/// Provides the passphrase for decrypting the identity file.
+///
+/// Implementations should obtain the passphrase securely — e.g., from a
+/// platform keychain, interactive prompt, or Unix domain socket.
+/// Environment variables are explicitly not supported as they leak to
+/// child processes and `/proc/<pid>/environ`.
+pub trait PassphraseProvider: Send + Sync {
+    /// Get the passphrase bytes. Called on each `root_secret()` invocation.
+    fn get_passphrase(&self) -> Result<Vec<u8>, SignerError>;
+}
+
+/// Passphrase provider that reads from a closure (for testing or integration).
+pub struct ClosurePassphraseProvider<F: Fn() -> Result<Vec<u8>, SignerError> + Send + Sync> {
+    f: F,
+}
+
+impl<F: Fn() -> Result<Vec<u8>, SignerError> + Send + Sync> ClosurePassphraseProvider<F> {
+    /// Create a new closure-based passphrase provider.
+    pub fn new(f: F) -> Self {
+        Self { f }
+    }
+}
+
+impl<F: Fn() -> Result<Vec<u8>, SignerError> + Send + Sync> PassphraseProvider
+    for ClosurePassphraseProvider<F>
+{
+    fn get_passphrase(&self) -> Result<Vec<u8>, SignerError> {
+        (self.f)()
+    }
 }
 
 impl FileSigner {
-    /// Create a file signer for the given path.
-    pub fn new(path: impl Into<PathBuf>) -> Self {
+    /// Create a file signer for the given path with a passphrase provider.
+    pub fn new(path: impl Into<PathBuf>, provider: Box<dyn PassphraseProvider>) -> Self {
         let path = path.into();
         let label = format!("file:{}", path.display());
-        Self { path, label }
+        Self { path, label, passphrase_provider: provider }
+    }
+
+    /// Create a file signer with a static passphrase (for testing only).
+    #[cfg(test)]
+    pub fn with_static_passphrase(path: impl Into<PathBuf>, passphrase: &'static [u8]) -> Self {
+        Self::new(path, Box::new(ClosurePassphraseProvider { f: move || Ok(passphrase.to_vec()) }))
     }
 
     /// Default identity file path: `~/.config/styrene/identity.key`.
-    ///
-    /// Uses $HOME directly (consistent with styrened-rs config module).
     pub fn default_path() -> PathBuf {
-        let home = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
+        let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."));
         home.join(".config").join("styrene").join("identity.key")
     }
 
-    /// Create with the default path.
-    pub fn with_default_path() -> Self {
-        Self::new(Self::default_path())
-    }
-
     /// Generate a new random root secret and save it encrypted with the passphrase.
+    ///
+    /// Uses `O_EXCL` semantics — **refuses to overwrite** an existing file.
+    /// This is atomic at the kernel level (no TOCTOU race). To replace an
+    /// existing identity, delete the file first (after backing up).
     pub fn generate(&self, passphrase: &[u8]) -> Result<(), SignerError> {
         let mut root_secret = [0u8; SECRET_LEN];
         OsRng.fill_bytes(&mut root_secret);
 
-        let result = self.save(&root_secret, passphrase);
+        let result = self.save_exclusive(&root_secret, passphrase);
         root_secret.zeroize();
         result
     }
 
-    /// Save a root secret encrypted with the given passphrase.
-    fn save(&self, root_secret: &[u8; SECRET_LEN], passphrase: &[u8]) -> Result<(), SignerError> {
+    /// Encrypt and write an identity file. Uses `create_new(true)` (O_EXCL)
+    /// to atomically refuse if the file already exists.
+    fn save_exclusive(
+        &self,
+        root_secret: &[u8; SECRET_LEN],
+        passphrase: &[u8],
+    ) -> Result<(), SignerError> {
+        let file_data = self.encrypt(root_secret, passphrase)?;
+
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        #[cfg(unix)]
+        {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true) // O_EXCL — atomic overwrite protection
+                .mode(0o600)
+                .open(&self.path)?;
+            f.write_all(&file_data)?;
+            f.sync_all()?;
+        }
+        #[cfg(not(unix))]
+        {
+            // create_new is available on all platforms via std
+            let mut f =
+                std::fs::OpenOptions::new().write(true).create_new(true).open(&self.path)?;
+            use std::io::Write;
+            f.write_all(&file_data)?;
+            f.sync_all()?;
+        }
+
+        Ok(())
+    }
+
+    /// Encrypt a root secret into the wire format bytes.
+    fn encrypt(
+        &self,
+        root_secret: &[u8; SECRET_LEN],
+        passphrase: &[u8],
+    ) -> Result<Vec<u8>, SignerError> {
         let mut salt = [0u8; SALT_LEN];
         OsRng.fill_bytes(&mut salt);
 
         let mut nonce_bytes = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
 
-        // Derive encryption key from passphrase via argon2id
+        // Derive encryption key from passphrase via argon2id (hardened params)
         let mut key = [0u8; 32];
-        Argon2::default()
+        argon2_params()
             .hash_password_into(passphrase, &salt, &mut key)
             .map_err(|e| SignerError::SigningFailed(format!("argon2id: {e}")))?;
 
-        // Encrypt root secret
         let cipher = ChaCha20Poly1305::new_from_slice(&key)
             .map_err(|e| SignerError::SigningFailed(format!("cipher init: {e}")))?;
         key.zeroize();
@@ -92,29 +179,15 @@ impl FileSigner {
             .encrypt(nonce, root_secret.as_ref())
             .map_err(|e| SignerError::SigningFailed(format!("encrypt: {e}")))?;
 
-        // Write file
         let mut file_data = Vec::with_capacity(FILE_LEN);
         file_data.extend_from_slice(&salt);
         file_data.extend_from_slice(&nonce_bytes);
         file_data.extend_from_slice(&ciphertext);
-
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&self.path, &file_data)?;
-
-        // Set permissions to owner-only on Unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))?;
-        }
-
-        Ok(())
+        Ok(file_data)
     }
 
     /// Load and decrypt the root secret.
-    fn load(&self, passphrase: &[u8]) -> Result<RootSecret, SignerError> {
+    pub fn load(&self, passphrase: &[u8]) -> Result<RootSecret, SignerError> {
         let file_data = std::fs::read(&self.path)?;
         if file_data.len() != FILE_LEN {
             return Err(SignerError::DecryptionFailed(format!(
@@ -127,9 +200,9 @@ impl FileSigner {
         let nonce_bytes = &file_data[SALT_LEN..SALT_LEN + NONCE_LEN];
         let ciphertext = &file_data[SALT_LEN + NONCE_LEN..];
 
-        // Derive key from passphrase
+        // Derive key from passphrase (hardened params)
         let mut key = [0u8; 32];
-        Argon2::default()
+        argon2_params()
             .hash_password_into(passphrase, salt, &mut key)
             .map_err(|e| SignerError::DecryptionFailed(format!("argon2id: {e}")))?;
 
@@ -138,12 +211,13 @@ impl FileSigner {
         key.zeroize();
 
         let nonce = Nonce::from_slice(nonce_bytes);
-        let plaintext = cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|_| SignerError::DecryptionFailed("wrong passphrase or corrupted file".into()))?;
+        let mut plaintext = cipher.decrypt(nonce, ciphertext).map_err(|_| {
+            SignerError::DecryptionFailed("wrong passphrase or corrupted file".into())
+        })?;
 
         let mut secret = [0u8; SECRET_LEN];
         secret.copy_from_slice(&plaintext);
+        plaintext.zeroize();
 
         Ok(RootSecret::new(secret))
     }
@@ -173,24 +247,18 @@ impl IdentitySigner for FileSigner {
         self.path.exists()
     }
 
-    async fn sign(&self, _data: &[u8]) -> Result<Vec<u8>, SignerError> {
-        // Ed25519 signing requires ed25519-dalek — not yet wired.
-        // When added, this will: derive signing key via HKDF, then sign.
-        Err(SignerError::Unavailable(
-            "Ed25519 signing not yet implemented (needs ed25519-dalek)".into(),
-        ))
+    async fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignerError> {
+        let root = self.root_secret().await?;
+        let deriver = crate::derive::KeyDeriver::new(root.as_bytes());
+        let mut seed = deriver.derive(crate::derive::KeyPurpose::RnsSigning);
+        let sig = crate::pubkey::sign_with_seed(&seed, data);
+        seed.zeroize();
+        Ok(sig.to_vec())
     }
 
     async fn root_secret(&self) -> Result<RootSecret, SignerError> {
-        let passphrase = std::env::var("STYRENE_PASSPHRASE")
-            .map(|s| s.into_bytes())
-            .map_err(|_| {
-                SignerError::AuthRequired(
-                    "STYRENE_PASSPHRASE environment variable not set — \
-                     required to decrypt identity file"
-                        .into(),
-                )
-            })?;
+        // Wrap in Zeroizing to guarantee cleanup even if load() panics.
+        let passphrase = zeroize::Zeroizing::new(self.passphrase_provider.get_passphrase()?);
         self.load(&passphrase)
     }
 }
@@ -198,18 +266,18 @@ impl IdentitySigner for FileSigner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
 
-    fn temp_signer() -> (FileSigner, NamedTempFile) {
-        let tmp = NamedTempFile::new().unwrap();
-        let signer = FileSigner::new(tmp.path());
-        (signer, tmp)
+    fn temp_signer() -> (FileSigner, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identity.key");
+        let signer = FileSigner::with_static_passphrase(path, b"test-passphrase");
+        (signer, dir)
     }
 
     #[test]
     fn generate_and_load_roundtrip() {
-        let (signer, _tmp) = temp_signer();
-        let passphrase = b"test-passphrase-123";
+        let (signer, _dir) = temp_signer();
+        let passphrase = b"test-passphrase";
 
         signer.generate(passphrase).unwrap();
         assert!(signer.exists());
@@ -219,21 +287,30 @@ mod tests {
     }
 
     #[test]
-    fn wrong_passphrase_fails() {
-        let (signer, _tmp) = temp_signer();
-        signer.generate(b"correct").unwrap();
-
-        let result = signer.load(b"wrong");
-        assert!(result.is_err());
+    fn generate_refuses_overwrite() {
+        let (signer, _dir) = temp_signer();
+        signer.generate(b"test-passphrase").unwrap();
+        let err = signer.generate(b"test-passphrase").unwrap_err();
         assert!(
-            result.unwrap_err().to_string().contains("wrong passphrase"),
+            err.to_string().contains("exists") || err.to_string().contains("already"),
+            "should refuse overwrite: {err}"
         );
     }
 
     #[test]
+    fn wrong_passphrase_fails() {
+        let (signer, _dir) = temp_signer();
+        signer.generate(b"correct").unwrap();
+
+        let result = signer.load(b"wrong");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("wrong passphrase"),);
+    }
+
+    #[test]
     fn deterministic_key_from_same_file() {
-        let (signer, _tmp) = temp_signer();
-        let passphrase = b"deterministic";
+        let (signer, _dir) = temp_signer();
+        let passphrase = b"test-passphrase";
 
         signer.generate(passphrase).unwrap();
 
@@ -244,14 +321,13 @@ mod tests {
 
     #[test]
     fn derived_keys_from_file_signer() {
-        let (signer, _tmp) = temp_signer();
-        let passphrase = b"derive-test";
+        let (signer, _dir) = temp_signer();
+        let passphrase = b"test-passphrase";
 
         signer.generate(passphrase).unwrap();
         let secret = signer.load(passphrase).unwrap();
         let keys = crate::derive::derive_keys(secret.as_bytes());
 
-        // All keys should be non-zero and distinct
         assert_ne!(keys.rns_encryption, [0u8; 32]);
         assert_ne!(keys.rns_signing, [0u8; 32]);
         assert_ne!(keys.rns_encryption, keys.rns_signing);
@@ -259,15 +335,57 @@ mod tests {
 
     #[test]
     fn tier_is_encrypted_file() {
-        let (signer, _tmp) = temp_signer();
+        let (signer, _dir) = temp_signer();
         assert_eq!(signer.tier(), SignerTier::EncryptedFile);
+    }
+
+    #[tokio::test]
+    async fn sign_produces_valid_ed25519() {
+        let (signer, _dir) = temp_signer();
+        let passphrase = b"test-passphrase";
+        signer.generate(passphrase).unwrap();
+
+        let data = b"hello styrene identity";
+        let sig_bytes = signer.sign(data).await.unwrap();
+        assert_eq!(sig_bytes.len(), 64);
+
+        // Verify with the matching public key
+        let root = signer.load(passphrase).unwrap();
+        let deriver = crate::derive::KeyDeriver::new(root.as_bytes());
+        let seed = deriver.derive(crate::derive::KeyPurpose::RnsSigning);
+        let vk = crate::pubkey::ed25519_verifying_key(&seed);
+
+        let sig = ed25519_dalek::Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap());
+        use ed25519_dalek::Verifier;
+        assert!(vk.verify(data, &sig).is_ok());
     }
 
     #[test]
     fn not_available_before_generate() {
-        let tmp = NamedTempFile::new().unwrap();
-        let path = tmp.path().join("nonexistent.key");
-        let signer = FileSigner::new(path);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.key");
+        let signer = FileSigner::with_static_passphrase(path, b"unused");
         assert!(!signer.is_available());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_created_with_restricted_permissions() {
+        let (signer, _dir) = temp_signer();
+        signer.generate(b"test-passphrase").unwrap();
+
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::metadata(signer.path()).unwrap().permissions();
+        assert_eq!(perms.mode() & 0o777, 0o600);
+    }
+
+    #[tokio::test]
+    async fn root_secret_via_provider() {
+        let (signer, _dir) = temp_signer();
+        signer.generate(b"test-passphrase").unwrap();
+
+        // The provider returns the passphrase; root_secret() should work.
+        let root = signer.root_secret().await.unwrap();
+        assert_ne!(root.as_bytes(), &[0u8; 32]);
     }
 }

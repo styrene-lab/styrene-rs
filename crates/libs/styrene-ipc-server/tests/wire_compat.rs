@@ -24,12 +24,10 @@ fn fixtures_dir() -> PathBuf {
 
 fn load_vector(name: &str) -> (Vec<u8>, serde_json::Value) {
     let dir = fixtures_dir();
-    let bin = fs::read(dir.join(format!("{name}.bin"))).unwrap_or_else(|e| {
-        panic!("missing test vector {name}.bin: {e}")
-    });
-    let json_str = fs::read_to_string(dir.join(format!("{name}.json"))).unwrap_or_else(|e| {
-        panic!("missing test vector {name}.json: {e}")
-    });
+    let bin = fs::read(dir.join(format!("{name}.bin")))
+        .unwrap_or_else(|e| panic!("missing test vector {name}.bin: {e}"));
+    let json_str = fs::read_to_string(dir.join(format!("{name}.json")))
+        .unwrap_or_else(|e| panic!("missing test vector {name}.json: {e}"));
     let meta: serde_json::Value = serde_json::from_str(&json_str).unwrap();
     (bin, meta)
 }
@@ -100,7 +98,8 @@ macro_rules! wire_compat_test {
 
             // Verify type byte matches
             assert_eq!(
-                msg_type as u8, $type_byte,
+                msg_type as u8,
+                $type_byte,
                 "type mismatch for {}: expected 0x{:02x}, got 0x{:02x}",
                 stringify!($name),
                 $type_byte,
@@ -121,7 +120,12 @@ macro_rules! wire_compat_test {
             // identical — decoders on both sides produce the same values.
             let reencoded = reencode_frame(msg_type, req_id, &payload);
             let (re_type, re_id, re_payload) = decode_frame(&reencoded);
-            assert_eq!(re_type as u8, msg_type as u8, "roundtrip type mismatch for {}", stringify!($name));
+            assert_eq!(
+                re_type as u8,
+                msg_type as u8,
+                "roundtrip type mismatch for {}",
+                stringify!($name)
+            );
             assert_eq!(re_id, req_id, "roundtrip req_id mismatch for {}", stringify!($name));
             assert_eq!(re_payload, payload, "roundtrip payload mismatch for {}", stringify!($name));
         }
@@ -189,10 +193,7 @@ fn cmd_send_chat_payload_fields() {
         payload.get("peer_hash").and_then(|v| v.as_str()),
         Some("abcdef0123456789abcdef0123456789")
     );
-    assert_eq!(
-        payload.get("content").and_then(|v| v.as_str()),
-        Some("Hello from Python!")
-    );
+    assert_eq!(payload.get("content").and_then(|v| v.as_str()), Some("Hello from Python!"));
 }
 
 #[test]
@@ -204,10 +205,7 @@ fn query_messages_payload_fields() {
         payload.get("peer_hash").and_then(|v| v.as_str()),
         Some("abcdef0123456789abcdef0123456789")
     );
-    assert_eq!(
-        payload.get("limit").and_then(|v| v.as_u64()),
-        Some(50)
-    );
+    assert_eq!(payload.get("limit").and_then(|v| v.as_u64()), Some(50));
 }
 
 #[test]
@@ -215,14 +213,8 @@ fn event_message_payload_fields() {
     let (bin, _) = load_vector("event_message");
     let (_, _, payload) = decode_frame(&bin);
 
-    assert_eq!(
-        payload.get("kind").and_then(|v| v.as_str()),
-        Some("new")
-    );
-    assert_eq!(
-        payload.get("id").and_then(|v| v.as_str()),
-        Some("msg_event_1")
-    );
+    assert_eq!(payload.get("kind").and_then(|v| v.as_str()), Some("new"));
+    assert_eq!(payload.get("id").and_then(|v| v.as_str()), Some("msg_event_1"));
 }
 
 // ── Exhaustive type coverage check ───────────────────────────────────────────

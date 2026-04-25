@@ -2,13 +2,14 @@
 
 #![cfg(feature = "alloc")]
 
-use styrene_content::{
-    chunk_profile::ChunkProfile,
-    manifest::StyreneManifest,
-};
+use styrene_content::{chunk_profile::ChunkProfile, manifest::StyreneManifest};
 
-fn noop_sign(_data: &[u8]) -> [u8; 64] { [0xBBu8; 64] }
-fn noop_verify(_data: &[u8], sig: &[u8; 64]) -> bool { sig.iter().all(|&b| b == 0xBB) }
+fn noop_sign(_data: &[u8]) -> [u8; 64] {
+    [0xBBu8; 64]
+}
+fn noop_verify(_data: &[u8], sig: &[u8; 64]) -> bool {
+    sig.iter().all(|&b| b == 0xBB)
+}
 
 fn firmware_blob() -> Vec<u8> {
     // Simulate a small firmware blob spread across multiple LoRa chunks.
@@ -21,8 +22,8 @@ fn multi_chunk_encode_decode_roundtrip() {
     let blob = firmware_blob();
     let m = StyreneManifest::build(
         &blob,
-        "styrened-rs-v1.0.0",
-        "firmware/styrened-rs",
+        "styrened-v1.0.0",
+        "firmware/styrened",
         ChunkProfile::LoRa,
         1_700_000_000,
         [0x42u8; 16],

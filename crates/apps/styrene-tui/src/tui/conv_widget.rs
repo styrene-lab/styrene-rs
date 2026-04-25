@@ -34,11 +34,15 @@ impl ConvState {
 
     pub fn scroll_down(&mut self, amount: u16) {
         self.scroll_offset = self.scroll_offset.saturating_sub(amount);
-        if self.scroll_offset == 0 { self.user_scrolled = false; }
+        if self.scroll_offset == 0 {
+            self.user_scrolled = false;
+        }
     }
 
     pub fn auto_scroll_to_bottom(&mut self) {
-        if !self.user_scrolled { self.scroll_offset = 0; }
+        if !self.user_scrolled {
+            self.scroll_offset = 0;
+        }
     }
 
     pub fn force_scroll_to_bottom(&mut self) {
@@ -46,7 +50,9 @@ impl ConvState {
         self.user_scrolled = false;
     }
 
-    pub fn invalidate(&mut self) { self.cached_count = 0; }
+    pub fn invalidate(&mut self) {
+        self.cached_count = 0;
+    }
 
     pub fn ensure_heights(&mut self, segments: &[Segment], width: u16, t: &dyn Theme) {
         if width != self.cached_width {
@@ -80,7 +86,9 @@ impl ConvState {
 }
 
 impl Default for ConvState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// The scrollable conversation widget.
@@ -108,7 +116,9 @@ impl<'a> StatefulWidget for ConversationWidget<'a> {
         let viewport_height = area.height;
         let total_height = state.total_height();
         let max_scroll = total_height.saturating_sub(viewport_height);
-        if state.scroll_offset > max_scroll { state.scroll_offset = max_scroll; }
+        if state.scroll_offset > max_scroll {
+            state.scroll_offset = max_scroll;
+        }
 
         let top_offset = if total_height <= viewport_height {
             0
@@ -123,16 +133,23 @@ impl<'a> StatefulWidget for ConversationWidget<'a> {
             let seg_bottom = y_cursor + seg_height;
             y_cursor = seg_bottom;
 
-            if seg_bottom <= top_offset { continue; }
-            if seg_top >= top_offset + viewport_height { break; }
+            if seg_bottom <= top_offset {
+                continue;
+            }
+            if seg_top >= top_offset + viewport_height {
+                break;
+            }
 
             if seg_top >= top_offset {
                 // Fully visible — render directly
                 let render_y = area.y + (seg_top - top_offset);
                 let available = area.bottom().saturating_sub(render_y);
-                if available == 0 { continue; }
+                if available == 0 {
+                    continue;
+                }
                 let seg_area = Rect {
-                    x: area.x, y: render_y,
+                    x: area.x,
+                    y: render_y,
                     width: area.width,
                     height: seg_height.min(available),
                 };
@@ -141,7 +158,9 @@ impl<'a> StatefulWidget for ConversationWidget<'a> {
                 // Partially clipped at top — render to temp buffer, copy visible portion
                 let clip_rows = top_offset - seg_top;
                 let visible_rows = seg_height.saturating_sub(clip_rows).min(viewport_height);
-                if visible_rows == 0 { continue; }
+                if visible_rows == 0 {
+                    continue;
+                }
 
                 let temp_area = Rect::new(0, 0, area.width, seg_height);
                 let mut temp_buf = Buffer::empty(temp_area);
@@ -159,7 +178,9 @@ impl<'a> StatefulWidget for ConversationWidget<'a> {
                 for row in 0..visible_rows {
                     let src_y = clip_rows + row;
                     let dst_y = area.y + row;
-                    if dst_y >= area.bottom() { break; }
+                    if dst_y >= area.bottom() {
+                        break;
+                    }
                     for x in 0..area.width {
                         if src_y < seg_height {
                             if let Some(cell) = buf.cell_mut((area.x + x, dst_y)) {
@@ -176,7 +197,7 @@ impl<'a> StatefulWidget for ConversationWidget<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::segments::{DeliveryStatus};
+    use crate::tui::segments::DeliveryStatus;
     use crate::tui::theme::StyreneTheme;
 
     #[test]
@@ -190,14 +211,12 @@ mod tests {
 
     #[test]
     fn single_sent_segment_renders() {
-        let segs = vec![
-            Segment::SentMessage {
-                dest_hash: "aabbccdd".into(),
-                dest_name: Some("Node A".into()),
-                text: "hello".into(),
-                delivery_status: DeliveryStatus::Sent,
-            },
-        ];
+        let segs = vec![Segment::SentMessage {
+            dest_hash: "aabbccdd".into(),
+            dest_name: Some("Node A".into()),
+            text: "hello".into(),
+            delivery_status: DeliveryStatus::Sent,
+        }];
         let area = Rect::new(0, 0, 80, 10);
         let mut buf = Buffer::empty(area);
         let mut state = ConvState::new();

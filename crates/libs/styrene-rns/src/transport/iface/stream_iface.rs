@@ -43,7 +43,7 @@ pub async fn run_hdlc_rx_loop<R>(
     iface_address: AddressHash,
     cancel: CancellationToken,
     stop: CancellationToken,
-    ifac: Option<&IfacConfig>,
+    ifac: Option<Arc<IfacConfig>>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send,
 {
@@ -74,7 +74,7 @@ pub async fn run_hdlc_rx_loop<R>(
 
                                 // IFAC: strip and verify if the interface requires it,
                                 // or drop packets that carry IFAC on an Open interface.
-                                let inner: Option<Vec<u8>> = if let Some(cfg) = ifac {
+                                let inner: Option<Vec<u8>> = if let Some(ref cfg) = ifac {
                                     // IFAC-enabled interface: must have valid IFAC token.
                                     super::ifac::ifac_unwrap(raw, cfg)
                                 } else if !raw.is_empty() && raw[0] & 0x80 != 0 {
@@ -143,7 +143,7 @@ pub async fn run_hdlc_tx_loop<W>(
     iface_address: AddressHash,
     cancel: CancellationToken,
     stop: CancellationToken,
-    ifac: Option<&IfacConfig>,
+    ifac: Option<Arc<IfacConfig>>,
 ) where
     W: tokio::io::AsyncWrite + Unpin + Send,
 {
@@ -167,7 +167,7 @@ pub async fn run_hdlc_tx_loop<W>(
 
                 if packet.serialize(&mut output).is_ok() {
                     // IFAC: wrap the serialized packet if this interface requires it.
-                    let wire_bytes: Vec<u8> = if let Some(cfg) = ifac {
+                    let wire_bytes: Vec<u8> = if let Some(ref cfg) = ifac {
                         super::ifac::ifac_wrap(output.as_slice(), cfg)
                     } else {
                         output.as_slice().to_vec()

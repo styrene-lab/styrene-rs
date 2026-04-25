@@ -21,6 +21,8 @@ thiserror.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 serde_json.workspace = true
+hex.workspace = true
+rmp-serde.workspace = true
 
 [features]
 default = ["std"]

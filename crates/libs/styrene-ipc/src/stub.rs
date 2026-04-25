@@ -8,7 +8,7 @@ use crate::types::*;
 /// A daemon implementation that returns `NotImplemented` for every method.
 ///
 /// This is the starting point for incremental development — wire it into
-/// `styrened-rs`, then replace stubs one method at a time.
+/// `styrened`, then replace stubs one method at a time.
 pub struct StubDaemon;
 
 #[async_trait]
@@ -86,6 +86,22 @@ impl DaemonMessaging for StubDaemon {
     ) -> Result<Option<PeerHash>, IpcError> {
         Err(IpcError::not_implemented("resolve_name"))
     }
+
+    async fn pin_conversation(&self, _peer_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("pin_conversation"))
+    }
+
+    async fn unpin_conversation(&self, _peer_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("unpin_conversation"))
+    }
+
+    async fn mute_conversation(&self, _peer_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("mute_conversation"))
+    }
+
+    async fn unmute_conversation(&self, _peer_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("unmute_conversation"))
+    }
 }
 
 #[async_trait]
@@ -153,6 +169,22 @@ impl DaemonStatus for StubDaemon {
 
     async fn blocked_peers(&self) -> Result<Vec<String>, IpcError> {
         Err(IpcError::not_implemented("blocked_peers"))
+    }
+
+    async fn list_interfaces(&self) -> Result<Vec<InterfaceDetail>, IpcError> {
+        Err(IpcError::not_implemented("list_interfaces"))
+    }
+
+    async fn search_peers(&self, _query: &str, _limit: u32) -> Result<Vec<DeviceInfo>, IpcError> {
+        Err(IpcError::not_implemented("search_peers"))
+    }
+
+    async fn bookmark_peer(&self, _identity_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("bookmark_peer"))
+    }
+
+    async fn unbookmark_peer(&self, _identity_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("unbookmark_peer"))
     }
 }
 
@@ -259,6 +291,30 @@ impl DaemonTunnel for StubDaemon {
 }
 
 #[async_trait]
+impl DaemonPages for StubDaemon {
+    async fn browse_page(
+        &self,
+        _host: &str,
+        _path: &str,
+        _timeout: Option<u64>,
+    ) -> Result<PageContent, IpcError> {
+        Err(IpcError::not_implemented("browse_page"))
+    }
+
+    async fn list_pages(
+        &self,
+        _host: &str,
+        _timeout: Option<u64>,
+    ) -> Result<Vec<PageInfo>, IpcError> {
+        Err(IpcError::not_implemented("list_pages"))
+    }
+
+    async fn page_hosts(&self) -> Result<Vec<DeviceInfo>, IpcError> {
+        Err(IpcError::not_implemented("page_hosts"))
+    }
+}
+
+#[async_trait]
 impl DaemonEvents for StubDaemon {
     async fn subscribe_messages(
         &self,
@@ -305,6 +361,10 @@ mod tests {
         assert!(stub.remove_contact("abc").await.is_err());
         assert!(stub.query_contacts().await.is_err());
         assert!(stub.resolve_name("name", None).await.is_err());
+        assert!(stub.pin_conversation("abc").await.is_err());
+        assert!(stub.unpin_conversation("abc").await.is_err());
+        assert!(stub.mute_conversation("abc").await.is_err());
+        assert!(stub.unmute_conversation("abc").await.is_err());
 
         // DaemonIdentity
         assert!(stub.query_identity().await.is_err());
@@ -318,6 +378,16 @@ mod tests {
         assert!(stub.query_path_info("abc").await.is_err());
         assert!(stub.query_auto_reply().await.is_err());
         assert!(stub.set_auto_reply("off", None, None).await.is_err());
+
+        assert!(stub.list_interfaces().await.is_err());
+        assert!(stub.search_peers("test", 10).await.is_err());
+        assert!(stub.bookmark_peer("abc").await.is_err());
+        assert!(stub.unbookmark_peer("abc").await.is_err());
+
+        // DaemonPages
+        assert!(stub.browse_page("abc", "/index", None).await.is_err());
+        assert!(stub.list_pages("abc", None).await.is_err());
+        assert!(stub.page_hosts().await.is_err());
 
         // DaemonFleet
         assert!(stub.device_status("abc", None).await.is_err());

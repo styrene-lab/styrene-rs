@@ -11,7 +11,9 @@
 //!   ○ node-3  deadbeef…   (peer — offline)
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{
+    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 use tui_tree_widget::{Tree, TreeItem, TreeState};
 
 use super::theme::Theme;
@@ -25,10 +27,7 @@ pub struct TopologyState {
 
 impl TopologyState {
     pub fn new() -> Self {
-        Self {
-            tree_state: TreeState::default(),
-            sidebar_active: false,
-        }
+        Self { tree_state: TreeState::default(), sidebar_active: false }
     }
 
     pub fn toggle_active(&mut self) {
@@ -41,11 +40,26 @@ impl TopologyState {
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
         use crossterm::event::KeyCode;
         match key.code {
-            KeyCode::Up => { self.tree_state.key_up(); true }
-            KeyCode::Down => { self.tree_state.key_down(); true }
-            KeyCode::Left => { self.tree_state.key_left(); true }
-            KeyCode::Right => { self.tree_state.key_right(); true }
-            KeyCode::Enter => { self.tree_state.toggle_selected(); true }
+            KeyCode::Up => {
+                self.tree_state.key_up();
+                true
+            }
+            KeyCode::Down => {
+                self.tree_state.key_down();
+                true
+            }
+            KeyCode::Left => {
+                self.tree_state.key_left();
+                true
+            }
+            KeyCode::Right => {
+                self.tree_state.key_right();
+                true
+            }
+            KeyCode::Enter => {
+                self.tree_state.toggle_selected();
+                true
+            }
             _ => false,
         }
     }
@@ -55,13 +69,17 @@ impl TopologyState {
         let selected = self.tree_state.selected();
         let id = selected.first()?;
         // Peer IDs are their hash; link IDs are "link::<id>"
-        if id.starts_with("link::") { return None; }
+        if id.starts_with("link::") {
+            return None;
+        }
         peers.iter().find(|p| &p.hash == id).map(|p| p.hash.as_str())
     }
 }
 
 impl Default for TopologyState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ─── Build tree items ─────────────────────────────────────────────────────────
@@ -72,59 +90,44 @@ fn peer_item<'a>(peer: &PeerRecord, links: &[LinkRecord], t: &dyn Theme) -> Tree
         PeerStatus::Stale => t.link_stale(),
         PeerStatus::Offline => t.peer_offline(),
     };
-    let hop_str = if peer.hop_count > 1 {
-        format!(" {}↗", peer.hop_count)
-    } else {
-        String::new()
-    };
+    let hop_str =
+        if peer.hop_count > 1 { format!(" {}↗", peer.hop_count) } else { String::new() };
 
     let label_text = Text::from(Line::from(vec![
-        Span::styled(
-            format!("{} ", peer.status.icon()),
-            Style::default().fg(status_color),
-        ),
+        Span::styled(format!("{} ", peer.status.icon()), Style::default().fg(status_color)),
         Span::styled(
             peer.label().to_string(),
             Style::default().fg(t.fg()).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!("  {}…{}", peer.short_hash(), hop_str),
-            Style::default().fg(t.dim()),
-        ),
+        Span::styled(format!("  {}…{}", peer.short_hash(), hop_str), Style::default().fg(t.dim())),
     ]));
 
     // Link children
-    let peer_links: Vec<&LinkRecord> = links.iter()
-        .filter(|l| l.peer_hash == peer.hash)
-        .collect();
+    let peer_links: Vec<&LinkRecord> = links.iter().filter(|l| l.peer_hash == peer.hash).collect();
 
-    let children: Vec<TreeItem<String>> = peer_links.iter().map(|link| {
-        let link_color = match link.status {
-            LinkStatus::Active => t.link_active(),
-            LinkStatus::Stale => t.link_stale(),
-            _ => t.link_closed(),
-        };
-        let rtt_str = if link.rtt_ms > 0.0 {
-            format!("  {:.0}ms", link.rtt_ms)
-        } else {
-            String::new()
-        };
-        let link_text = Text::from(Line::from(vec![
-            Span::styled(
-                format!("  {} ", link.status.icon()),
-                Style::default().fg(link_color),
-            ),
-            Span::styled(link.short_id().to_string(), Style::default().fg(t.muted())),
-            Span::styled(rtt_str, Style::default().fg(t.dim())),
-        ]));
-        TreeItem::new_leaf(format!("link::{}", link.id), link_text)
-    }).collect();
+    let children: Vec<TreeItem<String>> = peer_links
+        .iter()
+        .map(|link| {
+            let link_color = match link.status {
+                LinkStatus::Active => t.link_active(),
+                LinkStatus::Stale => t.link_stale(),
+                _ => t.link_closed(),
+            };
+            let rtt_str =
+                if link.rtt_ms > 0.0 { format!("  {:.0}ms", link.rtt_ms) } else { String::new() };
+            let link_text = Text::from(Line::from(vec![
+                Span::styled(format!("  {} ", link.status.icon()), Style::default().fg(link_color)),
+                Span::styled(link.short_id().to_string(), Style::default().fg(t.muted())),
+                Span::styled(rtt_str, Style::default().fg(t.dim())),
+            ]));
+            TreeItem::new_leaf(format!("link::{}", link.id), link_text)
+        })
+        .collect();
 
     if children.is_empty() {
         TreeItem::new_leaf(peer.hash.clone(), label_text)
     } else {
-        TreeItem::new(peer.hash.clone(), label_text, children)
-            .expect("unique peer hash")
+        TreeItem::new(peer.hash.clone(), label_text, children).expect("unique peer hash")
     }
 }
 
@@ -174,9 +177,8 @@ pub fn render(
         PeerStatus::Offline => 2,
     });
 
-    let items: Vec<TreeItem<String>> = sorted_peers.iter()
-        .map(|p| peer_item(p, links, t))
-        .collect();
+    let items: Vec<TreeItem<String>> =
+        sorted_peers.iter().map(|p| peer_item(p, links, t)).collect();
 
     // Auto-open all peers on first render
     if state.tree_state.opened().is_empty() && !items.is_empty() {
@@ -185,13 +187,9 @@ pub fn render(
         }
     }
 
-    let tree_style = Style::default()
-        .fg(t.fg())
-        .bg(t.bg());
-    let highlight_style = Style::default()
-        .fg(t.accent_bright())
-        .bg(t.surface_bg())
-        .add_modifier(Modifier::BOLD);
+    let tree_style = Style::default().fg(t.fg()).bg(t.bg());
+    let highlight_style =
+        Style::default().fg(t.accent_bright()).bg(t.surface_bg()).add_modifier(Modifier::BOLD);
 
     let Ok(tree) = Tree::new(&items) else {
         // Duplicate IDs — shouldn't happen; render fallback
@@ -200,9 +198,7 @@ pub fn render(
         return;
     };
 
-    let tree = tree
-        .highlight_style(highlight_style)
-        .style(tree_style);
+    let tree = tree.highlight_style(highlight_style).style(tree_style);
 
     frame.render_stateful_widget(tree, inner, &mut state.tree_state);
 
@@ -220,7 +216,9 @@ pub fn render(
 }
 
 fn render_hint(area: Rect, frame: &mut Frame, t: &dyn Theme) {
-    if area.height < 3 { return; }
+    if area.height < 3 {
+        return;
+    }
     let hint_y = area.y + area.height - 1;
     let hint = Paragraph::new(Line::from(vec![
         Span::styled("  r ", Style::default().fg(t.accent())),

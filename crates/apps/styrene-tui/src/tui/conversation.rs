@@ -18,7 +18,9 @@ impl ConversationView {
         Self { segments: Vec::new(), conv_state: ConvState::new() }
     }
 
-    pub fn segments(&self) -> &[Segment] { &self.segments }
+    pub fn segments(&self) -> &[Segment] {
+        &self.segments
+    }
 
     pub fn segments_and_state(&mut self) -> (&[Segment], &mut ConvState) {
         (&self.segments, &mut self.conv_state)
@@ -27,8 +29,11 @@ impl ConversationView {
     // ─── Push methods ─────────────────────────────────────────────
 
     pub fn push_sent(
-        &mut self, dest_hash: &str, dest_name: Option<&str>,
-        text: &str, status: DeliveryStatus,
+        &mut self,
+        dest_hash: &str,
+        dest_name: Option<&str>,
+        text: &str,
+        status: DeliveryStatus,
     ) {
         if !self.segments.is_empty() {
             self.segments.push(Segment::ConvSeparator);
@@ -44,8 +49,12 @@ impl ConversationView {
     }
 
     pub fn push_received(
-        &mut self, source_hash: &str, source_name: Option<&str>,
-        title: Option<&str>, text: &str, timestamp: i64,
+        &mut self,
+        source_hash: &str,
+        source_name: Option<&str>,
+        title: Option<&str>,
+        text: &str,
+        timestamp: i64,
     ) {
         self.segments.push(Segment::ReceivedMessage {
             source_hash: source_hash.to_string(),
@@ -59,8 +68,11 @@ impl ConversationView {
     }
 
     pub fn push_protocol_event(
-        &mut self, kind: ProtocolEventKind, peer_hash: Option<&str>,
-        peer_name: Option<&str>, detail: &str,
+        &mut self,
+        kind: ProtocolEventKind,
+        peer_hash: Option<&str>,
+        peer_name: Option<&str>,
+        detail: &str,
     ) {
         self.segments.push(Segment::ProtocolEvent {
             kind,
@@ -79,10 +91,7 @@ impl ConversationView {
     }
 
     pub fn push_mesh_event(&mut self, icon: &str, text: &str) {
-        self.segments.push(Segment::MeshEvent {
-            icon: icon.to_string(),
-            text: text.to_string(),
-        });
+        self.segments.push(Segment::MeshEvent { icon: icon.to_string(), text: text.to_string() });
         self.conv_state.invalidate();
         self.conv_state.auto_scroll_to_bottom();
     }
@@ -100,6 +109,10 @@ impl ConversationView {
 
     // ─── Scroll ───────────────────────────────────────────────────
 
-    pub fn scroll_up(&mut self, n: u16) { self.conv_state.scroll_up(n); }
-    pub fn scroll_down(&mut self, n: u16) { self.conv_state.scroll_down(n); }
+    pub fn scroll_up(&mut self, n: u16) {
+        self.conv_state.scroll_up(n);
+    }
+    pub fn scroll_down(&mut self, n: u16) {
+        self.conv_state.scroll_down(n);
+    }
 }

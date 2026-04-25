@@ -3,11 +3,11 @@
 //! Available on Linux, macOS, and any platform with `getrandom` support.
 //! Enabled by the `kernel` feature (on by default).
 
+use super::EntropySource;
 use crate::{
     health::SourceHealth,
     pool::{EntropyPool, SourceId},
 };
-use super::EntropySource;
 
 /// Entropy source drawing from the OS kernel's CSPRNG (`getrandom` syscall).
 ///

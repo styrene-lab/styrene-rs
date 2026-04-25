@@ -13,7 +13,7 @@
 //! - ConvSeparator   → visual turn boundary between conversations
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, BorderType, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph, Wrap};
 
 use super::theme::Theme;
 use super::widgets;
@@ -118,19 +118,13 @@ impl Segment {
     pub fn height(&self, width: u16, _t: &dyn Theme) -> u16 {
         let inner = width.saturating_sub(4); // borders + padding
         match self {
-            Segment::SentMessage { text, .. } => {
-                2 + wrapped_line_count(text, inner)
-            }
+            Segment::SentMessage { text, .. } => 2 + wrapped_line_count(text, inner),
             Segment::ReceivedMessage { title, text, .. } => {
                 let title_rows = u16::from(title.is_some());
                 2 + title_rows + wrapped_line_count(text, inner)
             }
-            Segment::ProtocolEvent { detail, .. } => {
-                1 + wrapped_line_count(detail, inner).max(1)
-            }
-            Segment::SystemEvent { text } => {
-                1 + wrapped_line_count(text, inner)
-            }
+            Segment::ProtocolEvent { detail, .. } => 1 + wrapped_line_count(detail, inner).max(1),
+            Segment::SystemEvent { text } => 1 + wrapped_line_count(text, inner),
             Segment::MeshEvent { text, .. } => {
                 1 + wrapped_line_count(text, inner.saturating_sub(2))
             }
@@ -149,13 +143,26 @@ impl Segment {
             }
             Segment::ReceivedMessage { source_hash, source_name, title, text, timestamp } => {
                 let ts = format_timestamp(*timestamp);
-                render_received(area, buf, t, source_hash, source_name.as_deref(),
-                    title.as_deref(), text, &ts)
+                render_received(
+                    area,
+                    buf,
+                    t,
+                    source_hash,
+                    source_name.as_deref(),
+                    title.as_deref(),
+                    text,
+                    &ts,
+                )
             }
-            Segment::ProtocolEvent { kind, peer_hash, peer_name, detail } => {
-                render_protocol_event(area, buf, t, kind, peer_hash.as_deref(),
-                    peer_name.as_deref(), detail)
-            }
+            Segment::ProtocolEvent { kind, peer_hash, peer_name, detail } => render_protocol_event(
+                area,
+                buf,
+                t,
+                kind,
+                peer_hash.as_deref(),
+                peer_name.as_deref(),
+                detail,
+            ),
             Segment::SystemEvent { text } => render_system(area, buf, t, text),
             Segment::MeshEvent { icon, text } => render_mesh_event(area, buf, t, icon, text),
             Segment::ConvSeparator => render_separator(area, buf, t),
@@ -168,9 +175,13 @@ impl Segment {
 // ═══════════════════════════════════════════════════════════════════
 
 fn render_sent(
-    area: Rect, buf: &mut Buffer, t: &dyn Theme,
-    dest_hash: &str, dest_name: Option<&str>,
-    text: &str, status: &DeliveryStatus,
+    area: Rect,
+    buf: &mut Buffer,
+    t: &dyn Theme,
+    dest_hash: &str,
+    dest_name: Option<&str>,
+    text: &str,
+    status: &DeliveryStatus,
 ) {
     let label = dest_name.unwrap_or(dest_hash);
     let short = &dest_hash[..dest_hash.len().min(8)];
@@ -203,9 +214,14 @@ fn render_sent(
 }
 
 fn render_received(
-    area: Rect, buf: &mut Buffer, t: &dyn Theme,
-    source_hash: &str, source_name: Option<&str>,
-    title: Option<&str>, text: &str, ts: &str,
+    area: Rect,
+    buf: &mut Buffer,
+    t: &dyn Theme,
+    source_hash: &str,
+    source_name: Option<&str>,
+    title: Option<&str>,
+    text: &str,
+    ts: &str,
 ) {
     let label = source_name.unwrap_or(source_hash);
     let short = &source_hash[..source_hash.len().min(8)];
@@ -229,32 +245,34 @@ fn render_received(
     let mut lines = vec![];
     if let Some(ttl) = title {
         lines.push(Line::from(Span::styled(
-            ttl, Style::default().fg(t.accent_bright()).add_modifier(Modifier::BOLD),
+            ttl,
+            Style::default().fg(t.accent_bright()).add_modifier(Modifier::BOLD),
         )));
     }
     lines.push(Line::from(Span::styled(text, Style::default().fg(t.fg()))));
-    Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .render(inner, buf);
+    Paragraph::new(lines).wrap(Wrap { trim: false }).render(inner, buf);
 }
 
 fn render_protocol_event(
-    area: Rect, buf: &mut Buffer, t: &dyn Theme,
-    kind: &ProtocolEventKind, peer_hash: Option<&str>,
-    peer_name: Option<&str>, detail: &str,
+    area: Rect,
+    buf: &mut Buffer,
+    t: &dyn Theme,
+    kind: &ProtocolEventKind,
+    peer_hash: Option<&str>,
+    peer_name: Option<&str>,
+    detail: &str,
 ) {
     let icon = kind.icon();
     let icon_color = match kind {
-        ProtocolEventKind::LinkEstablished | ProtocolEventKind::Receipt
-            | ProtocolEventKind::ResourceComplete => t.success(),
+        ProtocolEventKind::LinkEstablished
+        | ProtocolEventKind::Receipt
+        | ProtocolEventKind::ResourceComplete => t.success(),
         ProtocolEventKind::LinkClosed | ProtocolEventKind::ResourceFailed => t.error(),
         ProtocolEventKind::LinkStale => t.warning(),
         _ => t.accent_muted(),
     };
-    let peer_label = peer_name
-        .or(peer_hash)
-        .map(|s| format!(" {}", &s[..s.len().min(12)]))
-        .unwrap_or_default();
+    let peer_label =
+        peer_name.or(peer_hash).map(|s| format!(" {}", &s[..s.len().min(12)])).unwrap_or_default();
     let line = Line::from(vec![
         Span::styled(format!(" {icon}"), Style::default().fg(icon_color)),
         Span::styled(peer_label, Style::default().fg(t.muted())),
@@ -264,11 +282,9 @@ fn render_protocol_event(
 }
 
 fn render_system(area: Rect, buf: &mut Buffer, t: &dyn Theme, text: &str) {
-    let lines: Vec<Line> = text.lines()
-        .map(|l| Line::from(Span::styled(
-            format!("  {l}"),
-            Style::default().fg(t.accent_muted()),
-        )))
+    let lines: Vec<Line> = text
+        .lines()
+        .map(|l| Line::from(Span::styled(format!("  {l}"), Style::default().fg(t.accent_muted()))))
         .collect();
     Paragraph::new(lines).render(area, buf);
 }
@@ -291,16 +307,17 @@ fn render_separator(area: Rect, buf: &mut Buffer, t: &dyn Theme) {
 // ═══════════════════════════════════════════════════════════════════
 
 fn wrapped_line_count(text: &str, width: u16) -> u16 {
-    if width == 0 { return text.lines().count() as u16; }
+    if width == 0 {
+        return text.lines().count() as u16;
+    }
     let w = width as usize;
-    text.lines()
-        .map(|line| (line.len().max(1)).div_ceil(w) as u16)
-        .sum::<u16>()
-        .max(1)
+    text.lines().map(|line| (line.len().max(1)).div_ceil(w) as u16).sum::<u16>().max(1)
 }
 
 fn format_timestamp(ts: i64) -> String {
-    if ts == 0 { return String::new(); }
+    if ts == 0 {
+        return String::new();
+    }
     // Extract time-of-day from UTC epoch seconds
     let day_secs = ts % 86400;
     let h = day_secs / 3600;

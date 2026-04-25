@@ -27,16 +27,10 @@ struct MockTransport {
 impl ContentTransport for MockTransport {
     type Error = ();
 
-    async fn broadcast_announce(
-        &mut self,
-        announce: &ResourceAvailableAnnounce,
-    ) -> Result<(), ()> {
+    async fn broadcast_announce(&mut self, announce: &ResourceAvailableAnnounce) -> Result<(), ()> {
         self.announces.lock().unwrap().push(*announce);
         // Also deliver announce to peer's inbox.
-        self.peer_inbox
-            .lock()
-            .unwrap()
-            .push_back(ContentEvent::Announce(*announce));
+        self.peer_inbox.lock().unwrap().push_back(ContentEvent::Announce(*announce));
         Ok(())
     }
 
@@ -84,24 +78,22 @@ fn make_pair() -> (MockTransport, MockTransport) {
         peer_inbox: b_inbox.clone(),
         announces: announces.clone(),
     };
-    let b = MockTransport {
-        inbox: b_inbox,
-        peer_inbox: a_inbox,
-        announces,
-    };
+    let b = MockTransport { inbox: b_inbox, peer_inbox: a_inbox, announces };
     (a, b)
 }
 
-fn dummy_sign(_: &[u8]) -> [u8; 64] { [0xBBu8; 64] }
+fn dummy_sign(_: &[u8]) -> [u8; 64] {
+    [0xBBu8; 64]
+}
 
 #[tokio::test]
 async fn publish_then_self_download() {
-    let content = b"styrened-rs firmware v0.2.0 binary stub data for testing xxxxxxxx";
+    let content = b"styrened firmware v0.2.0 binary stub data for testing xxxxxxxx";
 
     let manifest = StyreneManifest::build(
         content,
-        "styrened-rs",
-        "firmware/styrened-rs",
+        "styrened",
+        "firmware/styrened",
         ChunkProfile::LoRa,
         1_700_000_000,
         [0u8; 16],
@@ -145,10 +137,7 @@ async fn chunk_verification_rejects_tampered_data() {
     let mut dist = ContentDistributor::new(RamChunkStore::new(), tx, [0u8; 16]);
 
     // Manually write a corrupted chunk.
-    dist.store()
-        .write_chunk(manifest.content_id, 0, b"corrupted data!!!")
-        .await
-        .unwrap();
+    dist.store().write_chunk(manifest.content_id, 0, b"corrupted data!!!").await.unwrap();
 
     // Verify the manifest rejects it.
     assert!(!manifest.verify_chunk(0, b"corrupted data!!!"));
@@ -159,8 +148,15 @@ async fn chunk_verification_rejects_tampered_data() {
 async fn announce_broadcast_on_publish() {
     let content = b"broadcast test content";
     let manifest = StyreneManifest::build(
-        content, "broadcast", "data/test", ChunkProfile::LoRa, 0, [0u8; 16], dummy_sign,
-    ).unwrap();
+        content,
+        "broadcast",
+        "data/test",
+        ChunkProfile::LoRa,
+        0,
+        [0u8; 16],
+        dummy_sign,
+    )
+    .unwrap();
 
     let (tx, _rx) = make_pair();
     let announces = tx.announces.clone();

@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Instant};
 use crate::transport::error::RnsError;
 use crate::{
     hash::{AddressHash, Hash},
-    packet::{DestinationType, Header, HeaderType, Packet, PacketType, PropagationType},
+    packet::{DestinationType, Header, HeaderType, IfacFlag, Packet, PacketType, PropagationType},
 };
 use rmp::encode::write_array_len;
 
@@ -103,13 +103,11 @@ impl PathTable {
         (
             Packet {
                 header: Header {
-                    ifac_flag: original_packet.header.ifac_flag,
+                    ifac_flag: IfacFlag::Open, // IFAC applied at interface layer
                     header_type: HeaderType::Type2,
-                    context_flag: original_packet.header.context_flag,
                     propagation_type: PropagationType::Transport,
-                    destination_type: original_packet.header.destination_type,
-                    packet_type: original_packet.header.packet_type,
                     hops: original_packet.header.hops + 1,
+                    ..original_packet.header
                 },
                 ifac: None,
                 destination: original_packet.destination,
@@ -154,13 +152,9 @@ impl PathTable {
         (
             Packet {
                 header: Header {
-                    ifac_flag: original_packet.header.ifac_flag,
                     header_type: HeaderType::Type2,
-                    context_flag: original_packet.header.context_flag,
                     propagation_type: PropagationType::Transport,
-                    destination_type: original_packet.header.destination_type,
-                    packet_type: original_packet.header.packet_type,
-                    hops: original_packet.header.hops,
+                    ..original_packet.header
                 },
                 ifac: original_packet.ifac,
                 destination: original_packet.destination,

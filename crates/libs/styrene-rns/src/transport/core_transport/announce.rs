@@ -7,8 +7,6 @@ async fn process_announce<'a>(
     iface: AddressHash,
     announce: crate::destination::AnnounceInfo<'_>,
 ) -> MutexGuard<'a, TransportHandler> {
-    let destination_known = handler.has_destination(&packet.destination);
-
     if let Some(existing) = handler.single_out_destinations.get(&packet.destination).cloned() {
         let existing = existing.lock().await;
         if existing.identity.public_key != announce.destination.identity.public_key
@@ -41,17 +39,16 @@ async fn process_announce<'a>(
     let dest_hash = announce.destination.desc.address_hash;
     let destination = Arc::new(Mutex::new(announce.destination));
 
-    if !destination_known {
-        if !handler.single_out_destinations.contains_key(&packet.destination) {
-            log::trace!("tp({}): new announce for {}", handler.config.name, packet.destination);
-
-            handler.single_out_destinations.insert(packet.destination, destination.clone());
-        }
-
-        handler.announce_table.add(packet, dest_hash, iface);
-
-        handler.path_table.handle_announce(packet, packet.transport, iface);
+    // Always add to announce/path tables — even for known destinations,
+    // updated announces carry new hops/app_data that must be processed.
+    // (Upstream fix: BeechatNetworkSystemsLtd/Reticulum-rs PR #83)
+    if !handler.single_out_destinations.contains_key(&packet.destination) {
+        log::trace!("tp({}): new announce for {}", handler.config.name, packet.destination);
+        handler.single_out_destinations.insert(packet.destination, destination.clone());
     }
+
+    handler.announce_table.add(packet, dest_hash, iface);
+    handler.path_table.handle_announce(packet, packet.transport, iface);
 
     let name_hash = {
         let destination = destination.lock().await;
@@ -79,6 +76,11 @@ pub(super) async fn handle_announce<'a>(
     mut handler: MutexGuard<'a, TransportHandler>,
     iface: AddressHash,
 ) {
+    // Skip announces for local destinations (upstream PR #83)
+    if handler.has_destination(&packet.destination) {
+        return;
+    }
+
     let announce = match DestinationAnnounce::validate(packet) {
         Ok(result) => result,
         Err(err) => {
@@ -109,15 +111,32 @@ pub(super) async fn handle_announce<'a>(
     let _ = process_announce(packet, handler, iface, announce).await;
 }
 
-pub(super) async fn retransmit_announces<'a>(mut handler: MutexGuard<'a, TransportHandler>) {
+/// Retransmit pending announces.
+///
+/// When `retransmit_old` is true, also retransmits cached (older) announces
+/// that may need periodic re-broadcast for network convergence.
+/// Called every `INTERVAL_ANNOUNCES_RETRANSMIT` (1s) with `retransmit_old=false`,
+/// and every `INTERVAL_OLD_ANNOUNCES_RETRANSMIT` (300s) with `retransmit_old=true`.
+pub(super) async fn retransmit_announces<'a>(
+    mut handler: MutexGuard<'a, TransportHandler>,
+    retransmit_old: bool,
+) {
     let transport_id = *handler.config.identity.address_hash();
     let messages = handler.announce_table.to_retransmit(&transport_id);
 
     for message in messages {
         handler.send(message).await;
     }
+
+    if retransmit_old {
+        let old_messages = handler.announce_table.to_retransmit_old(&transport_id);
+        for message in old_messages {
+            handler.send(message).await;
+        }
+    }
 }
 
+#[allow(dead_code)] // Awaiting integration into transport job loop
 pub(super) async fn release_held_announces<'a>(handler: MutexGuard<'a, TransportHandler>) {
     let mut handler = handler;
     let released = handler.announce_limits.release_ready();

@@ -59,6 +59,18 @@ impl DaemonStatus for TestDaemon {
     async fn blocked_peers(&self) -> Result<Vec<String>, IpcError> {
         Ok(vec![])
     }
+    async fn list_interfaces(&self) -> Result<Vec<InterfaceDetail>, IpcError> {
+        Ok(vec![])
+    }
+    async fn search_peers(&self, _q: &str, _limit: u32) -> Result<Vec<DeviceInfo>, IpcError> {
+        Ok(vec![])
+    }
+    async fn bookmark_peer(&self, _hash: &str) -> Result<bool, IpcError> {
+        Ok(true)
+    }
+    async fn unbookmark_peer(&self, _hash: &str) -> Result<bool, IpcError> {
+        Ok(true)
+    }
 }
 
 #[async_trait]
@@ -142,6 +154,18 @@ impl DaemonMessaging for TestDaemon {
     ) -> Result<Option<PeerHash>, IpcError> {
         Ok(None)
     }
+    async fn pin_conversation(&self, _peer: &str) -> Result<bool, IpcError> {
+        Ok(true)
+    }
+    async fn unpin_conversation(&self, _peer: &str) -> Result<bool, IpcError> {
+        Ok(true)
+    }
+    async fn mute_conversation(&self, _peer: &str) -> Result<bool, IpcError> {
+        Ok(true)
+    }
+    async fn unmute_conversation(&self, _peer: &str) -> Result<bool, IpcError> {
+        Ok(true)
+    }
 }
 
 #[async_trait]
@@ -215,6 +239,28 @@ impl DaemonFleet for TestDaemon {
 }
 
 #[async_trait]
+impl DaemonPages for TestDaemon {
+    async fn browse_page(
+        &self,
+        _host: &str,
+        _path: &str,
+        _timeout: Option<u64>,
+    ) -> Result<PageContent, IpcError> {
+        Err(IpcError::not_implemented("browse_page"))
+    }
+    async fn list_pages(
+        &self,
+        _host: &str,
+        _timeout: Option<u64>,
+    ) -> Result<Vec<PageInfo>, IpcError> {
+        Ok(vec![])
+    }
+    async fn page_hosts(&self) -> Result<Vec<DeviceInfo>, IpcError> {
+        Ok(vec![])
+    }
+}
+
+#[async_trait]
 impl DaemonEvents for TestDaemon {
     async fn subscribe_messages(
         &self,
@@ -267,10 +313,7 @@ async fn setup_server() -> (IpcServer, std::path::PathBuf) {
     let sock = sock_path.clone();
     std::mem::forget(dir);
 
-    let config = IpcServerConfig {
-        socket_path: sock.clone(),
-        event_capacity: 64,
-    };
+    let config = IpcServerConfig { socket_path: sock.clone(), event_capacity: 64 };
     let daemon: Arc<dyn Daemon> = Arc::new(TestDaemon);
     let mut server = IpcServer::new(daemon, config);
     server.start().await.expect("start");
@@ -327,10 +370,7 @@ async fn query_status() {
     let resp = send_and_recv(&mut stream, MessageType::QueryStatus, &HashMap::new()).await;
     assert_eq!(resp.msg_type, MessageType::Result);
     assert_eq!(resp.payload.get("uptime").and_then(|v| v.as_u64()), Some(42));
-    assert_eq!(
-        resp.payload.get("daemon_version").and_then(|v| v.as_str()),
-        Some("test-0.1.0")
-    );
+    assert_eq!(resp.payload.get("daemon_version").and_then(|v| v.as_str()), Some("test-0.1.0"));
     server.stop().await;
 }
 
@@ -340,10 +380,7 @@ async fn query_identity() {
     let mut stream = UnixStream::connect(&sock).await.expect("connect");
     let resp = send_and_recv(&mut stream, MessageType::QueryIdentity, &HashMap::new()).await;
     assert_eq!(resp.msg_type, MessageType::Result);
-    assert_eq!(
-        resp.payload.get("identity_hash").and_then(|v| v.as_str()),
-        Some("deadbeef")
-    );
+    assert_eq!(resp.payload.get("identity_hash").and_then(|v| v.as_str()), Some("deadbeef"));
     server.stop().await;
 }
 
@@ -421,13 +458,10 @@ async fn subscribe_and_event_push() {
     // Read the pushed event frame
     use tokio::io::AsyncReadExt;
     let mut len_buf = [0u8; 4];
-    tokio::time::timeout(
-        tokio::time::Duration::from_secs(2),
-        stream.read_exact(&mut len_buf),
-    )
-    .await
-    .expect("timeout")
-    .expect("read len");
+    tokio::time::timeout(tokio::time::Duration::from_secs(2), stream.read_exact(&mut len_buf))
+        .await
+        .expect("timeout")
+        .expect("read len");
 
     let total = u32::from_be_bytes(len_buf) as usize;
     let mut frame_buf = vec![0u8; total];

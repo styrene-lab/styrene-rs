@@ -13,11 +13,11 @@
 
 use std::time::Instant;
 
+use super::EntropySource;
 use crate::{
     health::SourceHealth,
     pool::{EntropyPool, SourceId},
 };
-use super::EntropySource;
 
 /// Number of timing samples per byte of entropy output.
 /// Higher = more entropy per byte but slower. 64 is a reasonable default.

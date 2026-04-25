@@ -22,11 +22,11 @@ pub struct FooterData {
 
     // Links card
     pub active_links: usize,
-    pub link_quality: f32,   // 0.0–1.0 average
+    pub link_quality: f32, // 0.0–1.0 average
 
     // Peers card
     pub known_peers: usize,
-    pub last_announce_secs: Option<u64>,  // seconds since last announce seen
+    pub last_announce_secs: Option<u64>, // seconds since last announce seen
 
     // Messages card
     pub unread_messages: usize,
@@ -39,9 +39,13 @@ pub struct FooterData {
 }
 
 impl FooterData {
-    pub fn trigger_flash(&mut self) { self.flash_ticks = 3; }
+    pub fn trigger_flash(&mut self) {
+        self.flash_ticks = 3;
+    }
     pub fn tick_flash(&mut self) {
-        if self.flash_ticks > 0 { self.flash_ticks = self.flash_ticks.saturating_sub(1); }
+        if self.flash_ticks > 0 {
+            self.flash_ticks = self.flash_ticks.saturating_sub(1);
+        }
     }
 
     pub fn render(&self, area: Rect, frame: &mut Frame, t: &dyn Theme) {
@@ -69,11 +73,8 @@ impl FooterData {
     }
 
     fn render_node_card(&self, area: Rect, frame: &mut Frame, t: &dyn Theme) {
-        let hash_short = if self.node_hash.len() >= 8 {
-            &self.node_hash[..8]
-        } else {
-            &self.node_hash
-        };
+        let hash_short =
+            if self.node_hash.len() >= 8 { &self.node_hash[..8] } else { &self.node_hash };
         let name = if self.node_name.is_empty() { "unnamed" } else { &self.node_name };
         let transport_color = if self.transport_active { t.success() } else { t.muted() };
         let transport_icon = if self.transport_active { "◉" } else { "○" };
@@ -103,7 +104,11 @@ impl FooterData {
     fn render_links_card(&self, area: Rect, frame: &mut Frame, t: &dyn Theme) {
         let bar_w = area.width.saturating_sub(6) as usize;
         let bar_spans = widgets::gauge_bar(
-            &GaugeConfig { percent: self.link_quality * 100.0, bar_width: bar_w.max(4), memory_blocks: 0 },
+            &GaugeConfig {
+                percent: self.link_quality * 100.0,
+                bar_width: bar_w.max(4),
+                memory_blocks: 0,
+            },
             t,
         );
         let lines = vec![
@@ -172,10 +177,7 @@ impl FooterData {
                 Span::styled(" unread", Style::default().fg(t.muted())),
             ]),
             Line::from(vec![
-                Span::styled(
-                    format!("{}", self.total_messages),
-                    Style::default().fg(t.dim()),
-                ),
+                Span::styled(format!("{}", self.total_messages), Style::default().fg(t.dim())),
                 Span::styled(" total", Style::default().fg(t.dim())),
             ]),
         ];
@@ -194,15 +196,13 @@ impl FooterData {
     }
 
     fn render_narrow(&self, area: Rect, frame: &mut Frame, t: &dyn Theme) {
-        let hash_short = if self.node_hash.len() >= 6 { &self.node_hash[..6] } else { &self.node_hash };
+        let hash_short =
+            if self.node_hash.len() >= 6 { &self.node_hash[..6] } else { &self.node_hash };
         let line = Line::from(vec![
             Span::styled(format!("⬡ {hash_short}…"), Style::default().fg(t.accent())),
             Span::styled(format!("  {} links", self.active_links), Style::default().fg(t.muted())),
             Span::styled(format!("  {} peers", self.known_peers), Style::default().fg(t.muted())),
         ]);
-        frame.render_widget(
-            Paragraph::new(line).style(t.style_footer_bg()),
-            area,
-        );
+        frame.render_widget(Paragraph::new(line).style(t.style_footer_bg()), area);
     }
 }

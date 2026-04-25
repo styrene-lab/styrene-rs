@@ -239,6 +239,7 @@ pub(super) async fn manage_transport(
         let cancel = cancel.clone();
 
         tokio::spawn(async move {
+            let mut last_old_retransmit = time::Instant::now();
             loop {
                 if cancel.is_cancelled() {
                     break;
@@ -249,7 +250,13 @@ pub(super) async fn manage_transport(
                         break;
                     },
                     _ = time::sleep(INTERVAL_ANNOUNCES_RETRANSMIT) => {
-                        retransmit_announces(handler.lock().await).await;
+                        let mut retransmit_old = false;
+                        let now = time::Instant::now();
+                        if now - last_old_retransmit > INTERVAL_OLD_ANNOUNCES_RETRANSMIT {
+                            retransmit_old = true;
+                            last_old_retransmit = now;
+                        }
+                        retransmit_announces(handler.lock().await, retransmit_old).await;
                     }
                 }
             }

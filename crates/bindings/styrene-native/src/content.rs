@@ -6,15 +6,12 @@
 //! - `StyreneManifest`              — signed content descriptor
 //! - `ResourceAvailableAnnounce`    — seeder availability announce
 
-use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use styrene_content::{
-    announce::ResourceAvailableAnnounce,
-    chunk_bitset::ChunkBitset,
-    chunk_profile::ChunkProfile,
-    content_id::ContentId,
-    manifest::StyreneManifest,
+    announce::ResourceAvailableAnnounce, chunk_bitset::ChunkBitset, chunk_profile::ChunkProfile,
+    content_id::ContentId, manifest::StyreneManifest,
 };
 
 // ── ContentId ────────────────────────────────────────────────────────────────
@@ -37,9 +34,8 @@ impl PyContentId {
     /// Reconstruct from a 32-byte hash array (no re-hashing).
     #[staticmethod]
     pub fn from_raw(data: &[u8]) -> PyResult<Self> {
-        let arr: [u8; 32] = data
-            .try_into()
-            .map_err(|_| PyValueError::new_err("expected 32 bytes"))?;
+        let arr: [u8; 32] =
+            data.try_into().map_err(|_| PyValueError::new_err("expected 32 bytes"))?;
         Ok(Self { inner: ContentId::from_raw(arr) })
     }
 
@@ -168,16 +164,15 @@ impl PyStyreneManifest {
 
     /// CBOR-encode the manifest (includes signature).
     pub fn encode<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = self.inner.encode()
-            .map_err(|e| PyValueError::new_err(format!("{e:?}")))?;
+        let bytes = self.inner.encode().map_err(|e| PyValueError::new_err(format!("{e:?}")))?;
         Ok(PyBytes::new(py, &bytes))
     }
 
     /// Decode a CBOR-encoded manifest.
     #[staticmethod]
     pub fn decode(data: &[u8]) -> PyResult<Self> {
-        let inner = StyreneManifest::decode(data)
-            .map_err(|e| PyValueError::new_err(format!("{e:?}")))?;
+        let inner =
+            StyreneManifest::decode(data).map_err(|e| PyValueError::new_err(format!("{e:?}")))?;
         Ok(Self { inner })
     }
 
@@ -198,8 +193,7 @@ impl PyStyreneManifest {
 
     /// Validate structural consistency.
     pub fn validate(&self) -> PyResult<()> {
-        self.inner.validate()
-            .map_err(|e| PyValueError::new_err(format!("{e:?}")))
+        self.inner.validate().map_err(|e| PyValueError::new_err(format!("{e:?}")))
     }
 
     /// Verify a single chunk's Blake3 hash against the manifest.
@@ -215,19 +209,29 @@ impl PyStyreneManifest {
     }
 
     #[getter]
-    pub fn size(&self) -> u64 { self.inner.size }
+    pub fn size(&self) -> u64 {
+        self.inner.size
+    }
 
     #[getter]
-    pub fn chunk_count(&self) -> u32 { self.inner.chunk_count }
+    pub fn chunk_count(&self) -> u32 {
+        self.inner.chunk_count
+    }
 
     #[getter]
-    pub fn name(&self) -> &str { self.inner.name.as_str() }
+    pub fn name(&self) -> &str {
+        self.inner.name.as_str()
+    }
 
     #[getter]
-    pub fn content_type(&self) -> &str { self.inner.content_type.as_str() }
+    pub fn content_type(&self) -> &str {
+        self.inner.content_type.as_str()
+    }
 
     #[getter]
-    pub fn created_at(&self) -> u64 { self.inner.created_at }
+    pub fn created_at(&self) -> u64 {
+        self.inner.created_at
+    }
 
     #[getter]
     pub fn creator_identity<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
@@ -325,9 +329,6 @@ impl PyResourceAvailableAnnounce {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "ResourceAvailableAnnounce(chunks_held={}/256)",
-            self.inner.chunks_held.count()
-        )
+        format!("ResourceAvailableAnnounce(chunks_held={}/256)", self.inner.chunks_held.count())
     }
 }

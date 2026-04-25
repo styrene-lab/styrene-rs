@@ -287,21 +287,14 @@ pub fn encode_frame(
 /// Decode an IPC frame from complete wire bytes (including length prefix).
 pub fn decode_frame(data: &[u8]) -> Result<Frame, WireError> {
     if data.len() < LENGTH_SIZE {
-        return Err(WireError::Incomplete {
-            expected: LENGTH_SIZE,
-            got: data.len(),
-        });
+        return Err(WireError::Incomplete { expected: LENGTH_SIZE, got: data.len() });
     }
 
-    let total_length =
-        u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let total_length = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
 
     let needed = LENGTH_SIZE + total_length;
     if data.len() < needed {
-        return Err(WireError::Incomplete {
-            expected: needed,
-            got: data.len(),
-        });
+        return Err(WireError::Incomplete { expected: needed, got: data.len() });
     }
 
     if total_length > MAX_PAYLOAD_SIZE + HEADER_SIZE {
@@ -316,15 +309,13 @@ pub fn decode_frame(data: &[u8]) -> Result<Frame, WireError> {
 
     let payload_bytes = &data[offset + HEADER_SIZE..LENGTH_SIZE + total_length];
 
-    let payload: HashMap<String, rmpv::Value> =
-        rmp_serde::from_slice(payload_bytes)
-            .map_err(|e| WireError::MsgpackDecode(e.to_string()))?;
+    let payload: HashMap<String, rmpv::Value> = if payload_bytes.is_empty() {
+        HashMap::new()
+    } else {
+        rmp_serde::from_slice(payload_bytes).map_err(|e| WireError::MsgpackDecode(e.to_string()))?
+    };
 
-    Ok(Frame {
-        msg_type,
-        request_id,
-        payload,
-    })
+    Ok(Frame { msg_type, request_id, payload })
 }
 
 /// Read a complete frame from a tokio `AsyncRead`.
@@ -350,15 +341,15 @@ pub async fn read_frame_async<R: tokio::io::AsyncReadExt + Unpin>(
     request_id.copy_from_slice(&frame_buf[TYPE_SIZE..TYPE_SIZE + REQUEST_ID_SIZE]);
 
     let payload_bytes = &frame_buf[HEADER_SIZE..];
-    let payload: HashMap<String, rmpv::Value> =
-        rmp_serde::from_slice(payload_bytes)
-            .map_err(|e| WireError::MsgpackDecode(e.to_string()))?;
+    // Handle empty payload: Python clients may send b"" instead of b"\x80" (msgpack empty map).
+    // Treat both as an empty HashMap for interop with NomadNet, Sideband, MeshChat.
+    let payload: HashMap<String, rmpv::Value> = if payload_bytes.is_empty() {
+        HashMap::new()
+    } else {
+        rmp_serde::from_slice(payload_bytes).map_err(|e| WireError::MsgpackDecode(e.to_string()))?
+    };
 
-    Ok(Frame {
-        msg_type,
-        request_id,
-        payload,
-    })
+    Ok(Frame { msg_type, request_id, payload })
 }
 
 /// Write a complete frame to a tokio `AsyncWrite`.
@@ -388,8 +379,8 @@ mod tests {
 
     #[test]
     fn encode_ping_frame() {
-        let frame = encode_frame(MessageType::Ping, &request_id(), &empty_payload())
-            .expect("encode");
+        let frame =
+            encode_frame(MessageType::Ping, &request_id(), &empty_payload()).expect("encode");
         // Length prefix
         let total = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
         assert_eq!(frame[LENGTH_SIZE], 0x01); // PING
@@ -401,8 +392,7 @@ mod tests {
     fn encode_result_with_payload() {
         let mut payload = HashMap::new();
         payload.insert("uptime".to_string(), rmpv::Value::from(42));
-        let frame = encode_frame(MessageType::Result, &request_id(), &payload)
-            .expect("encode");
+        let frame = encode_frame(MessageType::Result, &request_id(), &payload).expect("encode");
         let total = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
         assert!(total > HEADER_SIZE); // Has payload bytes beyond header
         assert_eq!(frame[LENGTH_SIZE], 0x81); // RESULT
@@ -412,21 +402,18 @@ mod tests {
     fn roundtrip_encode_decode() {
         let mut payload = HashMap::new();
         payload.insert("key".to_string(), rmpv::Value::from("value"));
-        let bytes = encode_frame(MessageType::QueryStatus, &request_id(), &payload)
-            .expect("encode");
+        let bytes =
+            encode_frame(MessageType::QueryStatus, &request_id(), &payload).expect("encode");
         let frame = decode_frame(&bytes).expect("decode");
         assert_eq!(frame.msg_type, MessageType::QueryStatus);
         assert_eq!(frame.request_id, request_id());
-        assert_eq!(
-            frame.payload.get("key").and_then(|v| v.as_str()),
-            Some("value")
-        );
+        assert_eq!(frame.payload.get("key").and_then(|v| v.as_str()), Some("value"));
     }
 
     #[test]
     fn decode_truncated_frame() {
-        let bytes = encode_frame(MessageType::Ping, &request_id(), &empty_payload())
-            .expect("encode");
+        let bytes =
+            encode_frame(MessageType::Ping, &request_id(), &empty_payload()).expect("encode");
         // Truncate: only length prefix + partial
         let truncated = &bytes[..LENGTH_SIZE + 5];
         match decode_frame(truncated) {
@@ -513,9 +500,6 @@ mod tests {
         let mut cursor = std::io::Cursor::new(buf);
         let frame = read_frame_async(&mut cursor).await.expect("read");
         assert_eq!(frame.msg_type, MessageType::QueryIdentity);
-        assert_eq!(
-            frame.payload.get("test").and_then(|v| v.as_bool()),
-            Some(true)
-        );
+        assert_eq!(frame.payload.get("test").and_then(|v| v.as_bool()), Some(true));
     }
 }

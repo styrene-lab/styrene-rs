@@ -68,13 +68,11 @@ pub(super) async fn handle_path_request<'a>(
         }
 
         if handler.config.retransmit {
-            if let Some(packet) =
-                handler.path_requests.generate_recursive(
-                    &request.destination,
-                    Some(iface),
-                    Some(request.tag_bytes.clone()),
-                )
-            {
+            if let Some(packet) = handler.path_requests.generate_recursive(
+                &request.destination,
+                Some(iface),
+                Some(request.tag_bytes.clone()),
+            ) {
                 handler
                     .send(TxMessage { tx_type: TxMessageType::Broadcast(Some(iface)), packet })
                     .await;

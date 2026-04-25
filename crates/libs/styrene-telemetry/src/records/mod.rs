@@ -222,90 +222,110 @@ mod tests {
             fn $name() {
                 let original = $val;
                 // Verify serde derives work: serialize then parse as a generic Value.
-                let json = serde_json::to_string(&original)
-                    .expect("serialize failed");
-                let _value: serde_json::Value = serde_json::from_str(&json)
-                    .expect("deserialize to Value failed");
+                let json = serde_json::to_string(&original).expect("serialize failed");
+                let _value: serde_json::Value =
+                    serde_json::from_str(&json).expect("deserialize to Value failed");
                 // If we got here, serde round-trip is valid.
             }
         };
     }
 
-    json_roundtrip!(aircraft_position_roundtrip, AircraftPosition {
-        icao: String::try_from("A1B2C3").unwrap(),
-        callsign: Some(String::try_from("UAL123").unwrap()),
-        lat: 40.712_8,
-        lon: -74.006,
-        alt_ft: Some(35_000),
-        ground_speed_kt: Some(480),
-        track_deg: Some(270),
-        squawk: Some(String::try_from("1200").unwrap()),
-        timestamp: 1_700_000_000,
-    });
+    json_roundtrip!(
+        aircraft_position_roundtrip,
+        AircraftPosition {
+            icao: String::try_from("A1B2C3").unwrap(),
+            callsign: Some(String::try_from("UAL123").unwrap()),
+            lat: 40.712_8,
+            lon: -74.006,
+            alt_ft: Some(35_000),
+            ground_speed_kt: Some(480),
+            track_deg: Some(270),
+            squawk: Some(String::try_from("1200").unwrap()),
+            timestamp: 1_700_000_000,
+        }
+    );
 
-    json_roundtrip!(aprs_position_roundtrip, AprsPosition {
-        callsign: String::try_from("W1AW-9").unwrap(),
-        lat: 41.714_7,
-        lon: -72.727_3,
-        symbol: String::try_from("/>").unwrap(),
-        comment: Some(String::try_from("Mobile").unwrap()),
-        alt_m: Some(45),
-        speed_kmh: Some(60),
-        timestamp: 1_700_000_000,
-    });
+    json_roundtrip!(
+        aprs_position_roundtrip,
+        AprsPosition {
+            callsign: String::try_from("W1AW-9").unwrap(),
+            lat: 41.714_7,
+            lon: -72.727_3,
+            symbol: String::try_from("/>").unwrap(),
+            comment: Some(String::try_from("Mobile").unwrap()),
+            alt_m: Some(45),
+            speed_kmh: Some(60),
+            timestamp: 1_700_000_000,
+        }
+    );
 
-    json_roundtrip!(meshtastic_node_roundtrip, MeshtasticNode {
-        node_id: String::try_from("!abcdef12").unwrap(),
-        short_name: String::try_from("NODE").unwrap(),
-        long_name: Some(String::try_from("Field Node 1").unwrap()),
-        lat: Some(40.712_8),
-        lon: Some(-74.006),
-        alt_m: Some(10),
-        battery_pct: Some(87),
-        snr_db_x4: Some(24),
-        hops: Some(1),
-        timestamp: 1_700_000_000,
-    });
+    json_roundtrip!(
+        meshtastic_node_roundtrip,
+        MeshtasticNode {
+            node_id: String::try_from("!abcdef12").unwrap(),
+            short_name: String::try_from("NODE").unwrap(),
+            long_name: Some(String::try_from("Field Node 1").unwrap()),
+            lat: Some(40.712_8),
+            lon: Some(-74.006),
+            alt_m: Some(10),
+            battery_pct: Some(87),
+            snr_db_x4: Some(24),
+            hops: Some(1),
+            timestamp: 1_700_000_000,
+        }
+    );
 
-    json_roundtrip!(ship_position_roundtrip, ShipPosition {
-        mmsi: 123_456_789,
-        vessel_name: Some(String::try_from("MV Styrene").unwrap()),
-        lat: 40.6_f32,
-        lon: -74.1_f32,
-        cog_x10: Some(900),
-        sog_x10: Some(120),
-        nav_status: Some(0),
-        timestamp: 1_700_000_000,
-    });
+    json_roundtrip!(
+        ship_position_roundtrip,
+        ShipPosition {
+            mmsi: 123_456_789,
+            vessel_name: Some(String::try_from("MV Styrene").unwrap()),
+            lat: 40.6_f32,
+            lon: -74.1_f32,
+            cog_x10: Some(900),
+            sog_x10: Some(120),
+            nav_status: Some(0),
+            timestamp: 1_700_000_000,
+        }
+    );
 
-    json_roundtrip!(weather_observation_roundtrip, WeatherObservation {
-        temp_c_x10: Some(215),
-        humidity_pct: Some(68),
-        pressure_hpa_x10: Some(10132),
-        wind_speed_kmh: Some(15),
-        wind_dir_deg: Some(270),
-        rain_mm_x10_1h: Some(0),
-        timestamp: 1_700_000_000,
-    });
+    json_roundtrip!(
+        weather_observation_roundtrip,
+        WeatherObservation {
+            temp_c_x10: Some(215),
+            humidity_pct: Some(68),
+            pressure_hpa_x10: Some(10132),
+            wind_speed_kmh: Some(15),
+            wind_dir_deg: Some(270),
+            rain_mm_x10_1h: Some(0),
+            timestamp: 1_700_000_000,
+        }
+    );
 
-    json_roundtrip!(satellite_pass_roundtrip, SatellitePass {
-        norad_id: 28_654,
-        name: String::try_from("NOAA 18").unwrap(),
-        aos_unix: 1_700_001_000,
-        los_unix: 1_700_001_900,
-        max_elevation_deg: 72,
-        aos_azimuth_deg: 320,
-        frequency_hz: Some(137_912_500),
-        decode_planned: true,
-    });
+    json_roundtrip!(
+        satellite_pass_roundtrip,
+        SatellitePass {
+            norad_id: 28_654,
+            name: String::try_from("NOAA 18").unwrap(),
+            aos_unix: 1_700_001_000,
+            los_unix: 1_700_001_900,
+            max_elevation_deg: 72,
+            aos_azimuth_deg: 320,
+            frequency_hz: Some(137_912_500),
+            decode_planned: true,
+        }
+    );
 
-    json_roundtrip!(node_status_roundtrip, NodeStatus {
-        node_identity: [0xAAu8; 16],
-        capability_flags: 0x00C3,
-        uptime_secs: 86_400,
-        load_x100: Some(42),
-        storage_used_mib: Some(220),
-        storage_free_mib: Some(780),
-        timestamp: 1_700_000_000,
-    });
+    json_roundtrip!(
+        node_status_roundtrip,
+        NodeStatus {
+            node_identity: [0xAAu8; 16],
+            capability_flags: 0x00C3,
+            uptime_secs: 86_400,
+            load_x100: Some(42),
+            storage_used_mib: Some(220),
+            storage_free_mib: Some(780),
+            timestamp: 1_700_000_000,
+        }
+    );
 }

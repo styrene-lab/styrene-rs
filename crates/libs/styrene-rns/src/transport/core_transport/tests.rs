@@ -220,9 +220,7 @@ async fn handle_inbound_for_test_rejects_forged_destination_proof() {
     handle_announce(&announce, handler.lock().await, AddressHash::new_from_rand(OsRng)).await;
 
     let count = Arc::new(AtomicUsize::new(0));
-    transport
-        .set_receipt_handler(Box::new(CountingReceiptHandler { count: count.clone() }))
-        .await;
+    transport.set_receipt_handler(Box::new(CountingReceiptHandler { count: count.clone() })).await;
 
     let mut data = PacketDataBuffer::new();
     data.safe_write(&[0x44u8; HASH_SIZE]);
@@ -254,9 +252,7 @@ async fn handle_inbound_for_test_accepts_valid_destination_proof() {
     handle_announce(&announce, handler.lock().await, AddressHash::new_from_rand(OsRng)).await;
 
     let count = Arc::new(AtomicUsize::new(0));
-    transport
-        .set_receipt_handler(Box::new(CountingReceiptHandler { count: count.clone() }))
-        .await;
+    transport.set_receipt_handler(Box::new(CountingReceiptHandler { count: count.clone() })).await;
 
     let packet_hash = [0x55u8; HASH_SIZE];
     let signature = remote_destination.identity.sign(&packet_hash).to_bytes();

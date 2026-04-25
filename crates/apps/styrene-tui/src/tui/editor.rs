@@ -40,11 +40,7 @@ impl Editor {
         let mut ta = TextArea::default();
         ta.set_cursor_line_style(Style::default());
         ta.set_cursor_style(Style::default().add_modifier(Modifier::REVERSED));
-        Self {
-            textarea: ta,
-            mode: EditorMode::Normal,
-            kill_ring: None,
-        }
+        Self { textarea: ta, mode: EditorMode::Normal, kill_ring: None }
     }
 
     /// Apply theme styles to the textarea.
@@ -61,10 +57,7 @@ impl Editor {
     // ─── Reverse search ─────────────────────────────────────────
 
     pub fn start_reverse_search(&mut self) {
-        self.mode = EditorMode::ReverseSearch {
-            query: String::new(),
-            match_idx: None,
-        };
+        self.mode = EditorMode::ReverseSearch { query: String::new(), match_idx: None };
     }
 
     pub fn search_insert(&mut self, c: char) {
@@ -85,9 +78,7 @@ impl Editor {
                 *match_idx = None;
                 return None;
             }
-            let start = match_idx
-                .map(|i| i.saturating_sub(1))
-                .unwrap_or(history.len() - 1);
+            let start = match_idx.map(|i| i.saturating_sub(1)).unwrap_or(history.len() - 1);
             for i in (0..=start).rev() {
                 if history[i].contains(query.as_str()) {
                     *match_idx = Some(i);
@@ -109,7 +100,9 @@ impl Editor {
 
     pub fn search_prev(&mut self, history: &[String]) -> Option<String> {
         if let EditorMode::ReverseSearch { ref query, ref mut match_idx } = self.mode {
-            if query.is_empty() || history.is_empty() { return None; }
+            if query.is_empty() || history.is_empty() {
+                return None;
+            }
             let start = match_idx.map(|i| i.saturating_sub(1)).unwrap_or(0);
             for i in (0..=start).rev() {
                 if history[i].contains(query.as_str()) && Some(i) != *match_idx {
@@ -137,11 +130,7 @@ impl Editor {
     }
 
     pub fn search_query(&self) -> Option<&str> {
-        if let EditorMode::ReverseSearch { ref query, .. } = self.mode {
-            Some(query)
-        } else {
-            None
-        }
+        if let EditorMode::ReverseSearch { ref query, .. } = self.mode { Some(query) } else { None }
     }
 
     // ─── Kill ring operations ───────────────────────────────────

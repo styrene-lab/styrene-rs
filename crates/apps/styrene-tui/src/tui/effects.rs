@@ -11,7 +11,7 @@
 use std::time::Instant;
 
 use ratatui::prelude::*;
-use tachyonfx::{fx, EffectManager, EffectTimer, Interpolation};
+use tachyonfx::{EffectManager, EffectTimer, Interpolation, fx};
 
 use super::theme::Theme;
 
@@ -110,9 +110,7 @@ impl Effects {
 
     /// True if any effects are active (drives render timing).
     pub fn has_active(&self) -> bool {
-        self.conversation.is_running()
-            || self.footer.is_running()
-            || self.editor.is_running()
+        self.conversation.is_running() || self.footer.is_running() || self.editor.is_running()
     }
 }
 

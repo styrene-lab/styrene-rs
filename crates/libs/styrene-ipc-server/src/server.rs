@@ -27,10 +27,7 @@ pub struct IpcServerConfig {
 
 impl Default for IpcServerConfig {
     fn default() -> Self {
-        Self {
-            socket_path: default_socket_path(),
-            event_capacity: 256,
-        }
+        Self { socket_path: default_socket_path(), event_capacity: 256 }
     }
 }
 
@@ -46,12 +43,7 @@ impl IpcServer {
     /// Create a new IPC server.
     pub fn new(daemon: Arc<dyn Daemon>, config: IpcServerConfig) -> Self {
         let (event_tx, _) = broadcast::channel(config.event_capacity);
-        Self {
-            config,
-            daemon,
-            event_tx,
-            accept_handle: None,
-        }
+        Self { config, daemon, event_tx, accept_handle: None }
     }
 
     /// Get a sender for pushing events to all subscribed clients.
@@ -70,10 +62,7 @@ impl IpcServer {
         }
 
         let listener = UnixListener::bind(&self.config.socket_path)?;
-        log::info!(
-            "IPC server listening on {}",
-            self.config.socket_path.display()
-        );
+        log::info!("IPC server listening on {}", self.config.socket_path.display());
 
         // Set socket permissions (owner-only)
         #[cfg(unix)]

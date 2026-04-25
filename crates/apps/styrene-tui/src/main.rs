@@ -1,38 +1,35 @@
-//! Styrene TUI — Ratatui terminal UI for the Styrene mesh daemon.
+//! Styrene TUI — three-workspace terminal UI for the Styrene mesh daemon.
 //!
-//! Architecture:
-//!   - `tui/`       — all ratatui rendering code (theme, widgets, segments)
-//!   - `app.rs`     — AppState and event handling
-//!   - `daemon.rs`  — RPC channel bridge (feeds DaemonEvents into App)
-//!   - `mesh_state.rs` — shared data model (PeerRecord, LinkRecord, ActivityLog)
+//! Workspaces:
+//!   - Home:     Activity feed, node status, signal waveform
+//!   - Peers:    Peer browser with Status/Chat/Pages/Terminal/Commands tabs
+//!   - Messages: Conversation threads
 //!
 //! Run: `cargo run -p styrene-tui`
-//! Quit: `q`, `Esc`, or Ctrl+C twice
 
 mod app;
 mod daemon;
 mod mesh_state;
-mod micron_widget; // Micron markup widget — used by Config tab in Phase 4
+mod micron_widget;
 mod tui;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
-use app::App;
+use app::{App, Focus, InputMode, Workspace};
 use tui::splash;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Seed spinner from process start
     tui::spinner::seed(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -45,7 +42,6 @@ async fn main() -> Result<()> {
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut terminal = ratatui::Terminal::new(backend)?;
 
-    // Panic hook that restores terminal
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
@@ -92,44 +88,39 @@ async fn run(
         }
     }
 
-    // ── Startup effects + welcome ────────────────────────────────────────────
+    // ── Welcome + effects ────────────────────────────────────────────────────
     {
         let t = app.theme.as_ref();
         app.effects.queue_startup(t);
     }
     app.push_welcome();
 
-    // ── Daemon connection (non-blocking, degrades gracefully) ────────────────
-    // Channel for daemon events → App
+    // ── Daemon connection ────────────────────────────────────────────────────
     let (daemon_tx, mut daemon_rx) = tokio::sync::mpsc::channel::<daemon::TuiEvent>(128);
 
     match daemon::connect(None).await {
         Ok((handle, mut event_rx)) => {
+            app.daemon_connected = true;
             app.conversation.push_system("⬡ daemon connected");
-
             let handle = Arc::new(Mutex::new(handle));
-
-            // Forward socket events → daemon_tx
             let tx_clone = daemon_tx.clone();
             tokio::spawn(async move {
                 while let Some(ev) = event_rx.recv().await {
-                    if tx_clone.send(ev).await.is_err() { break; }
+                    if tx_clone.send(ev).await.is_err() {
+                        break;
+                    }
                 }
             });
-
-            // Periodic poll for identity + status + device snapshots
             daemon::spawn_poll_task(handle, daemon_tx, 10);
         }
         Err(e) => {
-            app.conversation.push_system(
-                &format!("⬡ daemon unavailable ({e}) — demo mode"),
-            );
+            app.conversation.push_system(&format!("⬡ daemon unavailable ({e}) — demo mode"));
         }
     }
 
     // ── Main event loop — 60fps ──────────────────────────────────────────────
     loop {
-        // Drain pending daemon events before drawing
+        // Drain daemon events
         loop {
             match daemon_rx.try_recv() {
                 Ok(ev) => daemon::apply_event(&mut app, ev),
@@ -144,8 +135,8 @@ async fn run(
                 Event::Mouse(m) => {
                     use crossterm::event::MouseEventKind;
                     match m.kind {
-                        MouseEventKind::ScrollUp => app.conversation.scroll_up(3),
-                        MouseEventKind::ScrollDown => app.conversation.scroll_down(3),
+                        MouseEventKind::ScrollUp => app.active_conversation_mut().scroll_up(3),
+                        MouseEventKind::ScrollDown => app.active_conversation_mut().scroll_down(3),
                         _ => {}
                     }
                 }
@@ -166,18 +157,17 @@ async fn run(
 
 /// Returns true if the app should quit.
 fn handle_key(app: &mut App, key: KeyEvent) -> bool {
+    // ── Input mode routing ──────────────────────────────────────────────────
+    match &app.input_mode {
+        InputMode::Compose => return handle_compose_key(app, key),
+        InputMode::Command => return handle_command_key(app, key),
+        InputMode::Search { .. } => return handle_search_key(app, key),
+        InputMode::Normal => {}
+    }
+
+    // ── Global keys (Normal mode) ───────────────────────────────────────────
     match (key.code, key.modifiers) {
-        // Sidebar toggle
-        (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-            app.toggle_sidebar();
-        }
-
-        // Sidebar key routing when active
-        (_, _) if app.topology.sidebar_active && !app.composing => {
-            app.topology.handle_key(key);
-        }
-
-        // Quit — Ctrl+C twice
+        // Quit
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
             let now = std::time::Instant::now();
             if let Some(last) = app.last_ctrl_c {
@@ -188,58 +178,181 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.last_ctrl_c = Some(now);
             app.conversation.push_system("Press Ctrl+C again to quit");
         }
-        (KeyCode::Char('q'), KeyModifiers::NONE) if !app.composing => {
+        (KeyCode::Char('q'), KeyModifiers::NONE) if app.focus != Focus::Input => {
             return true;
         }
 
-        // Scroll
-        (KeyCode::PageUp, _) => app.conversation.scroll_up(20),
-        (KeyCode::PageDown, _) => app.conversation.scroll_down(20),
-        (KeyCode::Up, KeyModifiers::SHIFT) => app.conversation.scroll_up(3),
-        (KeyCode::Down, KeyModifiers::SHIFT) => app.conversation.scroll_down(3),
-        (KeyCode::Up, KeyModifiers::NONE) if !app.composing => app.conversation.scroll_up(3),
-        (KeyCode::Down, KeyModifiers::NONE) if !app.composing => app.conversation.scroll_down(3),
+        // Workspace navigation
+        (KeyCode::Tab, _) => app.next_workspace(),
+        (KeyCode::BackTab, _) => app.prev_workspace(),
+        (KeyCode::Char('1'), _) => app.set_workspace(Workspace::Home),
+        (KeyCode::Char('2'), _) => app.set_workspace(Workspace::Peers),
+        (KeyCode::Char('3'), _) => app.set_workspace(Workspace::Messages),
 
-        // Tab navigation
-        (KeyCode::Tab, _) => app.next_tab(),
-        (KeyCode::BackTab, _) => app.prev_tab(),
-
-        // Compose mode
-        (KeyCode::Char('n'), KeyModifiers::CONTROL) => {
-            app.composing = true;
-            app.conversation.push_system(
-                "Compose mode — type your message, Enter to send, Esc to cancel",
-            );
+        // Mode triggers
+        (KeyCode::Char(':'), _) => {
+            app.input_mode = InputMode::Command;
+            app.focus = Focus::Input;
         }
-        (KeyCode::Esc, _) if app.composing => {
-            app.composing = false;
+        (KeyCode::Char('/'), _) => {
+            app.input_mode = InputMode::Search { query: String::new() };
+            app.focus = Focus::Input;
+        }
+        (KeyCode::Char('i'), _) => {
+            app.input_mode = InputMode::Compose;
+            app.focus = Focus::Input;
+        }
+
+        // Sidebar navigation
+        (KeyCode::Char('j') | KeyCode::Down, _) if app.focus == Focus::Sidebar => {
+            let max = app.peers.len().saturating_sub(1);
+            app.sidebar_selection = (app.sidebar_selection + 1).min(max);
+        }
+        (KeyCode::Char('k') | KeyCode::Up, _) if app.focus == Focus::Sidebar => {
+            app.sidebar_selection = app.sidebar_selection.saturating_sub(1);
+        }
+        (KeyCode::Enter, _) if app.focus == Focus::Sidebar => {
+            // Select peer from sidebar
+            if let Some(peer) = app.peers.get(app.sidebar_selection) {
+                let hash = peer.hash.clone();
+                match app.workspace {
+                    Workspace::Peers => {
+                        app.selected_peer = Some(hash);
+                        app.focus = Focus::Main;
+                    }
+                    Workspace::Messages => {
+                        app.selected_conversation = Some(hash);
+                        app.focus = Focus::Main;
+                    }
+                    Workspace::Home => {
+                        // Jump to Peers workspace with this peer selected
+                        app.selected_peer = Some(hash);
+                        app.set_workspace(Workspace::Peers);
+                        app.focus = Focus::Main;
+                    }
+                }
+            }
+        }
+        (KeyCode::Char('g'), _) if app.focus == Focus::Sidebar => {
+            app.sidebar_selection = 0;
+        }
+        (KeyCode::Char('G'), _) if app.focus == Focus::Sidebar => {
+            app.sidebar_selection = app.peers.len().saturating_sub(1);
+        }
+
+        // Sidebar toggle
+        (KeyCode::Char('['), _) => app.sidebar_visible = false,
+        (KeyCode::Char(']'), _) => app.sidebar_visible = true,
+
+        // Focus cycling
+        (KeyCode::Esc, _) => {
+            match app.focus {
+                Focus::Main => app.focus = Focus::Sidebar,
+                Focus::Input => app.focus = Focus::Sidebar,
+                Focus::Sidebar => {
+                    // Deselect
+                    app.selected_peer = None;
+                    app.selected_conversation = None;
+                }
+            }
+        }
+
+        // Peer tab switching (in Peers workspace)
+        (KeyCode::Char(n @ '4'..='5'), _) if app.workspace == Workspace::Peers => {
+            let idx = (n as u8 - b'1') as usize;
+            if let Some(tab) = app::PeerTab::ALL.get(idx) {
+                app.peer_tab = *tab;
+            }
+        }
+
+        // Scroll main pane
+        (KeyCode::PageUp, _) => app.active_conversation_mut().scroll_up(20),
+        (KeyCode::PageDown, _) => app.active_conversation_mut().scroll_down(20),
+        (KeyCode::Char('j') | KeyCode::Down, _) if app.focus == Focus::Main => {
+            app.active_conversation_mut().scroll_down(3);
+        }
+        (KeyCode::Char('k') | KeyCode::Up, _) if app.focus == Focus::Main => {
+            app.active_conversation_mut().scroll_up(3);
+        }
+
+        // Peer tab navigation
+        (KeyCode::Right, _) if app.workspace == Workspace::Peers && app.focus == Focus::Main => {
+            app.next_peer_tab();
+        }
+
+        // Demo triggers
+        (KeyCode::Char('r'), _) if app.focus != Focus::Input => app.demo_announce(),
+        (KeyCode::Char('l'), _) if app.focus != Focus::Input => app.demo_link(),
+
+        _ => {}
+    }
+
+    false
+}
+
+fn handle_compose_key(app: &mut App, key: KeyEvent) -> bool {
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc, _) => {
+            app.input_mode = InputMode::Normal;
+            app.focus = Focus::Sidebar;
             app.editor.clear_line();
         }
-        (KeyCode::Enter, _) if app.composing => {
+        (KeyCode::Enter, _) => {
             let text = app.editor.take_text();
             if !text.is_empty() {
                 app.handle_compose_submit(text);
             }
-            app.composing = false;
+            app.input_mode = InputMode::Normal;
+            app.focus = Focus::Sidebar;
         }
-        (KeyCode::Char(c), mods) if app.composing && !mods.contains(KeyModifiers::CONTROL) => {
+        (KeyCode::Char(c), mods) if !mods.contains(KeyModifiers::CONTROL) => {
             app.editor.insert(c);
         }
-        (KeyCode::Backspace, _) if app.composing => { app.editor.backspace(); }
-        (KeyCode::Char('w'), KeyModifiers::CONTROL) if app.composing => {
-            app.editor.delete_word_backward();
-        }
-        (KeyCode::Char('u'), KeyModifiers::CONTROL) if app.composing => {
-            app.editor.clear_line();
-        }
-        (KeyCode::Char('k'), KeyModifiers::CONTROL) if app.composing => {
-            app.editor.kill_to_end();
-        }
+        (KeyCode::Backspace, _) => app.editor.backspace(),
+        (KeyCode::Char('u'), KeyModifiers::CONTROL) => app.editor.clear_line(),
+        (KeyCode::Char('k'), KeyModifiers::CONTROL) => app.editor.kill_to_end(),
+        (KeyCode::Char('w'), KeyModifiers::CONTROL) => app.editor.delete_word_backward(),
+        _ => {}
+    }
+    false
+}
 
-        // Demo triggers (when not composing)
-        (KeyCode::Char('r'), KeyModifiers::NONE) if !app.composing => app.demo_announce(),
-        (KeyCode::Char('l'), KeyModifiers::NONE) if !app.composing => app.demo_link(),
+fn handle_command_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            app.input_mode = InputMode::Normal;
+            app.focus = Focus::Sidebar;
+        }
+        KeyCode::Enter => {
+            // TODO: parse and execute command
+            app.input_mode = InputMode::Normal;
+            app.focus = Focus::Sidebar;
+        }
+        _ => {}
+    }
+    false
+}
 
+fn handle_search_key(app: &mut App, key: KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc => {
+            app.input_mode = InputMode::Normal;
+            app.focus = Focus::Sidebar;
+        }
+        KeyCode::Enter => {
+            app.input_mode = InputMode::Normal;
+            app.focus = Focus::Sidebar;
+        }
+        KeyCode::Char(c) => {
+            if let InputMode::Search { ref mut query } = app.input_mode {
+                query.push(c);
+            }
+        }
+        KeyCode::Backspace => {
+            if let InputMode::Search { ref mut query } = app.input_mode {
+                query.pop();
+            }
+        }
         _ => {}
     }
     false

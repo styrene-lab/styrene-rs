@@ -72,11 +72,12 @@ pub use encode::{decode, DecodeError, EncodeError, MAX_ENCODED_BYTES};
 pub use encode::encode;
 
 pub use records::{
-    AircraftPosition, AprsPosition, MeshtasticNode, NodeStatus,
-    SatellitePass, ServiceAnnouncement, ShipPosition, WeatherObservation,
-    MAX_STR, MAX_TEXT,
+    AircraftPosition, AprsPosition, MeshtasticNode, NodeStatus, SatellitePass, ServiceAnnouncement,
+    ShipPosition, WeatherObservation, MAX_STR, MAX_TEXT,
 };
 
-#[allow(unused_imports)]
-pub use types::{TelemetryBatch, TelemetryRecord, TelemetryType, MAX_BATCH_RECORDS, MAX_UNKNOWN_BYTES};
 pub use encode::encode_to_heapless;
+#[allow(unused_imports)]
+pub use types::{
+    TelemetryBatch, TelemetryRecord, TelemetryType, MAX_BATCH_RECORDS, MAX_UNKNOWN_BYTES,
+};
