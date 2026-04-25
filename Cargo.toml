@@ -12,10 +12,12 @@ members = [
   "crates/libs/styrene-identity",
   "crates/libs/styrene-tunnel",
   "crates/libs/styrene-micron",
-  "crates/apps/styrened-rs",
+  "crates/libs/styrene-rbac",
+  "crates/libs/styrene-secrets",
+  "crates/apps/styrened",
   "crates/apps/styrene-dx",
   "crates/apps/styrene-tui",
-  "crates/bindings/styrene-native",
+  "crates/bindings/styrene-native", "crates/libs/styrene-services",
 ]
 default-members = [
   "crates/libs/styrene-entropy",
@@ -29,12 +31,15 @@ default-members = [
   "crates/libs/styrene-identity",
   "crates/libs/styrene-tunnel",
   "crates/libs/styrene-micron",
-  "crates/apps/styrened-rs",
+  "crates/libs/styrene-rbac",
+  "crates/libs/styrene-secrets",
+  "crates/apps/styrened",
   # "crates/apps/styrene-dx",  # spike — build explicitly with -p
   "crates/apps/styrene-tui",
 ]
 
 [workspace.package]
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT"
@@ -53,6 +58,8 @@ styrene-ipc = { version = "0.1.0", path = "crates/libs/styrene-ipc" }
 styrene-ipc-server = { version = "0.1.0", path = "crates/libs/styrene-ipc-server" }
 styrene-tunnel = { version = "0.1.0", path = "crates/libs/styrene-tunnel" }
 styrene-micron = { version = "0.1.0", path = "crates/libs/styrene-micron" }
+styrene-rbac = { version = "0.1.0", path = "crates/libs/styrene-rbac" }
+styrene-secrets = { version = "0.1.0", path = "crates/libs/styrene-secrets" }
 aes = "0.8.4"
 aes-gcm = "0.10"
 ml-kem = "0.2.3"

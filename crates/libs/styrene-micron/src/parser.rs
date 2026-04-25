@@ -26,9 +26,7 @@ pub fn parse(source: &str) -> Document {
     // Close any open sections
     ctx.close_all_sections();
 
-    Document {
-        blocks: ctx.top_blocks,
-    }
+    Document { blocks: ctx.top_blocks }
 }
 
 /// Tracks parsing state including section nesting.
@@ -121,25 +119,17 @@ impl ParseContext {
                 } else {
                     let mut heading_style = StyleSet::default();
                     let mut heading_align = Alignment::Default;
-                    let nodes =
-                        parse_inline(heading_text, &mut heading_style, &mut heading_align);
+                    let nodes = parse_inline(heading_text, &mut heading_style, &mut heading_align);
                     // Heading style does NOT leak to subsequent lines
                     if nodes.is_empty() {
                         None
                     } else {
-                        Some(Line {
-                            nodes,
-                            alignment: heading_align,
-                        })
+                        Some(Line { nodes, alignment: heading_align })
                     }
                 };
 
                 // Push new section frame
-                self.section_stack.push(SectionFrame {
-                    level,
-                    heading,
-                    children: Vec::new(),
-                });
+                self.section_stack.push(SectionFrame { level, heading, children: Vec::new() });
             }
             // Section reset: < at SOL
             Some('<') => {
@@ -156,7 +146,11 @@ impl ParseContext {
                 let char_count = line.chars().count();
                 let symbol = if char_count == 2 {
                     let ch = line.chars().nth(1).unwrap();
-                    if (ch as u32) < 32 { '\u{2500}' } else { ch }
+                    if (ch as u32) < 32 {
+                        '\u{2500}'
+                    } else {
+                        ch
+                    }
                 } else {
                     '\u{2500}'
                 };
@@ -172,10 +166,7 @@ impl ParseContext {
                     self.push_block_or_child(BlockOrChild::EmptyLine);
                 } else {
                     let nodes = parse_inline(line, &mut self.style, &mut self.alignment);
-                    let line_block = BlockOrChild::Line(Line {
-                        nodes,
-                        alignment: self.alignment,
-                    });
+                    let line_block = BlockOrChild::Line(Line { nodes, alignment: self.alignment });
                     self.push_block_or_child(line_block);
                 }
             }
@@ -236,15 +227,9 @@ impl ParseContext {
 /// Convert a ChildBlock::Section to a top-level Block::Section.
 fn child_section_to_top(child: ChildBlock) -> Block {
     match child {
-        ChildBlock::Section {
-            level,
-            heading,
-            children,
-        } => Block::Section {
-            level,
-            heading,
-            children,
-        },
+        ChildBlock::Section { level, heading, children } => {
+            Block::Section { level, heading, children }
+        }
         _ => unreachable!(),
     }
 }
@@ -436,21 +421,14 @@ pub(crate) fn parse_inline(
 /// Flush accumulated text into a Text node if non-empty.
 fn flush_text(buf: &mut String, style: &StyleSet, nodes: &mut Vec<InlineNode>) {
     if !buf.is_empty() {
-        nodes.push(InlineNode::Text {
-            style: style.snapshot(),
-            text: std::mem::take(buf),
-        });
+        nodes.push(InlineNode::Text { style: style.snapshot(), text: std::mem::take(buf) });
     }
 }
 
 /// Parse a link: `` `[label`url`fields] ``.
 ///
 /// Canon: unlabeled = just url, labeled = label`url, with fields = label`url`field1|field2.
-fn parse_link(
-    chars: &[char],
-    start: usize,
-    style: &StyleSet,
-) -> (Option<InlineNode>, usize) {
+fn parse_link(chars: &[char], start: usize, style: &StyleSet) -> (Option<InlineNode>, usize) {
     let rest: String = chars[start..].iter().collect();
     let Some(end_offset) = rest.find(']') else {
         return (None, 2);
@@ -472,23 +450,14 @@ fn parse_link(
         }
     };
 
-    let node = InlineNode::Link {
-        style: style.snapshot(),
-        label,
-        url,
-        fields,
-    };
+    let node = InlineNode::Link { style: style.snapshot(), label, url, fields };
 
     // consumed: `[ (2) + inner + ] (1)
     (Some(node), 2 + end_offset + 1)
 }
 
 /// Parse a form field: `` `<descriptor`value> ``.
-fn parse_field(
-    chars: &[char],
-    start: usize,
-    style: &StyleSet,
-) -> (Option<InlineNode>, usize) {
+fn parse_field(chars: &[char], start: usize, style: &StyleSet) -> (Option<InlineNode>, usize) {
     let rest: String = chars[start..].iter().collect();
     let Some(end_offset) = rest.find('>') else {
         return (None, 2);
@@ -510,48 +479,24 @@ fn parse_field(
         if flags.contains('?') {
             let value = segments.get(2).unwrap_or(&"").to_string();
             let checked = segments.get(3) == Some(&"*");
-            FormField::Checkbox {
-                name,
-                value,
-                checked,
-            }
+            FormField::Checkbox { name, value, checked }
         } else if flags.contains('^') {
             let value = segments.get(2).unwrap_or(&"").to_string();
-            let checked = default_value == "*"
-                || segments.get(3) == Some(&"*");
-            FormField::Radio {
-                name,
-                value,
-                checked,
-            }
+            let checked = default_value == "*" || segments.get(3) == Some(&"*");
+            FormField::Radio { name, value, checked }
         } else if flags.contains('!') {
             let width_str = flags.replace('!', "");
             let width = width_str.parse().unwrap_or(24);
-            FormField::Password {
-                name,
-                value: default_value,
-                width,
-            }
+            FormField::Password { name, value: default_value, width }
         } else {
             let width = flags.parse().unwrap_or(24);
-            FormField::Text {
-                name,
-                value: default_value,
-                width,
-            }
+            FormField::Text { name, value: default_value, width }
         }
     } else {
-        FormField::Text {
-            name: descriptor.to_string(),
-            value: default_value,
-            width: 24,
-        }
+        FormField::Text { name: descriptor.to_string(), value: default_value, width: 24 }
     };
 
-    let node = InlineNode::Field {
-        style: style.snapshot(),
-        field,
-    };
+    let node = InlineNode::Field { style: style.snapshot(), field };
 
     (Some(node), 2 + end_offset + 1)
 }
@@ -575,18 +520,14 @@ mod tests {
         // First line
         match &doc.blocks[0] {
             Block::Line(Line { nodes, .. }) => {
-                assert!(
-                    matches!(&nodes[0], InlineNode::Text { style, .. } if style.has_bold())
-                );
+                assert!(matches!(&nodes[0], InlineNode::Text { style, .. } if style.has_bold()));
             }
             _ => panic!("expected line"),
         }
         // Second line
         match &doc.blocks[1] {
             Block::Line(Line { nodes, .. }) => {
-                assert!(
-                    matches!(&nodes[0], InlineNode::Text { style, .. } if style.has_bold())
-                );
+                assert!(matches!(&nodes[0], InlineNode::Text { style, .. } if style.has_bold()));
             }
             _ => panic!("expected line"),
         }

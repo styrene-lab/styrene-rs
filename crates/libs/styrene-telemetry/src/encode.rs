@@ -8,7 +8,7 @@
 //! by ciborium. The struct's serde derives handle field ordering; ciborium
 //! uses deterministic CBOR map encoding.
 
-use crate::types::{TelemetryBatch, MAX_BATCH_RECORDS};
+use crate::types::TelemetryBatch;
 
 /// Conservative upper bound on encoded batch size.
 ///
@@ -49,8 +49,7 @@ pub enum DecodeError {
 /// Available in all zones — no heap allocation required.
 /// Unknown record types decode to [`crate::types::TelemetryRecord::Unknown`].
 pub fn decode(bytes: &[u8]) -> Result<TelemetryBatch, DecodeError> {
-    let batch: TelemetryBatch =
-        ciborium::from_reader(bytes).map_err(|_| DecodeError::Decode)?;
+    let batch: TelemetryBatch = ciborium::from_reader(bytes).map_err(|_| DecodeError::Decode)?;
     if batch.version != 1 {
         return Err(DecodeError::InvalidVersion);
     }
@@ -131,10 +130,7 @@ mod tests {
         assert_eq!(decoded.timestamp, original.timestamp);
         assert_eq!(decoded.origin, original.origin);
         assert_eq!(decoded.len(), original.len());
-        assert_eq!(
-            decoded.records[0].record_type(),
-            TelemetryType::AircraftPosition as u16
-        );
+        assert_eq!(decoded.records[0].record_type(), TelemetryType::AircraftPosition as u16);
     }
 
     #[test]
@@ -155,10 +151,7 @@ mod tests {
 
     #[test]
     fn decode_rejects_garbage() {
-        assert!(matches!(
-            decode(b"not cbor data!!!"),
-            Err(DecodeError::Decode)
-        ));
+        assert!(matches!(decode(b"not cbor data!!!"), Err(DecodeError::Decode)));
     }
 
     #[test]

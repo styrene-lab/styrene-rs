@@ -448,8 +448,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         announce.context = PacketContext::PathResponse;
 
         if let Some(tag) = tag {
-            let expires_at =
-                now + std::time::Duration::from_secs(PATH_RESPONSE_TAG_WINDOW);
+            let expires_at = now + std::time::Duration::from_secs(PATH_RESPONSE_TAG_WINDOW);
             let tag = tag.to_vec();
             self.path_responses.insert(tag.clone(), (expires_at, announce));
             self.path_response_queue.push_back((tag, expires_at));

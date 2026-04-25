@@ -50,31 +50,40 @@ pub async fn dispatch(
             p.insert("pqc_available".into(), rmpv::Value::Boolean(false));
             p.insert("pqc_active".into(), rmpv::Value::Boolean(false));
             ok_payload(p)
-        },
+        }
         MessageType::QueryAttachment => {
             // Attachment queries — not yet implemented
             Err("attachment storage not yet implemented".into())
-        },
-        MessageType::QueryPage | MessageType::QueryPageServerStatus |
-        MessageType::CmdPageListSites | MessageType::CmdPageGetCached |
-        MessageType::CmdPageSaveSite | MessageType::CmdPageRemoveSite |
-        MessageType::CmdPageCrawlSite | MessageType::CmdPageRegenerate |
-        MessageType::CmdPageDisconnect => {
+        }
+        MessageType::QueryPage
+        | MessageType::QueryPageServerStatus
+        | MessageType::CmdPageListSites
+        | MessageType::CmdPageGetCached
+        | MessageType::CmdPageSaveSite
+        | MessageType::CmdPageRemoveSite
+        | MessageType::CmdPageCrawlSite
+        | MessageType::CmdPageRegenerate
+        | MessageType::CmdPageDisconnect => {
             // Page browser — delegated to Python TUI's page browser service
             Err("page browser not available in Rust daemon".into())
-        },
-        MessageType::CmdTerminalOpen | MessageType::CmdTerminalInput |
-        MessageType::CmdTerminalResize | MessageType::CmdTerminalClose => {
+        }
+        MessageType::CmdTerminalOpen
+        | MessageType::CmdTerminalInput
+        | MessageType::CmdTerminalResize
+        | MessageType::CmdTerminalClose => {
             // Remote terminal — P3, not yet implemented
             Err("remote terminal not yet implemented".into())
-        },
-        MessageType::CmdDatalinkEstablish | MessageType::CmdDatalinkTeardown |
-        MessageType::CmdDatalinkQuery | MessageType::CmdDatalinkInfo |
-        MessageType::CmdDatalinkStatus | MessageType::CmdDatalinkMeta |
-        MessageType::CmdDatalinkSpeedtest => {
+        }
+        MessageType::CmdDatalinkEstablish
+        | MessageType::CmdDatalinkTeardown
+        | MessageType::CmdDatalinkQuery
+        | MessageType::CmdDatalinkInfo
+        | MessageType::CmdDatalinkStatus
+        | MessageType::CmdDatalinkMeta
+        | MessageType::CmdDatalinkSpeedtest => {
             // Datalink management — P3, not yet implemented
             Err("datalink management not yet implemented".into())
-        },
+        }
         MessageType::CmdDeviceStatus => dispatch_device_status(daemon, &payload).await,
         MessageType::SubDevices => dispatch_sub_devices(daemon).await,
         MessageType::SubMessages => dispatch_sub_messages(daemon, &payload).await,
@@ -111,10 +120,7 @@ fn val_str<'a>(payload: &'a HashMap<String, rmpv::Value>, key: &str) -> Option<&
 
 /// Validate a hex hash string (16-32 hex chars).
 fn validate_hash(s: &str) -> Result<&str, String> {
-    if s.len() >= 16
-        && s.len() <= 64
-        && s.chars().all(|c| c.is_ascii_hexdigit())
-    {
+    if s.len() >= 16 && s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
         Ok(s)
     } else {
         Err(format!("invalid hash: expected 16-64 hex chars, got '{s}'"))
@@ -166,7 +172,10 @@ async fn dispatch_query_identity(daemon: &Arc<dyn Daemon>) -> Result<Payload, St
     let mut p = Payload::new();
     p.insert("identity_hash".into(), rmpv::Value::from(info.identity_hash.as_str()));
     p.insert("destination_hash".into(), rmpv::Value::from(info.destination_hash.as_str()));
-    p.insert("lxmf_destination_hash".into(), rmpv::Value::from(info.lxmf_destination_hash.as_str()));
+    p.insert(
+        "lxmf_destination_hash".into(),
+        rmpv::Value::from(info.lxmf_destination_hash.as_str()),
+    );
     p.insert("display_name".into(), rmpv::Value::from(info.display_name.as_str()));
     if let Some(ref icon) = info.icon {
         p.insert("icon".into(), rmpv::Value::from(icon.as_str()));
@@ -189,7 +198,10 @@ async fn dispatch_query_devices(
         .iter()
         .map(|d| {
             rmpv::Value::Map(vec![
-                (rmpv::Value::from("destination_hash"), rmpv::Value::from(d.destination_hash.as_str())),
+                (
+                    rmpv::Value::from("destination_hash"),
+                    rmpv::Value::from(d.destination_hash.as_str()),
+                ),
                 (rmpv::Value::from("identity_hash"), rmpv::Value::from(d.identity_hash.as_str())),
                 (rmpv::Value::from("name"), rmpv::Value::from(d.name.as_str())),
                 (rmpv::Value::from("device_type"), rmpv::Value::from(d.device_type.as_str())),
@@ -234,10 +246,7 @@ async fn dispatch_query_conversations(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let include_unread = val_bool(payload, "include_unread").unwrap_or(false);
-    let convos = daemon
-        .query_conversations(include_unread)
-        .await
-        .map_err(|e| e.to_string())?;
+    let convos = daemon.query_conversations(include_unread).await.map_err(|e| e.to_string())?;
     let list: Vec<rmpv::Value> = convos
         .iter()
         .map(|c| {
@@ -266,10 +275,8 @@ async fn dispatch_query_messages(
     let peer_hash = validate_hash(peer_hash)?;
     let limit = val_u64(payload, "limit").unwrap_or(50) as u32;
     let before_ts = val_i64(payload, "before_ts");
-    let msgs = daemon
-        .query_messages(peer_hash, limit, before_ts)
-        .await
-        .map_err(|e| e.to_string())?;
+    let msgs =
+        daemon.query_messages(peer_hash, limit, before_ts).await.map_err(|e| e.to_string())?;
     let list: Vec<rmpv::Value> = msgs
         .iter()
         .map(|m| {
@@ -290,10 +297,7 @@ async fn dispatch_query_messages(
 
 // ── Send chat ───────────────────────────────────────────────────────────
 
-async fn dispatch_send_chat(
-    daemon: &Arc<dyn Daemon>,
-    payload: Payload,
-) -> Result<Payload, String> {
+async fn dispatch_send_chat(daemon: &Arc<dyn Daemon>, payload: Payload) -> Result<Payload, String> {
     let peer_hash = val_str(&payload, "peer_hash").ok_or("missing peer_hash")?;
     let peer_hash = validate_hash(peer_hash)?.to_string();
     let content = val_str(&payload, "content").ok_or("missing content")?;
@@ -337,10 +341,7 @@ async fn dispatch_delete_conversation(
 ) -> Result<Payload, String> {
     let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
     let peer_hash = validate_hash(peer_hash)?;
-    let count = daemon
-        .delete_conversation(peer_hash)
-        .await
-        .map_err(|e| e.to_string())?;
+    let count = daemon.delete_conversation(peer_hash).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("count".into(), rmpv::Value::from(count));
     ok_payload(p)
@@ -353,10 +354,7 @@ async fn dispatch_delete_message(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let message_id = val_str(payload, "message_id").ok_or("missing message_id")?;
-    let ok = daemon
-        .delete_message(message_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let ok = daemon.delete_message(message_id).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("success".into(), rmpv::Value::from(ok));
     ok_payload(p)
@@ -390,10 +388,7 @@ async fn dispatch_resolve_name(
 ) -> Result<Payload, String> {
     let name = val_str(payload, "name").ok_or("missing name")?;
     let prefix = val_str(payload, "prefix");
-    let result = daemon
-        .resolve_name(name, prefix)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = daemon.resolve_name(name, prefix).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     match result {
         Some(hash) => p.insert("peer_hash".into(), rmpv::Value::from(hash.as_str())),
@@ -409,10 +404,8 @@ async fn dispatch_set_identity(
     let display_name = val_str(payload, "display_name");
     let icon = val_str(payload, "icon");
     let short_name = val_str(payload, "short_name");
-    let changed = daemon
-        .set_identity(display_name, icon, short_name)
-        .await
-        .map_err(|e| e.to_string())?;
+    let changed =
+        daemon.set_identity(display_name, icon, short_name).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("changed".into(), rmpv::Value::Boolean(changed));
     ok_payload(p)
@@ -425,10 +418,8 @@ async fn dispatch_set_auto_reply(
     let mode = val_str(payload, "mode").ok_or("missing mode")?;
     let message = val_str(payload, "message");
     let cooldown = payload.get("cooldown_secs").and_then(|v| v.as_u64());
-    let changed = daemon
-        .set_auto_reply(mode, message, cooldown)
-        .await
-        .map_err(|e| e.to_string())?;
+    let changed =
+        daemon.set_auto_reply(mode, message, cooldown).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("changed".into(), rmpv::Value::Boolean(changed));
     ok_payload(p)
@@ -441,10 +432,8 @@ async fn dispatch_search_messages(
     let query = val_str(payload, "query").ok_or("missing query")?;
     let peer_hash = val_str(payload, "peer_hash");
     let limit = payload.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as u32;
-    let messages = daemon
-        .search_messages(query, peer_hash, limit)
-        .await
-        .map_err(|e| e.to_string())?;
+    let messages =
+        daemon.search_messages(query, peer_hash, limit).await.map_err(|e| e.to_string())?;
     let arr: Vec<rmpv::Value> = messages
         .iter()
         .map(|m| {
@@ -454,9 +443,7 @@ async fn dispatch_search_messages(
             item.insert("content".to_string(), rmpv::Value::from(m.content.as_str()));
             item.insert("timestamp".to_string(), rmpv::Value::from(m.timestamp));
             rmpv::Value::Map(
-                item.into_iter()
-                    .map(|(k, v)| (rmpv::Value::from(k.as_str()), v))
-                    .collect(),
+                item.into_iter().map(|(k, v)| (rmpv::Value::from(k.as_str()), v)).collect(),
             )
         })
         .collect();
@@ -470,10 +457,7 @@ async fn dispatch_retry_message(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let message_id = val_str(payload, "message_id").ok_or("missing message_id")?;
-    let retried = daemon
-        .retry_message(message_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let retried = daemon.retry_message(message_id).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("retried".into(), rmpv::Value::Boolean(retried));
     ok_payload(p)
@@ -481,9 +465,7 @@ async fn dispatch_retry_message(
 
 // ── Query Config ─────────────────────────────────────────────────────────────
 
-async fn dispatch_query_config(
-    daemon: &Arc<dyn Daemon>,
-) -> Result<Payload, String> {
+async fn dispatch_query_config(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
     let config = daemon.query_config().await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     // Flatten config values into response payload
@@ -507,10 +489,7 @@ async fn dispatch_set_contact(
     let peer_hash = validate_hash(peer_hash)?;
     let alias = val_str(payload, "alias");
     let notes = val_str(payload, "notes");
-    daemon
-        .set_contact(peer_hash, alias, notes)
-        .await
-        .map_err(|e| e.to_string())?;
+    daemon.set_contact(peer_hash, alias, notes).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("ok".into(), rmpv::Value::Boolean(true));
     ok_payload(p)
@@ -522,10 +501,7 @@ async fn dispatch_remove_contact(
 ) -> Result<Payload, String> {
     let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
     let peer_hash = validate_hash(peer_hash)?;
-    let removed = daemon
-        .remove_contact(peer_hash)
-        .await
-        .map_err(|e| e.to_string())?;
+    let removed = daemon.remove_contact(peer_hash).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("removed".into(), rmpv::Value::Boolean(removed));
     ok_payload(p)
@@ -540,10 +516,7 @@ async fn dispatch_device_status(
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
     let dest = validate_hash(dest)?;
     let timeout = payload.get("timeout").and_then(|v| v.as_u64());
-    let info = daemon
-        .device_status(dest, timeout)
-        .await
-        .map_err(|e| e.to_string())?;
+    let info = daemon.device_status(dest, timeout).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("destination_hash".into(), rmpv::Value::from(info.destination_hash.as_str()));
     if let Some(uptime) = info.uptime {
@@ -557,9 +530,7 @@ async fn dispatch_device_status(
 
 // ── Subscriptions ────────────────────────────────────────────────────────────
 
-async fn dispatch_sub_devices(
-    daemon: &Arc<dyn Daemon>,
-) -> Result<Payload, String> {
+async fn dispatch_sub_devices(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
     let _ = daemon.subscribe_devices().await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("subscribed".into(), rmpv::Value::Boolean(true));
@@ -573,16 +544,9 @@ async fn dispatch_sub_messages(
     let peer_hashes: Vec<String> = payload
         .get("peer_hashes")
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
-    let _ = daemon
-        .subscribe_messages(&peer_hashes)
-        .await
-        .map_err(|e| e.to_string())?;
+    let _ = daemon.subscribe_messages(&peer_hashes).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("subscribed".into(), rmpv::Value::Boolean(true));
     ok_payload(p)
@@ -600,9 +564,7 @@ async fn dispatch_get_hub_status() -> Result<Payload, String> {
     ok_payload(p)
 }
 
-async fn dispatch_get_unread_counts(
-    daemon: &Arc<dyn Daemon>,
-) -> Result<Payload, String> {
+async fn dispatch_get_unread_counts(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
     // Build unread counts from conversations
     let convos = daemon
         .query_conversations(true) // unread_only
@@ -611,20 +573,14 @@ async fn dispatch_get_unread_counts(
     let mut counts = HashMap::new();
     for c in &convos {
         if c.unread_count > 0 {
-            counts.insert(
-                c.peer_hash.clone(),
-                rmpv::Value::from(c.unread_count as i64),
-            );
+            counts.insert(c.peer_hash.clone(), rmpv::Value::from(c.unread_count as i64));
         }
     }
     let mut p = Payload::new();
     p.insert(
         "counts".into(),
         rmpv::Value::Map(
-            counts
-                .into_iter()
-                .map(|(k, v)| (rmpv::Value::from(k.as_str()), v))
-                .collect(),
+            counts.into_iter().map(|(k, v)| (rmpv::Value::from(k.as_str()), v)).collect(),
         ),
     );
     ok_payload(p)
@@ -635,19 +591,16 @@ async fn dispatch_get_nodes(
     payload: &Payload,
 ) -> Result<Payload, String> {
     // GET_NODES returns persisted nodes — same data as QUERY_DEVICES
-    let styrene_only = payload
-        .get("styrene_only")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let devices = daemon
-        .query_devices(styrene_only)
-        .await
-        .map_err(|e| e.to_string())?;
+    let styrene_only = payload.get("styrene_only").and_then(|v| v.as_bool()).unwrap_or(false);
+    let devices = daemon.query_devices(styrene_only).await.map_err(|e| e.to_string())?;
     let arr: Vec<rmpv::Value> = devices
         .iter()
         .map(|d| {
             let mut item = HashMap::new();
-            item.insert("destination_hash".to_string(), rmpv::Value::from(d.destination_hash.as_str()));
+            item.insert(
+                "destination_hash".to_string(),
+                rmpv::Value::from(d.destination_hash.as_str()),
+            );
             item.insert("name".to_string(), rmpv::Value::from(d.name.as_str()));
             item.insert("status".to_string(), rmpv::Value::from(d.status.as_str()));
             item.insert("is_styrene_node".to_string(), rmpv::Value::Boolean(d.is_styrene_node));
@@ -655,9 +608,7 @@ async fn dispatch_get_nodes(
                 item.insert("last_announce".to_string(), rmpv::Value::from(ts));
             }
             rmpv::Value::Map(
-                item.into_iter()
-                    .map(|(k, v)| (rmpv::Value::from(k.as_str()), v))
-                    .collect(),
+                item.into_iter().map(|(k, v)| (rmpv::Value::from(k.as_str()), v)).collect(),
             )
         })
         .collect();
@@ -666,9 +617,7 @@ async fn dispatch_get_nodes(
     ok_payload(p)
 }
 
-async fn dispatch_get_core_config(
-    daemon: &Arc<dyn Daemon>,
-) -> Result<Payload, String> {
+async fn dispatch_get_core_config(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
     // Return config snapshot — same data as QUERY_CONFIG, wrapped in "config" key
     let config = daemon.query_config().await.map_err(|e| e.to_string())?;
     let mut config_map: Vec<(rmpv::Value, rmpv::Value)> = Vec::new();
@@ -714,10 +663,7 @@ async fn dispatch_sub_links() -> Result<Payload, String> {
 
 // ── Exec / Reboot (fleet RPC) ────────────────────────────────────────────────
 
-async fn dispatch_exec(
-    daemon: &Arc<dyn Daemon>,
-    payload: &Payload,
-) -> Result<Payload, String> {
+async fn dispatch_exec(daemon: &Arc<dyn Daemon>, payload: &Payload) -> Result<Payload, String> {
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
     let dest = validate_hash(dest)?;
     let cmd = val_str(payload, "command").ok_or("missing command")?;
@@ -727,10 +673,7 @@ async fn dispatch_exec(
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
     let timeout = payload.get("timeout").and_then(|v| v.as_u64());
-    let result = daemon
-        .exec(dest, cmd, args, timeout)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = daemon.exec(dest, cmd, args, timeout).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("exit_code".into(), rmpv::Value::from(result.exit_code as i64));
     p.insert("stdout".into(), rmpv::Value::from(result.stdout.as_str()));
@@ -746,10 +689,7 @@ async fn dispatch_reboot_device(
     let dest = validate_hash(dest)?;
     let delay = payload.get("delay").and_then(|v| v.as_u64());
     let timeout = payload.get("timeout").and_then(|v| v.as_u64());
-    let result = daemon
-        .reboot_device(dest, delay, timeout)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = daemon.reboot_device(dest, delay, timeout).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("accepted".into(), rmpv::Value::Boolean(result.accepted));
     if let Some(d) = result.delay_secs {
@@ -760,10 +700,7 @@ async fn dispatch_reboot_device(
 
 // ── Send (generic LXMF send — wraps send_chat) ──────────────────────────────
 
-async fn dispatch_send(
-    daemon: &Arc<dyn Daemon>,
-    payload: &Payload,
-) -> Result<Payload, String> {
+async fn dispatch_send(daemon: &Arc<dyn Daemon>, payload: &Payload) -> Result<Payload, String> {
     let peer_hash = val_str(payload, "destination_hash")
         .or_else(|| val_str(payload, "peer_hash"))
         .ok_or("missing destination_hash or peer_hash")?;
@@ -777,10 +714,7 @@ async fn dispatch_send(
     req.peer_hash = peer_hash;
     req.content = content;
     req.title = title;
-    let msg_id = daemon
-        .send_chat(req)
-        .await
-        .map_err(|e| e.to_string())?;
+    let msg_id = daemon.send_chat(req).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("message_id".into(), rmpv::Value::from(msg_id.as_str()));
     ok_payload(p)
@@ -903,10 +837,8 @@ async fn dispatch_remote_inbox(
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
     let limit = val_u64(payload, "limit").unwrap_or(50) as u32;
     let timeout = val_u64(payload, "timeout");
-    let conversations = daemon
-        .remote_inbox(dest, limit, timeout)
-        .await
-        .map_err(|e| e.to_string())?;
+    let conversations =
+        daemon.remote_inbox(dest, limit, timeout).await.map_err(|e| e.to_string())?;
     let items: Vec<rmpv::Value> = conversations
         .iter()
         .map(|c| {
@@ -930,10 +862,8 @@ async fn dispatch_remote_messages(
     let peer = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
     let limit = val_u64(payload, "limit").unwrap_or(50) as u32;
     let timeout = val_u64(payload, "timeout");
-    let messages = daemon
-        .remote_messages(dest, peer, limit, timeout)
-        .await
-        .map_err(|e| e.to_string())?;
+    let messages =
+        daemon.remote_messages(dest, peer, limit, timeout).await.map_err(|e| e.to_string())?;
     let items: Vec<rmpv::Value> = messages
         .iter()
         .map(|m| {
@@ -959,10 +889,7 @@ async fn dispatch_self_update(
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
     let version = val_str(payload, "version");
     let timeout = val_u64(payload, "timeout");
-    let result = daemon
-        .self_update(dest, version, timeout)
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = daemon.self_update(dest, version, timeout).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("accepted".into(), rmpv::Value::Boolean(result.accepted));
     if let Some(v) = &result.current_version {

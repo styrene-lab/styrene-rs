@@ -26,18 +26,16 @@
 //! ```
 
 use std::collections::HashMap;
-use std::path::{Path};
+use std::path::Path;
 use std::sync::Arc;
 
 use tokio::net::UnixStream;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Duration, timeout};
 
 use rmpv::Value as MpValue;
 use styrene_ipc::types::{DaemonStatusInfo, DeviceInfo, IdentityInfo, MessageInfo};
-use styrene_ipc_server::wire::{
-    self, Frame, MessageType, REQUEST_ID_SIZE,
-};
+use styrene_ipc_server::wire::{self, Frame, MessageType, REQUEST_ID_SIZE};
 
 use crate::mesh_state::{ActivityEntry, ActivityKind, PeerRecord, epoch_secs};
 
@@ -97,13 +95,10 @@ impl DaemonHandle {
             .map_err(|e| format!("write: {e}"))?;
 
         // Read response (5s timeout)
-        let frame = timeout(
-            Duration::from_secs(5),
-            wire::read_frame_async(&mut *stream),
-        )
-        .await
-        .map_err(|_| "rpc timeout".to_string())?
-        .map_err(|e| format!("read: {e}"))?;
+        let frame = timeout(Duration::from_secs(5), wire::read_frame_async(&mut *stream))
+            .await
+            .map_err(|_| "rpc timeout".to_string())?
+            .map_err(|e| format!("read: {e}"))?;
 
         Ok(frame)
     }
@@ -130,23 +125,17 @@ impl DaemonHandle {
 
     /// Subscribe to message events. Must be called before the read loop.
     pub async fn subscribe_messages(&mut self) -> Result<(), String> {
-        self.rpc(MessageType::SubMessages, &HashMap::new())
-            .await
-            .map(|_| ())
+        self.rpc(MessageType::SubMessages, &HashMap::new()).await.map(|_| ())
     }
 
     /// Subscribe to device/announce events.
     pub async fn subscribe_devices(&mut self) -> Result<(), String> {
-        self.rpc(MessageType::SubDevices, &HashMap::new())
-            .await
-            .map(|_| ())
+        self.rpc(MessageType::SubDevices, &HashMap::new()).await.map(|_| ())
     }
 
     /// Subscribe to link telemetry events (activated, closed, RTT updated).
     pub async fn subscribe_links(&mut self) -> Result<(), String> {
-        self.rpc(MessageType::SubLinks, &HashMap::new())
-            .await
-            .map(|_| ())
+        self.rpc(MessageType::SubLinks, &HashMap::new()).await.map(|_| ())
     }
 
     /// Send a ping. Returns true if pong received.
@@ -178,9 +167,8 @@ pub async fn connect(
         return Err(format!("socket not found: {}", path.display()));
     }
 
-    let stream = UnixStream::connect(&path)
-        .await
-        .map_err(|e| format!("connect {}: {e}", path.display()))?;
+    let stream =
+        UnixStream::connect(&path).await.map_err(|e| format!("connect {}: {e}", path.display()))?;
 
     let stream = Arc::new(Mutex::new(stream));
     let mut handle = DaemonHandle { stream: stream.clone(), next_id: 0 };
@@ -210,11 +198,7 @@ async fn event_reader(stream: Arc<Mutex<UnixStream>>, tx: mpsc::Sender<TuiEvent>
         // Lock for one frame read — release immediately so rpc() can also lock
         let frame_result = {
             let mut guard = stream.lock().await;
-            timeout(
-                Duration::from_secs(60),
-                wire::read_frame_async(&mut *guard),
-            )
-            .await
+            timeout(Duration::from_secs(60), wire::read_frame_async(&mut *guard)).await
         };
 
         match frame_result {
@@ -253,17 +237,18 @@ fn frame_to_tui_event(frame: Frame) -> Option<TuiEvent> {
             Some(TuiEvent::PeerAnnounce(peer))
         }
         MessageType::EventLink => {
-            let link_id = frame.payload.get("link_id")
-                .and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let peer_hash = frame.payload.get("peer_hash")
-                .and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let peer_name = frame.payload.get("peer_name")
-                .and_then(|v| v.as_str()).map(|s| s.to_string());
-            let status = frame.payload.get("status")
-                .and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let rtt_ms = frame.payload.get("rtt_ms")
-                .and_then(|v| v.as_f64());
-            if link_id.is_empty() || status.is_empty() { return None; }
+            let link_id =
+                frame.payload.get("link_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let peer_hash =
+                frame.payload.get("peer_hash").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let peer_name =
+                frame.payload.get("peer_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let status =
+                frame.payload.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let rtt_ms = frame.payload.get("rtt_ms").and_then(|v| v.as_f64());
+            if link_id.is_empty() || status.is_empty() {
+                return None;
+            }
             Some(TuiEvent::LinkUpdate { link_id, peer_hash, peer_name, status, rtt_ms })
         }
         MessageType::EventMessage => {
@@ -296,8 +281,13 @@ pub fn spawn_poll_task(
                 first = false;
                 let result = handle.lock().await.identity().await;
                 match result {
-                    Ok(info) => { let _ = tx.send(TuiEvent::Identity(info)).await; }
-                    Err(e) => { let _ = tx.send(TuiEvent::Disconnected(e)).await; return; }
+                    Ok(info) => {
+                        let _ = tx.send(TuiEvent::Identity(info)).await;
+                    }
+                    Err(e) => {
+                        let _ = tx.send(TuiEvent::Disconnected(e)).await;
+                        return;
+                    }
                 }
             }
 
@@ -306,15 +296,22 @@ pub fn spawn_poll_task(
 
             let status = handle.lock().await.status().await;
             match status {
-                Ok(s) => { let _ = tx.send(TuiEvent::Status(s)).await; }
-                Err(e) => { let _ = tx.send(TuiEvent::Disconnected(e)).await; return; }
+                Ok(s) => {
+                    let _ = tx.send(TuiEvent::Status(s)).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(TuiEvent::Disconnected(e)).await;
+                    return;
+                }
             }
 
             let devices = handle.lock().await.devices(false).await;
             if let Ok(devs) = devices {
                 let now = epoch_secs();
                 for dev in devs {
-                    if dev.destination_hash.is_empty() { continue; }
+                    if dev.destination_hash.is_empty() {
+                        continue;
+                    }
                     let peer = PeerRecord::new(
                         dev.destination_hash.clone(),
                         if dev.name.is_empty() { None } else { Some(dev.name.clone()) },
@@ -335,19 +332,27 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
 
     match ev {
         TuiEvent::Identity(info) => {
-            app.footer.node_hash = info.destination_hash.clone();
-            app.footer.node_name = info.display_name.clone();
-            app.footer.transport_active = true;
+            app.node_hash = info.destination_hash.clone();
+            app.node_name = info.display_name.clone();
+            app.daemon_connected = true;
             let hash_short = &info.destination_hash[..8.min(info.destination_hash.len())];
-            app.conversation.push_system(
-                &format!("⬡ connected  node: {hash_short}…  name: {}",
-                    info.display_name),
-            );
+            app.conversation.push_system(&format!(
+                "⬡ connected  node: {hash_short}…  name: {}",
+                info.display_name
+            ));
+            app.activity.push(ActivityEntry::new(
+                ActivityKind::Announce,
+                &info.display_name,
+                "local node identity loaded",
+            ));
         }
 
         TuiEvent::Status(status) => {
-            app.footer.transport_active = status.rns_initialized;
-            app.footer.active_links = status.active_links as usize;
+            app.daemon_version = status.daemon_version.clone();
+            app.rns_initialized = status.rns_initialized;
+            app.transport_active = status.transport_enabled;
+            app.propagation_enabled = status.propagation_enabled;
+            app.interface_count = status.interface_count;
         }
 
         TuiEvent::PeerAnnounce(peer) => {
@@ -371,30 +376,56 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
                 ));
                 app.peers.push(peer);
             }
-            app.footer.trigger_flash();
+            // trigger_flash removed — effects system handles visuals
         }
 
         TuiEvent::Message(msg) => {
-            if msg.is_outgoing { return; }
-            let name = app.peers.iter()
-                .find(|p| p.hash == msg.source_hash)
-                .and_then(|p| p.name.clone());
+            let peer_hash = if msg.is_outgoing {
+                msg.destination_hash.clone()
+            } else {
+                msg.source_hash.clone()
+            };
+            let name = app.peers.iter().find(|p| p.hash == peer_hash).and_then(|p| p.name.clone());
 
-            app.conversation.push_received(
-                &msg.source_hash,
-                name.as_deref(),
-                msg.title.as_deref(),
-                &msg.content,
-                msg.timestamp,
-            );
+            // Push to per-peer conversation
+            let conv = app.peer_conversation(&peer_hash);
+            if msg.is_outgoing {
+                conv.push_sent(&peer_hash, name.as_deref(), &msg.content, DeliveryStatus::Sent);
+            } else {
+                conv.push_received(
+                    &peer_hash,
+                    name.as_deref(),
+                    msg.title.as_deref(),
+                    &msg.content,
+                    msg.timestamp,
+                );
+            }
+
+            // Also push to global conversation (Home activity)
+            if !msg.is_outgoing {
+                app.conversation.push_received(
+                    &peer_hash,
+                    name.as_deref(),
+                    msg.title.as_deref(),
+                    &msg.content,
+                    msg.timestamp,
+                );
+            }
+
+            let label = name.as_deref().unwrap_or(&peer_hash[..8.min(peer_hash.len())]);
             app.activity.push(ActivityEntry::new(
-                ActivityKind::InboundMessage,
-                name.as_deref().unwrap_or(&msg.source_hash[..8.min(msg.source_hash.len())]),
+                if msg.is_outgoing {
+                    ActivityKind::OutboundMessage
+                } else {
+                    ActivityKind::InboundMessage
+                },
+                label,
                 msg.title.as_deref().unwrap_or(&msg.content[..msg.content.len().min(32)]),
             ));
-            app.footer.unread_messages += 1;
-            app.footer.total_messages += 1;
-            app.footer.trigger_flash();
+            if !msg.is_outgoing {
+                app.unread_count += 1;
+            }
+            // trigger_flash removed — effects system handles visuals
         }
 
         TuiEvent::MessageStatus { id: _, status } => {
@@ -420,7 +451,9 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
                             peer_name.clone(),
                             crate::mesh_state::epoch_secs(),
                         );
-                        if let Some(rtt) = rtt_ms { link.rtt_ms = rtt; }
+                        if let Some(rtt) = rtt_ms {
+                            link.rtt_ms = rtt;
+                        }
                         link.pluck();
                         app.links.push(link);
                         app.activity.push(ActivityEntry::new(
@@ -440,11 +473,8 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
                 }
                 "closed" | "stale" => {
                     if let Some(link) = app.links.iter_mut().find(|l| l.id == link_id) {
-                        link.status = if status == "stale" {
-                            LinkStatus::Stale
-                        } else {
-                            LinkStatus::Closed
-                        };
+                        link.status =
+                            if status == "stale" { LinkStatus::Stale } else { LinkStatus::Closed };
                     }
                     if status == "closed" {
                         app.links.retain(|l| l.id != link_id);
@@ -457,14 +487,19 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
                 }
                 _ => {}
             }
-            app.footer.trigger_flash();
+            // trigger_flash removed — effects system handles visuals
         }
 
         TuiEvent::Disconnected(reason) => {
-            app.conversation.push_system(
-                &format!("⚠ daemon disconnected: {reason}"),
-            );
-            app.footer.transport_active = false;
+            app.daemon_connected = false;
+            app.rns_initialized = false;
+            app.transport_active = false;
+            app.conversation.push_system(&format!("⚠ daemon disconnected: {reason}"));
+            app.activity.push(ActivityEntry::new(
+                ActivityKind::LinkDown,
+                "daemon",
+                &format!("disconnected: {reason}"),
+            ));
         }
     }
 }
@@ -514,33 +549,38 @@ fn parse_status(p: &HashMap<String, MpValue>) -> Result<DaemonStatusInfo, String
 }
 
 fn parse_devices(p: &HashMap<String, MpValue>) -> Result<Vec<DeviceInfo>, String> {
-    let arr = p.get("devices")
+    let arr = p
+        .get("devices")
         .or_else(|| p.get("result"))
         .and_then(|v| v.as_array())
         .ok_or_else(|| "no 'devices' array in response".to_string())?;
 
-    Ok(arr.iter().filter_map(|v| {
-        let m = v.as_map()?;
-        let get = |key: &str| -> String {
-            m.iter()
-                .find(|(k, _)| k.as_str() == Some(key))
-                .and_then(|(_, v)| v.as_str())
-                .unwrap_or("")
-                .to_string()
-        };
-        let mut dev = DeviceInfo::default();
-        dev.destination_hash = get("destination_hash");
-        dev.identity_hash = get("identity_hash");
-        dev.name = get("name");
-        dev.device_type = get("device_type");
-        dev.status = get("status");
-        dev.is_styrene_node = m.iter()
-            .find(|(k, _)| k.as_str() == Some("is_styrene_node"))
-            .and_then(|(_, v)| v.as_bool())
-            .unwrap_or(false);
-        dev.lxmf_destination_hash = get("lxmf_destination_hash");
-        Some(dev)
-    }).collect())
+    Ok(arr
+        .iter()
+        .filter_map(|v| {
+            let m = v.as_map()?;
+            let get = |key: &str| -> String {
+                m.iter()
+                    .find(|(k, _)| k.as_str() == Some(key))
+                    .and_then(|(_, v)| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let mut dev = DeviceInfo::default();
+            dev.destination_hash = get("destination_hash");
+            dev.identity_hash = get("identity_hash");
+            dev.name = get("name");
+            dev.device_type = get("device_type");
+            dev.status = get("status");
+            dev.is_styrene_node = m
+                .iter()
+                .find(|(k, _)| k.as_str() == Some("is_styrene_node"))
+                .and_then(|(_, v)| v.as_bool())
+                .unwrap_or(false);
+            dev.lxmf_destination_hash = get("lxmf_destination_hash");
+            Some(dev)
+        })
+        .collect())
 }
 
 fn parse_device_from_payload(p: &HashMap<String, MpValue>) -> Option<DeviceInfo> {
@@ -560,7 +600,9 @@ fn parse_device_from_payload(p: &HashMap<String, MpValue>) -> Option<DeviceInfo>
 
 fn parse_message_from_payload(p: &HashMap<String, MpValue>) -> Option<MessageInfo> {
     let id = mp_str(p, "id");
-    if id.is_empty() { return None; }
+    if id.is_empty() {
+        return None;
+    }
     let mut msg = MessageInfo::default();
     msg.id = id;
     msg.source_hash = mp_str(p, "source_hash");

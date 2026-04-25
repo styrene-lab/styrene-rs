@@ -8,8 +8,8 @@ use bzip2::write::BzEncoder;
 use bzip2::Compression;
 use tokio::time::{sleep, Instant};
 
-use crate::transport::channel::{ChannelError, HandlerId, SystemMessageTypes, TypedMessage};
 use crate::packet::PACKET_MDU;
+use crate::transport::channel::{ChannelError, HandlerId, SystemMessageTypes, TypedMessage};
 use crate::transport::core_transport::TransportChannel;
 
 const STREAM_ID_MAX: u16 = 0x3FFF;
@@ -429,11 +429,11 @@ impl Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::destination_ext::link::{Link, LinkHandleResult};
     use crate::destination::{DestinationDesc, DestinationName};
     use crate::hash::AddressHash;
     use crate::identity::PrivateIdentity;
     use crate::transport::core_transport::{Transport, TransportConfig};
+    use crate::transport::destination_ext::link::{Link, LinkHandleResult};
     use rand_core::OsRng;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;

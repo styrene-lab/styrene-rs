@@ -1,49 +1,80 @@
-//! Application state — owns all TUI state, wires theme/panels/data model.
+//! Application state — three-workspace shell with persistent sidebar and input bar.
+//!
+//! Layout:
+//! ```text
+//! ┌──────────────────────────────────────────────────────────────┐
+//! │  ■ styrene    Home · Peers · Messages       3↑  ●12  ◐2  ○1│
+//! ├──────────┬───────────────────────────────────────────────────┤
+//! │ SIDEBAR  │                MAIN PANE                          │
+//! │          │                                                   │
+//! ├──────────┴───────────────────────────────────────────────────┤
+//! │ > _                                                          │
+//! └──────────────────────────────────────────────────────────────┘
+//! ```
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Padding};
+use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
 
-use crate::mesh_state::{
-    ActivityEntry, ActivityKind, ActivityLog, LinkRecord, LinkStatus, PeerRecord, PeerStatus,
-    epoch_secs,
-};
-use crate::tui::conversation::ConversationView;
+use crate::mesh_state::{ActivityLog, LinkRecord, PeerRecord, PeerStatus, epoch_secs};
 use crate::tui::conv_widget::ConversationWidget;
+use crate::tui::conversation::ConversationView;
 use crate::tui::editor::Editor;
 use crate::tui::effects::Effects;
-use crate::tui::footer::FooterData;
 use crate::tui::segments::{DeliveryStatus, ProtocolEventKind};
 use crate::tui::signal::{self, SignalState};
 use crate::tui::theme::{self, Theme};
-use crate::tui::topology::{self, TopologyState};
+use crate::tui::topology::TopologyState;
 
-// ─── Minimum width for the topology sidebar ──────────────────────────────────
-const SIDEBAR_MIN_WIDTH: u16 = 120;
-const SIDEBAR_WIDTH: u16 = 36;
+// ─── Layout constants ────────────────────────────────────────────────────────
 
-// ─── Tab ─────────────────────────────────────────────────────────────────────
+const SIDEBAR_WIDTH: u16 = 28;
+const SIDEBAR_COLLAPSE_THRESHOLD: u16 = 60;
+
+// ─── Workspace ───────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tab {
-    Messages,
+pub enum Workspace {
+    Home,
     Peers,
-    Links,
-    Config,
+    Messages,
 }
 
-impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Messages, Tab::Peers, Tab::Links, Tab::Config];
+impl Workspace {
+    pub const ALL: [Workspace; 3] = [Workspace::Home, Workspace::Peers, Workspace::Messages];
 
     pub fn title(&self) -> &'static str {
         match self {
-            Tab::Messages => "Messages",
-            Tab::Peers => "Peers",
-            Tab::Links => "Links",
-            Tab::Config => "Config",
+            Workspace::Home => "Home",
+            Workspace::Peers => "Peers",
+            Workspace::Messages => "Messages",
         }
     }
+}
+
+// ─── Input mode ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InputMode {
+    /// Default — input bar shows status
+    Normal,
+    /// Command mode — `:` prefix
+    Command,
+    /// Search mode — `/` prefix, filters sidebar
+    Search { query: String },
+    /// Compose mode — writing a chat message
+    Compose,
+}
+
+// ─── Focus ───────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Focus {
+    Sidebar,
+    Main,
+    Input,
 }
 
 // ─── App ─────────────────────────────────────────────────────────────────────
@@ -51,28 +82,79 @@ impl Tab {
 pub struct App {
     pub theme: Box<dyn Theme>,
 
+    // Navigation
+    pub workspace: Workspace,
+    pub focus: Focus,
+    pub input_mode: InputMode,
+    pub sidebar_visible: bool,
+
     // Data model
     pub peers: Vec<PeerRecord>,
     pub links: Vec<LinkRecord>,
     pub activity: ActivityLog,
 
     // Panels
-    pub conversation: ConversationView,
+    pub conversation: ConversationView, // system/global view (Home workspace)
+    pub conversations: HashMap<String, ConversationView>, // per-peer (Messages/Chat)
     pub editor: Editor,
-    pub footer: FooterData,
     pub effects: Effects,
+    #[allow(dead_code)] // used by future tree-mode sidebar
     pub topology: TopologyState,
     pub signal: SignalState,
 
+    // Sidebar state
+    pub sidebar_selection: usize,
+
+    // Peers workspace: selected peer + active tab
+    pub selected_peer: Option<String>,
+    pub peer_tab: PeerTab,
+
+    // Messages workspace: selected conversation
+    pub selected_conversation: Option<String>,
+
+    // Daemon state (populated from IPC events)
+    pub node_hash: String,
+    pub node_name: String,
+    pub daemon_connected: bool,
+    pub daemon_version: String,
+    pub rns_initialized: bool,
+    pub transport_active: bool,
+    pub propagation_enabled: bool,
+    pub interface_count: u32,
+
+    // Mesh badges (computed each tick)
+    pub badge_online: usize,
+    pub badge_stale: usize,
+    pub badge_lost: usize,
+    pub unread_count: usize,
+
     // UI state
-    pub composing: bool,
-    pub active_tab: Tab,
     pub last_ctrl_c: Option<Instant>,
     pub last_tick: Instant,
+}
 
-    // Demo counters
-    announce_counter: usize,
-    link_counter: usize,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeerTab {
+    Status,
+    Chat,
+    Pages,
+    Terminal,
+    Commands,
+}
+
+impl PeerTab {
+    pub const ALL: [PeerTab; 5] =
+        [PeerTab::Status, PeerTab::Chat, PeerTab::Pages, PeerTab::Terminal, PeerTab::Commands];
+
+    pub fn title(&self) -> &'static str {
+        match self {
+            PeerTab::Status => "Status",
+            PeerTab::Chat => "Chat",
+            PeerTab::Pages => "Pages",
+            PeerTab::Terminal => "Terminal",
+            PeerTab::Commands => "Commands",
+        }
+    }
 }
 
 impl App {
@@ -81,85 +163,161 @@ impl App {
         let mut editor = Editor::new();
         editor.apply_theme(theme.as_ref());
 
-        // Generate a demo local identity for display
-        let id = rns_core::identity::PrivateIdentity::new_from_rand(&mut rand_core::OsRng);
-        let node_hash = hex::encode(id.as_identity().address_hash.as_slice());
-
-        let mut footer = FooterData::default();
-        footer.node_hash = node_hash;
-        footer.node_name = "local-node".to_string();
-        footer.transport_active = true;
-
         Self {
             theme,
+            workspace: Workspace::Home,
+            focus: Focus::Main,
+            input_mode: InputMode::Normal,
+            sidebar_visible: true,
             peers: Vec::new(),
             links: Vec::new(),
             activity: ActivityLog::new(),
             conversation: ConversationView::new(),
+            conversations: HashMap::new(),
             editor,
-            footer,
             effects: Effects::new(),
             topology: TopologyState::new(),
             signal: SignalState::new(),
-            composing: false,
-            active_tab: Tab::Messages,
+            node_hash: String::new(),
+            node_name: String::new(),
+            daemon_connected: false,
+            daemon_version: String::new(),
+            rns_initialized: false,
+            transport_active: false,
+            propagation_enabled: false,
+            interface_count: 0,
+            sidebar_selection: 0,
+            selected_peer: None,
+            peer_tab: PeerTab::Status,
+            selected_conversation: None,
+            badge_online: 0,
+            badge_stale: 0,
+            badge_lost: 0,
+            unread_count: 0,
             last_ctrl_c: None,
             last_tick: Instant::now(),
-            announce_counter: 0,
-            link_counter: 0,
         }
-    }
-
-    pub fn push_welcome(&mut self) {
-        let hash_short = &self.footer.node_hash[..8.min(self.footer.node_hash.len())];
-        let msg = format!(
-            "⬡ Styrene mesh TUI\n\
-             \n  Local node: {hash_short}…\n\
-             \n  Tab / Shift+Tab  switch panels\n\
-             \n  Ctrl+D           toggle topology sidebar\n\
-             \n  Ctrl+N           compose message\n\
-             \n  r                demo announce\n\
-             \n  l                demo link\n\
-             \n  q / Ctrl+C×2     quit"
-        );
-        self.conversation.push_system(&msg);
     }
 
     // ─── Navigation ──────────────────────────────────────────────────────────
 
-    pub fn next_tab(&mut self) {
-        let idx = Tab::ALL.iter().position(|t| *t == self.active_tab).unwrap_or(0);
-        self.active_tab = Tab::ALL[(idx + 1) % Tab::ALL.len()];
+    pub fn set_workspace(&mut self, ws: Workspace) {
+        self.workspace = ws;
+        self.sidebar_selection = 0;
+        self.focus = Focus::Sidebar;
     }
 
-    pub fn prev_tab(&mut self) {
-        let idx = Tab::ALL.iter().position(|t| *t == self.active_tab).unwrap_or(0);
-        self.active_tab = Tab::ALL[(idx + Tab::ALL.len() - 1) % Tab::ALL.len()];
+    pub fn next_workspace(&mut self) {
+        let idx = Workspace::ALL.iter().position(|w| *w == self.workspace).unwrap_or(0);
+        self.set_workspace(Workspace::ALL[(idx + 1) % Workspace::ALL.len()]);
     }
 
+    pub fn prev_workspace(&mut self) {
+        let idx = Workspace::ALL.iter().position(|w| *w == self.workspace).unwrap_or(0);
+        self.set_workspace(Workspace::ALL[(idx + Workspace::ALL.len() - 1) % Workspace::ALL.len()]);
+    }
+
+    #[allow(dead_code)] // available for keybind wiring
     pub fn toggle_sidebar(&mut self) {
-        self.topology.toggle_active();
+        self.sidebar_visible = !self.sidebar_visible;
     }
 
-    pub fn sidebar_visible(&self, terminal_width: u16) -> bool {
-        terminal_width >= SIDEBAR_MIN_WIDTH
+    pub fn next_peer_tab(&mut self) {
+        let idx = PeerTab::ALL.iter().position(|t| *t == self.peer_tab).unwrap_or(0);
+        self.peer_tab = PeerTab::ALL[(idx + 1) % PeerTab::ALL.len()];
     }
 
-    // ─── Tick — called every frame ────────────────────────────────────────────
+    /// Get the currently active conversation for scrolling (workspace-aware).
+    pub fn active_conversation_mut(&mut self) -> &mut ConversationView {
+        match self.workspace {
+            Workspace::Messages => {
+                if let Some(ref hash) = self.selected_conversation {
+                    let hash = hash.clone();
+                    return self.conversations.entry(hash).or_insert_with(ConversationView::new);
+                }
+                &mut self.conversation
+            }
+            Workspace::Peers if self.peer_tab == PeerTab::Chat => {
+                if let Some(ref hash) = self.selected_peer {
+                    let hash = hash.clone();
+                    return self.conversations.entry(hash).or_insert_with(ConversationView::new);
+                }
+                &mut self.conversation
+            }
+            _ => &mut self.conversation,
+        }
+    }
+
+    /// Get or create a per-peer conversation view.
+    pub fn peer_conversation(&mut self, peer_hash: &str) -> &mut ConversationView {
+        self.conversations.entry(peer_hash.to_string()).or_insert_with(ConversationView::new)
+    }
+
+    // ─── Sidebar data ────────────────────────────────────────────────────────
+
+    fn sidebar_items(&self) -> Vec<(String, String, Option<usize>)> {
+        // Returns (hash, display_name, unread_count) for the current workspace
+        match self.workspace {
+            Workspace::Home | Workspace::Peers => self
+                .peers
+                .iter()
+                .map(|p| {
+                    let name = p.name.clone().unwrap_or_else(|| p.hash[..8].to_string());
+                    (p.hash.clone(), name, None)
+                })
+                .collect(),
+            Workspace::Messages => {
+                // Show peers that have conversations, sorted by most recent message
+                let mut convos: Vec<_> = self
+                    .conversations
+                    .keys()
+                    .filter_map(|hash| {
+                        let conv = self.conversations.get(hash)?;
+                        if conv.segments().is_empty() {
+                            return None;
+                        }
+                        let name = self
+                            .peers
+                            .iter()
+                            .find(|p| p.hash == *hash)
+                            .and_then(|p| p.name.clone())
+                            .unwrap_or_else(|| hash[..8.min(hash.len())].to_string());
+                        // Count unread (received messages — simplified)
+                        let unread = conv
+                            .segments()
+                            .iter()
+                            .filter(|s| {
+                                matches!(s, crate::tui::segments::Segment::ReceivedMessage { .. })
+                            })
+                            .count();
+                        Some((hash.clone(), name, Some(unread)))
+                    })
+                    .collect();
+                // Most recently active first (by segment count as proxy)
+                convos.sort_by(|a, b| {
+                    let a_count =
+                        self.conversations.get(&a.0).map(|c| c.segments().len()).unwrap_or(0);
+                    let b_count =
+                        self.conversations.get(&b.0).map(|c| c.segments().len()).unwrap_or(0);
+                    b_count.cmp(&a_count)
+                });
+                convos
+            }
+        }
+    }
+
+    // ─── Tick ────────────────────────────────────────────────────────────────
 
     pub fn tick(&mut self) {
         let dt = self.last_tick.elapsed().as_secs_f64();
         self.last_tick = Instant::now();
 
-        self.footer.tick_flash();
         self.signal.tick(dt);
-
-        // Advance wave animation on all links
         for link in &mut self.links {
             link.tick_wave(dt);
         }
 
-        // Age peer status: online → stale after 5 minutes
+        // Age peer status
         let now = epoch_secs();
         for peer in &mut self.peers {
             if peer.status == PeerStatus::Online && peer.age_secs(now) > 300 {
@@ -167,290 +325,674 @@ impl App {
             }
         }
 
-        self.sync_footer();
+        // Compute badges
+        self.badge_online = self.peers.iter().filter(|p| p.status == PeerStatus::Online).count();
+        self.badge_stale = self.peers.iter().filter(|p| p.status == PeerStatus::Stale).count();
+        self.badge_lost = self.peers.iter().filter(|p| p.status == PeerStatus::Offline).count();
     }
 
-    /// Keep footer counts in sync with the data model.
-    fn sync_footer(&mut self) {
-        self.footer.known_peers = self.peers.len();
-        self.footer.active_links = self.links.iter()
-            .filter(|l| l.status.is_active())
-            .count();
+    // ─── Draw ────────────────────────────────────────────────────────────────
 
-        // Average RTT quality for the gauge (0.0 = no links, 1.0 = perfect)
-        let active_rtts: Vec<f64> = self.links.iter()
-            .filter(|l| l.status == LinkStatus::Active && l.rtt_ms > 0.0)
-            .map(|l| l.rtt_ms)
-            .collect();
-        self.footer.link_quality = if active_rtts.is_empty() {
-            0.0
-        } else {
-            let avg_rtt = active_rtts.iter().sum::<f64>() / active_rtts.len() as f64;
-            // Map 0–2000ms to 1.0–0.0 (lower RTT = higher quality)
-            (1.0 - (avg_rtt / 2000.0).min(1.0)) as f32
+    pub fn draw(&mut self, f: &mut Frame) {
+        let full = f.area();
+        f.render_widget(Block::default().style(Style::default().bg(self.theme.bg())), full);
+
+        let input_height = match self.input_mode {
+            InputMode::Compose => 3u16,
+            InputMode::Command | InputMode::Search { .. } => 1,
+            InputMode::Normal => 1,
         };
 
-        // Last announce age
-        if self.peers.is_empty() {
-            self.footer.last_announce_secs = None;
+        let [top_bar, body, input_bar] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(input_height),
+        ])
+        .areas(full);
+
+        self.draw_top_bar(f, top_bar);
+        self.draw_body(f, body);
+        self.draw_input_bar(f, input_bar);
+
+        // Post-process effects
+        self.effects.process(f.buffer_mut(), body, input_bar, input_bar);
+    }
+
+    fn draw_top_bar(&self, f: &mut Frame, area: Rect) {
+        let t = self.theme.as_ref();
+
+        // Left: brand + workspace tabs
+        let tabs: Vec<Span> = Workspace::ALL
+            .iter()
+            .flat_map(|ws| {
+                let style = if *ws == self.workspace {
+                    Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(t.muted())
+                };
+                vec![
+                    Span::styled(ws.title(), style),
+                    Span::styled(" · ", Style::default().fg(t.dim())),
+                ]
+            })
+            .collect();
+
+        // Right: badges
+        let badges = vec![
+            Span::styled(
+                format!("{}↑", self.unread_count),
+                if self.unread_count > 0 {
+                    Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(t.dim())
+                },
+            ),
+            Span::styled("  ", Style::default()),
+            Span::styled(format!("●{}", self.badge_online), Style::default().fg(t.success())),
+            Span::styled("  ", Style::default()),
+            Span::styled(format!("◐{}", self.badge_stale), Style::default().fg(t.warning())),
+            Span::styled("  ", Style::default()),
+            Span::styled(format!("○{}", self.badge_lost), Style::default().fg(t.dim())),
+        ];
+
+        // Compose the line with brand on left, badges on right
+        let hash_short = if self.node_hash.is_empty() {
+            String::new()
         } else {
-            let now = epoch_secs();
-            let most_recent = self.peers.iter()
-                .map(|p| p.last_seen)
-                .max()
-                .unwrap_or(0);
-            self.footer.last_announce_secs = Some(now.saturating_sub(most_recent));
+            format!("  {}…", &self.node_hash[..8.min(self.node_hash.len())])
+        };
+        let mut left_spans = vec![
+            Span::styled("⬡ ", Style::default().fg(t.accent())),
+            Span::styled("styrene", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+            Span::styled(&hash_short, Style::default().fg(t.dim())),
+            Span::styled("   ", Style::default()),
+        ];
+        left_spans.extend(tabs);
+
+        // Calculate right-side width for padding
+        let right_text: String = badges.iter().map(|s| s.content.as_ref()).collect();
+        let right_width = right_text.len() as u16;
+        let left_text: String = left_spans.iter().map(|s| s.content.as_ref()).collect();
+        let left_width = left_text.len() as u16;
+        let pad = area.width.saturating_sub(left_width + right_width);
+
+        left_spans.push(Span::styled(" ".repeat(pad as usize), Style::default()));
+        left_spans.extend(badges);
+
+        let bar = Paragraph::new(Line::from(left_spans)).style(Style::default().bg(t.bg()));
+        f.render_widget(bar, area);
+    }
+
+    fn draw_body(&mut self, f: &mut Frame, area: Rect) {
+        let show_sidebar = self.sidebar_visible && area.width >= SIDEBAR_COLLAPSE_THRESHOLD;
+
+        if show_sidebar {
+            let [sidebar_area, main_area] =
+                Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(0)])
+                    .areas(area);
+
+            self.draw_sidebar(f, sidebar_area);
+            self.draw_main(f, main_area);
+        } else {
+            self.draw_main(f, area);
         }
     }
 
-    // ─── Demo event generators ────────────────────────────────────────────────
+    fn draw_sidebar(&mut self, f: &mut Frame, area: Rect) {
+        let t = self.theme.as_ref();
+        let items = self.sidebar_items();
+
+        let title = match self.workspace {
+            Workspace::Home => " Peers ",
+            Workspace::Peers => " Peers ",
+            Workspace::Messages => " Conversations ",
+        };
+
+        let block = Block::default()
+            .title(Span::styled(title, Style::default().fg(t.muted())))
+            .borders(Borders::RIGHT)
+            .border_style(Style::default().fg(t.border_dim()))
+            .style(Style::default().bg(t.bg()));
+
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        // Render sidebar items
+        let visible_height = inner.height as usize;
+        let scroll_offset = if self.sidebar_selection >= visible_height {
+            self.sidebar_selection - visible_height + 1
+        } else {
+            0
+        };
+
+        for (i, (hash, name, unread)) in
+            items.iter().enumerate().skip(scroll_offset).take(visible_height)
+        {
+            let y = inner.y + (i - scroll_offset) as u16;
+            if y >= inner.y + inner.height {
+                break;
+            }
+
+            let is_selected = i == self.sidebar_selection && self.focus == Focus::Sidebar;
+
+            // Status icon
+            let peer = self.peers.iter().find(|p| p.hash == *hash);
+            let (icon, icon_color) = match peer.map(|p| &p.status) {
+                Some(PeerStatus::Online) => ("● ", t.success()),
+                Some(PeerStatus::Stale) => ("◐ ", t.warning()),
+                Some(PeerStatus::Offline) | None => ("○ ", t.dim()),
+            };
+
+            let name_style = if is_selected {
+                Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(t.fg())
+            };
+
+            let mut spans = vec![
+                Span::styled(icon, Style::default().fg(icon_color)),
+                Span::styled(truncate_to(name, (SIDEBAR_WIDTH - 4) as usize), name_style),
+            ];
+
+            if let Some(count) = unread {
+                if *count > 0 {
+                    spans.push(Span::styled(format!(" {count}"), Style::default().fg(t.accent())));
+                }
+            }
+
+            let line_area = Rect { x: inner.x, y, width: inner.width, height: 1 };
+
+            if is_selected {
+                f.render_widget(
+                    Block::default().style(Style::default().bg(t.surface_bg())),
+                    line_area,
+                );
+            }
+
+            f.render_widget(Paragraph::new(Line::from(spans)), line_area);
+        }
+    }
+
+    fn draw_main(&mut self, f: &mut Frame, area: Rect) {
+        match self.workspace {
+            Workspace::Home => self.draw_home(f, area),
+            Workspace::Peers => self.draw_peers_workspace(f, area),
+            Workspace::Messages => self.draw_messages_workspace(f, area),
+        }
+    }
+
+    fn draw_home(&mut self, f: &mut Frame, area: Rect) {
+        let t = self.theme.as_ref();
+
+        // Split: activity feed (top) + node status (bottom)
+        let [feed_area, status_area] =
+            Layout::vertical([Constraint::Min(6), Constraint::Length(8)]).areas(area);
+
+        // ── Activity feed ────────────────────────────────────────────────────
+        let feed_block = Block::default()
+            .title(Span::styled(" Activity ", Style::default().fg(t.muted())))
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(t.border_dim()))
+            .style(Style::default().bg(t.bg()));
+        let feed_inner = feed_block.inner(feed_area);
+        f.render_widget(feed_block, feed_area);
+
+        let entries: Vec<_> = self.activity.entries().take(feed_inner.height as usize).collect();
+        for (i, entry) in entries.iter().enumerate() {
+            let y = feed_inner.y + i as u16;
+            if y >= feed_inner.y + feed_inner.height {
+                break;
+            }
+            let age = entry.age_secs();
+            let time_str = if age < 60.0 {
+                format!("{:>3.0}s", age)
+            } else if age < 3600.0 {
+                format!("{:>3.0}m", age / 60.0)
+            } else {
+                format!("{:>3.0}h", age / 3600.0)
+            };
+            let icon = entry.kind.icon();
+            let line = Line::from(vec![
+                Span::styled(time_str, Style::default().fg(t.dim())),
+                Span::styled("  ", Style::default()),
+                Span::styled(icon, Style::default().fg(t.accent())),
+                Span::styled(" ", Style::default()),
+                Span::styled(&entry.peer_label, Style::default().fg(t.fg())),
+                Span::styled(": ", Style::default().fg(t.dim())),
+                Span::styled(&entry.detail, Style::default().fg(t.muted())),
+            ]);
+            f.render_widget(
+                Paragraph::new(line),
+                Rect { x: feed_inner.x, y, width: feed_inner.width, height: 1 },
+            );
+        }
+
+        if entries.is_empty() {
+            f.render_widget(
+                Paragraph::new("  No activity yet — waiting for mesh events...")
+                    .style(Style::default().fg(t.dim())),
+                feed_inner,
+            );
+        }
+
+        // ── Node status panel ────────────────────────────────────────────────
+        let status_block = Block::default()
+            .title(Span::styled(" Node ", Style::default().fg(t.muted())))
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(t.border_dim()))
+            .style(Style::default().bg(t.bg()));
+        let status_inner = status_block.inner(status_area);
+        f.render_widget(status_block, status_area);
+
+        // Node identity + status lines
+        let hash_display = if self.node_hash.is_empty() {
+            "not connected".to_string()
+        } else {
+            format!("{}…", &self.node_hash[..12.min(self.node_hash.len())])
+        };
+
+        let connection_color = if self.daemon_connected { t.success() } else { t.dim() };
+        let connection_icon = if self.daemon_connected { "●" } else { "○" };
+
+        let rns_status = if self.rns_initialized { "active" } else { "inactive" };
+        let rns_color = if self.rns_initialized { t.success() } else { t.warning() };
+
+        // Left column: identity + mesh status
+        // Right column: signal waveform
+        let [info_area, wave_area] =
+            Layout::horizontal([Constraint::Length(40), Constraint::Min(12)]).areas(status_inner);
+
+        let info_lines = vec![
+            Line::from(vec![
+                Span::styled("  Identity  ", Style::default().fg(t.muted())),
+                Span::styled(&hash_display, Style::default().fg(t.fg())),
+            ]),
+            Line::from(vec![
+                Span::styled("  Name      ", Style::default().fg(t.muted())),
+                Span::styled(
+                    if self.node_name.is_empty() { "—" } else { &self.node_name },
+                    Style::default().fg(t.fg()),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Daemon    ", Style::default().fg(t.muted())),
+                Span::styled(connection_icon, Style::default().fg(connection_color)),
+                Span::styled(
+                    if self.daemon_version.is_empty() {
+                        " not connected".to_string()
+                    } else {
+                        format!(" v{}", self.daemon_version)
+                    },
+                    Style::default().fg(t.fg()),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Mesh      ", Style::default().fg(t.muted())),
+                Span::styled(rns_status, Style::default().fg(rns_color)),
+                Span::styled(
+                    format!(
+                        "  {} iface  {} peers  {} links",
+                        self.interface_count,
+                        self.peers.len(),
+                        self.links.iter().filter(|l| l.status.is_active()).count(),
+                    ),
+                    Style::default().fg(t.dim()),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Propagation ", Style::default().fg(t.muted())),
+                Span::styled(
+                    if self.propagation_enabled { "enabled" } else { "disabled" },
+                    Style::default().fg(if self.propagation_enabled {
+                        t.success()
+                    } else {
+                        t.dim()
+                    }),
+                ),
+            ]),
+        ];
+
+        f.render_widget(Paragraph::new(info_lines).style(Style::default().bg(t.bg())), info_area);
+
+        // Signal waveform in the right column
+        let links_snap = self.links.clone();
+        signal::render(wave_area, f, &mut self.signal, &links_snap, &self.activity, t);
+    }
+
+    fn draw_peers_workspace(&mut self, f: &mut Frame, area: Rect) {
+        let t = self.theme.as_ref();
+
+        if self.selected_peer.is_none() {
+            // No peer selected — show prompt
+            f.render_widget(
+                Paragraph::new("  Select a peer from the sidebar to view details")
+                    .style(Style::default().fg(t.muted()).bg(t.bg())),
+                area,
+            );
+            return;
+        }
+
+        let peer_hash = self.selected_peer.clone().unwrap_or_default();
+        let peer_name = self
+            .peers
+            .iter()
+            .find(|p| p.hash == peer_hash)
+            .and_then(|p| p.name.clone())
+            .unwrap_or_else(|| peer_hash[..8.min(peer_hash.len())].to_string());
+
+        // Header with peer name + tabs
+        let [header_area, content_area] =
+            Layout::vertical([Constraint::Length(2), Constraint::Min(0)]).areas(area);
+
+        // Peer header
+        let header_line = Line::from(vec![
+            Span::styled("  ⬡ ", Style::default().fg(t.accent())),
+            Span::styled(&peer_name, Style::default().fg(t.fg()).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("  {}", &peer_hash[..12.min(peer_hash.len())]),
+                Style::default().fg(t.dim()),
+            ),
+        ]);
+        f.render_widget(
+            Paragraph::new(header_line).style(Style::default().bg(t.bg())),
+            Rect { x: header_area.x, y: header_area.y, width: header_area.width, height: 1 },
+        );
+
+        // Tab bar
+        let tab_titles: Vec<&str> = PeerTab::ALL.iter().map(|t| t.title()).collect();
+        let selected = PeerTab::ALL.iter().position(|tab| *tab == self.peer_tab).unwrap_or(0);
+        let tabs = Tabs::new(tab_titles)
+            .select(selected)
+            .highlight_style(Style::default().fg(t.accent()).add_modifier(Modifier::BOLD))
+            .style(Style::default().fg(t.muted()).bg(t.bg()))
+            .divider("│");
+        f.render_widget(
+            tabs,
+            Rect { x: header_area.x, y: header_area.y + 1, width: header_area.width, height: 1 },
+        );
+
+        // Tab content
+        match self.peer_tab {
+            PeerTab::Status => self.draw_peer_status(f, content_area, &peer_hash),
+            PeerTab::Chat => self.draw_peer_chat(f, content_area),
+            _ => {
+                f.render_widget(
+                    Paragraph::new(format!("  {} — coming soon", self.peer_tab.title()))
+                        .style(Style::default().fg(t.dim()).bg(t.bg())),
+                    content_area,
+                );
+            }
+        }
+    }
+
+    fn draw_peer_status(&self, f: &mut Frame, area: Rect, peer_hash: &str) {
+        let t = self.theme.as_ref();
+        let peer = self.peers.iter().find(|p| p.hash == peer_hash);
+
+        let mut lines = Vec::new();
+        if let Some(p) = peer {
+            let status_str = match p.status {
+                PeerStatus::Online => "● ACTIVE",
+                PeerStatus::Stale => "◐ STALE",
+                PeerStatus::Offline => "○ LOST",
+            };
+            let status_color = match p.status {
+                PeerStatus::Online => t.success(),
+                PeerStatus::Stale => t.warning(),
+                PeerStatus::Offline => t.dim(),
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled("  Status:  ", Style::default().fg(t.muted())),
+                Span::styled(status_str, Style::default().fg(status_color)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  First:   ", Style::default().fg(t.muted())),
+                Span::styled(format!("{}", p.first_seen), Style::default().fg(t.fg())),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  Last:    ", Style::default().fg(t.muted())),
+                Span::styled(format!("{}", p.last_seen), Style::default().fg(t.fg())),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  Hops:    ", Style::default().fg(t.muted())),
+                Span::styled(format!("{}", p.hop_count), Style::default().fg(t.fg())),
+            ]));
+
+            // Show links for this peer
+            let peer_links: Vec<_> = self.links.iter().filter(|l| l.peer_hash == p.hash).collect();
+            if !peer_links.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled("  Links:", Style::default().fg(t.muted()))));
+                for link in peer_links {
+                    lines.push(Line::from(vec![
+                        Span::styled("    ", Style::default()),
+                        Span::styled(
+                            format!("{}  RTT: {:.1}ms", &link.id[..8], link.rtt_ms),
+                            Style::default().fg(t.fg()),
+                        ),
+                    ]));
+                }
+            }
+        } else {
+            lines.push(Line::from(Span::styled(
+                "  No data available",
+                Style::default().fg(t.dim()),
+            )));
+        }
+
+        f.render_widget(Paragraph::new(lines).style(Style::default().bg(t.bg())), area);
+    }
+
+    fn draw_peer_chat(&mut self, f: &mut Frame, area: Rect) {
+        let t = self.theme.as_ref();
+        let peer_hash = self.selected_peer.clone().unwrap_or_default();
+
+        if let Some(conv) = self.conversations.get_mut(&peer_hash) {
+            let (segments, state) = conv.segments_and_state();
+            f.render_stateful_widget(ConversationWidget::new(segments, t), area, state);
+        } else {
+            f.render_widget(
+                Paragraph::new("  No messages with this peer")
+                    .style(Style::default().fg(t.dim()).bg(t.bg())),
+                area,
+            );
+        }
+    }
+
+    fn draw_messages_workspace(&mut self, f: &mut Frame, area: Rect) {
+        let t = self.theme.as_ref();
+
+        let peer_hash = match &self.selected_conversation {
+            Some(h) => h.clone(),
+            None => {
+                f.render_widget(
+                    Paragraph::new("  Select a conversation from the sidebar")
+                        .style(Style::default().fg(t.muted()).bg(t.bg())),
+                    area,
+                );
+                return;
+            }
+        };
+
+        if let Some(conv) = self.conversations.get_mut(&peer_hash) {
+            let (segments, state) = conv.segments_and_state();
+            f.render_stateful_widget(ConversationWidget::new(segments, t), area, state);
+        } else {
+            f.render_widget(
+                Paragraph::new("  No messages yet").style(Style::default().fg(t.dim()).bg(t.bg())),
+                area,
+            );
+        }
+    }
+
+    fn draw_input_bar(&self, f: &mut Frame, area: Rect) {
+        let t = self.theme.as_ref();
+
+        match &self.input_mode {
+            InputMode::Normal => {
+                let status = match self.workspace {
+                    Workspace::Home => "Tab: switch workspace  /: search  ?: help",
+                    Workspace::Peers => "j/k: navigate  Enter: select  t: tree mode",
+                    Workspace::Messages => "j/k: navigate  i: compose  /: search",
+                };
+                f.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(" ", Style::default()),
+                        Span::styled(status, Style::default().fg(t.dim())),
+                    ]))
+                    .style(Style::default().bg(t.bg())),
+                    area,
+                );
+            }
+            InputMode::Command => {
+                f.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(" :", Style::default().fg(t.accent())),
+                        Span::styled("_", Style::default().fg(t.fg())),
+                    ]))
+                    .style(Style::default().bg(t.surface_bg())),
+                    area,
+                );
+            }
+            InputMode::Search { query } => {
+                f.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(" /", Style::default().fg(t.accent())),
+                        Span::styled(query, Style::default().fg(t.fg())),
+                        Span::styled("_", Style::default().fg(t.muted())),
+                    ]))
+                    .style(Style::default().bg(t.surface_bg())),
+                    area,
+                );
+            }
+            InputMode::Compose => {
+                let block = Block::default()
+                    .borders(Borders::TOP)
+                    .border_style(Style::default().fg(t.border_dim()))
+                    .style(Style::default().bg(t.surface_bg()));
+                let block_inner = block.inner(area);
+                f.render_widget(block, area);
+                f.render_widget(&self.editor.textarea, block_inner);
+            }
+        }
+    }
+
+    // ─── Demo / data injection ───────────────────────────────────────────────
+
+    pub fn push_welcome(&mut self) {
+        self.conversation.push_system(
+            "⬡ Styrene mesh TUI\n\n  \
+             Tab          switch workspace\n  \
+             j/k          navigate sidebar\n  \
+             Enter        select\n  \
+             i            compose message\n  \
+             /            search\n  \
+             :            command mode\n  \
+             Ctrl+C x2    quit",
+        );
+    }
 
     pub fn demo_announce(&mut self) {
-        self.announce_counter += 1;
-        let hash = format!("{:032x}", self.announce_counter as u128 * 0xf1a7b3cafe01_u128);
-        let name = format!("node-{}", self.announce_counter);
+        use crate::mesh_state::{ActivityEntry, ActivityKind, PeerRecord as MeshPeer};
+
+        let idx = self.peers.len() + 1;
+        let hash = format!("{:032x}", idx as u128 * 0xf1a7b3cafe01_u128);
+        let name = format!("node-{idx}");
         let now = epoch_secs();
 
-        // Upsert peer record
         if let Some(existing) = self.peers.iter_mut().find(|p| p.hash == hash) {
             existing.touch(now, 1);
         } else {
-            self.peers.push(PeerRecord::new(hash.clone(), Some(name.clone()), now));
+            self.peers.push(MeshPeer::new(hash.clone(), Some(name.clone()), now));
         }
 
-        // Activity log
-        self.activity.push(ActivityEntry::new(
-            ActivityKind::Announce,
-            &name,
-            "announce received",
-        ));
-
-        // Conversation event
+        self.activity.push(ActivityEntry::new(ActivityKind::Announce, &name, "announce received"));
         self.conversation.push_protocol_event(
             ProtocolEventKind::Announce,
             Some(&hash[..8]),
             Some(&name),
             "announce received",
         );
-
-        self.footer.trigger_flash();
     }
 
     pub fn demo_link(&mut self) {
-        self.link_counter += 1;
-        let peer_hash = format!("{:032x}", self.link_counter as u128 * 0xa3b7c1d5e2f0_u128);
-        let link_id = format!("{:016x}", self.link_counter as u64 * 0xdeadbeef_u64);
-        let name = format!("node-{}", self.link_counter + 100);
+        use crate::mesh_state::{
+            ActivityEntry, ActivityKind, LinkRecord as MeshLink, PeerRecord as MeshPeer,
+        };
+
+        let idx = self.links.len() + 1;
+        let peer_hash = format!("{:032x}", idx as u128 * 0xa3b7c1d5e2f0_u128);
+        let link_id = format!("{:016x}", idx as u64 * 0xdeadbeef_u64);
+        let name = format!("node-{}", idx + 100);
         let now = epoch_secs();
 
-        // Ensure peer exists
         if !self.peers.iter().any(|p| p.hash == peer_hash) {
-            let mut peer = PeerRecord::new(peer_hash.clone(), Some(name.clone()), now);
+            let mut peer = MeshPeer::new(peer_hash.clone(), Some(name.clone()), now);
             peer.link_ids.push(link_id.clone());
             self.peers.push(peer);
-        } else if let Some(peer) = self.peers.iter_mut().find(|p| p.hash == peer_hash) {
-            if !peer.link_ids.contains(&link_id) {
-                peer.link_ids.push(link_id.clone());
-            }
         }
 
-        // Create link record with a fake initial RTT
-        let mut link = LinkRecord::new(link_id.clone(), peer_hash.clone(), Some(name.clone()), now);
-        link.rtt_ms = 20.0 + (self.link_counter as f64 * 7.3) % 180.0;
+        let mut link = MeshLink::new(link_id, peer_hash.clone(), Some(name.clone()), now);
+        link.rtt_ms = 20.0 + (idx as f64 * 7.3) % 180.0;
         link.pluck();
         self.links.push(link);
 
-        // Activity log
-        self.activity.push(ActivityEntry::new(
-            ActivityKind::LinkUp,
-            &name,
-            "link established",
-        ));
-
-        // Conversation events
+        self.activity.push(ActivityEntry::new(ActivityKind::LinkUp, &name, "link established"));
         self.conversation.push_protocol_event(
             ProtocolEventKind::LinkEstablished,
             Some(&peer_hash[..8]),
             Some(&name),
             "link established",
         );
-        self.conversation.push_received(
-            &peer_hash[..16.min(peer_hash.len())],
+
+        // Push demo message to per-peer conversation
+        let peer_key = peer_hash[..16.min(peer_hash.len())].to_string();
+        let conv = self.peer_conversation(&peer_key);
+        conv.push_received(
+            &peer_key,
             Some(&name),
             Some("Hello"),
-            "This is a demo inbound LXMF message over the new link.",
+            "Demo inbound LXMF message over the new link.",
             now as i64,
         );
-        self.activity.push(ActivityEntry::new(
-            ActivityKind::InboundMessage,
-            &name,
-            "Hello",
-        ));
-
-        self.footer.unread_messages += 1;
-        self.footer.total_messages += 1;
-        self.footer.trigger_flash();
+        self.unread_count += 1;
     }
 
     pub fn handle_compose_submit(&mut self, text: String) {
-        let dest_hash = "demonode00000000000000000000000000";
-        let dest_name = "Demo Node";
-        self.conversation.push_sent(dest_hash, Some(dest_name), &text, DeliveryStatus::Sent);
-        self.activity.push(ActivityEntry::new(
-            ActivityKind::OutboundMessage,
-            dest_name,
-            text.chars().take(32).collect::<String>(),
+        let dest = self
+            .selected_peer
+            .clone()
+            .or_else(|| self.selected_conversation.clone())
+            .unwrap_or_else(|| "demo".to_string());
+        let name = self
+            .peers
+            .iter()
+            .find(|p| p.hash == dest)
+            .and_then(|p| p.name.clone())
+            .unwrap_or_else(|| "peer".to_string());
+
+        // Push to per-peer conversation
+        let conv = self.peer_conversation(&dest);
+        conv.push_sent(&dest, Some(&name), &text, DeliveryStatus::Sent);
+
+        // Activity log
+        self.activity.push(crate::mesh_state::ActivityEntry::new(
+            crate::mesh_state::ActivityKind::OutboundMessage,
+            &name,
+            &text[..text.len().min(32)],
         ));
-        self.footer.total_messages += 1;
-    }
-
-    // ─── Draw ─────────────────────────────────────────────────────────────────
-
-    pub fn draw(&mut self, f: &mut Frame) {
-        let full = f.area();
-        let bg_color = self.theme.bg();
-        f.render_widget(Block::default().style(Style::default().bg(bg_color)), full);
-
-        let compose_height = if self.composing { 3u16 } else { 0 };
-        let [header_a, tabs_a, body_a, compose_a, footer_a] = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Length(1),
-            Constraint::Min(0),
-            Constraint::Length(compose_height),
-            Constraint::Length(2),
-        ])
-        .areas(full);
-
-        {
-            let t = self.theme.as_ref();
-            draw_header(f, header_a, t, &self.footer.node_hash);
-            draw_tabs(f, tabs_a, t, self.active_tab);
-        }
-
-        // Body: optionally split into [main | sidebar]
-        let show_sidebar = self.sidebar_visible(full.width);
-        let (main_a, sidebar_a) = if show_sidebar {
-            let [m, s] = Layout::horizontal([
-                Constraint::Min(0),
-                Constraint::Length(SIDEBAR_WIDTH),
-            ])
-            .areas(body_a);
-            (m, Some(s))
-        } else {
-            (body_a, None)
-        };
-
-        self.draw_main(f, main_a);
-
-        if let Some(s_area) = sidebar_a {
-            // Borrow split: extract what topology needs, then render
-            let (peers_snap, links_snap) = (self.peers.clone(), self.links.clone());
-            let t = self.theme.as_ref();
-            topology::render(s_area, f, &mut self.topology, &peers_snap, &links_snap, t);
-        }
-
-        if self.composing {
-            self.draw_compose(f, compose_a);
-        }
-
-        {
-            let footer = self.footer.clone();
-            let t = self.theme.as_ref();
-            footer.render(footer_a, f, t);
-        }
-
-        self.effects.process(f.buffer_mut(), main_a, footer_a, compose_a);
-    }
-
-    fn draw_main(&mut self, f: &mut Frame, area: Rect) {
-        match self.active_tab {
-            Tab::Messages => self.draw_messages(f, area),
-            Tab::Peers => self.draw_peers(f, area),
-            Tab::Links => self.draw_links(f, area),
-            Tab::Config => {
-                let t = self.theme.as_ref();
-                draw_placeholder(f, area, t, "Config");
-            }
-        }
-    }
-
-    fn draw_messages(&mut self, f: &mut Frame, area: Rect) {
-        let t = self.theme.as_ref();
-        let (segments, state) = self.conversation.segments_and_state();
-        f.render_stateful_widget(ConversationWidget::new(segments, t), area, state);
-    }
-
-    fn draw_peers(&mut self, f: &mut Frame, area: Rect) {
-        // Full-width peer tree when sidebar isn't visible (narrow terminal)
-        let (peers_snap, links_snap) = (self.peers.clone(), self.links.clone());
-        let t = self.theme.as_ref();
-        topology::render(area, f, &mut self.topology, &peers_snap, &links_snap, t);
-    }
-
-    fn draw_links(&mut self, f: &mut Frame, area: Rect) {
-        let links_snap = self.links.clone();
-        let t = self.theme.as_ref();
-        signal::render(area, f, &mut self.signal, &links_snap, &self.activity, t);
-    }
-
-    fn draw_compose(&mut self, f: &mut Frame, area: Rect) {
-        let (border_color, surface_bg, muted) = {
-            let t = self.theme.as_ref();
-            (t.border(), t.surface_bg(), t.muted())
-        };
-        let block = Block::default()
-            .title(Span::styled(
-                " Compose  Enter to send  Esc to cancel ",
-                Style::default().fg(muted),
-            ))
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(border_color))
-            .style(Style::default().bg(surface_bg));
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-        f.render_widget(&self.editor.textarea, inner);
     }
 }
 
-// ─── Free-function renderers ──────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn draw_header(f: &mut Frame, area: Rect, t: &dyn Theme, node_hash: &str) {
-    use ratatui::text::Line;
-    use ratatui::widgets::Paragraph;
-    let hash_short = &node_hash[..8.min(node_hash.len())];
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled("⬡ ", Style::default().fg(t.accent())),
-        Span::styled("Styrene", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
-        Span::styled("  mesh communications", Style::default().fg(t.muted())),
-        Span::styled(format!("  {hash_short}…"), Style::default().fg(t.dim())),
-    ]))
-    .block(
-        Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(t.style_border_dim())
-            .style(Style::default().bg(t.bg()))
-            .padding(Padding::new(1, 0, 0, 0)),
-    );
-    f.render_widget(header, area);
-}
-
-fn draw_tabs(f: &mut Frame, area: Rect, t: &dyn Theme, active: Tab) {
-    use ratatui::widgets::Tabs;
-    let titles: Vec<&str> = Tab::ALL.iter().map(|t| t.title()).collect();
-    let selected = Tab::ALL.iter().position(|tab| *tab == active).unwrap_or(0);
-    let tabs = Tabs::new(titles)
-        .select(selected)
-        .highlight_style(Style::default().fg(t.accent()).add_modifier(Modifier::BOLD))
-        .style(Style::default().fg(t.muted()).bg(t.bg()))
-        .divider("│");
-    f.render_widget(tabs, area);
-}
-
-fn draw_placeholder(f: &mut Frame, area: Rect, t: &dyn Theme, label: &str) {
-    use ratatui::widgets::Paragraph;
-    f.render_widget(
-        Paragraph::new(format!("  {label} — coming soon"))
-            .style(Style::default().fg(t.muted()).bg(t.bg())),
-        area,
-    );
+fn truncate_to(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else if max > 1 {
+        format!("{}…", &s[..max - 1])
+    } else {
+        s[..max].to_string()
+    }
 }

@@ -4,11 +4,11 @@ use rand_core::{OsRng, RngCore};
 use tokio::time::{Duration, Instant};
 
 use crate::hash::AddressHash;
-use crate::transport::iface::{TxMessage, TxMessageType};
 use crate::packet::{
     DestinationType, Header, HeaderType, IfacFlag, Packet, PacketContext, PacketType,
     PropagationType,
 };
+use crate::transport::iface::{TxMessage, TxMessageType};
 
 const PATHFINDER_RETRY_GRACE: Duration = Duration::from_secs(5);
 const PATHFINDER_RETRY_WINDOW: Duration = Duration::from_millis(500);
@@ -328,6 +328,33 @@ impl AnnounceTable {
 
         for destination in completed_responses {
             self.responses.remove(&destination);
+        }
+
+        messages
+    }
+
+    /// Retransmit older cached announces that may benefit from periodic re-broadcast.
+    ///
+    /// Called less frequently than `to_retransmit()` — typically every 300 seconds.
+    /// Returns packets from the cache that haven't been retransmitted recently.
+    pub fn to_retransmit_old(&mut self, transport_id: &AddressHash) -> Vec<TxMessage> {
+        let mut messages = vec![];
+        let now = Instant::now();
+
+        // Iterate over both cache generations
+        for map in [self.cache.newer.as_mut(), self.cache.older.as_mut()].into_iter().flatten() {
+            for (_destination, entry) in map.iter_mut() {
+                if now.duration_since(entry.timeout) < Duration::from_secs(300) {
+                    continue;
+                }
+                if let Some(message) = entry.retransmit(transport_id) {
+                    messages.push(message);
+                }
+            }
+        }
+
+        if !messages.is_empty() {
+            log::trace!("Announce cache: {} old announces retransmitted", messages.len());
         }
 
         messages

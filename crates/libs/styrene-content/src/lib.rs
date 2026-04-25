@@ -25,6 +25,8 @@
 //! | `embedded-storage` | `FlashChunkStore` for RP2040/ESP32 |
 
 #![no_std]
+#![allow(async_fn_in_trait)] // AFIT is intentional — no_std/embassy compatible, no boxing
+#![allow(dead_code)] // Crate is design-complete but not yet wired into daemon
 
 #[cfg(feature = "alloc")]
 extern crate alloc;

@@ -88,10 +88,7 @@ impl std::fmt::Debug for EntropyPool {
 impl EntropyPool {
     /// Create a new, empty entropy pool.
     pub fn new() -> Self {
-        Self {
-            pools: std::array::from_fn(|_| Pool::new()),
-            reseed_count: 0,
-        }
+        Self { pools: std::array::from_fn(|_| Pool::new()), reseed_count: 0 }
     }
 
     /// Add bytes from a source into the pool.

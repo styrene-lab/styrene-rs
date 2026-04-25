@@ -65,12 +65,8 @@ mod tests {
         held.set(0);
         held.set(1);
         held.set(2);
-        let ann = ResourceAvailableAnnounce::new(
-            ContentId::from_bytes(b"x"),
-            [0u8; 16],
-            held,
-            [0u8; 16],
-        );
+        let ann =
+            ResourceAvailableAnnounce::new(ContentId::from_bytes(b"x"), [0u8; 16], held, [0u8; 16]);
         assert!(ann.is_complete_seeder(3));
         assert!(!ann.is_complete_seeder(4));
     }

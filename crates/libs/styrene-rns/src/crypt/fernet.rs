@@ -265,7 +265,6 @@ pub struct CachedFernet {
     enc_key: AesKey,
 }
 
-
 impl CachedFernet {
     pub fn new_from_slices(sign_key: &[u8], enc_key: &[u8]) -> Self {
         let mut sign_key_bytes = [0u8; AES_KEY_SIZE];

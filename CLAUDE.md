@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Rust implementation of the RNS/LXMF protocol stack for the [Styrene](https://github.com/styrene-lab) mesh communications project. Forked from [FreeTAKTeam/LXMF-rs](https://github.com/FreeTAKTeam/LXMF-rs) — the most complete non-Python Reticulum implementation.
 
-This is a **parallel implementation** alongside the Python `styrened` daemon. The wire protocol is the shared contract — no FFI, no PyO3 bindings. Both implementations communicate over LXMF like any two Reticulum nodes.
+This is the **canonical implementation** of the Styrene daemon. The wire protocol is the shared contract with the legacy Python `styrened` — no FFI, no PyO3 bindings. Both implementations communicate over LXMF like any two Reticulum nodes.
 
 ## Build Commands
 
@@ -42,18 +42,18 @@ crates/
     styrene-mesh/           # Styrene wire protocol envelope format
                             # (must match styrened's styrene_wire.py byte-for-byte)
   apps/
-    styrened-rs/            # Daemon binary + RPC server + test harness
-                            # (lib name: reticulum_daemon)
+    styrened/            # Daemon binary + RPC server + test harness
+                            # (lib name: styrened)
 ```
 
 ## Relationship to Python styrened
 
-| Concern | Python (styrened) | Rust (styrene-rs) |
+| Concern | Rust (styrene-rs) | Python (styrened) |
 |---------|-------------------|-------------------|
-| Wire protocol authority | `styrene_wire.py` is reference | Must match byte-for-byte |
-| Production status | Primary (all deployments) | Experimental (until interop gate) |
-| TUI | styrene-tui (Textual) | Not planned |
-| Target devices | Hub, operator workstation | Constrained edge (Pi Zero 2W) |
+| Production status | **Primary** (new deployments) | Legacy (supported, not new installs) |
+| Wire protocol | Must match byte-for-byte | `styrene_wire.py` is reference |
+| TUI | styrene-tui (ratatui) | styrene-tui (Textual) |
+| Target devices | All — Hub, edge (Pi Zero 2W), workstation | Hub, operator workstation |
 | Communication | Over LXMF mesh | Over LXMF mesh |
 
 ## Key Files
@@ -63,7 +63,7 @@ crates/
 | `crates/libs/styrene-mesh/src/wire.rs` | Wire protocol — must match `styrene_wire.py` |
 | `crates/libs/styrene-rns/src/transport/` | Transport layer (feature-gated) |
 | `crates/libs/styrene-lxmf/src/sdk/` | SDK domain types (feature-gated) |
-| `crates/apps/styrened-rs/src/rpc/` | RPC daemon + codec + HTTP |
+| `crates/apps/styrened/src/rpc/` | RPC daemon + codec + HTTP |
 | `tests/interop/fixtures/` | Binary test vectors generated from Python |
 | `tests/interop/python/` | Python scripts generating test fixtures |
 | `UPSTREAM.md` | Fork attribution and upstream tracking |
@@ -87,7 +87,7 @@ crates/
 
 | Issue | Severity | Status |
 |-------|----------|--------|
-| IFAC bug — multi-hop broken | Critical | Fix planned |
+| IFAC bug — multi-hop broken | Critical | Fixed (ifac.rs, cross-language interop verified) |
 | HMAC timing oracle | High | Fixed (constant-time comparison) |
 | `Identity.encrypt()` double-ephemeral | Medium | Fixed |
 

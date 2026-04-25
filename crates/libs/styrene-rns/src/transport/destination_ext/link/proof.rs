@@ -1,3 +1,4 @@
+#[allow(dead_code)] // Used in trace logging paths
 fn bytes_to_hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

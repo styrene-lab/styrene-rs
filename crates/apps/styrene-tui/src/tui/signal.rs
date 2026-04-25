@@ -27,7 +27,9 @@ use crate::mesh_state::{ActivityEntry, ActivityLog, LinkRecord, LinkStatus};
 
 /// Map signal intensity [0.0, 1.0] to a color on the mesh ramp.
 fn intensity_color(intensity: f64) -> Color {
-    if intensity < 0.005 { return Color::Rgb(0, 1, 3); }
+    if intensity < 0.005 {
+        return Color::Rgb(0, 1, 3);
+    }
     let i = intensity.clamp(0.0, 1.0);
     let i = if i > 0.008856 { i.cbrt() } else { i * 7.787 + 16.0 / 116.0 };
     let i = ((i - 0.138) / (1.0 - 0.138)).clamp(0.0, 1.0);
@@ -68,10 +70,7 @@ fn render_wave_line<'a>(link: &LinkRecord, width: usize, t: &dyn Theme) -> Line<
     let name = link.label();
     let name_trunc: String = name.chars().take(10).collect();
     let pad = " ".repeat(10_usize.saturating_sub(name.len().min(10)));
-    spans.push(Span::styled(
-        format!("{name_trunc}{pad} "),
-        Style::default().fg(t.muted()).bg(BG),
-    ));
+    spans.push(Span::styled(format!("{name_trunc}{pad} "), Style::default().fg(t.muted()).bg(BG)));
 
     // Wave body
     let wave_cols = width.saturating_sub(14);
@@ -81,22 +80,16 @@ fn render_wave_line<'a>(link: &LinkRecord, width: usize, t: &dyn Theme) -> Line<
         let amplitude = raw.abs() * base_intensity;
         let color = intensity_color(amplitude);
 
-        let char_idx = ((amplitude * (WAVE_CHARS.len() - 1) as f64) as usize)
-            .min(WAVE_CHARS.len() - 1);
+        let char_idx =
+            ((amplitude * (WAVE_CHARS.len() - 1) as f64) as usize).min(WAVE_CHARS.len() - 1);
         let ch = if active { WAVE_CHARS[char_idx] } else { ' ' };
 
-        spans.push(Span::styled(
-            ch.to_string(),
-            Style::default().fg(color).bg(BG),
-        ));
+        spans.push(Span::styled(ch.to_string(), Style::default().fg(color).bg(BG)));
     }
 
     // RTT label
-    let rtt_str = if link.rtt_ms > 0.0 {
-        format!(" {:.0}ms", link.rtt_ms)
-    } else {
-        "    ?  ".to_string()
-    };
+    let rtt_str =
+        if link.rtt_ms > 0.0 { format!(" {:.0}ms", link.rtt_ms) } else { "    ?  ".to_string() };
     spans.push(Span::styled(rtt_str, Style::default().fg(t.dim()).bg(BG)));
 
     Line::from(spans)
@@ -107,37 +100,28 @@ fn render_wave_line<'a>(link: &LinkRecord, width: usize, t: &dyn Theme) -> Line<
 fn render_activity_entry<'a>(entry: &ActivityEntry, width: usize, t: &dyn Theme) -> Line<'a> {
     let age = entry.age_secs();
     // Fade older entries: < 10s = bright, < 60s = normal, older = dim
-    let text_color = if age < 10.0 { t.fg() }
-        else if age < 60.0 { t.muted() }
-        else { t.dim() };
+    let text_color = if age < 10.0 {
+        t.fg()
+    } else if age < 60.0 {
+        t.muted()
+    } else {
+        t.dim()
+    };
     let icon_color = if age < 10.0 { t.accent() } else { t.dim() };
 
-    let age_str = if age < 60.0 {
-        format!("{:.0}s", age)
-    } else {
-        format!("{:.0}m", age / 60.0)
-    };
+    let age_str = if age < 60.0 { format!("{:.0}s", age) } else { format!("{:.0}m", age / 60.0) };
 
     let label_w = width.saturating_sub(12);
     let peer_trunc: String = entry.peer_label.chars().take(label_w.min(12)).collect();
 
     Line::from(vec![
-        Span::styled(
-            format!(" {} ", entry.kind.icon()),
-            Style::default().fg(icon_color).bg(BG),
-        ),
-        Span::styled(
-            format!("{:<12} ", peer_trunc),
-            Style::default().fg(text_color).bg(BG),
-        ),
+        Span::styled(format!(" {} ", entry.kind.icon()), Style::default().fg(icon_color).bg(BG)),
+        Span::styled(format!("{:<12} ", peer_trunc), Style::default().fg(text_color).bg(BG)),
         Span::styled(
             entry.detail.chars().take(label_w.saturating_sub(14)).collect::<String>(),
             Style::default().fg(text_color).bg(BG),
         ),
-        Span::styled(
-            format!(" {:>4}", age_str),
-            Style::default().fg(t.dim()).bg(BG),
-        ),
+        Span::styled(format!(" {:>4}", age_str), Style::default().fg(t.dim()).bg(BG)),
     ])
 }
 
@@ -149,7 +133,9 @@ pub struct SignalState {
 }
 
 impl SignalState {
-    pub fn new() -> Self { Self { time: 0.0 } }
+    pub fn new() -> Self {
+        Self { time: 0.0 }
+    }
 
     pub fn tick(&mut self, dt: f64) {
         self.time = (self.time + dt) % 3600.0;
@@ -157,7 +143,9 @@ impl SignalState {
 }
 
 impl Default for SignalState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ─── Render ───────────────────────────────────────────────────────────────────
@@ -170,10 +158,7 @@ pub fn render(
     activity: &ActivityLog,
     t: &dyn Theme,
 ) {
-    frame.render_widget(
-        Block::default().style(Style::default().bg(BG)),
-        area,
-    );
+    frame.render_widget(Block::default().style(Style::default().bg(BG)), area);
 
     if area.width < 20 || area.height < 4 {
         return;
@@ -181,11 +166,8 @@ pub fn render(
 
     // Split: left 55% waves, right 45% activity
     let split = (area.width as f32 * 0.55) as u16;
-    let [left_a, right_a] = Layout::horizontal([
-        Constraint::Length(split),
-        Constraint::Min(0),
-    ])
-    .areas(area);
+    let [left_a, right_a] =
+        Layout::horizontal([Constraint::Length(split), Constraint::Min(0)]).areas(area);
 
     render_waves(left_a, frame, links, t);
     render_activity(right_a, frame, activity, t);
@@ -225,15 +207,13 @@ fn render_waves(area: Rect, frame: &mut Frame, links: &[LinkRecord], t: &dyn The
         _ => 2,
     });
 
-    let lines: Vec<Line> = sorted.iter()
+    let lines: Vec<Line> = sorted
+        .iter()
         .take(inner.height as usize)
         .map(|l| render_wave_line(l, inner.width as usize, t))
         .collect();
 
-    frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(BG)),
-        inner,
-    );
+    frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), inner);
 }
 
 fn render_activity(area: Rect, frame: &mut Frame, log: &ActivityLog, t: &dyn Theme) {
@@ -254,15 +234,13 @@ fn render_activity(area: Rect, frame: &mut Frame, log: &ActivityLog, t: &dyn The
         return;
     }
 
-    let lines: Vec<Line> = log.entries()
+    let lines: Vec<Line> = log
+        .entries()
         .take(inner.height as usize)
         .map(|e| render_activity_entry(e, inner.width as usize, t))
         .collect();
 
-    frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(BG)),
-        inner,
-    );
+    frame.render_widget(Paragraph::new(lines).style(Style::default().bg(BG)), inner);
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -284,9 +262,7 @@ mod tests {
 
     #[test]
     fn wave_line_renders_empty_link() {
-        let link = LinkRecord::new(
-            "aabb".into(), "ccdd".into(), Some("test".into()), 1000,
-        );
+        let link = LinkRecord::new("aabb".into(), "ccdd".into(), Some("test".into()), 1000);
         let line = render_wave_line(&link, 60, &StyreneTheme);
         assert!(!line.spans.is_empty());
     }
@@ -318,9 +294,7 @@ mod tests {
 
     #[test]
     fn link_wave_animation() {
-        let mut link = LinkRecord::new(
-            "aabb".into(), "ccdd".into(), None, 1000,
-        );
+        let mut link = LinkRecord::new("aabb".into(), "ccdd".into(), None, 1000);
         link.rtt_ms = 50.0;
         let initial_amp = link.wave_amplitude;
         link.tick_wave(0.5);

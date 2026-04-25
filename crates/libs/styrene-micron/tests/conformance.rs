@@ -14,15 +14,21 @@ const GUIDE: &str = include_str!("fixtures/nomad_net_guide.mu");
 /// Recursively count all blocks including nested children.
 fn count_all_blocks(doc: &Document) -> usize {
     fn count_children(children: &[ChildBlock]) -> usize {
-        children.iter().map(|c| match c {
-            ChildBlock::Section { children, .. } => 1 + count_children(children),
-            _ => 1,
-        }).sum()
+        children
+            .iter()
+            .map(|c| match c {
+                ChildBlock::Section { children, .. } => 1 + count_children(children),
+                _ => 1,
+            })
+            .sum()
     }
-    doc.blocks.iter().map(|b| match b {
-        Block::Section { children, .. } => 1 + count_children(children),
-        _ => 1,
-    }).sum()
+    doc.blocks
+        .iter()
+        .map(|b| match b {
+            Block::Section { children, .. } => 1 + count_children(children),
+            _ => 1,
+        })
+        .sum()
 }
 
 // ── Smoke Test ─────────────────────────────────────────────────────
@@ -38,17 +44,10 @@ fn parse_guide_produces_blocks() {
     // The guide is a substantial document. With section nesting,
     // many blocks are children rather than top-level. The guide has
     // ~20+ top-level blocks (sections + inter-section content).
-    assert!(
-        doc.blocks.len() > 15,
-        "expected >15 top-level blocks, got {}",
-        doc.blocks.len()
-    );
+    assert!(doc.blocks.len() > 15, "expected >15 top-level blocks, got {}", doc.blocks.len());
     // Also verify total block count including nested children
     let total = count_all_blocks(&doc);
-    assert!(
-        total > 80,
-        "expected >80 total blocks (including nested), got {total}"
-    );
+    assert!(total > 80, "expected >80 total blocks (including nested), got {total}");
 }
 
 // ── Section Nesting ────────────────────────────────────────────────
@@ -59,17 +58,10 @@ fn section_creates_nested_scope() {
     let doc = parse(">Heading\nChild text\nMore child text");
     assert_eq!(doc.blocks.len(), 1, "section + children = 1 top-level block");
     match &doc.blocks[0] {
-        Block::Section {
-            level,
-            heading,
-            children,
-        } => {
+        Block::Section { level, heading, children } => {
             assert_eq!(*level, 1);
             assert!(heading.is_some());
-            assert!(
-                !children.is_empty(),
-                "section must contain child blocks"
-            );
+            assert!(!children.is_empty(), "section must contain child blocks");
         }
         other => panic!("expected Section, got {other:?}"),
     }
@@ -155,10 +147,7 @@ fn section_tag_mid_line_is_text() {
                     _ => None,
                 })
                 .collect();
-            assert!(
-                full_text.contains(">"),
-                "mid-line > should be literal text"
-            );
+            assert!(full_text.contains(">"), "mid-line > should be literal text");
         }
         other => panic!("expected Line, got {other:?}"),
     }
@@ -176,10 +165,7 @@ fn section_end_mid_line_is_text() {
                     _ => None,
                 })
                 .collect();
-            assert!(
-                full_text.contains("<"),
-                "mid-line < should be literal text"
-            );
+            assert!(full_text.contains("<"), "mid-line < should be literal text");
         }
         other => panic!("expected Line, got {other:?}"),
     }
@@ -248,10 +234,7 @@ fn divider_long_line_uses_default() {
     let doc = parse("-abc");
     match &doc.blocks[0] {
         Block::Divider { symbol } => {
-            assert_eq!(
-                *symbol, '\u{2500}',
-                "divider with >2 chars should use default symbol"
-            );
+            assert_eq!(*symbol, '\u{2500}', "divider with >2 chars should use default symbol");
         }
         other => panic!("expected Divider, got {other:?}"),
     }
@@ -263,10 +246,7 @@ fn divider_control_char_rejected() {
     let doc = parse("-\x01");
     match &doc.blocks[0] {
         Block::Divider { symbol } => {
-            assert_eq!(
-                *symbol, '\u{2500}',
-                "control char divider should fall back to default"
-            );
+            assert_eq!(*symbol, '\u{2500}', "control char divider should fall back to default");
         }
         other => panic!("expected Divider, got {other:?}"),
     }
@@ -324,11 +304,7 @@ fn style_reset_resets_alignment_to_default() {
     });
     match reset_block {
         Some(Block::Line(Line { alignment, .. })) => {
-            assert_eq!(
-                *alignment,
-                Alignment::Default,
-                "`` should reset alignment to Default"
-            );
+            assert_eq!(*alignment, Alignment::Default, "`` should reset alignment to Default");
         }
         other => panic!("expected Line with Default alignment, got {other:?}"),
     }
@@ -350,7 +326,9 @@ fn bold_toggle() {
                 other => panic!("expected Text, got {other:?}"),
             }
             // Find the "normal" node
-            let normal = nodes.iter().find(|n| matches!(n, InlineNode::Text { text, .. } if text.contains("normal")));
+            let normal = nodes
+                .iter()
+                .find(|n| matches!(n, InlineNode::Text { text, .. } if text.contains("normal")));
             match normal {
                 Some(InlineNode::Text { style, .. }) => {
                     assert!(!style.has_bold(), "second span should not be bold");
@@ -366,12 +344,10 @@ fn bold_toggle() {
 fn italic_toggle() {
     let doc = parse("`*italic`* normal");
     match &doc.blocks[0] {
-        Block::Line(Line { nodes, .. }) => {
-            match &nodes[0] {
-                InlineNode::Text { style, .. } => assert!(style.has_italic()),
-                other => panic!("expected Text, got {other:?}"),
-            }
-        }
+        Block::Line(Line { nodes, .. }) => match &nodes[0] {
+            InlineNode::Text { style, .. } => assert!(style.has_italic()),
+            other => panic!("expected Text, got {other:?}"),
+        },
         other => panic!("expected Line, got {other:?}"),
     }
 }
@@ -380,12 +356,10 @@ fn italic_toggle() {
 fn underline_toggle() {
     let doc = parse("`_underline`_ normal");
     match &doc.blocks[0] {
-        Block::Line(Line { nodes, .. }) => {
-            match &nodes[0] {
-                InlineNode::Text { style, .. } => assert!(style.has_underline()),
-                other => panic!("expected Text, got {other:?}"),
-            }
-        }
+        Block::Line(Line { nodes, .. }) => match &nodes[0] {
+            InlineNode::Text { style, .. } => assert!(style.has_underline()),
+            other => panic!("expected Text, got {other:?}"),
+        },
         other => panic!("expected Line, got {other:?}"),
     }
 }
@@ -395,17 +369,15 @@ fn combined_formatting() {
     // From guide: `!`*`_combine
     let doc = parse("`!`*`_combined`_`*`!");
     match &doc.blocks[0] {
-        Block::Line(Line { nodes, .. }) => {
-            match &nodes[0] {
-                InlineNode::Text { style, text } => {
-                    assert!(style.has_bold(), "should be bold");
-                    assert!(style.has_italic(), "should be italic");
-                    assert!(style.has_underline(), "should be underline");
-                    assert_eq!(text, "combined");
-                }
-                other => panic!("expected Text, got {other:?}"),
+        Block::Line(Line { nodes, .. }) => match &nodes[0] {
+            InlineNode::Text { style, text } => {
+                assert!(style.has_bold(), "should be bold");
+                assert!(style.has_italic(), "should be italic");
+                assert!(style.has_underline(), "should be underline");
+                assert_eq!(text, "combined");
             }
-        }
+            other => panic!("expected Text, got {other:?}"),
+        },
         other => panic!("expected Line, got {other:?}"),
     }
 }
@@ -415,7 +387,9 @@ fn style_reset_clears_all() {
     let doc = parse("`!`*`_styled``unstyled");
     match &doc.blocks[0] {
         Block::Line(Line { nodes, .. }) => {
-            let unstyled = nodes.iter().find(|n| matches!(n, InlineNode::Text { text, .. } if text == "unstyled"));
+            let unstyled = nodes
+                .iter()
+                .find(|n| matches!(n, InlineNode::Text { text, .. } if text == "unstyled"));
             match unstyled {
                 Some(InlineNode::Text { style, .. }) => {
                     assert!(!style.has_bold());
@@ -467,7 +441,9 @@ fn fg_color_reset() {
     let doc = parse("`Ff00red`f normal");
     match &doc.blocks[0] {
         Block::Line(Line { nodes, .. }) => {
-            let normal = nodes.iter().find(|n| matches!(n, InlineNode::Text { text, .. } if text.contains("normal")));
+            let normal = nodes
+                .iter()
+                .find(|n| matches!(n, InlineNode::Text { text, .. } if text.contains("normal")));
             match normal {
                 Some(InlineNode::Text { style, .. }) => {
                     assert!(style.fg_color().is_none(), "`f should clear fg color");
@@ -499,8 +475,10 @@ fn literal_toggle_must_be_sol() {
     // `= mid-line should NOT toggle literal mode
     let doc = parse("text `= not literal");
     // Should be a regular line, not a literal block
-    assert!(!doc.blocks.iter().any(|b| matches!(b, Block::Literal { .. })),
-        "mid-line `= should not create literal block");
+    assert!(
+        !doc.blocks.iter().any(|b| matches!(b, Block::Literal { .. })),
+        "mid-line `= should not create literal block"
+    );
 }
 
 #[test]
@@ -588,10 +566,7 @@ fn field_text_input() {
     let doc = parse("`<user_input`Pre-defined data>");
     match &doc.blocks[0] {
         Block::Line(Line { nodes, .. }) => match &nodes[0] {
-            InlineNode::Field {
-                field: FormField::Text { name, value, .. },
-                ..
-            } => {
+            InlineNode::Field { field: FormField::Text { name, value, .. }, .. } => {
                 assert_eq!(name, "user_input");
                 assert_eq!(value, "Pre-defined data");
             }
@@ -606,10 +581,7 @@ fn field_empty_value() {
     let doc = parse("`<demo_empty`>");
     match &doc.blocks[0] {
         Block::Line(Line { nodes, .. }) => match &nodes[0] {
-            InlineNode::Field {
-                field: FormField::Text { name, value, .. },
-                ..
-            } => {
+            InlineNode::Field { field: FormField::Text { name, value, .. }, .. } => {
                 assert_eq!(name, "demo_empty");
                 assert_eq!(value, "");
             }
@@ -624,10 +596,7 @@ fn field_with_size() {
     let doc = parse("`<16|with_size`>");
     match &doc.blocks[0] {
         Block::Line(Line { nodes, .. }) => match &nodes[0] {
-            InlineNode::Field {
-                field: FormField::Text { name, width, .. },
-                ..
-            } => {
+            InlineNode::Field { field: FormField::Text { name, width, .. }, .. } => {
                 assert_eq!(name, "with_size");
                 assert_eq!(*width, 16);
             }
@@ -642,10 +611,7 @@ fn field_masked() {
     let doc = parse("`<!|masked_demo`hidden text>");
     match &doc.blocks[0] {
         Block::Line(Line { nodes, .. }) => match &nodes[0] {
-            InlineNode::Field {
-                field: FormField::Password { name, value, .. },
-                ..
-            } => {
+            InlineNode::Field { field: FormField::Password { name, value, .. }, .. } => {
                 assert_eq!(name, "masked_demo");
                 assert_eq!(value, "hidden text");
             }
@@ -660,10 +626,7 @@ fn field_checkbox() {
     let doc = parse("`<?|field_name|value`>");
     match &doc.blocks[0] {
         Block::Line(Line { nodes, .. }) => match &nodes[0] {
-            InlineNode::Field {
-                field: FormField::Checkbox { name, value, checked },
-                ..
-            } => {
+            InlineNode::Field { field: FormField::Checkbox { name, value, checked }, .. } => {
                 assert_eq!(name, "field_name");
                 assert_eq!(value, "value");
                 assert!(!checked);
@@ -679,10 +642,7 @@ fn field_checkbox_prechecked() {
     let doc = parse("`<?|checkbox|1|*`>");
     match &doc.blocks[0] {
         Block::Line(Line { nodes, .. }) => match &nodes[0] {
-            InlineNode::Field {
-                field: FormField::Checkbox { checked, .. },
-                ..
-            } => {
+            InlineNode::Field { field: FormField::Checkbox { checked, .. }, .. } => {
                 assert!(checked, "checkbox with |* should be pre-checked");
             }
             other => panic!("expected Checkbox, got {other:?}"),
@@ -696,10 +656,7 @@ fn field_radio() {
     let doc = parse("`<^|color|Red`>");
     match &doc.blocks[0] {
         Block::Line(Line { nodes, .. }) => match &nodes[0] {
-            InlineNode::Field {
-                field: FormField::Radio { name, value, checked },
-                ..
-            } => {
+            InlineNode::Field { field: FormField::Radio { name, value, checked }, .. } => {
                 assert_eq!(name, "color");
                 assert_eq!(value, "Red");
                 assert!(!checked);
@@ -715,10 +672,7 @@ fn field_radio_prechecked() {
     let doc = parse("`<^|color|Blue`*>");
     match &doc.blocks[0] {
         Block::Line(Line { nodes, .. }) => match &nodes[0] {
-            InlineNode::Field {
-                field: FormField::Radio { checked, .. },
-                ..
-            } => {
+            InlineNode::Field { field: FormField::Radio { checked, .. }, .. } => {
                 assert!(checked, "radio with `* before > should be pre-checked");
             }
             other => panic!("expected Radio, got {other:?}"),
@@ -796,20 +750,24 @@ fn heading_style_does_not_leak() {
     // Formatting set inside a heading should not affect subsequent lines
     let doc = parse(">Heading with `!bold\nText after heading");
     // Find the text after heading
-    let text_blocks: Vec<_> = doc.blocks.iter().filter(|b| match b {
-        Block::Line(Line { nodes, .. }) => nodes.iter().any(|n| match n {
-            InlineNode::Text { text, .. } => text.contains("Text after"),
-            _ => false,
-        }),
-        Block::Section { children, .. } => children.iter().any(|c| match c {
-            ChildBlock::Line(Line { nodes, .. }) => nodes.iter().any(|n| match n {
+    let text_blocks: Vec<_> = doc
+        .blocks
+        .iter()
+        .filter(|b| match b {
+            Block::Line(Line { nodes, .. }) => nodes.iter().any(|n| match n {
                 InlineNode::Text { text, .. } => text.contains("Text after"),
                 _ => false,
             }),
+            Block::Section { children, .. } => children.iter().any(|c| match c {
+                ChildBlock::Line(Line { nodes, .. }) => nodes.iter().any(|n| match n {
+                    InlineNode::Text { text, .. } => text.contains("Text after"),
+                    _ => false,
+                }),
+                _ => false,
+            }),
             _ => false,
-        }),
-        _ => false,
-    }).collect();
+        })
+        .collect();
 
     assert!(!text_blocks.is_empty(), "should find text after heading");
     // Check the style of "Text after heading" is not bold

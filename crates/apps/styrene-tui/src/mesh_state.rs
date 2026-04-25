@@ -7,7 +7,7 @@
 //!   - footer.rs   (derived counts)
 //!   - conversation.rs (source/dest display names)
 //!
-//! Phase 5: this will be populated live from styrened-rs RPC events.
+//! Phase 5: this will be populated live from styrened RPC events.
 //! Right now it is populated by the demo_announce / demo_link methods.
 
 use std::collections::VecDeque;
@@ -233,13 +233,12 @@ pub struct ActivityEntry {
 }
 
 impl ActivityEntry {
-    pub fn new(kind: ActivityKind, peer_label: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self {
-            kind,
-            peer_label: peer_label.into(),
-            detail: detail.into(),
-            when: Instant::now(),
-        }
+    pub fn new(
+        kind: ActivityKind,
+        peer_label: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self { kind, peer_label: peer_label.into(), detail: detail.into(), when: Instant::now() }
     }
 
     pub fn age_secs(&self) -> f64 {
@@ -269,8 +268,12 @@ impl ActivityLog {
         self.entries.iter()
     }
 
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

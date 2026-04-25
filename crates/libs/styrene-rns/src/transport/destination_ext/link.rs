@@ -10,6 +10,8 @@ use rand_core::OsRng;
 use sha2::Digest;
 use x25519_dalek::StaticSecret;
 
+use crate::crypt::fernet::{CachedFernet, PlainText, Token};
+use crate::transport::error::RnsError;
 use crate::{
     buffer::OutputBuffer,
     hash::{AddressHash, Hash, ADDRESS_HASH_SIZE, HASH_SIZE},
@@ -22,8 +24,6 @@ use crate::{
         MessageState as ChannelMessageState,
     },
 };
-use crate::transport::error::RnsError;
-use crate::crypt::fernet::{CachedFernet, PlainText, Token};
 
 use super::DestinationDesc;
 
@@ -47,8 +47,10 @@ const CHANNEL_RTT_FAST_SECS: f32 = 0.18;
 const CHANNEL_RTT_MEDIUM_SECS: f32 = 0.75;
 const CHANNEL_RTT_SLOW_SECS: f32 = 1.45;
 const CHANNEL_WINDOW_FLEXIBILITY: u8 = 4;
+#[allow(dead_code)] // Used by poll_channel_timeouts (awaiting transport loop integration)
 const CHANNEL_MAX_TRIES: u8 = 5;
 
+#[allow(dead_code)] // Scaffolded for channel retry logic
 #[derive(Debug, Copy, Clone)]
 struct PendingChannelPacket {
     sequence: u16,
@@ -619,6 +621,7 @@ impl Link {
         self.channel_states.insert(sequence, ChannelMessageState::Failed);
     }
 
+    #[allow(dead_code)] // Awaiting transport loop integration
     pub(crate) fn poll_channel_timeouts(&mut self, now: Instant) -> Vec<Packet> {
         if !matches!(self.status, LinkStatus::Active | LinkStatus::Stale) {
             return Vec::new();
@@ -665,6 +668,7 @@ impl Link {
         resend_packets
     }
 
+    #[allow(dead_code)] // Awaiting transport loop integration
     pub(crate) fn next_channel_retry_at(&self) -> Option<Instant> {
         if !matches!(self.status, LinkStatus::Active | LinkStatus::Stale) {
             return None;
@@ -768,6 +772,7 @@ impl Link {
         }
     }
 
+    #[allow(dead_code)]
     fn note_channel_timeout(&mut self) {
         self.channel_fast_rate_rounds = 0;
         self.channel_medium_rate_rounds = 0;

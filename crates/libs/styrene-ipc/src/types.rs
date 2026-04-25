@@ -232,6 +232,55 @@ pub struct TunnelSaInfo {
     pub bytes_out: u64,
 }
 
+// ── Page browsing ────────────────────────────────────────────────────────────
+
+/// A page hosted by a NomadNet/Styrene node.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct PageInfo {
+    /// Page path (e.g., "/index", "/status", "/id").
+    pub path: String,
+    /// Page title, if extractable from content.
+    pub title: Option<String>,
+    /// Hosting node's destination hash.
+    pub host_hash: String,
+    /// Hosting node's display name.
+    pub host_name: Option<String>,
+}
+
+/// Rendered page content.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct PageContent {
+    /// The raw micron markup source.
+    pub source: String,
+    /// Page title.
+    pub title: Option<String>,
+    /// Hosting node destination hash.
+    pub host_hash: String,
+    /// Fetch timestamp.
+    pub fetched_at: i64,
+    /// Links found in the page (path targets).
+    pub links: Vec<String>,
+}
+
+// ── Interface management ─────────────────────────────────────────────────────
+
+/// Detailed interface information.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct InterfaceDetail {
+    pub name: String,
+    pub kind: String,
+    pub enabled: bool,
+    pub status: String,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub peers_connected: u32,
+}
+
 // ── Events ────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

@@ -17,11 +17,7 @@ pub enum Block {
     /// Section scope with heading, depth, and child blocks.
     /// Created by `>` at SOL. Children are indented by depth × SECTION_INDENT.
     /// Sections nest: a `>>` inside a `>` becomes a child Section.
-    Section {
-        level: u8,
-        heading: Option<Line>,
-        children: Vec<ChildBlock>,
-    },
+    Section { level: u8, heading: Option<Line>, children: Vec<ChildBlock> },
     /// A line of inline-formatted text (outside any section).
     Line(Line),
     /// Empty line (paragraph break).
@@ -38,11 +34,7 @@ pub enum Block {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChildBlock {
     /// Nested subsection.
-    Section {
-        level: u8,
-        heading: Option<Line>,
-        children: Vec<ChildBlock>,
-    },
+    Section { level: u8, heading: Option<Line>, children: Vec<ChildBlock> },
     /// A line of text within a section.
     Line(Line),
     /// Empty line within a section.
@@ -68,12 +60,7 @@ pub enum InlineNode {
     /// Line break within a block.
     Newline,
     /// Hyperlink.
-    Link {
-        style: StyleSet,
-        label: Option<String>,
-        url: String,
-        fields: Vec<String>,
-    },
+    Link { style: StyleSet, label: Option<String>, url: String, fields: Vec<String> },
     /// Form field (checkbox, radio, text input).
     Field { style: StyleSet, field: FormField },
 }
@@ -169,24 +156,8 @@ impl StyleSet {
 /// Form field types.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FormField {
-    Text {
-        name: String,
-        value: String,
-        width: u8,
-    },
-    Password {
-        name: String,
-        value: String,
-        width: u8,
-    },
-    Checkbox {
-        name: String,
-        value: String,
-        checked: bool,
-    },
-    Radio {
-        name: String,
-        value: String,
-        checked: bool,
-    },
+    Text { name: String, value: String, width: u8 },
+    Password { name: String, value: String, width: u8 },
+    Checkbox { name: String, value: String, checked: bool },
+    Radio { name: String, value: String, checked: bool },
 }

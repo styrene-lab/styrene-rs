@@ -5,8 +5,8 @@
 //! Each character unlocks frame by frame (center-out weighted).
 //! Before unlock: CRT noise glyph. After unlock: final character.
 
-use std::time::Duration;
 use ratatui::prelude::*;
+use std::time::Duration;
 
 use super::theme::Theme;
 
@@ -15,13 +15,17 @@ pub const TOTAL_FRAMES: u32 = 38;
 pub const HOLD_FRAMES: u32 = 8;
 
 const NOISE_CHARS: &[char] = &[
-    '▓', '▒', '░', '█', '▄', '▀', '▌', '▐', '▊', '▋', '▍', '▎', '▏', '◆', '■',
-    '┼', '╬', '╪', '╫', '┤', '├', '┬', '┴', '╱', '╲', '│', '─', '⬡', '◇',
+    '▓', '▒', '░', '█', '▄', '▀', '▌', '▐', '▊', '▋', '▍', '▎', '▏', '◆', '■', '┼', '╬', '╪', '╫',
+    '┤', '├', '┬', '┴', '╱', '╲', '│', '─', '⬡', '◇',
 ];
 
-struct SimpleRng { s: u32 }
+struct SimpleRng {
+    s: u32,
+}
 impl SimpleRng {
-    fn new(seed: u32) -> Self { Self { s: seed } }
+    fn new(seed: u32) -> Self {
+        Self { s: seed }
+    }
     fn next(&mut self) -> f64 {
         self.s = self.s.wrapping_mul(1664525).wrapping_add(1013904223) & 0x7fffffff;
         self.s as f64 / 0x7fffffff as f64
@@ -68,7 +72,9 @@ pub struct SplashScreen {
 
 impl SplashScreen {
     pub fn new(term_width: u16, term_height: u16) -> Option<Self> {
-        if term_width < 40 || term_height < 12 { return None; }
+        if term_width < 40 || term_height < 12 {
+            return None;
+        }
 
         // Build combined art: sigil + spacer + mark
         let mut art_lines: Vec<&str> = SIGIL.to_vec();
@@ -78,7 +84,8 @@ impl SplashScreen {
         let art_width = art_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
         let art_height = art_lines.len();
 
-        let art: Vec<Vec<char>> = art_lines.iter()
+        let art: Vec<Vec<char>> = art_lines
+            .iter()
             .map(|l| {
                 let mut chars: Vec<char> = l.chars().collect();
                 chars.resize(art_width, ' ');
@@ -95,15 +102,17 @@ impl SplashScreen {
         let mut rng = SimpleRng::new(42);
         let unlock_frames: Vec<Vec<u32>> = (0..art_height)
             .map(|y| {
-                (0..art_width).map(|x| {
-                    let dy = y as f64 - cy;
-                    let dx = x as f64 - cx;
-                    let dist = (dx * dx + dy * dy).sqrt();
-                    let norm = dist / max_dist;
-                    // Center unlocks first, edges unlock last
-                    let jitter = rng.next() * 6.0;
-                    ((norm * (TOTAL_FRAMES as f64 - 8.0)) + jitter) as u32
-                }).collect()
+                (0..art_width)
+                    .map(|x| {
+                        let dy = y as f64 - cy;
+                        let dx = x as f64 - cx;
+                        let dist = (dx * dx + dy * dy).sqrt();
+                        let norm = dist / max_dist;
+                        // Center unlocks first, edges unlock last
+                        let jitter = rng.next() * 6.0;
+                        ((norm * (TOTAL_FRAMES as f64 - 8.0)) + jitter) as u32
+                    })
+                    .collect()
             })
             .collect();
 
@@ -145,8 +154,7 @@ impl SplashScreen {
         let offset_y = area.height.saturating_sub(self.art_height) / 2;
 
         // Fill bg
-        let bg_block = ratatui::widgets::Block::default()
-            .style(Style::default().bg(t.bg()));
+        let bg_block = ratatui::widgets::Block::default().style(Style::default().bg(t.bg()));
         f.render_widget(bg_block, area);
 
         // Render art character by character
@@ -158,7 +166,9 @@ impl SplashScreen {
                 let unlock = self.unlock_frames[y][x];
                 let draw_x = offset_x + x as u16;
                 let draw_y = offset_y + y as u16;
-                if draw_x >= area.right() || draw_y >= area.bottom() { continue; }
+                if draw_x >= area.right() || draw_y >= area.bottom() {
+                    continue;
+                }
 
                 let (symbol, color) = if self.frame >= unlock {
                     // Unlocked — show final character

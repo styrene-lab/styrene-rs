@@ -1,0 +1,50 @@
+[
+  {
+    "description": "basic wrap/unwrap with default ifac_size=8",
+    "sign_key_hex": "ca8db4ed0f70ac5b0cb0c1a0c9aa628c18f483e8d92de954c038f17525a83aa4",
+    "ifac_key_hex": "22087c4ef21232e72c8c6981ce6eb49b5d6fdcd6b20f09d3820bc1390fcfd184",
+    "ifac_size": 8,
+    "inner_hex": "000068656c6c6f2049464143",
+    "wrapped_hex": "b7e2753e988e17930d072c8292f35aaf93d2a7cf"
+  },
+  {
+    "description": "packet with non-zero hops and flags",
+    "sign_key_hex": "ca8db4ed0f70ac5b0cb0c1a0c9aa628c18f483e8d92de954c038f17525a83aa4",
+    "ifac_key_hex": "22087c4ef21232e72c8c6981ce6eb49b5d6fdcd6b20f09d3820bc1390fcfd184",
+    "ifac_size": 8,
+    "inner_hex": "4003686f70706564207061636b6574",
+    "wrapped_hex": "f46d5ef1b00dbc60610f6c6460f68c8fc86f5eb634efcc"
+  },
+  {
+    "description": "small ifac_size=4",
+    "sign_key_hex": "ca8db4ed0f70ac5b0cb0c1a0c9aa628c18f483e8d92de954c038f17525a83aa4",
+    "ifac_key_hex": "22087c4ef21232e72c8c6981ce6eb49b5d6fdcd6b20f09d3820bc1390fcfd184",
+    "ifac_size": 4,
+    "inner_hex": "0000736d616c6c20746f6b656e",
+    "wrapped_hex": "b4cca3746f0559335fd7c46f516a4730fd"
+  },
+  {
+    "description": "large ifac_size=16",
+    "sign_key_hex": "ca8db4ed0f70ac5b0cb0c1a0c9aa628c18f483e8d92de954c038f17525a83aa4",
+    "ifac_key_hex": "22087c4ef21232e72c8c6981ce6eb49b5d6fdcd6b20f09d3820bc1390fcfd184",
+    "ifac_size": 16,
+    "inner_hex": "00006c6172676520746f6b656e20746573742064617461207061796c6f6164",
+    "wrapped_hex": "ef6266b760e20d00e24bafeb1fc19b8a8002ba4925e2707898772e5b82e10c862be5c33401c8895fda5980c871b396"
+  },
+  {
+    "description": "different key pair",
+    "sign_key_hex": "a3e33eedb5718e02b5937ad70dd005eea81dfcbca8ea81211a40834c2adca334",
+    "ifac_key_hex": "649acb3061c659eed4c6e7297f856dedd1b2566eed1ffc0f0b6b1a699913cb18",
+    "ifac_size": 8,
+    "inner_hex": "2001646966666572656e74206b6579",
+    "wrapped_hex": "db96c625e0540fced2096be36c07c261843dee8b547c13"
+  },
+  {
+    "description": "binary payload with all 256 byte values",
+    "sign_key_hex": "ca8db4ed0f70ac5b0cb0c1a0c9aa628c18f483e8d92de954c038f17525a83aa4",
+    "ifac_key_hex": "22087c4ef21232e72c8c6981ce6eb49b5d6fdcd6b20f09d3820bc1390fcfd184",
+    "ifac_size": 8,
+    "inner_hex": "0000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+    "wrapped_hex": "a96251e3a7bc738f1a0e4feaa6c2b8540ca616559e38627a467224e7dbba485354984f10d41a8f528a9431b21c9979f7c1ebfb77cf1aba43d2717b328669b75bde91f87de029b3b6bf7e2f98426e4e964ef6f73359eca216f6a95cf2e733dff1027b6c1383abbdfcd602e5aab3f95c8ed24de5408762957a4c3d66326147df093f756e21140a18f2c2b1a3a3cbede71c8166db363232e4b2766a5f132c00ad2b34ad79bd1dc47a91a59f3e7805c8554de4122042fa4c22d3e84d4d4c6925a1b4d0b01490d8e9d0535f52e4c5161cca2615cfa9e3d9434268e964cd3399da8ab3eea5eeadba2468b16563a370eb3ff7da8e663bc0975d9bb21bb177c48c4a4fd5c1c25b0d4eb9c2546490"
+  }
+]

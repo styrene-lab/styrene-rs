@@ -5,9 +5,7 @@
 //! the no_std contract is broken.
 
 use styrene_content::{
-    announce::ResourceAvailableAnnounce,
-    chunk_bitset::ChunkBitset,
-    chunk_profile::ChunkProfile,
+    announce::ResourceAvailableAnnounce, chunk_bitset::ChunkBitset, chunk_profile::ChunkProfile,
     content_id::ContentId,
 };
 

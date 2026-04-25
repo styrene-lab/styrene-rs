@@ -11,8 +11,13 @@ BeechatNetworkSystemsLtd/Reticulum-rs  (RNS core, ~185 stars, multi-contributor)
 FreeTAKTeam/LXMF-rs                    (added LXMF layer, workspace split, daemon)
         │
         ▼  (forked Feb 24 2026)
-styrene-lab/styrene-rs                  (renamed, restructured, security-hardened)
+styrene-lab/styrene-rs                  (canonical — renamed, restructured, security-hardened)
 ```
+
+> **Canonical divergence (2026-04-19):** styrene-rs is now the primary Styrene distribution.
+> Upstream tracking continues for RNS/LXMF protocol correctness, but feature development
+> (service layer, TUI, IPC, edge hardware) happens here first. Python styrened remains
+> supported as a legacy deployment option.
 
 ## Fork Date
 
@@ -56,7 +61,7 @@ beechat   https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs.git  (fetch o
 | Upstream | Tracks | Relevant to |
 |----------|--------|-------------|
 | **beechat** (`beechat/main`) | Core RNS protocol: identity, destinations, links, transport, interfaces, crypto | `styrene-rns` crate |
-| **upstream** (`upstream/master`) | LXMF layer + daemon/RPC + workspace-level changes | `styrene-lxmf`, `styrened-rs` crates |
+| **upstream** (`upstream/master`) | LXMF layer + daemon/RPC + workspace-level changes | `styrene-lxmf`, `styrened` crates |
 
 **Beechat is authoritative for RNS protocol correctness** — larger contributor base, longer history, broader review. FreeTAKTeam is relevant for LXMF-specific features and daemon patterns.
 
@@ -180,8 +185,8 @@ For manually applying Beechat changes to `styrene-rns`:
 | `libs/rns-transport/` | `libs/styrene-rns/src/transport/` | Merged into styrene-rns behind feature gate |
 | `libs/lxmf-core/` | `libs/styrene-lxmf/` | Renamed |
 | `libs/lxmf-sdk/` | `libs/styrene-lxmf/src/sdk/` | Merged into styrene-lxmf behind feature gate |
-| `libs/rns-rpc/` | `apps/styrened-rs/src/rpc/` | Absorbed into daemon |
-| `apps/reticulumd/` | `apps/styrened-rs/` | Renamed |
+| `libs/rns-rpc/` | `apps/styrened/src/rpc/` | Absorbed into daemon |
+| `apps/reticulumd/` | `apps/styrened/` | Renamed |
 | `apps/lxmf-cli/` | *(removed)* | Not carried |
 | `apps/rns-tools/` | *(removed)* | Not carried |
 

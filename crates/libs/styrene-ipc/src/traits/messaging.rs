@@ -66,4 +66,16 @@ pub trait DaemonMessaging: Send + Sync {
         name: &str,
         prefix: Option<&str>,
     ) -> Result<Option<PeerHash>, IpcError>;
+
+    /// Pin a conversation so it sorts to the top.
+    async fn pin_conversation(&self, peer_hash: &str) -> Result<bool, IpcError>;
+
+    /// Unpin a conversation.
+    async fn unpin_conversation(&self, peer_hash: &str) -> Result<bool, IpcError>;
+
+    /// Mute notifications for a conversation.
+    async fn mute_conversation(&self, peer_hash: &str) -> Result<bool, IpcError>;
+
+    /// Unmute notifications for a conversation.
+    async fn unmute_conversation(&self, peer_hash: &str) -> Result<bool, IpcError>;
 }

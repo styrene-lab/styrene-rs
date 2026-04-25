@@ -148,13 +148,7 @@ pub fn ifac_unwrap(raw: &[u8], config: &IfacConfig) -> Option<Vec<u8>> {
     let unmasked: Vec<u8> = raw
         .iter()
         .enumerate()
-        .map(|(i, &b)| {
-            if i <= 1 || i > config.ifac_size + 1 {
-                b ^ mask[i]
-            } else {
-                b
-            }
-        })
+        .map(|(i, &b)| if i <= 1 || i > config.ifac_size + 1 { b ^ mask[i] } else { b })
         .collect();
 
     // Clear the IFAC flag in the unmasked header and strip IFAC token bytes.
@@ -189,8 +183,10 @@ mod tests {
     /// A minimal but valid-looking raw packet (header + dest + context + data).
     fn test_inner() -> Vec<u8> {
         let mut p = vec![0x00u8, 0x00]; // flags, hops
-        p.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04,
-                               0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c]); // dest
+        p.extend_from_slice(&[
+            0xde, 0xad, 0xbe, 0xef, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+            0x0b, 0x0c,
+        ]); // dest
         p.push(0x00); // context
         p.extend_from_slice(b"hello ifac"); // data
         p
@@ -262,6 +258,69 @@ mod tests {
         let config = make_config(DEFAULT_IFAC_SIZE);
         let short = vec![0x80u8, 0x00, 0x01, 0x02]; // less than 2 + ifac_size
         assert!(ifac_unwrap(&short, &config).is_none());
+    }
+
+    /// Simulate multi-hop forwarding: A→B→C where each hop has its own IFAC config.
+    ///
+    /// A wraps with config_ab (hops=0), B unwraps, increments hops to 1,
+    /// re-wraps with config_bc, C unwraps and verifies.
+    #[test]
+    fn multi_hop_forwarding() {
+        // Each interface has its own shared secret (identity + key)
+        let config_ab = make_config(DEFAULT_IFAC_SIZE);
+        let config_bc = make_config(DEFAULT_IFAC_SIZE);
+
+        // Node A: packet with hops=0
+        let mut inner = test_inner();
+        inner[1] = 0x00; // hops=0
+
+        // A wraps for interface A→B
+        let wire_ab = ifac_wrap(&inner, &config_ab);
+
+        // Node B: unwrap from interface A→B
+        let recovered_at_b =
+            ifac_unwrap(&wire_ab, &config_ab).expect("B must successfully unwrap A's packet");
+        assert_eq!(recovered_at_b[1], 0x00, "hops should still be 0 after unwrap");
+
+        // Node B: transport layer increments hops
+        let mut forwarded = recovered_at_b.clone();
+        forwarded[1] = recovered_at_b[1] + 1; // hops = 1
+
+        // Node B: wrap for interface B→C
+        let wire_bc = ifac_wrap(&forwarded, &config_bc);
+
+        // Node C: unwrap from interface B→C
+        let recovered_at_c = ifac_unwrap(&wire_bc, &config_bc)
+            .expect("C must successfully unwrap B's forwarded packet");
+        assert_eq!(recovered_at_c[1], 0x01, "hops should be 1 after forwarding");
+        assert_eq!(recovered_at_c[2..], inner[2..], "payload must be preserved");
+    }
+
+    /// Same as multi_hop_forwarding but with 3 hops (A→B→C→D).
+    #[test]
+    fn three_hop_forwarding() {
+        let config_ab = make_config(DEFAULT_IFAC_SIZE);
+        let config_bc = make_config(DEFAULT_IFAC_SIZE);
+        let config_cd = make_config(DEFAULT_IFAC_SIZE);
+
+        let mut inner = test_inner();
+        inner[1] = 0x00;
+
+        // Hop 1: A→B
+        let wire_ab = ifac_wrap(&inner, &config_ab);
+        let mut at_b = ifac_unwrap(&wire_ab, &config_ab).expect("hop 1 unwrap");
+        at_b[1] += 1; // hops=1
+
+        // Hop 2: B→C
+        let wire_bc = ifac_wrap(&at_b, &config_bc);
+        let mut at_c = ifac_unwrap(&wire_bc, &config_bc).expect("hop 2 unwrap");
+        at_c[1] += 1; // hops=2
+
+        // Hop 3: C→D
+        let wire_cd = ifac_wrap(&at_c, &config_cd);
+        let at_d = ifac_unwrap(&wire_cd, &config_cd).expect("hop 3 unwrap");
+        assert_eq!(at_d[1], 0x02, "hops should be 2 after 3 hops");
+        assert_eq!(at_d[2..], inner[2..], "payload preserved across 3 hops");
     }
 
     #[test]

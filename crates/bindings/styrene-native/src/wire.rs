@@ -2,7 +2,7 @@
 //!
 //! Wraps `styrene_mesh::wire::StyreneMessage` and `StyreneMessageType`
 //! so Python can encode/decode wire-format messages using the exact same
-//! Rust implementation that `styrened-rs` uses.
+//! Rust implementation that `styrened` uses.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -123,9 +123,7 @@ impl PyStyreneMessage {
     /// Create a new message with a random request ID.
     #[new]
     fn new(message_type: PyStyreneMessageType, payload: &[u8]) -> Self {
-        Self {
-            inner: StyreneMessage::new(message_type.to_rust(), payload),
-        }
+        Self { inner: StyreneMessage::new(message_type.to_rust(), payload) }
     }
 
     /// Create a new message with a specific request ID (for responses).
@@ -138,9 +136,7 @@ impl PyStyreneMessage {
         let rid: [u8; 16] = request_id
             .try_into()
             .map_err(|_| PyValueError::new_err("request_id must be exactly 16 bytes"))?;
-        Ok(Self {
-            inner: StyreneMessage::with_request_id(message_type.to_rust(), rid, payload),
-        })
+        Ok(Self { inner: StyreneMessage::with_request_id(message_type.to_rust(), rid, payload) })
     }
 
     /// Encode to wire format bytes.
@@ -151,9 +147,7 @@ impl PyStyreneMessage {
     /// Decode from wire format bytes.
     #[staticmethod]
     fn decode(data: &[u8]) -> PyResult<Self> {
-        StyreneMessage::decode(data)
-            .map(|inner| Self { inner })
-            .map_err(wire_err_to_py)
+        StyreneMessage::decode(data).map(|inner| Self { inner }).map_err(wire_err_to_py)
     }
 
     /// Wire format version (currently 1).

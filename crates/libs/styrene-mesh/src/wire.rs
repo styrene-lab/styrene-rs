@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{NAMESPACE, WIRE_VERSION};
 
 /// Wire protocol header size: 10 (namespace) + 1 (version) + 1 (type) + 16 (request_id) = 28
-const HEADER_SIZE: usize = 28;
+const HEADER_SIZE: usize = 29; // 11 (namespace) + 1 (version) + 1 (type) + 16 (request_id)
 
 /// Errors from wire protocol operations.
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +54,23 @@ pub enum StyreneMessageType {
     // Status (0x10-0x1F)
     StatusRequest = 0x10,
     StatusResponse = 0x11,
+    CapabilitiesRequest = 0x12,
+    CapabilitiesResponse = 0x13,
+
+    // Content (0x20-0x2F)
+    Chat = 0x20,
+    ChatAck = 0x21,
+    FileOffer = 0x22,
+    FileAccept = 0x23,
+    FileChunk = 0x24,
+
+    // Network (0x30-0x3F)
+    Announce = 0x30,
+    AnnounceAck = 0x31,
+    PeerRequest = 0x32,
+    PeerResponse = 0x33,
+    VpnHandshakeRequest = 0x34,
+    VpnHandshakeResponse = 0x35,
 
     // RPC Commands (0x40-0x5F)
     Exec = 0x40,
@@ -98,11 +115,14 @@ pub enum StyreneMessageType {
 
     // Content Distribution (0xE0-0xE3)
     /// A node announces availability of content chunks.
-    ResourceAvailable   = 0xE0,
+    ResourceAvailable = 0xE0,
     /// Request a specific chunk from a seeder.
-    ChunkRequest        = 0xE1,
+    ChunkRequest = 0xE1,
     /// Response carrying a chunk's raw bytes.
-    ChunkResponse       = 0xE2,
+    ChunkResponse = 0xE2,
+
+    // Error (0xFF)
+    Error = 0xFF,
 }
 
 impl StyreneMessageType {
@@ -114,6 +134,19 @@ impl StyreneMessageType {
             0x03 => Ok(Self::Heartbeat),
             0x10 => Ok(Self::StatusRequest),
             0x11 => Ok(Self::StatusResponse),
+            0x12 => Ok(Self::CapabilitiesRequest),
+            0x13 => Ok(Self::CapabilitiesResponse),
+            0x20 => Ok(Self::Chat),
+            0x21 => Ok(Self::ChatAck),
+            0x22 => Ok(Self::FileOffer),
+            0x23 => Ok(Self::FileAccept),
+            0x24 => Ok(Self::FileChunk),
+            0x30 => Ok(Self::Announce),
+            0x31 => Ok(Self::AnnounceAck),
+            0x32 => Ok(Self::PeerRequest),
+            0x33 => Ok(Self::PeerResponse),
+            0x34 => Ok(Self::VpnHandshakeRequest),
+            0x35 => Ok(Self::VpnHandshakeResponse),
             0x40 => Ok(Self::Exec),
             0x41 => Ok(Self::Reboot),
             0x42 => Ok(Self::ConfigUpdate),
@@ -150,6 +183,7 @@ impl StyreneMessageType {
             0xE0 => Ok(Self::ResourceAvailable),
             0xE1 => Ok(Self::ChunkRequest),
             0xE2 => Ok(Self::ChunkResponse),
+            0xFF => Ok(Self::Error),
             _ => Err(WireError::UnknownMessageType(b)),
         }
     }
@@ -271,26 +305,26 @@ impl StyreneMessage {
             return Err(WireError::TooShort(data.len()));
         }
 
-        // Validate namespace
-        if &data[..10] != NAMESPACE.as_slice() {
+        // Validate namespace (11 bytes: "styrene.io:")
+        if &data[..11] != NAMESPACE.as_slice() {
             return Err(WireError::InvalidNamespace);
         }
 
         // Validate version
-        let version = data[10];
+        let version = data[11];
         if version != WIRE_VERSION {
             return Err(WireError::UnsupportedVersion(version));
         }
 
         // Parse message type
-        let message_type = StyreneMessageType::from_byte(data[11])?;
+        let message_type = StyreneMessageType::from_byte(data[12])?;
 
         // Extract request ID
         let mut request_id = [0u8; 16];
-        request_id.copy_from_slice(&data[12..28]);
+        request_id.copy_from_slice(&data[13..29]);
 
         // Remaining bytes are payload
-        let payload = data[28..].to_vec();
+        let payload = data[29..].to_vec();
 
         Ok(Self { version, message_type, request_id, payload })
     }
@@ -337,24 +371,24 @@ mod tests {
 
     #[test]
     fn rejects_wrong_namespace() {
-        let mut data = vec![0u8; 28];
-        data[..10].copy_from_slice(b"not.styren");
+        let mut data = vec![0u8; 29];
+        data[..11].copy_from_slice(b"not.styrene");
         assert!(matches!(StyreneMessage::decode(&data), Err(WireError::InvalidNamespace)));
     }
 
     #[test]
     fn rejects_unknown_version() {
-        let mut data = vec![0u8; 28];
-        data[..10].copy_from_slice(b"styrene.io");
-        data[10] = 0xFF;
+        let mut data = vec![0u8; 29];
+        data[..11].copy_from_slice(b"styrene.io:");
+        data[11] = 0xFF;
         assert!(matches!(StyreneMessage::decode(&data), Err(WireError::UnsupportedVersion(0xFF))));
     }
 
     #[test]
-    fn header_size_is_28() {
+    fn header_size_is_29() {
         let msg = StyreneMessage::new(StyreneMessageType::Ping, &[]);
         let encoded = msg.encode();
-        assert_eq!(encoded.len(), 28); // no payload
+        assert_eq!(encoded.len(), 29); // 11 (namespace) + 1 (version) + 1 (type) + 16 (request_id)
     }
 
     #[test]

@@ -122,13 +122,7 @@ impl Default for AdaptiveProportionTest {
 impl AdaptiveProportionTest {
     /// Create a new APT with the given window size and thresholds.
     pub fn new(window_bits: usize, low_threshold: f32, high_threshold: f32) -> Self {
-        Self {
-            window_bits,
-            low_threshold,
-            high_threshold,
-            bit_buffer: Vec::new(),
-            bits_seen: 0,
-        }
+        Self { window_bits, low_threshold, high_threshold, bit_buffer: Vec::new(), bits_seen: 0 }
     }
 
     /// Feed one byte of source output. Returns `Err` on test failure.
@@ -238,16 +232,14 @@ mod tests {
     #[test]
     fn apt_fails_all_zeros() {
         let mut apt = AdaptiveProportionTest::new(64, 0.15, 0.85);
-        let result: Result<(), HealthError> =
-            (0..8).try_for_each(|_| apt.update(0x00));
+        let result: Result<(), HealthError> = (0..8).try_for_each(|_| apt.update(0x00));
         assert!(result.is_err(), "all-zeros should fail APT");
     }
 
     #[test]
     fn apt_fails_all_ones() {
         let mut apt = AdaptiveProportionTest::new(64, 0.15, 0.85);
-        let result: Result<(), HealthError> =
-            (0..8).try_for_each(|_| apt.update(0xFF));
+        let result: Result<(), HealthError> = (0..8).try_for_each(|_| apt.update(0xFF));
         assert!(result.is_err(), "all-ones should fail APT");
     }
 

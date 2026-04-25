@@ -22,13 +22,13 @@ have been ported in session 2026-03-23. See `docs/upstream-sync-log.md` and `doc
 
 ## Tier 1: Core Gaps (Blocks Real Deployment)
 
-### 1.0 Upstream Protocol Correctness Backlog (NEW — 2026-03-23)
+### 1.0 Upstream Protocol Correctness Backlog
 
-**Status:** Open, 15 fixes available to port immediately  
+**Status:** ✅ Closed (2026-03-23) — all 28 priority adoption commits ported  
 **Source:** FreeTAKTeam upstream PRs #106–#131 — see `docs/upstream-sync-log.md` for full triage  
 
 Upstream assembled and addressed a 41-issue Rust/Python compatibility list. The following gaps
-**already have working fixes in the upstream repo** and need to be ported to styrene-rs:
+were ported from the upstream repo into styrene-rs:
 
 | Issue | Description | Upstream PR | styrene-rs crate |
 |-------|-------------|-------------|-----------------|
@@ -70,22 +70,33 @@ next in priority order. Open issues (3, 4, 18, 20–43 minus those closed above)
 
 ### 1.1 IFAC Multi-Hop Bug (Inherited)
 
-**Status:** Open, critical  
-**Files:** `crates/libs/styrene-rns/src/transport/core_transport/`  
+**Status:** ✅ Resolved (2026-04-19)  
+**Files:** `crates/libs/styrene-rns/src/transport/iface/ifac.rs` (276 LOC, 9 tests)  
 
-Authenticated interfaces (IFAC) reject forwarded packets because the HMAC validation doesn't account for hop-modified headers. Single-hop works. Multi-hop networks — the actual deployment topology — do not.
+Full IFAC wrap/unwrap algorithm implemented at the interface boundary (not transport layer).
+Each forwarding hop re-applies IFAC for its outbound interface, so the token is always fresh.
+Multi-hop tests pass (3-hop and 4-hop chains). Cross-language interop fixtures verify
+byte-identical output with Python (`tests/interop/fixtures/ifac_vectors.json`).
 
-**Fix scope:** Requires understanding how Python RNS strips/reattaches IFAC before forwarding. Likely 100-200 lines in `handler.rs` / `core.rs`.
+**Config plumbing:** `InterfaceContext` now carries `Option<Arc<IfacConfig>>`, wired through
+TCP client, TCP server (propagated to accepted clients), and serial interfaces.
+UDP rejects IFAC-flagged packets but does not support IFAC wrap/unwrap (no HDLC pipeline).
 
 ### 1.2 Serial/KISS Interface
 
-**Status:** Not started  
-**Blocks:** Edge deployment on LoRa hardware (RNode, RP2040, ESP32)  
-**Reference:** Python `RNS.Interfaces.SerialInterface`, `RNS.Interfaces.KISSInterface`  
+**Status:** ✅ Implemented (2026-04-19)  
+**Files:** `crates/libs/styrene-rns/src/transport/iface/serial.rs`, `kiss.rs`  
+**Feature gate:** `serial` (adds `tokio-serial`)  
 
-The stated reason for the Rust port is constrained edge devices. Without serial transport, the binary can only communicate over TCP/UDP — no different from running Python with less ecosystem maturity.
+Serial interface with async reconnection (`serial.rs`, ~200 LOC). KISS codec with full
+FEND/FESC byte-stuffing (`kiss.rs`, 230 LOC, 8 tests). `KissReader`/`KissWriter` adapters
+wrap the serial port for transparent KISS framing — the HDLC loops work unchanged.
 
-**Implementation:** Add `serial.rs` to `crates/libs/styrene-rns/src/transport/iface/`. Requires a serial crate (`tokio-serial` or `serialport`). HDLC framing is already implemented and reusable. KISS framing is a separate encoder (FEND/FESC byte stuffing) — ~150 lines.
+- `SerialInterface::new(path, baud)` — raw HDLC (direct serial)
+- `SerialInterface::new_kiss(path, baud)` — KISS+HDLC (TNC/RNode devices)
+- IFAC support wired via `InterfaceContext.ifac`
+
+**Remaining:** Hardware validation on RNode and RP2040 devices.
 
 ### 1.3 Propagation (Store-and-Forward)
 
@@ -156,9 +167,13 @@ Auto-connect to a hub transport node with reconnection, health monitoring, and g
 
 ### 3.1 Styrene Wire Interop
 
-**Status:** `styrene-mesh` crate exists (670 LOC), no cross-language test vectors  
+**Status:** ✅ Resolved — cross-language test vectors in place  
+**Files:** `crates/libs/styrene-mesh/tests/wire_interop.rs`, `tests/interop/fixtures/wire_manifest.json`  
 
-The wire protocol is the contract between Python and Rust nodes. There are interop fixtures for RNS primitives (identity, packets, HDLC, Fernet, announces) but **none for the Styrene envelope format**. Two implementations with no shared test vectors is a bug waiting to happen.
+Python fixture generator produces 13 V2 + 2 V1 binary fixtures. Rust tests verify decode
+and roundtrip byte-identical re-encode. Coverage includes all message types (Ping, Chat,
+Exec, Terminal, PQC, Error, large payloads, binary payloads). IFAC interop vectors added
+separately (`tests/interop/fixtures/ifac_vectors.json`).
 
 ### 3.2 PQC Integration
 
@@ -185,10 +200,12 @@ Independent of all service layer work — can be built and tested standalone. Se
 
 ### 3.3 Ratchet Persistence
 
-**Status:** In-memory only  
-**Files:** `crates/libs/styrene-rns/src/transport/ratchet_store.rs`  
+**Status:** ✅ Resolved  
+**Files:** `crates/libs/styrene-rns/src/transport/ratchet_store.rs` (160 LOC)  
 
-Ratchet state must survive daemon restarts or forward secrecy breaks on reboot. Python persists to disk. Rust keeps it in memory.
+Disk-backed persistence implemented: directory-based storage with MessagePack serialization.
+In-memory cache + lazy disk load. Atomic writes (write-to-tmp + rename). 30-day expiry with
+background cleanup. Ratchet state survives daemon restarts.
 
 ---
 
@@ -310,17 +327,17 @@ This is orthogonal to thread count. A single-core Pi Zero 2W runs `tokio::main(f
 
 ## Priority Order
 
-| # | Item | Type | Effort | Unblocks |
-|---|------|------|--------|----------|
-| 1 | S1: `Rc` → `Arc`, multi-thread runtime | Structural | Small (mechanical) | Everything — removes artificial constraint |
-| 2 | S3: `ByteStream` trait | Structural | Medium | Serial, WASM, dedup |
-| 3 | 1.1: IFAC fix | Bug | Medium | Real multi-hop mesh |
-| 4 | 1.2: Serial/KISS interface | Feature | Medium | Edge hardware deployment |
-| 5 | S2: `MeshTransport` trait | Structural | Medium | Testability, WASM, service architecture |
-| 6 | S4: `include!()` → modules | Refactor | Small | Developer experience |
-| 7 | **3.4: `styrene-entropy` crate** | **Feature** | **Medium** | **PQC activation (3.2), edge identity gen, Hub pool** |
-| 8 | S5: `AppContext` service registry | Structural | Large | All Tier 2 services |
-| 9 | 1.3: Propagation backend | Feature | Large | Offline message delivery, entropy RPC |
-| 10 | 3.1: Wire interop vectors | Testing | Small | Confidence in cross-impl compat |
-| 11 | 3.2: PQC integration | Feature | Medium | Post-quantum mesh — **requires 3.4** |
-| 12 | 2.1–2.7: Service layer | Feature | Very large | Feature parity |
+| # | Item | Type | Effort | Status |
+|---|------|------|--------|--------|
+| ~~1~~ | ~~S1: `Rc` → `Arc`, multi-thread runtime~~ | ~~Structural~~ | ~~Small~~ | ✅ Done |
+| ~~2~~ | ~~S3: `ByteStream` trait~~ | ~~Structural~~ | ~~Medium~~ | ✅ Done |
+| ~~3~~ | ~~1.1: IFAC fix~~ | ~~Bug~~ | ~~Medium~~ | ✅ Done |
+| ~~4~~ | ~~1.2: Serial/KISS interface~~ | ~~Feature~~ | ~~Medium~~ | ✅ Done |
+| ~~5~~ | ~~S2: `MeshTransport` trait~~ | ~~Structural~~ | ~~Medium~~ | ✅ Done |
+| ~~6~~ | ~~S4: `include!()` → modules~~ | ~~Refactor~~ | ~~Small~~ | ✅ Done |
+| 7 | **3.4: `styrene-entropy` crate** | **Feature** | **Medium** | Scaffolded |
+| ~~8~~ | ~~S5: `AppContext` service registry~~ | ~~Structural~~ | ~~Large~~ | ✅ Scaffolded + wired |
+| 9 | 1.3: Propagation backend | Feature | Large | RPC stubs only |
+| ~~10~~ | ~~3.1: Wire interop vectors~~ | ~~Testing~~ | ~~Small~~ | ✅ Done |
+| 11 | 3.2: PQC integration | Feature | Medium | Blocked by 3.4 |
+| 12 | 2.1–2.7: Service layer | Feature | Very large | Partially scaffolded |

@@ -36,6 +36,7 @@ rusqlite = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
 tokio-util = { workspace = true, optional = true }
+tokio-serial = { version = "5.4", optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -58,6 +59,7 @@ transport = [
     "dep:tokio",
     "dep:tokio-util",
 ]
+serial = ["transport", "dep:tokio-serial"]
 
 [lints]
 workspace = true

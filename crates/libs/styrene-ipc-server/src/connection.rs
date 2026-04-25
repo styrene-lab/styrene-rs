@@ -45,12 +45,7 @@ pub async fn handle_client(
 
     // Spawn writer task
     let subs_for_writer = subscriptions.clone();
-    let writer_handle = tokio::spawn(writer_loop(
-        write_half,
-        frame_rx,
-        event_rx,
-        subs_for_writer,
-    ));
+    let writer_handle = tokio::spawn(writer_loop(write_half, frame_rx, event_rx, subs_for_writer));
 
     // Read loop
     let mut reader = tokio::io::BufReader::new(read_half);
@@ -72,9 +67,7 @@ pub async fn handle_client(
                     }
                 }
             }
-            Err(WireError::Io(ref e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
+            Err(WireError::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 log::debug!("client disconnected (EOF)");
                 break;
             }
@@ -127,10 +120,18 @@ async fn handle_frame(
             let mut subs = subscriptions.lock().await;
             if let Some(topic) = payload.get("topic").and_then(|v| v.as_str()) {
                 match topic {
-                    "devices" => { subs.remove(&SubTopic::Devices); }
-                    "messages" => { subs.remove(&SubTopic::Messages); }
-                    "activity" => { subs.remove(&SubTopic::Activity); }
-                    "links" => { subs.remove(&SubTopic::Links); }
+                    "devices" => {
+                        subs.remove(&SubTopic::Devices);
+                    }
+                    "messages" => {
+                        subs.remove(&SubTopic::Messages);
+                    }
+                    "activity" => {
+                        subs.remove(&SubTopic::Activity);
+                    }
+                    "links" => {
+                        subs.remove(&SubTopic::Links);
+                    }
                     _ => {}
                 }
             } else {
@@ -226,18 +227,9 @@ async fn event_to_frame(
                 rmpv::Value::from(device.destination_hash.as_str()),
             );
             p.insert("name".to_string(), rmpv::Value::from(device.name.as_str()));
-            p.insert(
-                "identity_hash".to_string(),
-                rmpv::Value::from(device.identity_hash.as_str()),
-            );
-            p.insert(
-                "device_type".to_string(),
-                rmpv::Value::from(device.device_type.as_str()),
-            );
-            p.insert(
-                "status".to_string(),
-                rmpv::Value::from(device.status.as_str()),
-            );
+            p.insert("identity_hash".to_string(), rmpv::Value::from(device.identity_hash.as_str()));
+            p.insert("device_type".to_string(), rmpv::Value::from(device.device_type.as_str()));
+            p.insert("status".to_string(), rmpv::Value::from(device.status.as_str()));
             (MessageType::EventDevice, SubTopic::Devices, p)
         }
         DaemonEvent::Message { kind, message } => {
@@ -251,43 +243,24 @@ async fn event_to_frame(
             let mut p = HashMap::new();
             p.insert("kind".to_string(), rmpv::Value::from(kind_str));
             p.insert("id".to_string(), rmpv::Value::from(message.id.as_str()));
-            p.insert(
-                "source_hash".to_string(),
-                rmpv::Value::from(message.source_hash.as_str()),
-            );
-            p.insert(
-                "content".to_string(),
-                rmpv::Value::from(message.content.as_str()),
-            );
+            p.insert("source_hash".to_string(), rmpv::Value::from(message.source_hash.as_str()));
+            p.insert("content".to_string(), rmpv::Value::from(message.content.as_str()));
             (MessageType::EventMessage, SubTopic::Messages, p)
         }
         DaemonEvent::TerminalOutput { session_id, data } => {
             let mut p = HashMap::new();
-            p.insert(
-                "session_id".to_string(),
-                rmpv::Value::from(session_id.as_str()),
-            );
+            p.insert("session_id".to_string(), rmpv::Value::from(session_id.as_str()));
             p.insert("data".to_string(), rmpv::Value::from(data.as_slice()));
             (MessageType::EventTerminalOutput, SubTopic::Activity, p)
         }
         DaemonEvent::TerminalStateChange { session_id, .. } => {
             let mut p = HashMap::new();
-            p.insert(
-                "session_id".to_string(),
-                rmpv::Value::from(session_id.as_str()),
-            );
+            p.insert("session_id".to_string(), rmpv::Value::from(session_id.as_str()));
             (MessageType::EventTerminalReady, SubTopic::Activity, p)
         }
-        DaemonEvent::TunnelStateChange {
-            peer_hash,
-            state,
-            backend,
-        } => {
+        DaemonEvent::TunnelStateChange { peer_hash, state, backend } => {
             let mut p = HashMap::new();
-            p.insert(
-                "peer_hash".to_string(),
-                rmpv::Value::from(peer_hash.as_str()),
-            );
+            p.insert("peer_hash".to_string(), rmpv::Value::from(peer_hash.as_str()));
             p.insert("state".to_string(), rmpv::Value::from(state.as_str()));
             p.insert("backend".to_string(), rmpv::Value::from(backend.as_str()));
             (MessageType::EventActivity, SubTopic::Activity, p)

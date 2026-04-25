@@ -29,16 +29,13 @@ impl<'de> Deserialize<'de> for Sig64 {
                 write!(f, "64 bytes")
             }
             fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Sig64, E> {
-                let arr: [u8; 64] = v.try_into()
-                    .map_err(|_| E::invalid_length(v.len(), &self))?;
+                let arr: [u8; 64] = v.try_into().map_err(|_| E::invalid_length(v.len(), &self))?;
                 Ok(Sig64(arr))
             }
         }
         d.deserialize_bytes(V)
     }
 }
-
-
 
 /// Maximum chunks tracked — matches `ChunkBitset` capacity.
 pub const MAX_CHUNKS: usize = 256;
@@ -69,7 +66,7 @@ pub struct StyreneManifest {
     pub chunk_hashes: HVec<[u8; 32], MAX_CHUNKS>,
     /// Human-readable name (≤ 64 bytes UTF-8).
     pub name: HString<MAX_NAME_LEN>,
-    /// Content type tag, e.g. `"firmware/styrened-rs"`, `"data/emergency"`.
+    /// Content type tag, e.g. `"firmware/styrened"`, `"data/emergency"`.
     pub content_type: HString<MAX_TYPE_LEN>,
     /// Unix timestamp (seconds) when the manifest was created.
     pub created_at: u64,
@@ -178,14 +175,14 @@ impl StyreneManifest {
     #[cfg(feature = "alloc")]
     fn canonical_bytes(&self) -> Result<HVec<u8, 8192>, ManifestError> {
         let canonical = StyreneManifestCanonical {
-            content_id:       &self.content_id,
-            size:             self.size,
-            chunk_profile:    self.chunk_profile,
-            chunk_count:      self.chunk_count,
-            chunk_hashes:     &self.chunk_hashes,
-            name:             &self.name,
-            content_type:     &self.content_type,
-            created_at:       self.created_at,
+            content_id: &self.content_id,
+            size: self.size,
+            chunk_profile: self.chunk_profile,
+            chunk_count: self.chunk_count,
+            chunk_hashes: &self.chunk_hashes,
+            name: &self.name,
+            content_type: &self.content_type,
+            created_at: self.created_at,
             creator_identity: &self.creator_identity,
         };
         encode_cbor(&canonical)
@@ -196,22 +193,21 @@ impl StyreneManifest {
 #[cfg(feature = "alloc")]
 fn encode_cbor<T: Serialize>(value: &T) -> Result<HVec<u8, 8192>, ManifestError> {
     let mut out: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-    ciborium::into_writer(value, &mut out)
-        .map_err(|_| ManifestError::EncodeFailed)?;
+    ciborium::into_writer(value, &mut out).map_err(|_| ManifestError::EncodeFailed)?;
     HVec::from_slice(&out).map_err(|_| ManifestError::EncodeFailed)
 }
 
 /// Helper struct for canonical serialization (excludes signature field).
 #[derive(Serialize)]
 struct StyreneManifestCanonical<'a> {
-    content_id:       &'a ContentId,
-    size:             u64,
-    chunk_profile:    ChunkProfile,
-    chunk_count:      u32,
-    chunk_hashes:     &'a HVec<[u8; 32], MAX_CHUNKS>,
-    name:             &'a HString<MAX_NAME_LEN>,
-    content_type:     &'a HString<MAX_TYPE_LEN>,
-    created_at:       u64,
+    content_id: &'a ContentId,
+    size: u64,
+    chunk_profile: ChunkProfile,
+    chunk_count: u32,
+    chunk_hashes: &'a HVec<[u8; 32], MAX_CHUNKS>,
+    name: &'a HString<MAX_NAME_LEN>,
+    content_type: &'a HString<MAX_TYPE_LEN>,
+    created_at: u64,
     creator_identity: &'a [u8; 16],
 }
 
@@ -219,8 +215,12 @@ struct StyreneManifestCanonical<'a> {
 mod tests {
     use super::*;
 
-    fn dummy_sign(_data: &[u8]) -> [u8; 64] { [0xAAu8; 64] }
-    fn dummy_verify(_data: &[u8], sig: &[u8; 64]) -> bool { sig.iter().all(|&b| b == 0xAA) }
+    fn dummy_sign(_data: &[u8]) -> [u8; 64] {
+        [0xAAu8; 64]
+    }
+    fn dummy_verify(_data: &[u8], sig: &[u8; 64]) -> bool {
+        sig.iter().all(|&b| b == 0xAA)
+    }
 
     fn small_content() -> &'static [u8] {
         b"hello from the mesh this is some test content for the manifest"
@@ -236,7 +236,8 @@ mod tests {
             1_700_000_000,
             [0u8; 16],
             dummy_sign,
-        ).unwrap();
+        )
+        .unwrap();
         m.validate().unwrap();
         assert_eq!(m.chunk_count, 1); // fits in one LoRa chunk
     }
@@ -251,7 +252,8 @@ mod tests {
             0,
             [1u8; 16],
             dummy_sign,
-        ).unwrap();
+        )
+        .unwrap();
         let encoded = m.encode().unwrap();
         let decoded = StyreneManifest::decode(&encoded).unwrap();
         assert_eq!(decoded.content_id, m.content_id);
@@ -269,7 +271,8 @@ mod tests {
             0,
             [0u8; 16],
             dummy_sign,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(m.verify_signature(dummy_verify).is_ok());
     }
 
@@ -283,7 +286,8 @@ mod tests {
             0,
             [0u8; 16],
             dummy_sign,
-        ).unwrap();
+        )
+        .unwrap();
         m.signature.0[0] ^= 0xFF; // corrupt
         assert!(m.verify_signature(dummy_verify).is_err());
     }
@@ -299,7 +303,8 @@ mod tests {
             0,
             [0u8; 16],
             dummy_sign,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(m.verify_chunk(0, content));
         assert!(!m.verify_chunk(0, b"wrong content"));
         assert!(!m.verify_chunk(99, b"out of range"));

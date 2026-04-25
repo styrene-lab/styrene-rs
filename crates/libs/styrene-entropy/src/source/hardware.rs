@@ -9,11 +9,11 @@
 use serialport::SerialPort;
 use std::{io, time::Duration};
 
+use super::EntropySource;
 use crate::{
     health::{HealthChecker, HealthError, SourceHealth},
     pool::{EntropyPool, SourceId},
 };
-use super::EntropySource;
 
 /// Frame sync byte marking the start of every message.
 const SYNC_BYTE: u8 = 0xAA;
@@ -105,9 +105,8 @@ impl HardwareSource {
     ///
     /// Baud rate: 1,000,000 (1 Mbaud). Read timeout: 500 ms.
     pub fn open(port_path: &str) -> Result<Self, serialport::Error> {
-        let port = serialport::new(port_path, 1_000_000)
-            .timeout(Duration::from_millis(500))
-            .open()?;
+        let port =
+            serialport::new(port_path, 1_000_000).timeout(Duration::from_millis(500)).open()?;
 
         Ok(Self {
             port,
@@ -203,9 +202,7 @@ impl HardwareSource {
                         None
                     }
                     Err(HealthError::AdaptiveProportion { ones, window, pct }) => {
-                        self.degrade(format!(
-                            "APT failure: {ones}/{window} ones ({pct:.1}%)"
-                        ));
+                        self.degrade(format!("APT failure: {ones}/{window} ones ({pct:.1}%)"));
                         let _ = self.send_reset();
                         None
                     }

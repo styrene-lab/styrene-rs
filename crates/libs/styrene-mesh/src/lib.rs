@@ -4,7 +4,7 @@
 //!
 //! This crate implements the binary wire format used by the Styrene mesh
 //! communications platform. It is the shared contract between the Python
-//! (`styrened`) and Rust (`styrened-rs`) implementations — both must produce
+//! (`styrened`) and Rust (`styrened`) implementations — both must produce
 //! and consume identical byte sequences.
 //!
 //! ## Wire Format v2
@@ -46,8 +46,8 @@ pub mod pqc;
 
 pub use wire::{StyreneMessage, StyreneMessageType, WireError};
 
-/// Wire format namespace prefix.
-pub const NAMESPACE: &[u8; 10] = b"styrene.io";
+/// Wire format namespace prefix (must match Python styrene_wire.py STYRENE_PREFIX).
+pub const NAMESPACE: &[u8; 11] = b"styrene.io:";
 
-/// Current wire format version.
-pub const WIRE_VERSION: u8 = 0x01;
+/// Current wire format version (v2 = with request_id, must match Python STYRENE_VERSION).
+pub const WIRE_VERSION: u8 = 0x02;

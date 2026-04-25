@@ -53,6 +53,7 @@ use crate::ratchets::{encrypt_for_public_key, now_secs};
 use crate::transport::ratchet_store::RatchetStore;
 use crate::transport::resource::{build_resource_request_packet, ResourceEvent, ResourceManager};
 
+#[allow(dead_code)] // Scaffolded from upstream — awaiting integration into transport loop
 mod announce_limits;
 pub mod announce_table;
 pub mod discovery;
@@ -114,8 +115,11 @@ pub const PATHFINDER_M: usize = 128; // Max hops
 
 const INTERVAL_LINKS_CHECK: Duration = Duration::from_secs(1);
 const INTERVAL_INPUT_LINK_CLEANUP: Duration = Duration::from_secs(20);
+const INTERVAL_OLD_ANNOUNCES_RETRANSMIT: Duration = Duration::from_secs(300);
+#[allow(dead_code)] // Used when output link restart is implemented
 const INTERVAL_OUTPUT_LINK_RESTART: Duration = Duration::from_secs(60);
 const INTERVAL_OUTPUT_LINK_REPEAT: Duration = Duration::from_secs(6);
+#[allow(dead_code)] // Used when output link keepalive is implemented
 const INTERVAL_OUTPUT_LINK_KEEP: Duration = Duration::from_secs(5);
 const INTERVAL_IFACE_CLEANUP: Duration = Duration::from_secs(10);
 const INTERVAL_ANNOUNCES_RETRANSMIT: Duration = Duration::from_secs(1);
@@ -272,6 +276,7 @@ mod path;
 // wire: inbound packet handlers and wire-level packet logic.
 mod wire;
 
+#[allow(dead_code)] // Used in trace logging (PACKET_TRACE)
 fn bytes_to_hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

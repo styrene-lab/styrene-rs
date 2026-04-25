@@ -1,7 +1,7 @@
 use super::*;
 use crate::transport::channel::{
-    ChannelError, Envelope as ChannelEnvelope, HandlerId, MessageState as ChannelMessageState,
-    TypedMessage, validate_typed_message_type,
+    validate_typed_message_type, ChannelError, Envelope as ChannelEnvelope, HandlerId,
+    MessageState as ChannelMessageState, TypedMessage,
 };
 
 impl Transport {
@@ -300,11 +300,7 @@ impl TransportChannel {
         self.link_id
     }
 
-    pub async fn send(
-        &self,
-        msg_type: u16,
-        payload: Vec<u8>,
-    ) -> Result<u16, ChannelError> {
+    pub async fn send(&self, msg_type: u16, payload: Vec<u8>) -> Result<u16, ChannelError> {
         let link = self.find_link().await.ok_or(ChannelError::LinkNotReady)?;
 
         let (sequence, iface, packet) = {
@@ -352,10 +348,7 @@ impl TransportChannel {
         Ok(hint)
     }
 
-    pub async fn send_typed<M: TypedMessage>(
-        &self,
-        message: &M,
-    ) -> Result<u16, ChannelError> {
+    pub async fn send_typed<M: TypedMessage>(&self, message: &M) -> Result<u16, ChannelError> {
         self.send(M::MSG_TYPE, message.encode()).await
     }
 

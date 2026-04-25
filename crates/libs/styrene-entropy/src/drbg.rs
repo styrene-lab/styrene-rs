@@ -51,13 +51,7 @@ impl Drbg {
     /// Create a new DRBG. The pool is empty — you must add entropy and call
     /// [`Self::reseed_from_pool`] (or [`Self::reseed`]) before calling [`Self::fill_bytes`].
     pub fn new(pool: EntropyPool) -> Self {
-        Self {
-            pool,
-            key: [0u8; 32],
-            value: [0u8; 32],
-            bytes_since_reseed: 0,
-            seeded: false,
-        }
+        Self { pool, key: [0u8; 32], value: [0u8; 32], bytes_since_reseed: 0, seeded: false }
     }
 
     /// Add raw entropy bytes to the internal pool.
@@ -138,8 +132,7 @@ impl Drbg {
     /// Updates K and V given additional input (may be empty).
     fn update(&mut self, additional: &[u8]) {
         // K = HMAC(K, V || 0x00 || additional_input)
-        let mut mac = HmacSha256::new_from_slice(&self.key)
-            .expect("HMAC accepts any key length");
+        let mut mac = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts any key length");
         mac.update(&self.value);
         mac.update(&[0x00]);
         mac.update(additional);
@@ -150,8 +143,8 @@ impl Drbg {
 
         if !additional.is_empty() {
             // K = HMAC(K, V || 0x01 || additional_input)
-            let mut mac2 = HmacSha256::new_from_slice(&new_key)
-                .expect("HMAC accepts any key length");
+            let mut mac2 =
+                HmacSha256::new_from_slice(&new_key).expect("HMAC accepts any key length");
             mac2.update(&new_value);
             mac2.update(&[0x01]);
             mac2.update(additional);
@@ -169,8 +162,7 @@ impl Drbg {
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut mac =
-        HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     mac.finalize().into_bytes().into()
 }

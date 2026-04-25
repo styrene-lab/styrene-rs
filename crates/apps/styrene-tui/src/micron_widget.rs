@@ -10,8 +10,7 @@ use ratatui::style::{Color, Modifier, Style as RStyle};
 use ratatui::text::{Line, Span, Text};
 
 use styrene_micron::{
-    Alignment, Block, ChildBlock, Document, FormField, InlineNode, StyleSet,
-    Line as MicronLine,
+    Alignment, Block, ChildBlock, Document, FormField, InlineNode, Line as MicronLine, StyleSet,
 };
 
 /// Section indentation in spaces per level (matches NomadNet SECTION_INDENT=2).
@@ -37,11 +36,7 @@ pub fn render_document(doc: &Document, width: u16) -> Text<'static> {
 
 fn render_block(block: &Block, depth: usize, width: u16, lines: &mut Vec<Line<'static>>) {
     match block {
-        Block::Section {
-            level,
-            heading,
-            children,
-        } => {
+        Block::Section { level, heading, children } => {
             let section_depth = depth + 1;
             // Render heading
             if let Some(heading_line) = heading {
@@ -50,10 +45,7 @@ fn render_block(block: &Block, depth: usize, width: u16, lines: &mut Vec<Line<'s
                 let indent = indent_str(depth);
                 let mut spans = vec![Span::raw(indent)];
                 // Add a leading space for heading text
-                spans.push(Span::styled(
-                    " ",
-                    RStyle::default().fg(fg).bg(bg),
-                ));
+                spans.push(Span::styled(" ", RStyle::default().fg(fg).bg(bg)));
                 for node in &heading_line.nodes {
                     let base = RStyle::default().fg(fg).bg(bg);
                     render_inline_node(node, base, &mut spans);
@@ -74,21 +66,14 @@ fn render_block(block: &Block, depth: usize, width: u16, lines: &mut Vec<Line<'s
             lines.push(Line::from(""));
         }
         Block::Divider { symbol } => {
-            let fill: String = std::iter::repeat(*symbol)
-                .take(width as usize)
-                .collect();
-            lines.push(Line::from(Span::styled(
-                fill,
-                RStyle::default().fg(Color::DarkGray),
-            )));
+            let fill: String = std::iter::repeat(*symbol).take(width as usize).collect();
+            lines.push(Line::from(Span::styled(fill, RStyle::default().fg(Color::DarkGray))));
         }
         Block::Literal { content } => {
             for lit_line in content.lines() {
                 lines.push(Line::from(Span::styled(
                     lit_line.to_string(),
-                    RStyle::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::ITALIC),
+                    RStyle::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
                 )));
             }
         }
@@ -105,11 +90,7 @@ fn render_child_block(
     lines: &mut Vec<Line<'static>>,
 ) {
     match child {
-        ChildBlock::Section {
-            level,
-            heading,
-            children,
-        } => {
+        ChildBlock::Section { level, heading, children } => {
             // Re-wrap as Block::Section for rendering
             render_block(
                 &Block::Section {
@@ -144,9 +125,7 @@ fn render_child_block(
                     Span::raw(indent.clone()),
                     Span::styled(
                         lit_line.to_string(),
-                        RStyle::default()
-                            .fg(Color::DarkGray)
-                            .add_modifier(Modifier::ITALIC),
+                        RStyle::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
                     ),
                 ]));
             }
@@ -175,11 +154,7 @@ fn render_line(line: &MicronLine, depth: usize, lines: &mut Vec<Line<'static>>) 
     lines.push(rline);
 }
 
-fn render_inline_node(
-    node: &InlineNode,
-    base_style: RStyle,
-    spans: &mut Vec<Span<'static>>,
-) {
+fn render_inline_node(node: &InlineNode, base_style: RStyle, spans: &mut Vec<Span<'static>>) {
     match node {
         InlineNode::Text { style, text } => {
             let rstyle = micron_style_to_ratatui(style, base_style);
@@ -188,54 +163,38 @@ fn render_inline_node(
         InlineNode::Newline => {
             // Newlines within a block — usually handled at line level
         }
-        InlineNode::Link {
-            style,
-            label,
-            url,
-            ..
-        } => {
+        InlineNode::Link { style, label, url, .. } => {
             let mut rstyle = micron_style_to_ratatui(style, base_style);
             rstyle = rstyle.add_modifier(Modifier::UNDERLINED);
             let display = label.as_deref().unwrap_or(url.as_str());
             spans.push(Span::styled(display.to_string(), rstyle));
         }
-        InlineNode::Field { field, .. } => {
-            match field {
-                FormField::Text { name, value, width } => {
-                    let display = if value.is_empty() {
-                        format!("[{name}: …]")
-                    } else {
-                        let truncated: String = value.chars().take(*width as usize).collect();
-                        format!("[{name}: {truncated}]")
-                    };
-                    spans.push(Span::styled(
-                        display,
-                        base_style.add_modifier(Modifier::UNDERLINED),
-                    ));
-                }
-                FormField::Password { name, value, .. } => {
-                    let masked: String = "•".repeat(value.len().max(3));
-                    spans.push(Span::styled(
-                        format!("[{name}: {masked}]"),
-                        base_style.add_modifier(Modifier::UNDERLINED),
-                    ));
-                }
-                FormField::Checkbox { checked, .. } => {
-                    let mark = if *checked { "x" } else { " " };
-                    spans.push(Span::styled(
-                        format!("[{mark}]"),
-                        base_style,
-                    ));
-                }
-                FormField::Radio { checked, .. } => {
-                    let mark = if *checked { "•" } else { " " };
-                    spans.push(Span::styled(
-                        format!("({mark})"),
-                        base_style,
-                    ));
-                }
+        InlineNode::Field { field, .. } => match field {
+            FormField::Text { name, value, width } => {
+                let display = if value.is_empty() {
+                    format!("[{name}: …]")
+                } else {
+                    let truncated: String = value.chars().take(*width as usize).collect();
+                    format!("[{name}: {truncated}]")
+                };
+                spans.push(Span::styled(display, base_style.add_modifier(Modifier::UNDERLINED)));
             }
-        }
+            FormField::Password { name, value, .. } => {
+                let masked: String = "•".repeat(value.len().max(3));
+                spans.push(Span::styled(
+                    format!("[{name}: {masked}]"),
+                    base_style.add_modifier(Modifier::UNDERLINED),
+                ));
+            }
+            FormField::Checkbox { checked, .. } => {
+                let mark = if *checked { "x" } else { " " };
+                spans.push(Span::styled(format!("[{mark}]"), base_style));
+            }
+            FormField::Radio { checked, .. } => {
+                let mark = if *checked { "•" } else { " " };
+                spans.push(Span::styled(format!("({mark})"), base_style));
+            }
+        },
     }
 }
 

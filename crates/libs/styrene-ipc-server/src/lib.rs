@@ -3,7 +3,7 @@
 //! Exposes an [`Arc<dyn Daemon>`](styrene_ipc::traits::Daemon) over a framed
 //! msgpack wire protocol on a Unix domain socket. Wire-compatible with the
 //! Python `styrened.ipc` protocol, enabling the Python TUI to connect to
-//! `styrened-rs` as a drop-in daemon replacement.
+//! `styrened` as a drop-in daemon replacement.
 //!
 //! # Quick Start
 //!
@@ -21,9 +21,9 @@
 //! # }
 //! ```
 
-pub mod wire;
 pub mod connection;
 pub mod dispatch;
 pub mod server;
+pub mod wire;
 
-pub use server::{IpcServer, IpcServerConfig, default_socket_path};
+pub use server::{default_socket_path, IpcServer, IpcServerConfig};

@@ -1,6 +1,7 @@
 pub mod driver;
 pub mod hdlc;
 pub mod ifac;
+pub mod kiss;
 pub mod serial;
 pub mod stream_iface;
 pub mod tcp_client;
@@ -101,6 +102,9 @@ pub struct InterfaceContext<T: Interface> {
     pub inner: Arc<Mutex<T>>,
     pub channel: InterfaceChannel,
     pub cancel: CancellationToken,
+    /// Optional IFAC configuration for this interface. When `Some`, all packets
+    /// are wrapped/unwrapped with IFAC authentication at the stream boundary.
+    pub ifac: Option<Arc<ifac::IfacConfig>>,
 }
 
 pub struct InterfaceManager {
@@ -160,7 +164,37 @@ impl InterfaceManager {
 
         let inner = Arc::new(Mutex::new(inner));
 
-        InterfaceContext::<T> { inner: inner.clone(), channel, cancel: self.cancel.clone() }
+        InterfaceContext::<T> {
+            inner: inner.clone(),
+            channel,
+            cancel: self.cancel.clone(),
+            ifac: None,
+        }
+    }
+
+    /// Spawn an interface with an optional IFAC configuration.
+    ///
+    /// When `ifac` is `Some`, the interface authenticates all packets using the
+    /// shared IFAC key. TCP servers should pass their own IFAC config so that
+    /// accepted client connections inherit it.
+    pub fn spawn_with_ifac<T: Interface, F, R>(
+        &mut self,
+        inner: T,
+        worker: F,
+        ifac: Option<Arc<ifac::IfacConfig>>,
+    ) -> AddressHash
+    where
+        F: FnOnce(InterfaceContext<T>) -> R,
+        R: std::future::Future<Output = ()> + Send + 'static,
+        R::Output: Send + 'static,
+    {
+        let mut context = self.new_context(inner);
+        context.ifac = ifac;
+        let address = *context.channel.address();
+
+        task::spawn(worker(context));
+
+        address
     }
 
     pub fn spawn<T: Interface, F, R>(&mut self, inner: T, worker: F) -> AddressHash

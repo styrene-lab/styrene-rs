@@ -1,11 +1,9 @@
 use heapless::Vec as HVec;
 
 use crate::{
-    announce::ResourceAvailableAnnounce,
     chunk_bitset::ChunkBitset,
     content_id::ContentId,
     error::DistributorError,
-    manifest::StyreneManifest,
     store::ChunkStore,
     transport::{ContentEvent, ContentTransport},
 };
@@ -17,7 +15,7 @@ const MAX_SEEDERS: usize = 16;
 #[derive(Clone, Copy)]
 struct Seeder {
     identity: [u8; 16],
-    chunks:   ChunkBitset,
+    chunks: ChunkBitset,
 }
 
 /// Protocol state machine for content distribution.
@@ -38,12 +36,12 @@ where
     S: ChunkStore + 'static,
     T: ContentTransport + 'static,
 {
-    store:     S,
+    store: S,
     transport: T,
     /// Known seeders for content items we are downloading.
-    seeders:   HVec<(ContentId, Seeder), MAX_SEEDERS>,
+    seeders: HVec<(ContentId, Seeder), MAX_SEEDERS>,
     /// Our own RNS identity hash (for announcements).
-    local_id:  [u8; 16],
+    local_id: [u8; 16],
 }
 
 impl<S, T> ContentDistributor<S, T>
@@ -52,12 +50,7 @@ where
     T: ContentTransport + 'static,
 {
     pub fn new(store: S, transport: T, local_id: [u8; 16]) -> Self {
-        Self {
-            store,
-            transport,
-            seeders: HVec::new(),
-            local_id,
-        }
+        Self { store, transport, seeders: HVec::new(), local_id }
     }
 
     /// Publish content: split into chunks, store all, broadcast announce.
@@ -99,12 +92,8 @@ where
             out
         };
 
-        let announce = ResourceAvailableAnnounce::new(
-            manifest.content_id,
-            manifest_hash,
-            held,
-            self.local_id,
-        );
+        let announce =
+            ResourceAvailableAnnounce::new(manifest.content_id, manifest_hash, held, self.local_id);
 
         self.transport
             .broadcast_announce(&announce)
@@ -207,14 +196,15 @@ where
             }
 
             ContentEvent::ChunkRequest { from, content_id, index } => {
-                let chunk_size = 262144; // WiFi max — safe upper bound for stack buf
-                // For actual use, caller should pass the manifest to get the right size.
-                // This is a simplified serve path.
+                let _chunk_size = 262144; // WiFi max — safe upper bound for stack buf
+                                          // For actual use, caller should pass the manifest to get the right size.
+                                          // This is a simplified serve path.
                 #[cfg(feature = "alloc")]
                 {
                     let mut buf = alloc::vec![0u8; chunk_size];
                     if let Ok(n) = self.store.read_chunk(content_id, index, &mut buf).await {
-                        let _ = self.transport
+                        let _ = self
+                            .transport
                             .send_chunk_response(&from, content_id, index, &buf[..n])
                             .await;
                     }

@@ -24,10 +24,14 @@ impl TcpServer {
         Self { addr: addr.into(), iface_manager }
     }
 
+    /// Spawn the TCP server. Accepted client connections inherit the server's
+    /// IFAC configuration (if any) so that all clients on this listener enforce
+    /// the same interface authentication.
     pub async fn spawn(context: InterfaceContext<Self>) {
         let addr = { context.inner.lock().unwrap().addr.clone() };
 
         let iface_manager = { context.inner.lock().unwrap().iface_manager.clone() };
+        let server_ifac = context.ifac.clone();
 
         let (_, tx_channel) = context.channel.split();
         let tx_channel = Arc::new(tokio::sync::Mutex::new(tx_channel));
@@ -95,9 +99,10 @@ impl TcpServer {
 
                             let mut iface_manager = iface_manager.lock().await;
 
-                            iface_manager.spawn(
+                            iface_manager.spawn_with_ifac(
                                 TcpClient::new_from_stream(client.1.to_string(), client.0),
                                 TcpClient::spawn,
+                                server_ifac.clone(),
                             );
                         }
                     }

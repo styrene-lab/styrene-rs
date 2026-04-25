@@ -40,4 +40,16 @@ pub trait DaemonStatus: Send + Sync {
 
     /// List all blocked peer identity hashes.
     async fn blocked_peers(&self) -> Result<Vec<String>, IpcError>;
+
+    /// List all network interfaces with detail.
+    async fn list_interfaces(&self) -> Result<Vec<InterfaceDetail>, IpcError>;
+
+    /// Search discovered peers by name or hash prefix.
+    async fn search_peers(&self, query: &str, limit: u32) -> Result<Vec<DeviceInfo>, IpcError>;
+
+    /// Bookmark a peer for quick access.
+    async fn bookmark_peer(&self, identity_hash: &str) -> Result<bool, IpcError>;
+
+    /// Remove a peer bookmark.
+    async fn unbookmark_peer(&self, identity_hash: &str) -> Result<bool, IpcError>;
 }

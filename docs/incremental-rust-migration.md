@@ -1,8 +1,8 @@
 # Incremental Rust Migration via PyO3 FFI
 
 **Date**: 2026-03-02
-**Status**: Proposed
-**Supersedes**: "No FFI, no PyO3 bindings" stance in CLAUDE.md
+**Status**: Superseded (2026-04-19) — Rust is now the canonical distribution. This document is retained as historical context for the PyO3 bridge approach.
+**Originally superseded**: "No FFI, no PyO3 bindings" stance in CLAUDE.md
 
 ## Problem
 

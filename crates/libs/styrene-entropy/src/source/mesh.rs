@@ -9,11 +9,11 @@
 //!
 //! Enabled by the `mesh-source` feature.
 
+use super::EntropySource;
 use crate::{
     health::SourceHealth,
     pool::{EntropyPool, SourceId},
 };
-use super::EntropySource;
 
 /// Purpose codes for ENTROPY_REQUEST — mirrors the RPC spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -14,6 +14,11 @@ use crate::transport::iface::RxMessage;
 
 use super::{Interface, InterfaceContext};
 
+// TODO: UDP does not use HDLC/stream_iface loops, so IFAC wrap/unwrap is not
+// wired here yet. UDP IFAC would require wrapping raw packets before send_to
+// and unwrapping after recv_from. TCP and serial (the deployment-critical
+// transports) have full IFAC support via InterfaceContext.ifac.
+
 // UDP trace logging stays on by default for packet-level network bring-up visibility.
 const PACKET_TRACE: bool = true;
 
@@ -86,6 +91,16 @@ impl UdpInterface {
                                         break;
                                     }
                                     Ok((n, _in_addr)) => {
+                                        // Reject IFAC-flagged packets — UDP has no
+                                        // IFAC wrap/unwrap pipeline. Accepting them
+                                        // would bypass interface authentication.
+                                        if n > 0 && rx_buffer[0] & 0x80 != 0 {
+                                            log::debug!(
+                                                "udp_interface: dropping IFAC packet on open interface {}",
+                                                iface_address
+                                            );
+                                            continue;
+                                        }
                                         if let Ok(packet) = Packet::deserialize(&mut InputBuffer::new(&rx_buffer[..n])) {
                                             if PACKET_TRACE {
                                                 log::trace!("udp_interface: rx << ({}) {}", iface_address, packet);

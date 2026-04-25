@@ -1,0 +1,49 @@
+[package]
+name = "styrened"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "styrened"
+
+[dependencies]
+rns_core = { package = "styrene-rns", path = "../../libs/styrene-rns", version = "0.1.0", features = ["transport"] }
+lxmf = { package = "styrene-lxmf", path = "../../libs/styrene-lxmf", version = "0.1.0", default-features = false, features = ["std"] }
+styrene-ipc = { path = "../../libs/styrene-ipc", version = "0.1.0" }
+styrene-ipc-server = { path = "../../libs/styrene-ipc-server", version = "0.1.0" }
+styrene-services = { path = "../../libs/styrene-services", version = "0.1.0" }
+styrene-mesh = { workspace = true }
+async-trait.workspace = true
+thiserror.workspace = true
+base64 = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+hkdf.workspace = true
+hmac.workspace = true
+hex.workspace = true
+rand_core = { workspace = true, features = ["getrandom"] }
+rmp-serde.workspace = true
+rmpv = { workspace = true, features = ["with-serde"] }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+toml = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+x25519-dalek = { workspace = true }
+x509-parser = { workspace = true }
+zeroize.workspace = true
+dirs = "6.0.0"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[[bin]]
+name = "styrened"
+path = "src/bin/styrened/main.rs"
