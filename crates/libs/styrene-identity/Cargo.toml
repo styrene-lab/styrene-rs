@@ -2,6 +2,8 @@
 name = "styrene-identity"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/styrene-lab/styrene-rs"
 description = "Identity signing trait and HKDF key derivation hierarchy for Styrene"
 
 [dependencies]
@@ -40,3 +42,8 @@ ssh-agent = ["ssh-agent-lib", "ssh-key", "signing", "tokio"]
 tokio = { version = "1", features = ["rt", "macros"] }
 tempfile = "3"
 hex = "0.4"
+ed25519-dalek = { version = "=2.1.1", features = ["rand_core"] }
+x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+sha2 = "0.10"
+sha3 = "0.10"
+data-encoding = "2"
