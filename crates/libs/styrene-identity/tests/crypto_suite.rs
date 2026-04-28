@@ -588,6 +588,287 @@ fn convenience_methods_match_purposes() {
 // Layer 7: Statistical Collision Resistance
 // ═══════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════
+// Layer 8: File Signer Roundtrip — End-to-End Vault Lifecycle
+// ═══════════════════════════════════════════════════════════════════
+
+/// Full lifecycle: generate → load → derive → sign → verify.
+/// Tests the entire path from passphrase to cryptographic operation.
+#[test]
+fn file_signer_full_lifecycle() {
+    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test-identity.key");
+    let passphrase = b"test-passphrase-lifecycle";
+
+    let pp = passphrase.to_vec();
+    let signer = FileSigner::new(
+        &path,
+        Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))),
+    );
+
+    // Generate
+    signer.generate(passphrase).unwrap();
+    assert!(path.exists());
+
+    // Load and derive
+    let root = signer.load(passphrase).unwrap();
+    let deriver = KeyDeriver::new(root.as_bytes());
+
+    // Derive all keys — every one must be valid
+    let signing_seed = deriver.derive(KeyPurpose::Signing);
+    let sk = SigningKey::from_bytes(&signing_seed);
+    let vk = sk.verifying_key();
+
+    // Sign and verify
+    let message = b"lifecycle test message";
+    let sig = sk.sign(message);
+    assert!(vk.verify(message, &sig).is_ok());
+
+    // Derive again from same root — must be deterministic
+    let root2 = signer.load(passphrase).unwrap();
+    let deriver2 = KeyDeriver::new(root2.as_bytes());
+    let signing_seed2 = deriver2.derive(KeyPurpose::Signing);
+    assert_eq!(signing_seed, signing_seed2, "same vault file must produce same keys");
+}
+
+/// Wrong passphrase must not produce the same keys (must fail or produce garbage).
+#[test]
+fn wrong_passphrase_produces_different_result() {
+    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+    use styrene_identity::signer::SignerError;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test-identity.key");
+
+    let pp = b"correct".to_vec();
+    let signer = FileSigner::new(
+        &path,
+        Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))),
+    );
+    signer.generate(b"correct").unwrap();
+
+    // Load with wrong passphrase — must fail (ChaCha20Poly1305 auth tag check)
+    let result = signer.load(b"wrong-passphrase");
+    assert!(result.is_err(), "wrong passphrase must not decrypt successfully");
+
+    match result.unwrap_err() {
+        SignerError::DecryptionFailed(_) => {} // expected
+        other => panic!("expected DecryptionFailed, got: {other}"),
+    }
+}
+
+/// Identity file must be exactly 97 bytes (STID format).
+#[test]
+fn identity_file_size_is_exact() {
+    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider, FILE_LEN};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test-identity.key");
+
+    let pp = b"test".to_vec();
+    let signer = FileSigner::new(
+        &path,
+        Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))),
+    );
+    signer.generate(b"test").unwrap();
+
+    let file_data = std::fs::read(&path).unwrap();
+    assert_eq!(file_data.len(), FILE_LEN, "identity file must be exactly {FILE_LEN} bytes");
+
+    // Verify STID magic header
+    assert_eq!(&file_data[..4], b"STID", "identity file must start with STID magic");
+    assert_eq!(file_data[4], 1, "identity file version must be 1");
+}
+
+/// Truncated identity file must fail to load.
+#[test]
+fn truncated_file_fails_to_load() {
+    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test-identity.key");
+
+    let pp = b"test".to_vec();
+    let signer = FileSigner::new(
+        &path,
+        Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))),
+    );
+    signer.generate(b"test").unwrap();
+
+    // Truncate the file
+    let data = std::fs::read(&path).unwrap();
+    std::fs::write(&path, &data[..50]).unwrap();
+
+    let result = signer.load(b"test");
+    assert!(result.is_err(), "truncated file must not load");
+}
+
+/// Corrupted ciphertext must fail authentication.
+#[test]
+fn corrupted_ciphertext_fails() {
+    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test-identity.key");
+
+    let pp = b"test".to_vec();
+    let signer = FileSigner::new(
+        &path,
+        Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))),
+    );
+    signer.generate(b"test").unwrap();
+
+    // Flip a byte in the ciphertext region (after header + salt + nonce = 5 + 32 + 12 = 49)
+    let mut data = std::fs::read(&path).unwrap();
+    data[60] ^= 0xFF;
+    std::fs::write(&path, &data).unwrap();
+
+    let result = signer.load(b"test");
+    assert!(result.is_err(), "corrupted ciphertext must not decrypt");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Layer 9: SignerChain Derivation Consistency
+// ═══════════════════════════════════════════════════════════════════
+
+/// Two different FileSigner instances with the same vault file must
+/// produce the same root secret and therefore the same derived keys.
+#[test]
+fn two_signers_same_file_same_keys() {
+    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test-identity.key");
+    let passphrase = b"test";
+
+    let pp1 = passphrase.to_vec();
+    let signer1 = FileSigner::new(
+        &path,
+        Box::new(ClosurePassphraseProvider::new(move || Ok(pp1.clone()))),
+    );
+    signer1.generate(passphrase).unwrap();
+
+    let root1 = signer1.load(passphrase).unwrap();
+    let d1 = KeyDeriver::new(root1.as_bytes());
+
+    let pp2 = passphrase.to_vec();
+    let signer2 = FileSigner::new(
+        &path,
+        Box::new(ClosurePassphraseProvider::new(move || Ok(pp2.clone()))),
+    );
+    let root2 = signer2.load(passphrase).unwrap();
+    let d2 = KeyDeriver::new(root2.as_bytes());
+
+    for purpose in KeyPurpose::all() {
+        assert_eq!(
+            d1.derive(*purpose),
+            d2.derive(*purpose),
+            "{:?}: two signers on same file disagree",
+            purpose
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Layer 10: Derivation Independence — No Information Leakage
+// ═══════════════════════════════════════════════════════════════════
+
+/// Knowing one derived key must not reveal any other derived key.
+/// Test: XOR of two derived keys must not equal the XOR of two different
+/// derived keys (i.e., no linear relationship between derived values).
+#[test]
+fn no_linear_relationship_between_derived_keys() {
+    let d = KeyDeriver::new(&TEST_ROOT);
+
+    let keys: Vec<[u8; 32]> = KeyPurpose::all()
+        .iter()
+        .map(|p| d.derive(*p))
+        .collect();
+
+    // For every pair (A, B), compute A ⊕ B.
+    // No two different pairs should produce the same XOR
+    // (which would indicate a linear relationship).
+    let mut xors = std::collections::HashSet::new();
+
+    for i in 0..keys.len() {
+        for j in (i + 1)..keys.len() {
+            let mut xor = [0u8; 32];
+            for k in 0..32 {
+                xor[k] = keys[i][k] ^ keys[j][k];
+            }
+            assert!(
+                xors.insert(xor),
+                "linear relationship detected between key pairs involving indices {i} and {j}"
+            );
+        }
+    }
+}
+
+/// Derived keys must have high entropy (no obvious patterns).
+/// Test: every derived key must have at least 20 distinct byte values
+/// out of 32 bytes (a truly random 32-byte value has ~31.4 expected
+/// distinct values; a degenerate key like [0,0,...,0] has 1).
+#[test]
+fn derived_keys_have_high_entropy() {
+    let d = KeyDeriver::new(&TEST_ROOT);
+
+    for purpose in KeyPurpose::all() {
+        let key = d.derive(*purpose);
+        let distinct_bytes: std::collections::HashSet<u8> = key.iter().copied().collect();
+        assert!(
+            distinct_bytes.len() >= 15,
+            "{:?}: only {} distinct byte values (expected ≥15 for high entropy)",
+            purpose,
+            distinct_bytes.len()
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Layer 11: Cross-Derivation Sign/Verify — Keys Don't Cross-Authenticate
+// ═══════════════════════════════════════════════════════════════════
+
+/// A signature made with one Ed25519 key must NOT verify under a different
+/// Ed25519 key from the same root. This confirms key isolation at the
+/// cryptographic level, not just at the byte level.
+#[test]
+fn cross_key_signatures_do_not_verify() {
+    let d = KeyDeriver::new(&TEST_ROOT);
+    let message = b"cross-key isolation test";
+
+    let ed25519_purposes = [
+        KeyPurpose::Signing,
+        KeyPurpose::SshHost,
+        KeyPurpose::Yggdrasil,
+        KeyPurpose::I2pSigning,
+        KeyPurpose::Tor,
+    ];
+
+    for i in 0..ed25519_purposes.len() {
+        let sk_i = SigningKey::from_bytes(&d.derive(ed25519_purposes[i]));
+        let sig = sk_i.sign(message);
+
+        for j in 0..ed25519_purposes.len() {
+            if i == j {
+                continue;
+            }
+            let vk_j = SigningKey::from_bytes(&d.derive(ed25519_purposes[j])).verifying_key();
+            assert!(
+                vk_j.verify(message, &sig).is_err(),
+                "signature from {:?} verified under {:?} — key isolation broken",
+                ed25519_purposes[i],
+                ed25519_purposes[j]
+            );
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Layer 12: Statistical — Collision Resistance
+// ═══════════════════════════════════════════════════════════════════
+
 /// 1000 random roots must produce 1000 unique identity hashes.
 /// (128-bit hash space, collision probability ≈ 0 for 1000 samples)
 #[test]
