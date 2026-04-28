@@ -1,6 +1,6 @@
 //! Identity vault — safe lifecycle management for Styrene identities.
 //!
-//! Wraps [`FileSigner`](crate::file_signer::FileSigner) with guardrails:
+//! Wraps [`FileSigner`] with guardrails:
 //! - `init()` refuses to overwrite an existing identity
 //! - `backup()` exports an encrypted copy before destructive operations
 //! - Clear error messages guide operators through each failure mode

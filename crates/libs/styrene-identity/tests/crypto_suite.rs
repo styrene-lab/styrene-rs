@@ -869,6 +869,241 @@ fn cross_key_signatures_do_not_verify() {
 // Layer 12: Statistical — Collision Resistance
 // ═══════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════
+// Layer 13: Protocol Wire Formats
+// ═══════════════════════════════════════════════════════════════════
+
+/// SSH Ed25519 public key wire format: "ssh-ed25519" prefix + 32-byte key.
+/// Verify the derived key can be encoded in the standard SSH format.
+#[test]
+fn ssh_ed25519_wire_format() {
+    let d = KeyDeriver::new(&TEST_ROOT);
+    let seed = d.derive(KeyPurpose::SshHost);
+    let vk = ed25519_verifying_key(&seed);
+    let pubkey_bytes = vk.as_bytes();
+
+    // SSH wire format: uint32(len("ssh-ed25519")) + "ssh-ed25519" + uint32(32) + key
+    let key_type = b"ssh-ed25519";
+    let mut wire = Vec::new();
+    wire.extend_from_slice(&(key_type.len() as u32).to_be_bytes());
+    wire.extend_from_slice(key_type);
+    wire.extend_from_slice(&(32u32).to_be_bytes());
+    wire.extend_from_slice(pubkey_bytes);
+
+    // Verify the wire format starts correctly
+    assert_eq!(&wire[..4], &[0, 0, 0, 11]); // len("ssh-ed25519") = 11
+    assert_eq!(&wire[4..15], b"ssh-ed25519");
+    assert_eq!(&wire[15..19], &[0, 0, 0, 32]); // key length = 32
+    assert_eq!(&wire[19..51], pubkey_bytes);
+    assert_eq!(wire.len(), 51);
+
+    // Base64 encode for authorized_keys format
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&wire);
+    let authorized_keys_line = format!("ssh-ed25519 {b64} styrene@test");
+    assert!(authorized_keys_line.starts_with("ssh-ed25519 AAAA"));
+}
+
+/// sign_with_seed roundtrip — the signature bytes must verify correctly.
+#[test]
+fn sign_with_seed_roundtrip_all_purposes() {
+    use styrene_identity::pubkey::sign_with_seed;
+
+    let d = KeyDeriver::new(&TEST_ROOT);
+    let message = b"sign_with_seed roundtrip test";
+
+    let ed25519_purposes = [
+        KeyPurpose::Signing,
+        KeyPurpose::SshHost,
+        KeyPurpose::Yggdrasil,
+        KeyPurpose::I2pSigning,
+        KeyPurpose::Tor,
+    ];
+
+    for purpose in &ed25519_purposes {
+        let seed = d.derive(*purpose);
+        let sig_bytes = sign_with_seed(&seed, message);
+
+        // Verify using the verifying key
+        let vk = ed25519_verifying_key(&seed);
+        let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        assert!(
+            vk.verify(message, &sig).is_ok(),
+            "{:?}: sign_with_seed roundtrip failed",
+            purpose
+        );
+
+        // Verify wrong data fails
+        let wrong_sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        assert!(vk.verify(b"wrong", &wrong_sig).is_err());
+    }
+}
+
+/// Age X25519 recipient format: age1... (Bech32-encoded).
+/// Verify the derived age key produces a valid X25519 public key
+/// that could be used as an age recipient.
+#[test]
+fn age_key_produces_valid_x25519() {
+    let d = KeyDeriver::new(&TEST_ROOT);
+    let secret = d.derive(KeyPurpose::Age);
+    let pk = x25519_public_key(&secret);
+
+    // Public key must be 32 bytes, non-zero
+    assert_eq!(pk.as_bytes().len(), 32);
+    assert_ne!(pk.as_bytes(), &[0u8; 32]);
+
+    // DH exchange with self must work (age uses X25519 DH)
+    let our_secret = StaticSecret::from(secret);
+    let their_secret = StaticSecret::from([0xCC; 32]);
+    let their_public = X25519PublicKey::from(&their_secret);
+
+    let shared = our_secret.diffie_hellman(&their_public);
+    assert_ne!(shared.as_bytes(), &[0u8; 32], "age DH shared secret is zero");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Layer 14: Cross-Implementation Reference Vectors (JSON export)
+// ═══════════════════════════════════════════════════════════════════
+
+/// Generate a complete reference vector set as JSON.
+/// This can be verified independently in Python, JavaScript, Go, etc.
+/// The test itself verifies the JSON is well-formed and contains all fields.
+#[test]
+fn generate_reference_vectors_json() {
+    let d = KeyDeriver::new(&TEST_ROOT);
+
+    let mut flat = serde_json::Map::new();
+    for purpose in KeyPurpose::all() {
+        let seed = d.derive(*purpose);
+        let seed_hex = hex::encode(&seed);
+
+        let mut entry = serde_json::Map::new();
+        entry.insert("info".into(), serde_json::Value::String(
+            String::from_utf8_lossy(purpose.info()).to_string()
+        ));
+        entry.insert("seed_hex".into(), serde_json::Value::String(seed_hex.clone()));
+
+        // Add pubkey for Ed25519 purposes
+        if matches!(purpose,
+            KeyPurpose::Signing | KeyPurpose::SshHost | KeyPurpose::Yggdrasil |
+            KeyPurpose::I2pSigning | KeyPurpose::Tor
+        ) {
+            let vk = ed25519_verifying_key(&seed);
+            entry.insert("ed25519_pubkey_hex".into(),
+                serde_json::Value::String(hex::encode(vk.as_bytes())));
+        }
+
+        // Add pubkey for X25519 purposes
+        if matches!(purpose,
+            KeyPurpose::RnsEncryption | KeyPurpose::Age |
+            KeyPurpose::I2pEncryption | KeyPurpose::WireGuard
+        ) {
+            let pk = x25519_public_key(&seed);
+            entry.insert("x25519_pubkey_hex".into(),
+                serde_json::Value::String(hex::encode(pk.as_bytes())));
+        }
+
+        flat.insert(format!("{:?}", purpose), serde_json::Value::Object(entry));
+    }
+
+    // Identity hash
+    let signing_seed = d.derive(KeyPurpose::Signing);
+    let signing_vk = ed25519_verifying_key(&signing_seed);
+    let id_digest = Sha256::digest(signing_vk.as_bytes());
+    let identity_hash = hex::encode(&id_digest[..16]);
+
+    // Parameterized
+    let mut parameterized = serde_json::Map::new();
+    let ssh_gh = d.derive_ssh_user_key("github").unwrap();
+    parameterized.insert("ssh_user/github".into(),
+        serde_json::Value::String(hex::encode(&ssh_gh)));
+    let agent = d.derive_agent_key("omegon-primary").unwrap();
+    parameterized.insert("agent/omegon-primary".into(),
+        serde_json::Value::String(hex::encode(&agent)));
+    let (i2p_s, i2p_e) = d.derive_i2p_service("forge").unwrap();
+    parameterized.insert("i2p_service/forge/signing".into(),
+        serde_json::Value::String(hex::encode(&i2p_s)));
+    parameterized.insert("i2p_service/forge/encryption".into(),
+        serde_json::Value::String(hex::encode(&i2p_e)));
+    let onion = d.derive_onion_service("forge").unwrap();
+    parameterized.insert("onion_service/forge".into(),
+        serde_json::Value::String(hex::encode(&onion)));
+
+    let vectors = serde_json::json!({
+        "root_secret_hex": hex::encode(&TEST_ROOT),
+        "hkdf_salt": "styrene-identity-v1",
+        "identity_hash": identity_hash,
+        "flat_purposes": flat,
+        "parameterized": parameterized,
+    });
+
+    // Verify the JSON is well-formed
+    let json_str = serde_json::to_string_pretty(&vectors).unwrap();
+    assert!(json_str.len() > 500, "reference vectors too small");
+
+    // Verify key fields exist
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    assert!(parsed["identity_hash"].is_string());
+    assert!(parsed["flat_purposes"]["Signing"]["seed_hex"].is_string());
+    assert!(parsed["flat_purposes"]["Signing"]["ed25519_pubkey_hex"].is_string());
+    assert!(parsed["flat_purposes"]["RnsEncryption"]["x25519_pubkey_hex"].is_string());
+    assert!(parsed["flat_purposes"]["I2pSigning"]["ed25519_pubkey_hex"].is_string());
+    assert!(parsed["flat_purposes"]["Tor"]["ed25519_pubkey_hex"].is_string());
+    assert!(parsed["parameterized"]["ssh_user/github"].is_string());
+    assert!(parsed["parameterized"]["agent/omegon-primary"].is_string());
+    assert!(parsed["parameterized"]["i2p_service/forge/signing"].is_string());
+    assert!(parsed["parameterized"]["onion_service/forge"].is_string());
+
+    // Print for manual inspection / export
+    // Uncomment to dump: eprintln!("{json_str}");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Layer 15: Concurrent Derivation Safety
+// ═══════════════════════════════════════════════════════════════════
+
+/// Multiple threads deriving from the same root must produce identical results.
+/// This verifies there's no shared mutable state in the derivation path.
+#[test]
+fn concurrent_derivation_is_deterministic() {
+    use std::sync::Arc;
+    use std::thread;
+
+    let root = Arc::new(TEST_ROOT);
+    let mut handles = vec![];
+
+    for purpose_idx in 0..KeyPurpose::all().len() {
+        let root = Arc::clone(&root);
+        handles.push(thread::spawn(move || {
+            let d = KeyDeriver::new(&root);
+            let purpose = KeyPurpose::all()[purpose_idx];
+            let key = d.derive(purpose);
+            (purpose_idx, key)
+        }));
+    }
+
+    // Collect results
+    let mut results: Vec<(usize, [u8; 32])> = handles
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .collect();
+    results.sort_by_key(|(idx, _)| *idx);
+
+    // Verify against single-threaded derivation
+    let d = KeyDeriver::new(&TEST_ROOT);
+    for (idx, key) in &results {
+        let expected = d.derive(KeyPurpose::all()[*idx]);
+        assert_eq!(
+            key, &expected,
+            "concurrent derivation mismatch for purpose index {idx}"
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Layer 16: Statistical — Collision Resistance
+// ═══════════════════════════════════════════════════════════════════
+
 /// 1000 random roots must produce 1000 unique identity hashes.
 /// (128-bit hash space, collision probability ≈ 0 for 1000 samples)
 #[test]

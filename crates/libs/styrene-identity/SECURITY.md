@@ -7,6 +7,7 @@
 - **Pinned test vectors** ensure derivation stability across versions
 - **Ed25519** signing via `ed25519-dalek` (pinned to `=2.1.1`)
 - **Argon2id** with hardened parameters (m=64MiB, t=3, p=1) for file-based encryption
+- **Versioned file format** with `STID` magic bytes and version marker (backward-compatible with legacy headerless files)
 
 ## Key Material Lifecycle
 
