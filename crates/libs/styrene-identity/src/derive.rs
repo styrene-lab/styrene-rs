@@ -79,7 +79,7 @@ pub enum KeyPurpose {
 
     /// THE identity signing key (Ed25519).
     /// Used for: mesh signing, git commits, personal attribution.
-    /// Identity hash = SHA-256(pubkey)[:16].
+    /// Identity hash = SHA-256(pubkey) truncated to 16 bytes.
     /// This IS you.
     Signing,
 

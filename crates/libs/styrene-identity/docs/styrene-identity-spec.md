@@ -605,13 +605,17 @@ Level-2 info strings are in a separate HKDF tree (different IKM AND different sa
 | YubiKey FIDO2 salt | `SHA-256(b"styrene-identity-root-v1")` (32 bytes) | hmac-secret extension |
 | YubiKey RP ID | `"styrene.mesh"` | FIDO2 relying party |
 | YubiKey user ID | `b"styrene-operator"` | FIDO2 user entity |
-| File format | `[salt:32][nonce:12][ciphertext:32+16]` (92 bytes) | Tier D identity file |
+| File format (v1) | `STID[version:1][salt:32][nonce:12][ciphertext:32+16]` (97 bytes) | Tier D identity file |
+| File format (legacy) | `[salt:32][nonce:12][ciphertext:32+16]` (92 bytes) | Pre-v1 identity file (read-only compat) |
 | argon2id params | `m=65536 (64 MiB), t=3, p=1, Argon2id v0x13` | Key derivation from passphrase |
 | Level-2 salt (SSH user) | `b"styrene-identity-ssh-user-v1"` | Two-level HKDF for SSH user keys |
 | Level-2 salt (agent) | `b"styrene-identity-agent-v1"` | Two-level HKDF for agent keys |
 
-**Known limitation of the file format:**
-No magic bytes or version marker. Any 92-byte file is accepted and attempted for decryption. Wrong passphrase and file corruption are indistinguishable (both produce `DecryptionFailed`). A versioned file header should be added before widespread deployment.
+**File format versioning (v1):**
+The v1 format prepends `STID` magic bytes and a version byte (0x01) before the payload.
+Invalid magic → immediate rejection (not a Styrene identity file).
+Unknown version → clear error with the version number.
+Legacy 92-byte files (no header) are still accepted for backward compatibility.
 
 ## Appendix C: Test Vectors
 
@@ -661,11 +665,11 @@ Issues identified during adversarial review that should be resolved before produ
 |---|-------|----------|--------|
 | 1 | PRK not zeroized | High | **Resolved** — `KeyDeriver` stores raw PRK bytes with `Zeroize` on `Drop` |
 | 2 | Argon2 params unspecified | Medium | **Resolved** — pinned to `m=65536, t=3, p=1, Argon2id v0x13` |
-| 3 | File format has no magic bytes or version marker | Medium | Open |
-| 4 | `SignerChain` (automatic tier fallback) not yet implemented | Medium | Open |
+| 3 | File format has no magic bytes or version marker | Medium | **Resolved** — `STID` magic + version byte header; legacy 92-byte files still accepted |
+| 4 | `SignerChain` (automatic tier fallback) not yet implemented | Medium | **Resolved** — `SignerChain` struct with tier-ordered fallback, status reporting |
 | 5 | Empty SSH user labels and agent names silently accepted | Low | **Resolved** — `DeriveError::EmptyLabel` returned |
 | 6 | Level-2 HKDF reuses same salt as level-1 | Low | **Resolved** — distinct salts per family (`styrene-identity-agent-v1`, `styrene-identity-ssh-user-v1`) |
-| 7 | `DerivedKeys` struct contains 4 of 7 flat purposes; `derive_all()` name is misleading | Low | Open |
+| 7 | `DerivedKeys` struct contains 4 of 7 flat purposes; `derive_all()` name is misleading | Low | **Resolved** — `DerivedKeys` now contains all 7 flat purposes |
 | 8 | No identity binding mechanism | Medium | Deferred to identity manifest spec |
 | 9 | Forward compatibility: no mechanism for v1/v2 key coexistence during transition | Medium | Deferred |
 | 10 | PIN/passphrase via env vars | Medium | **Resolved** — `PinProvider` and `PassphraseProvider` traits injected |
