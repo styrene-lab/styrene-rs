@@ -9,7 +9,7 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 /// Create an Ed25519 signing key from a 32-byte seed.
 ///
-/// The seed is typically from `KeyDeriver::derive(KeyPurpose::RnsSigning)`,
+/// The seed is typically from `KeyDeriver::derive(KeyPurpose::Signing)`,
 /// `KeyDeriver::ssh_host_seed()`, or `KeyDeriver::derive_ssh_user_key(label)`.
 pub fn ed25519_signing_key(seed: &[u8; 32]) -> SigningKey {
     SigningKey::from_bytes(seed)

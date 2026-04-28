@@ -229,7 +229,7 @@ impl IdentitySigner for YubiKeySigner {
     async fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignerError> {
         let root = self.root_secret().await?;
         let deriver = crate::derive::KeyDeriver::new(root.as_bytes());
-        let mut seed = deriver.derive(crate::derive::KeyPurpose::RnsSigning);
+        let mut seed = deriver.derive(crate::derive::KeyPurpose::Signing);
         let sig = crate::pubkey::sign_with_seed(&seed, data);
         seed.zeroize();
         Ok(sig.to_vec())
