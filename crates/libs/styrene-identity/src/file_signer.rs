@@ -23,12 +23,21 @@ use zeroize::Zeroize;
 
 use crate::signer::{IdentitySigner, RootSecret, SignerError, SignerTier};
 
+/// File format magic bytes: "STID" (Styrene Identity).
+const MAGIC: &[u8; 4] = b"STID";
+/// File format version. Increment when the format changes.
+const FORMAT_VERSION: u8 = 1;
+/// Header: magic(4) + version(1) = 5 bytes.
+const HEADER_LEN: usize = MAGIC.len() + 1;
+
 const SALT_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
 const SECRET_LEN: usize = 32;
 const TAG_LEN: usize = 16;
-/// Expected file size for an encrypted identity file (salt + nonce + ciphertext + tag).
-pub const FILE_LEN: usize = SALT_LEN + NONCE_LEN + SECRET_LEN + TAG_LEN;
+/// Expected file size: header(5) + salt(32) + nonce(12) + ciphertext(32+16) = 97 bytes.
+pub const FILE_LEN: usize = HEADER_LEN + SALT_LEN + NONCE_LEN + SECRET_LEN + TAG_LEN;
+/// Legacy file size (v0 format without header).
+const LEGACY_FILE_LEN: usize = SALT_LEN + NONCE_LEN + SECRET_LEN + TAG_LEN;
 
 /// Hardened Argon2id parameters.
 /// m=65536 KiB (64 MiB), t=3 iterations, p=1 parallelism.
@@ -180,6 +189,8 @@ impl FileSigner {
             .map_err(|e| SignerError::SigningFailed(format!("encrypt: {e}")))?;
 
         let mut file_data = Vec::with_capacity(FILE_LEN);
+        file_data.extend_from_slice(MAGIC);
+        file_data.push(FORMAT_VERSION);
         file_data.extend_from_slice(&salt);
         file_data.extend_from_slice(&nonce_bytes);
         file_data.extend_from_slice(&ciphertext);
@@ -187,18 +198,34 @@ impl FileSigner {
     }
 
     /// Load and decrypt the root secret.
+    ///
+    /// Accepts both the current versioned format (v1, 97 bytes with STID header)
+    /// and the legacy headerless format (92 bytes) for backward compatibility.
     pub fn load(&self, passphrase: &[u8]) -> Result<RootSecret, SignerError> {
         let file_data = std::fs::read(&self.path)?;
-        if file_data.len() != FILE_LEN {
+
+        // Determine format: versioned (has STID header) or legacy (no header).
+        let payload = if file_data.len() == FILE_LEN && file_data.starts_with(MAGIC) {
+            let version = file_data[MAGIC.len()];
+            if version != FORMAT_VERSION {
+                return Err(SignerError::DecryptionFailed(format!(
+                    "unsupported identity file version: {version} (expected {FORMAT_VERSION})"
+                )));
+            }
+            &file_data[HEADER_LEN..]
+        } else if file_data.len() == LEGACY_FILE_LEN {
+            // Legacy v0 format without header — still supported for migration.
+            &file_data[..]
+        } else {
             return Err(SignerError::DecryptionFailed(format!(
-                "invalid file size: {} (expected {FILE_LEN})",
+                "invalid identity file: {} bytes (expected {FILE_LEN} or {LEGACY_FILE_LEN})",
                 file_data.len()
             )));
-        }
+        };
 
-        let salt = &file_data[..SALT_LEN];
-        let nonce_bytes = &file_data[SALT_LEN..SALT_LEN + NONCE_LEN];
-        let ciphertext = &file_data[SALT_LEN + NONCE_LEN..];
+        let salt = &payload[..SALT_LEN];
+        let nonce_bytes = &payload[SALT_LEN..SALT_LEN + NONCE_LEN];
+        let ciphertext = &payload[SALT_LEN + NONCE_LEN..];
 
         // Derive key from passphrase (hardened params)
         let mut key = [0u8; 32];
@@ -250,7 +277,7 @@ impl IdentitySigner for FileSigner {
     async fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignerError> {
         let root = self.root_secret().await?;
         let deriver = crate::derive::KeyDeriver::new(root.as_bytes());
-        let mut seed = deriver.derive(crate::derive::KeyPurpose::RnsSigning);
+        let mut seed = deriver.derive(crate::derive::KeyPurpose::Signing);
         let sig = crate::pubkey::sign_with_seed(&seed, data);
         seed.zeroize();
         Ok(sig.to_vec())
@@ -329,8 +356,8 @@ mod tests {
         let keys = crate::derive::derive_keys(secret.as_bytes());
 
         assert_ne!(keys.rns_encryption, [0u8; 32]);
-        assert_ne!(keys.rns_signing, [0u8; 32]);
-        assert_ne!(keys.rns_encryption, keys.rns_signing);
+        assert_ne!(keys.signing, [0u8; 32]);
+        assert_ne!(keys.rns_encryption, keys.signing);
     }
 
     #[test]
@@ -352,7 +379,7 @@ mod tests {
         // Verify with the matching public key
         let root = signer.load(passphrase).unwrap();
         let deriver = crate::derive::KeyDeriver::new(root.as_bytes());
-        let seed = deriver.derive(crate::derive::KeyPurpose::RnsSigning);
+        let seed = deriver.derive(crate::derive::KeyPurpose::Signing);
         let vk = crate::pubkey::ed25519_verifying_key(&seed);
 
         let sig = ed25519_dalek::Signature::from_bytes(sig_bytes.as_slice().try_into().unwrap());

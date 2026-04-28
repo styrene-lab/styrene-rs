@@ -39,4 +39,4 @@ pub mod yubikey_signer;
 pub use derive::{
     derive_key, derive_keys, validate_label, DeriveError, DerivedKeys, KeyDeriver, KeyPurpose,
 };
-pub use signer::{IdentitySigner, SignerError, SignerTier};
+pub use signer::{IdentitySigner, SignerChain, SignerError, SignerTier};

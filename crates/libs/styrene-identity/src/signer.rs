@@ -97,6 +97,79 @@ impl std::fmt::Debug for RootSecret {
     }
 }
 
+/// Ordered chain of signers — tries each in tier order (A→B→C→D) until
+/// one succeeds. This is the automatic fallback mechanism described in the spec.
+///
+/// ```text
+/// SignerChain [YubiKeySigner, FileSigner]
+///   1. Try YubiKeySigner.is_available() → false (no YubiKey plugged in)
+///   2. Try FileSigner.is_available() → true
+///   3. Use FileSigner
+/// ```
+pub struct SignerChain {
+    signers: Vec<Box<dyn IdentitySigner>>,
+}
+
+impl SignerChain {
+    /// Create a signer chain from a list of signers. They will be tried in
+    /// the given order — callers should sort by tier (highest security first).
+    pub fn new(signers: Vec<Box<dyn IdentitySigner>>) -> Self {
+        Self { signers }
+    }
+
+    /// Create a signer chain sorted by tier (A before D).
+    pub fn new_sorted(mut signers: Vec<Box<dyn IdentitySigner>>) -> Self {
+        signers.sort_by_key(|s| s.tier());
+        Self { signers }
+    }
+
+    /// Find the first available signer, or None.
+    pub fn available(&self) -> Option<&dyn IdentitySigner> {
+        self.signers.iter().find(|s| s.is_available()).map(|s| s.as_ref())
+    }
+
+    /// List all signers with their availability status.
+    pub fn status(&self) -> Vec<(&str, SignerTier, bool)> {
+        self.signers
+            .iter()
+            .map(|s| (s.label(), s.tier(), s.is_available()))
+            .collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl IdentitySigner for SignerChain {
+    fn tier(&self) -> SignerTier {
+        self.available().map(|s| s.tier()).unwrap_or(SignerTier::EncryptedFile)
+    }
+
+    fn label(&self) -> &str {
+        self.available().map(|s| s.label()).unwrap_or("(no signer available)")
+    }
+
+    fn is_available(&self) -> bool {
+        self.signers.iter().any(|s| s.is_available())
+    }
+
+    async fn root_secret(&self) -> Result<RootSecret, SignerError> {
+        for signer in &self.signers {
+            if signer.is_available() {
+                return signer.root_secret().await;
+            }
+        }
+        Err(SignerError::Unavailable("no signer available in chain".into()))
+    }
+
+    async fn sign(&self, data: &[u8]) -> Result<Vec<u8>, SignerError> {
+        for signer in &self.signers {
+            if signer.is_available() {
+                return signer.sign(data).await;
+            }
+        }
+        Err(SignerError::Unavailable("no signer available in chain".into()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +187,150 @@ mod tests {
         assert!(SignerTier::HardwareHsm < SignerTier::DeviceHsm);
         assert!(SignerTier::DeviceHsm < SignerTier::CredentialManager);
         assert!(SignerTier::CredentialManager < SignerTier::EncryptedFile);
+    }
+
+    // ── SignerChain tests ───────────────────────────────────────────────────
+
+    /// A mock signer for testing the chain.
+    struct MockSigner {
+        tier: SignerTier,
+        name: &'static str,
+        available: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl IdentitySigner for MockSigner {
+        fn tier(&self) -> SignerTier {
+            self.tier
+        }
+        fn label(&self) -> &str {
+            self.name
+        }
+        fn is_available(&self) -> bool {
+            self.available
+        }
+        async fn root_secret(&self) -> Result<RootSecret, SignerError> {
+            if self.available {
+                Ok(RootSecret::new([self.tier as u8; 32]))
+            } else {
+                Err(SignerError::Unavailable(self.name.into()))
+            }
+        }
+        async fn sign(&self, _data: &[u8]) -> Result<Vec<u8>, SignerError> {
+            if self.available {
+                Ok(vec![self.tier as u8; 64])
+            } else {
+                Err(SignerError::Unavailable(self.name.into()))
+            }
+        }
+    }
+
+    #[test]
+    fn chain_selects_first_available() {
+        let chain = SignerChain::new(vec![
+            Box::new(MockSigner {
+                tier: SignerTier::HardwareHsm,
+                name: "yubikey",
+                available: false,
+            }),
+            Box::new(MockSigner {
+                tier: SignerTier::EncryptedFile,
+                name: "file",
+                available: true,
+            }),
+        ]);
+        assert!(chain.is_available());
+        assert_eq!(chain.label(), "file");
+        assert_eq!(chain.tier(), SignerTier::EncryptedFile);
+    }
+
+    #[test]
+    fn chain_prefers_higher_tier() {
+        let chain = SignerChain::new(vec![
+            Box::new(MockSigner {
+                tier: SignerTier::HardwareHsm,
+                name: "yubikey",
+                available: true,
+            }),
+            Box::new(MockSigner {
+                tier: SignerTier::EncryptedFile,
+                name: "file",
+                available: true,
+            }),
+        ]);
+        assert_eq!(chain.label(), "yubikey");
+        assert_eq!(chain.tier(), SignerTier::HardwareHsm);
+    }
+
+    #[test]
+    fn chain_empty_is_unavailable() {
+        let chain = SignerChain::new(vec![]);
+        assert!(!chain.is_available());
+    }
+
+    #[test]
+    fn chain_all_unavailable() {
+        let chain = SignerChain::new(vec![
+            Box::new(MockSigner {
+                tier: SignerTier::HardwareHsm,
+                name: "yubikey",
+                available: false,
+            }),
+            Box::new(MockSigner {
+                tier: SignerTier::EncryptedFile,
+                name: "file",
+                available: false,
+            }),
+        ]);
+        assert!(!chain.is_available());
+        assert_eq!(chain.label(), "(no signer available)");
+    }
+
+    #[tokio::test]
+    async fn chain_sign_uses_first_available() {
+        let chain = SignerChain::new(vec![
+            Box::new(MockSigner {
+                tier: SignerTier::HardwareHsm,
+                name: "yubikey",
+                available: false,
+            }),
+            Box::new(MockSigner {
+                tier: SignerTier::EncryptedFile,
+                name: "file",
+                available: true,
+            }),
+        ]);
+        let sig = chain.sign(b"test").await.unwrap();
+        assert_eq!(sig[0], SignerTier::EncryptedFile as u8);
+    }
+
+    #[tokio::test]
+    async fn chain_sign_fails_when_none_available() {
+        let chain = SignerChain::new(vec![Box::new(MockSigner {
+            tier: SignerTier::HardwareHsm,
+            name: "yubikey",
+            available: false,
+        })]);
+        assert!(chain.sign(b"test").await.is_err());
+    }
+
+    #[test]
+    fn chain_status_reports_all() {
+        let chain = SignerChain::new(vec![
+            Box::new(MockSigner {
+                tier: SignerTier::HardwareHsm,
+                name: "yubikey",
+                available: false,
+            }),
+            Box::new(MockSigner {
+                tier: SignerTier::EncryptedFile,
+                name: "file",
+                available: true,
+            }),
+        ]);
+        let status = chain.status();
+        assert_eq!(status.len(), 2);
+        assert_eq!(status[0], ("yubikey", SignerTier::HardwareHsm, false));
+        assert_eq!(status[1], ("file", SignerTier::EncryptedFile, true));
     }
 }
