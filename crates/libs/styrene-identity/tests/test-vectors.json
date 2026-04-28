@@ -1,0 +1,84 @@
+{
+  "flat_purposes": {
+    "Age": {
+      "curve": "x25519",
+      "info": "styrene-age-v1",
+      "pubkey_hex": "cb8b9b9c17eb6f81d5f809818b9b6423550a281b05c7c9ae9592b8b2b611390c",
+      "seed_hex": "4ddcaf4dde4bbd9e1cd755ecbdd1ffbb08659551df7860dc00645ff128fcba81"
+    },
+    "I2pEncryption": {
+      "curve": "x25519",
+      "info": "styrene-i2p-encryption-v1",
+      "pubkey_hex": "5ccec64e8e32533f1edef5357e4e59fa657a658ecc0dc40012ff9a2ae6aae268",
+      "seed_hex": "ad3c896f4c1104fb7a136333fb3ed12ac8346c1e8432e0494a532cedbdc69bd2"
+    },
+    "I2pSigning": {
+      "curve": "ed25519",
+      "info": "styrene-i2p-signing-v1",
+      "pubkey_hex": "0591ea2ac12f258a7230a51033eebc687973800d39f1743d1d204a2bcff5b9da",
+      "seed_hex": "5512a4999c2755375430d059b4a2412216f1190036582bae7833cde229918f84"
+    },
+    "RnsEncryption": {
+      "curve": "x25519",
+      "info": "styrene-rns-encryption-v1",
+      "pubkey_hex": "9ce5cac16f544c770a1e35a780a680a2e3f7f92173c1878e59600e4070c2e72e",
+      "seed_hex": "aefdbd63fb6746c2edb73bba3bcb34f61909077f65fe033c9372b55f6ace0c0c"
+    },
+    "Signing": {
+      "curve": "ed25519",
+      "info": "styrene-rns-signing-v1",
+      "pubkey_hex": "f75dbab378b9fc79afe7c1aab0e50c6811fdb67ea3826bec8cadb07211498bef",
+      "seed_hex": "cca4a2bbaff94149aa3a9e4f5690a5d0a996da327e73b5e7bd59027706be736d"
+    },
+    "SshHost": {
+      "curve": "ed25519",
+      "info": "styrene-ssh-host-v1",
+      "pubkey_hex": "58691c4cb691197952e2eb983ba320060461e0530b640249dff1e3026eb561d1",
+      "seed_hex": "9d87179ac9ae1eb624bdc8c973a97c601c79d429c508c1b88059e728c6a7fa1c"
+    },
+    "Tor": {
+      "curve": "ed25519",
+      "info": "styrene-tor-v1",
+      "pubkey_hex": "1685ae9b5a6a9ed53ce9fcd716ebd360b8f19065de9543ce6186ec38e89ec5f3",
+      "seed_hex": "8ec4e21b91391089dda905a8ab98862b1015d2fde407a45e5ba709c06f1726ea"
+    },
+    "WireGuard": {
+      "curve": "x25519",
+      "info": "styrene-wireguard-v1",
+      "pubkey_hex": "a180cc9121f6e1d2c7c7a0a80b91b2e54aaae1489baab4a2b38731a15b33f510",
+      "seed_hex": "3d16bf14bd383b8f485b9662fa91e0857586698d4eff76e39a2781aba548d7c4"
+    },
+    "Yggdrasil": {
+      "curve": "ed25519",
+      "info": "styrene-yggdrasil-v1",
+      "pubkey_hex": "a0f816514de715e83024d8d4e40b38647aaea613aa1cec70789e81930a53a419",
+      "seed_hex": "0709ca1cd9a0e813c16612be3b9b3daeb60dca6053320a35332825d246f6f4ab"
+    }
+  },
+  "hkdf_salt": "styrene-identity-v1",
+  "identity_hash": "6279e31aff9bc151638ac305d88ab6bc",
+  "parameterized": {
+    "agent/auspex-deploy": "9aaad67d37260b9858d74b73b6f5de73d63bfbcb17b321a9baaa29b638e69666",
+    "agent/forge": "7c1e76a2af06ad62c45aa9da3de964487225760612fe8904cbc7fe41ef3b24fe",
+    "agent/github": "8842bc8061c7db2b4c8daaba661ff8bb9152d0db1037f3b76d563db59e2de838",
+    "agent/omegon-primary": "4dd66edcda091a5e3d15aa3fb8ec32d81e212d94760b61915b1d6f204b0672e2",
+    "agent/wiki": "19bd16f0b94033b905014b7ccb9f6db4f4d0ed1beab9df2f43046a7a68fb43d9",
+    "agent/work": "5013eac2d481f58187ee3920e57d2eaf54202383db15d8f650c35e8418f1c774",
+    "i2p/chat/encryption": "b89144edfb7dc1a2956acdf39ed505fc191de1b9cf90f859ee50b57cb6cbb046",
+    "i2p/chat/signing": "a13a5a4eed330eff0041a2570aff429a5ee1473103c3013cf51c0a46c8c005ab",
+    "i2p/forge/encryption": "2f80f0264fa4301de39b30fb892f27e1038f6ba3048e9c0d574235bdd670a08e",
+    "i2p/forge/signing": "c4ad7112b627a72d152777a35ef68b9a6ee522b59115fac5229e3c7d2e8e3ef6",
+    "i2p/wiki/encryption": "24af1d8798d4f3a302df048d80f12cfb63bfafa6d53b6c7558c24e0b22df3326",
+    "i2p/wiki/signing": "9ce97237a1e87176db1d5c7c30d8f68eefd4ce17ee6266d9965e1bf64a4a565e",
+    "onion/chat": "fd8d07fc9d16971ace8eb0b7fe927de0608bf8201510ca13d5bce80c87b8b74d",
+    "onion/forge": "cfb05d96551a591e4d06a7ffc2fb7caf3e95dfbcec45a214f95b6cd01302bd5a",
+    "onion/wiki": "7dc943de289c7d04e168bd0c94c6bb2ec885a2a9262671f2365bdcedfdcc90cf",
+    "ssh_user/auspex-deploy": "ff64ac0cd11943a661a8f8ef95c466be5169ff8c73ce69e832ff4e0c464bd216",
+    "ssh_user/forge": "cc0ab60ea458ef42f3cc6d57c0e8fbdf8c3d2aee655d65ef9cd57fe482a2800b",
+    "ssh_user/github": "3c261af80e084a637fd20e0f7274a4106702894f0d23c47e855f6c9adce20d75",
+    "ssh_user/omegon-primary": "a012283c9d06a3c99e0b712d140bec356de3cbfe995738cde5395d49995e9a1e",
+    "ssh_user/wiki": "f3ea00dc8dca15f380952a7d6f351222803d029aaa555961151d1df9ba85c0f7",
+    "ssh_user/work": "47ccae2c007f8c9c59d1a58cdc83bab91e71a0944fd6e1179e2d732c0e6c580c"
+  },
+  "root_secret_hex": "4242424242424242424242424242424242424242424242424242424242424242"
+}
