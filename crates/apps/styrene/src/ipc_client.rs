@@ -89,10 +89,12 @@ impl DaemonClient {
         Ok(frame)
     }
 
-    /// Set a custom timeout for the next RPC call.
-    fn with_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.next_timeout = Some(timeout);
-        self
+    /// Set a custom timeout for the next RPC call only.
+    /// Consumed by `take()` inside `rpc()` — if `rpc()` is never called,
+    /// the timeout carries over to the next call. Always call `rpc()` after
+    /// `with_timeout()`.
+    fn with_timeout(&mut self, secs: u64) {
+        self.next_timeout = Some(Duration::from_secs(secs.saturating_add(5)));
     }
 
     pub async fn ping(&mut self) -> bool {
@@ -172,7 +174,7 @@ impl DaemonClient {
         let mut p = HashMap::new();
         p.insert("destination_hash".into(), MpValue::String(dest.into()));
         p.insert("timeout".into(), MpValue::Integer(timeout_secs.into()));
-        self.with_timeout(Duration::from_secs(timeout_secs.saturating_add(5)));
+        self.with_timeout(timeout_secs);
         let frame = self.rpc(MessageType::CmdDeviceStatus, &p).await?;
         Ok(frame.payload)
     }
@@ -191,7 +193,7 @@ impl DaemonClient {
             args.iter().map(|a| MpValue::String(a.clone().into())).collect();
         p.insert("args".into(), MpValue::Array(mp_args));
         p.insert("timeout".into(), MpValue::Integer(timeout_secs.into()));
-        self.with_timeout(Duration::from_secs(timeout_secs.saturating_add(5)));
+        self.with_timeout(timeout_secs);
         let frame = self.rpc(MessageType::CmdExec, &p).await?;
         Ok(frame.payload)
     }
