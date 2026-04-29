@@ -252,9 +252,16 @@ pub(crate) async fn fleet_exec(
 
     if !stdout.is_empty() {
         print!("{stdout}");
+        // Ensure newline before the exit code line
+        if !stdout.ends_with('\n') {
+            println!();
+        }
     }
     if !stderr.is_empty() {
         eprint!("{stderr}");
+        if !stderr.ends_with('\n') {
+            eprintln!();
+        }
     }
 
     if exit_code == 0 {
