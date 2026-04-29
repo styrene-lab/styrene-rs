@@ -5,11 +5,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(
-    name = "styrene",
-    about = "Styrene mesh node — daemon, TUI, and CLI",
-    version
-)]
+#[command(name = "styrene", about = "Styrene mesh node — daemon, TUI, and CLI", version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -88,4 +84,44 @@ pub enum Command {
     /// Show or modify daemon configuration
     #[cfg(feature = "cli")]
     Config,
+
+    /// Fleet management — query and control remote nodes
+    #[cfg(feature = "cli")]
+    Fleet {
+        #[command(subcommand)]
+        action: FleetAction,
+    },
+}
+
+#[cfg(feature = "cli")]
+#[derive(Subcommand)]
+pub enum FleetAction {
+    /// Show status of all known nodes or a specific node
+    Status {
+        /// Specific node hash to query (all nodes if omitted)
+        node: Option<String>,
+        /// Timeout in seconds for remote queries
+        #[arg(long, default_value = "10")]
+        timeout: u64,
+    },
+    /// Execute a command on a remote node
+    Exec {
+        /// Target node destination hash
+        node: String,
+        /// Command to execute
+        cmd: String,
+        /// Command arguments
+        args: Vec<String>,
+        /// Timeout in seconds
+        #[arg(long, default_value = "30")]
+        timeout: u64,
+    },
+    /// Reboot a remote node
+    Reboot {
+        /// Target node destination hash
+        node: String,
+        /// Delay before reboot in seconds
+        #[arg(long, default_value = "0")]
+        delay: u64,
+    },
 }
