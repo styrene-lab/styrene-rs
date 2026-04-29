@@ -125,8 +125,8 @@ pub(crate) async fn messages(socket: Option<&Path>, peer: &str, limit: u32) -> a
 
     for msg in &msgs {
         let direction = if msg.is_outgoing { style("→").cyan() } else { style("←").green() };
-        let content_preview = if msg.content.len() > 60 {
-            format!("{}…", &msg.content[..60])
+        let content_preview = if msg.content.chars().count() > 60 {
+            format!("{}…", truncate(&msg.content, 60))
         } else {
             msg.content.clone()
         };

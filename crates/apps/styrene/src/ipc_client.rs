@@ -172,7 +172,7 @@ impl DaemonClient {
         let mut p = HashMap::new();
         p.insert("destination_hash".into(), MpValue::String(dest.into()));
         p.insert("timeout".into(), MpValue::Integer(timeout_secs.into()));
-        self.with_timeout(Duration::from_secs(timeout_secs + 5));
+        self.with_timeout(Duration::from_secs(timeout_secs.saturating_add(5)));
         let frame = self.rpc(MessageType::CmdDeviceStatus, &p).await?;
         Ok(frame.payload)
     }
@@ -191,7 +191,7 @@ impl DaemonClient {
             args.iter().map(|a| MpValue::String(a.clone().into())).collect();
         p.insert("args".into(), MpValue::Array(mp_args));
         p.insert("timeout".into(), MpValue::Integer(timeout_secs.into()));
-        self.with_timeout(Duration::from_secs(timeout_secs + 5));
+        self.with_timeout(Duration::from_secs(timeout_secs.saturating_add(5)));
         let frame = self.rpc(MessageType::CmdExec, &p).await?;
         Ok(frame.payload)
     }
