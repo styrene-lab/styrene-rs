@@ -1,0 +1,37 @@
+# Multi-stage build for the operator (CLI-only) test container.
+#
+# Build context must be the workspace root (styrene-rs/):
+#   docker build -f tests/mesh/Dockerfile.operator -t styrene-operator:latest .
+
+# --- Stage 1: Build ---
+FROM rust:1.85-slim AS builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates/ crates/
+
+RUN cargo build --release -p styrene --no-default-features --features cli
+
+# --- Stage 2: Runtime ---
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       python3 ca-certificates curl git jq bash \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/target/release/styrene /usr/local/bin/styrene
+
+# Copy test harness and scenarios
+COPY tests/mesh/harness.sh /harness/harness.sh
+COPY tests/mesh/run_tests.sh /harness/run_tests.sh
+COPY tests/mesh/scenarios/ /harness/scenarios/
+
+RUN chmod +x /harness/run_tests.sh /harness/scenarios/*.sh
+
+CMD ["/harness/run_tests.sh"]

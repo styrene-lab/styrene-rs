@@ -1,0 +1,41 @@
+# Multi-stage build for styrened mesh test containers.
+#
+# Build context must be the workspace root (styrene-rs/):
+#   docker build -f tests/mesh/Dockerfile.styrened -t styrened-mesh:latest .
+
+# --- Stage 1: Build ---
+FROM rust:1.85-slim AS builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy workspace manifests first for layer caching
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates/ crates/
+
+RUN cargo build --release -p styrened -p styrene
+
+# --- Stage 2: Runtime ---
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       python3 ca-certificates curl jq bash \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/target/release/styrened /usr/local/bin/styrened
+COPY --from=builder /build/target/release/styrene /usr/local/bin/styrene
+COPY tests/mesh/tcp_relay.py /relay/tcp_relay.py
+
+ENV STYRENE_RUNTIME_DIR=/run/styrene
+ENV STYRENE_DATA_DIR=/var/lib/styrene
+ENV PYTHONUNBUFFERED=1
+
+RUN mkdir -p "$STYRENE_RUNTIME_DIR" "$STYRENE_DATA_DIR"
+
+EXPOSE 4242 9001
+
+CMD ["styrened"]
