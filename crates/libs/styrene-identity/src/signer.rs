@@ -1,5 +1,6 @@
 //! IdentitySigner trait — abstract signing interface across hardware tiers.
 
+use rand_core::RngCore;
 use zeroize::Zeroize;
 
 /// Signer implementation tier — indicates trust level and key storage model.
@@ -88,6 +89,41 @@ impl RootSecret {
     /// Access the raw bytes.
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.bytes
+    }
+}
+
+impl RootSecret {
+    /// Generate an ephemeral root secret from the OS CSPRNG.
+    ///
+    /// The returned secret has **no relationship** to any persistent identity.
+    /// Use this for anonymous, pseudonymous, or one-time identities that must
+    /// not be linkable to your primary StyreneIdentity.
+    ///
+    /// The ephemeral root is never written to disk. Keys derived from it are
+    /// cryptographically independent of any file-backed or hardware-backed
+    /// identity. When the `RootSecret` is dropped, the bytes are zeroized.
+    ///
+    /// # When to use this
+    ///
+    /// - Anonymous RNS addresses for one-time communication
+    /// - Pseudonymous identities that must not be attributable
+    /// - Testing and development without touching real identity files
+    ///
+    /// # When NOT to use this
+    ///
+    /// - Any identity you need to recover later (there is no backup)
+    /// - Any identity you want attributed to you (use your persistent identity)
+    ///
+    /// ```
+    /// use styrene_identity::signer::RootSecret;
+    ///
+    /// let ephemeral = RootSecret::ephemeral();
+    /// // Derive keys, use them, drop — no trace left.
+    /// ```
+    pub fn ephemeral() -> Self {
+        let mut bytes = [0u8; 32];
+        rand_core::OsRng.fill_bytes(&mut bytes);
+        Self { bytes }
     }
 }
 
@@ -312,6 +348,43 @@ mod tests {
             available: false,
         })]);
         assert!(chain.sign(b"test").await.is_err());
+    }
+
+    // ── Ephemeral root tests ────────────────────────────────────────────────
+
+    #[test]
+    fn ephemeral_is_non_zero() {
+        let root = RootSecret::ephemeral();
+        assert_ne!(root.as_bytes(), &[0u8; 32], "CSPRNG should not produce all zeros");
+    }
+
+    #[test]
+    fn ephemeral_produces_unique_roots() {
+        let a = RootSecret::ephemeral();
+        let b = RootSecret::ephemeral();
+        assert_ne!(
+            a.as_bytes(),
+            b.as_bytes(),
+            "two ephemeral roots must be independent"
+        );
+    }
+
+    #[test]
+    fn ephemeral_is_unlinkable_to_fixed_root() {
+        let fixed = RootSecret::new([0x42u8; 32]);
+        let ephemeral = RootSecret::ephemeral();
+
+        // Derive the same purpose from both — they must differ
+        let d_fixed = crate::derive::KeyDeriver::new(fixed.as_bytes());
+        let d_ephemeral = crate::derive::KeyDeriver::new(ephemeral.as_bytes());
+
+        let k_fixed = d_fixed.derive(crate::derive::KeyPurpose::Signing);
+        let k_ephemeral = d_ephemeral.derive(crate::derive::KeyPurpose::Signing);
+
+        assert_ne!(
+            k_fixed, k_ephemeral,
+            "ephemeral keys must not match any fixed identity"
+        );
     }
 
     #[test]

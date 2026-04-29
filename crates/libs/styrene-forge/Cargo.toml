@@ -1,0 +1,16 @@
+[package]
+name = "styrene-forge"
+description = "Forge API types — ForgeClient trait, ForgeEndpoint, ForgeIssue, and data types for Forgejo/GitHub/GitLab integration. Shared contract for scribe, codex, omegon, and other ecosystem crates."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"
+
+[dev-dependencies]
+serde_json = { workspace = true }

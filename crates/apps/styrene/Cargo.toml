@@ -1,0 +1,42 @@
+[package]
+name = "styrene"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Styrene mesh node — daemon, TUI, and CLI in one binary"
+publish = false
+
+[[bin]]
+name = "styrene"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { workspace = true, features = ["derive", "env"] }
+console = "0.15"
+anyhow.workspace = true
+
+# IPC client (shared wire protocol from ipc-server)
+styrene-ipc = { path = "../../libs/styrene-ipc", version = "0.1.0" }
+styrene-ipc-server = { path = "../../libs/styrene-ipc-server", version = "0.1.0" }
+rmpv = { workspace = true, features = ["with-serde"] }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Daemon (feature-gated)
+styrened = { path = "../styrened", version = "0.1.0", optional = true }
+
+# TUI (feature-gated)
+styrene-tui-app = { package = "styrene-tui", path = "../styrene-tui", version = "0.0.1", optional = true }
+
+[features]
+default = ["daemon", "cli"]
+daemon = ["styrened"]
+tui = ["daemon", "cli", "styrene-tui-app"]
+cli = []
+
+[lints]
+workspace = true

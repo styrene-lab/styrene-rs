@@ -28,6 +28,12 @@ Passphrase and PIN are provided via trait-based providers (`PassphraseProvider`,
 
 Identity files are written with `mode(0o600)` set atomically at creation time via `OpenOptions` on Unix. No TOCTOU race between creation and permission setting.
 
+## Identity Linkability
+
+All keys derived from one root secret are deterministically linked. This is a feature for attribution and recovery, but a liability for anonymity. Derived keys do not provide unlinkability or deniability.
+
+For anonymous or pseudonymous use cases, use `RootSecret::ephemeral()` (no persistence, CSPRNG-generated, zeroized on drop) or a separate identity file. See `docs/unlinkability.md` for the detailed threat model, anti-patterns, and decision matrix.
+
 ## Accepted Risks
 
 ### A1. `Hkdf::from_prk()` intermediates not zeroized

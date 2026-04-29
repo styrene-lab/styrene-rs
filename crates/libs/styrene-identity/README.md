@@ -213,6 +213,26 @@ All keys trace back to the same root — one identity, multiple signers.
 
 See [SECURITY.md](SECURITY.md) for the full threat model and accepted risks.
 
+## Linkability warning
+
+**All keys derived from one root are cryptographically linked.** This is
+by design for attribution and recovery, but it means derived keys cannot
+provide anonymity. For anonymous or pseudonymous identities, use an
+independent root:
+
+```rust
+use styrene_identity::signer::RootSecret;
+
+// Ephemeral: CSPRNG-generated, no file, zeroized on drop
+let anon = RootSecret::ephemeral();
+
+// Or: separate persistent identity
+// nex identity init --path ~/.config/styrene/pseudonym.key
+```
+
+See [docs/unlinkability.md](docs/unlinkability.md) for the full model,
+anti-patterns, and decision matrix.
+
 ## Test vectors
 
 From a root secret of `0x42` repeated 32 times:
