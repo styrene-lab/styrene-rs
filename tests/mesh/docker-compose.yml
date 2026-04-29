@@ -1,0 +1,144 @@
+# Mesh integration test topology.
+#
+# Hub:   TCP server on :4242, relay on :9001 — bridges mesh-core and mesh-isolated
+# Alpha: TCP client -> hub, relay on :9002 — mesh-core
+# Beta:  TCP client -> hub, relay on :9003 — mesh-core
+# Gamma: TCP client -> hub, relay on :9004 — mesh-isolated
+# Operator: CLI only, connects via tcp://hub:9001 — mesh-core
+#
+# Usage:
+#   docker compose -f tests/mesh/docker-compose.yml up -d --build
+#   # operator runs tests automatically and exits
+#   docker compose -f tests/mesh/docker-compose.yml logs operator
+#   docker compose -f tests/mesh/docker-compose.yml down -v
+
+services:
+  hub:
+    build:
+      context: ../..
+      dockerfile: tests/mesh/Dockerfile.styrened
+    image: styrened-mesh:latest
+    container_name: mesh-hub
+    hostname: hub
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        styrened &
+        sleep 3
+        python3 /relay/tcp_relay.py "$${STYRENE_RUNTIME_DIR}/control.sock" 9001
+    volumes:
+      - ./configs/hub.toml:/etc/styrene/config.toml:ro
+      - ./tcp_relay.py:/relay/tcp_relay.py:ro
+    environment:
+      - STYRENE_CONFIG=/etc/styrene/config.toml
+    ports:
+      - "${MESH_HUB_PORT:-9001}:9001"
+    networks:
+      - mesh-core
+      - mesh-isolated
+
+  alpha:
+    build:
+      context: ../..
+      dockerfile: tests/mesh/Dockerfile.styrened
+    image: styrened-mesh:latest
+    container_name: mesh-alpha
+    hostname: alpha
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        sleep 5
+        styrened &
+        sleep 3
+        python3 /relay/tcp_relay.py "$${STYRENE_RUNTIME_DIR}/control.sock" 9002
+    depends_on:
+      - hub
+    volumes:
+      - ./configs/alpha.toml:/etc/styrene/config.toml:ro
+      - ./tcp_relay.py:/relay/tcp_relay.py:ro
+    environment:
+      - STYRENE_CONFIG=/etc/styrene/config.toml
+    ports:
+      - "${MESH_ALPHA_PORT:-9002}:9002"
+    networks:
+      - mesh-core
+
+  beta:
+    build:
+      context: ../..
+      dockerfile: tests/mesh/Dockerfile.styrened
+    image: styrened-mesh:latest
+    container_name: mesh-beta
+    hostname: beta
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        sleep 5
+        styrened &
+        sleep 3
+        python3 /relay/tcp_relay.py "$${STYRENE_RUNTIME_DIR}/control.sock" 9003
+    depends_on:
+      - hub
+    volumes:
+      - ./configs/beta.toml:/etc/styrene/config.toml:ro
+      - ./tcp_relay.py:/relay/tcp_relay.py:ro
+    environment:
+      - STYRENE_CONFIG=/etc/styrene/config.toml
+    ports:
+      - "${MESH_BETA_PORT:-9003}:9003"
+    networks:
+      - mesh-core
+
+  gamma:
+    build:
+      context: ../..
+      dockerfile: tests/mesh/Dockerfile.styrened
+    image: styrened-mesh:latest
+    container_name: mesh-gamma
+    hostname: gamma
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        sleep 5
+        styrened &
+        sleep 3
+        python3 /relay/tcp_relay.py "$${STYRENE_RUNTIME_DIR}/control.sock" 9004
+    depends_on:
+      - hub
+    volumes:
+      - ./configs/gamma.toml:/etc/styrene/config.toml:ro
+      - ./tcp_relay.py:/relay/tcp_relay.py:ro
+    environment:
+      - STYRENE_CONFIG=/etc/styrene/config.toml
+    ports:
+      - "${MESH_GAMMA_PORT:-9004}:9004"
+    networks:
+      - mesh-isolated
+
+  operator:
+    build:
+      context: ../..
+      dockerfile: tests/mesh/Dockerfile.operator
+    image: styrene-operator:latest
+    container_name: mesh-operator
+    hostname: operator
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        sleep 15
+        /harness/run_tests.sh
+    depends_on:
+      - hub
+      - alpha
+      - beta
+      - gamma
+    environment:
+      - STYRENE_SOCKET=tcp://hub:9001
+    networks:
+      - mesh-core
+
+networks:
+  mesh-core:
+    driver: bridge
+  mesh-isolated:
+    driver: bridge
