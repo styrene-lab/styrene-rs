@@ -89,6 +89,44 @@ impl<F: Fn() -> Result<Vec<u8>, SignerError> + Send + Sync> PassphraseProvider
     }
 }
 
+/// Passphrase provider that returns a fixed passphrase.
+///
+/// Simpler than [`ClosurePassphraseProvider`] for non-interactive use cases
+/// (scripts, daemons, tests). The passphrase is stored in memory for the
+/// lifetime of the provider — use [`ClosurePassphraseProvider`] if you need
+/// to fetch it on demand from a keychain or prompt.
+///
+/// ```ignore
+/// use styrene_identity::file_signer::{FileSigner, StaticPassphraseProvider};
+///
+/// let signer = FileSigner::new(
+///     "~/.config/styrene/identity.key",
+///     Box::new(StaticPassphraseProvider::new(b"my-passphrase")),
+/// );
+/// ```
+pub struct StaticPassphraseProvider {
+    passphrase: Vec<u8>,
+}
+
+impl StaticPassphraseProvider {
+    /// Create a provider that always returns the given passphrase.
+    pub fn new(passphrase: &[u8]) -> Self {
+        Self { passphrase: passphrase.to_vec() }
+    }
+}
+
+impl PassphraseProvider for StaticPassphraseProvider {
+    fn get_passphrase(&self) -> Result<Vec<u8>, SignerError> {
+        Ok(self.passphrase.clone())
+    }
+}
+
+impl Drop for StaticPassphraseProvider {
+    fn drop(&mut self) {
+        self.passphrase.zeroize();
+    }
+}
+
 impl FileSigner {
     /// Create a file signer for the given path with a passphrase provider.
     pub fn new(path: impl Into<PathBuf>, provider: Box<dyn PassphraseProvider>) -> Self {
@@ -97,10 +135,13 @@ impl FileSigner {
         Self { path, label, passphrase_provider: provider }
     }
 
-    /// Create a file signer with a static passphrase (for testing only).
-    #[cfg(test)]
-    pub fn with_static_passphrase(path: impl Into<PathBuf>, passphrase: &'static [u8]) -> Self {
-        Self::new(path, Box::new(ClosurePassphraseProvider { f: move || Ok(passphrase.to_vec()) }))
+    /// Create a file signer with a static passphrase.
+    ///
+    /// Convenience constructor for non-interactive use cases (scripts, daemons,
+    /// tests). For interactive CLI tools, prefer [`ClosurePassphraseProvider`]
+    /// with a prompt, or [`StaticPassphraseProvider`] directly.
+    pub fn with_static_passphrase(path: impl Into<PathBuf>, passphrase: &[u8]) -> Self {
+        Self::new(path, Box::new(StaticPassphraseProvider::new(passphrase)))
     }
 
     /// Default identity file path: `~/.config/styrene/identity.key`.

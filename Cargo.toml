@@ -15,9 +15,14 @@ members = [
   "crates/libs/styrene-rbac",
   "crates/libs/styrene-secrets",
   "crates/apps/styrened",
+  "crates/apps/styrene",
   "crates/apps/styrene-dx",
   "crates/apps/styrene-tui",
   "crates/bindings/styrene-native", "crates/libs/styrene-services",
+  "crates/libs/styrene-mqtt",
+  "crates/libs/styrene-forge",
+  "crates/libs/styrene-amcp",
+  "crates/tests/styrene-e2e",
 ]
 default-members = [
   "crates/libs/styrene-entropy",
@@ -36,6 +41,7 @@ default-members = [
   "crates/apps/styrened",
   # "crates/apps/styrene-dx",  # spike — build explicitly with -p
   "crates/apps/styrene-tui",
+  "crates/libs/styrene-amcp",
 ]
 
 [workspace.package]
@@ -44,6 +50,7 @@ edition = "2021"
 rust-version = "1.75"
 license = "MIT"
 repository = "https://github.com/styrene-lab/styrene-rs"
+authors = ["Styrene Labs"]
 
 [workspace.dependencies]
 anyhow = "1"
@@ -94,6 +101,13 @@ x25519-dalek = "2.0.1"
 async-trait = "0.1"
 thiserror = "1"
 zeroize = "1.8"
+tracing = "0.1"
+rumqttc = "0.25"
+rumqttd = "0.20"
+chrono = { version = "0.4", features = ["serde"] }
+futures-core = "0.3"
+pin-project-lite = "0.2"
+styrene-mqtt = { version = "0.1.0", path = "crates/libs/styrene-mqtt" }
 
 [profile.dev.package.styrene-rns]
 opt-level = 2

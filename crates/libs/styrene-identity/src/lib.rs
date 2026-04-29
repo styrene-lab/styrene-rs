@@ -66,6 +66,21 @@
 //!       └─ Expand(name) → per-agent signing Ed25519
 //! ```
 //!
+//! # Linkability warning
+//!
+//! **All keys derived from one root are cryptographically linked.** This is
+//! by design for attribution and recovery, but it means derived keys cannot
+//! provide anonymity or unlinkability. If you need an identity that cannot be
+//! traced to your primary identity, use [`ephemeral()`](signer::RootSecret::ephemeral) or a
+//! separate identity file. See `docs/unlinkability.md` for the full model.
+//!
+//! ```rust
+//! use styrene_identity::signer::RootSecret;
+//!
+//! // Anonymous: independent CSPRNG root, no link to any persistent identity
+//! let anon = RootSecret::ephemeral();
+//! ```
+//!
 //! # Security
 //!
 //! - All secret material is zeroized on drop ([`RootSecret`], [`KeyDeriver`], [`DerivedKeys`])
@@ -80,8 +95,13 @@
 //! [`DerivedKeys`]: derive::DerivedKeys
 
 pub mod derive;
+pub mod discover;
 #[cfg(feature = "file-signer")]
 pub mod file_signer;
+#[cfg(feature = "signing")]
+pub mod format;
+#[cfg(feature = "signing")]
+pub mod identity;
 #[cfg(feature = "signing")]
 pub mod pubkey;
 pub mod signer;
@@ -95,4 +115,7 @@ pub mod yubikey_signer;
 pub use derive::{
     derive_key, derive_keys, validate_label, DeriveError, DerivedKeys, KeyDeriver, KeyPurpose,
 };
+pub use discover::{discover, DiscoveredIdentity};
+#[cfg(feature = "signing")]
+pub use identity::{identity_hash, identity_pubkey, IdentityInfo, IDENTITY_HASH_BYTES};
 pub use signer::{IdentitySigner, SignerChain, SignerError, SignerTier};
