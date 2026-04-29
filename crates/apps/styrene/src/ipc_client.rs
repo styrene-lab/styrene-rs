@@ -15,13 +15,15 @@ use styrene_ipc::types::{
 };
 use styrene_ipc_server::wire::{self, Frame, MessageType, REQUEST_ID_SIZE};
 
-/// Timeout for RPC calls.
+/// Default timeout for RPC calls.
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Client connection to a styrened daemon.
 pub struct DaemonClient {
     stream: UnixStream,
     next_id: u64,
+    /// Override timeout for the next RPC call (reset after use).
+    next_timeout: Option<Duration>,
 }
 
 impl DaemonClient {
@@ -41,7 +43,7 @@ impl DaemonClient {
             .await
             .map_err(|e| format!("connect {}: {e}", path.display()))?;
 
-        let mut client = Self { stream, next_id: 0 };
+        let mut client = Self { stream, next_id: 0, next_timeout: None };
 
         if !client.ping().await {
             return Err("daemon did not respond to ping".into());
@@ -63,15 +65,34 @@ impl DaemonClient {
         payload: &HashMap<String, MpValue>,
     ) -> Result<Frame, String> {
         let req_id = self.next_request_id();
+        let rpc_timeout = self.next_timeout.take().unwrap_or(RPC_TIMEOUT);
 
         wire::write_frame_async(&mut self.stream, msg_type, &req_id, payload)
             .await
             .map_err(|e| format!("write: {e}"))?;
 
-        timeout(RPC_TIMEOUT, wire::read_frame_async(&mut self.stream))
+        let frame = timeout(rpc_timeout, wire::read_frame_async(&mut self.stream))
             .await
             .map_err(|_| "rpc timeout".to_string())?
-            .map_err(|e| format!("read: {e}"))
+            .map_err(|e| format!("read: {e}"))?;
+
+        // Check for error responses from the daemon
+        if frame.msg_type == MessageType::Error {
+            let msg = frame
+                .payload
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown daemon error");
+            return Err(msg.to_string());
+        }
+
+        Ok(frame)
+    }
+
+    /// Set a custom timeout for the next RPC call.
+    fn with_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.next_timeout = Some(timeout);
+        self
     }
 
     pub async fn ping(&mut self) -> bool {
@@ -151,6 +172,7 @@ impl DaemonClient {
         let mut p = HashMap::new();
         p.insert("destination_hash".into(), MpValue::String(dest.into()));
         p.insert("timeout".into(), MpValue::Integer(timeout_secs.into()));
+        self.with_timeout(Duration::from_secs(timeout_secs + 5));
         let frame = self.rpc(MessageType::CmdDeviceStatus, &p).await?;
         Ok(frame.payload)
     }
@@ -169,6 +191,7 @@ impl DaemonClient {
             args.iter().map(|a| MpValue::String(a.clone().into())).collect();
         p.insert("args".into(), MpValue::Array(mp_args));
         p.insert("timeout".into(), MpValue::Integer(timeout_secs.into()));
+        self.with_timeout(Duration::from_secs(timeout_secs + 5));
         let frame = self.rpc(MessageType::CmdExec, &p).await?;
         Ok(frame.payload)
     }
