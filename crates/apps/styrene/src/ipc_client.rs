@@ -8,9 +8,11 @@ use std::path::{Path, PathBuf};
 
 use rmpv::Value as MpValue;
 use tokio::net::UnixStream;
-use tokio::time::{Duration, timeout};
+use tokio::time::{timeout, Duration};
 
-use styrene_ipc::types::{ConversationInfo, DaemonStatusInfo, DeviceInfo, IdentityInfo, MessageInfo};
+use styrene_ipc::types::{
+    ConversationInfo, DaemonStatusInfo, DeviceInfo, IdentityInfo, MessageInfo,
+};
 use styrene_ipc_server::wire::{self, Frame, MessageType, REQUEST_ID_SIZE};
 
 /// Timeout for RPC calls.
@@ -26,9 +28,7 @@ impl DaemonClient {
     /// Connect to the daemon socket. Returns an error if the socket doesn't
     /// exist or the daemon doesn't respond to a ping.
     pub async fn connect(socket_path: Option<&Path>) -> Result<Self, String> {
-        let path = socket_path
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(default_socket_path);
+        let path = socket_path.map(|p| p.to_path_buf()).unwrap_or_else(default_socket_path);
 
         if !path.exists() {
             return Err(format!(
@@ -99,9 +99,7 @@ impl DaemonClient {
     }
 
     pub async fn conversations(&mut self) -> Result<Vec<ConversationInfo>, String> {
-        let frame = self
-            .rpc(MessageType::QueryConversations, &HashMap::new())
-            .await?;
+        let frame = self.rpc(MessageType::QueryConversations, &HashMap::new()).await?;
         parse_conversations(&frame.payload)
     }
 
@@ -124,10 +122,7 @@ impl DaemonClient {
         title: Option<&str>,
     ) -> Result<String, String> {
         let mut p = HashMap::new();
-        p.insert(
-            "destination_hash".into(),
-            MpValue::String(destination.into()),
-        );
+        p.insert("destination_hash".into(), MpValue::String(destination.into()));
         p.insert("content".into(), MpValue::String(content.into()));
         if let Some(t) = title {
             p.insert("title".into(), MpValue::String(t.into()));
@@ -145,6 +140,50 @@ impl DaemonClient {
         let frame = self.rpc(MessageType::QueryConfig, &HashMap::new()).await?;
         Ok(frame.payload)
     }
+
+    // ── Fleet operations ────────────────────────────────────────────────
+
+    pub async fn device_status(
+        &mut self,
+        dest: &str,
+        timeout_secs: u64,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("destination_hash".into(), MpValue::String(dest.into()));
+        p.insert("timeout".into(), MpValue::Integer(timeout_secs.into()));
+        let frame = self.rpc(MessageType::CmdDeviceStatus, &p).await?;
+        Ok(frame.payload)
+    }
+
+    pub async fn exec(
+        &mut self,
+        dest: &str,
+        cmd: &str,
+        args: &[String],
+        timeout_secs: u64,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("destination_hash".into(), MpValue::String(dest.into()));
+        p.insert("command".into(), MpValue::String(cmd.into()));
+        let mp_args: Vec<MpValue> =
+            args.iter().map(|a| MpValue::String(a.clone().into())).collect();
+        p.insert("args".into(), MpValue::Array(mp_args));
+        p.insert("timeout".into(), MpValue::Integer(timeout_secs.into()));
+        let frame = self.rpc(MessageType::CmdExec, &p).await?;
+        Ok(frame.payload)
+    }
+
+    pub async fn reboot_device(
+        &mut self,
+        dest: &str,
+        delay_secs: u64,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("destination_hash".into(), MpValue::String(dest.into()));
+        p.insert("delay".into(), MpValue::Integer(delay_secs.into()));
+        let frame = self.rpc(MessageType::CmdRebootDevice, &p).await?;
+        Ok(frame.payload)
+    }
 }
 
 fn default_socket_path() -> PathBuf {
@@ -154,10 +193,7 @@ fn default_socket_path() -> PathBuf {
 // ── Payload parsers ─────────────────────────────────────────────────────────
 
 fn mp_str(p: &HashMap<String, MpValue>, key: &str) -> String {
-    p.get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string()
+    p.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string()
 }
 
 fn mp_bool(p: &HashMap<String, MpValue>, key: &str) -> bool {
@@ -178,14 +214,8 @@ fn parse_identity(p: &HashMap<String, MpValue>) -> Result<IdentityInfo, String> 
     info.destination_hash = mp_str(p, "destination_hash");
     info.lxmf_destination_hash = mp_str(p, "lxmf_destination_hash");
     info.display_name = mp_str(p, "display_name");
-    info.icon = p
-        .get("icon")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    info.short_name = p
-        .get("short_name")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    info.icon = p.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string());
+    info.short_name = p.get("short_name").and_then(|v| v.as_str()).map(|s| s.to_string());
     Ok(info)
 }
 
@@ -197,10 +227,7 @@ fn parse_status(p: &HashMap<String, MpValue>) -> Result<DaemonStatusInfo, String
     s.lxmf_initialized = mp_bool(p, "lxmf_initialized");
     s.device_count = mp_u64(p, "device_count") as u32;
     s.interface_count = mp_u64(p, "interface_count") as u32;
-    s.hub_status = p
-        .get("hub_status")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+    s.hub_status = p.get("hub_status").and_then(|v| v.as_str()).map(|s| s.to_string());
     s.propagation_enabled = mp_bool(p, "propagation_enabled");
     s.transport_enabled = mp_bool(p, "transport_enabled");
     s.active_links = mp_u64(p, "active_links") as u32;
@@ -274,9 +301,7 @@ fn parse_conversations(p: &HashMap<String, MpValue>) -> Result<Vec<ConversationI
                     .unwrap_or(0) as u32
             };
             let get_i64 = |key: &str| -> Option<i64> {
-                m.iter()
-                    .find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, v)| v.as_i64())
+                m.iter().find(|(k, _)| k.as_str() == Some(key)).and_then(|(_, v)| v.as_i64())
             };
             let mut c = ConversationInfo::default();
             c.peer_hash = get("peer_hash");

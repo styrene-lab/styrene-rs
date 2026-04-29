@@ -32,13 +32,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         #[cfg(feature = "daemon")]
-        Some(Command::Daemon {
-            rpc: _,
-            db: _,
-            config: _,
-            identity: _,
-            ephemeral: _,
-        }) => {
+        Some(Command::Daemon { rpc: _, db: _, config: _, identity: _, ephemeral: _ }) => {
             // TODO: wire up styrened::run() with these args
             eprintln!("Daemon startup not yet wired — use `styrened` binary for now");
             std::process::exit(1);
@@ -48,17 +42,14 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Status) => commands::status(socket).await,
 
         #[cfg(feature = "cli")]
-        Some(Command::Peers {
-            ref query,
-            styrene_only,
-        }) => commands::peers(socket, query.as_deref(), styrene_only).await,
+        Some(Command::Peers { ref query, styrene_only }) => {
+            commands::peers(socket, query.as_deref(), styrene_only).await
+        }
 
         #[cfg(feature = "cli")]
-        Some(Command::Send {
-            ref destination,
-            ref content,
-            ref title,
-        }) => commands::send(socket, destination, content, title.as_deref()).await,
+        Some(Command::Send { ref destination, ref content, ref title }) => {
+            commands::send(socket, destination, content, title.as_deref()).await
+        }
 
         #[cfg(feature = "cli")]
         Some(Command::Messages { ref peer, limit }) => {
@@ -73,5 +64,18 @@ async fn main() -> anyhow::Result<()> {
 
         #[cfg(feature = "cli")]
         Some(Command::Config) => commands::config(socket).await,
+
+        #[cfg(feature = "cli")]
+        Some(Command::Fleet { ref action }) => match action {
+            cli::FleetAction::Status { ref node, timeout } => {
+                commands::fleet_status(socket, node.as_deref(), *timeout).await
+            }
+            cli::FleetAction::Exec { ref node, ref cmd, ref args, timeout } => {
+                commands::fleet_exec(socket, node, cmd, args, *timeout).await
+            }
+            cli::FleetAction::Reboot { ref node, delay } => {
+                commands::fleet_reboot(socket, node, *delay).await
+            }
+        },
     }
 }
