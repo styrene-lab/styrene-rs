@@ -6,6 +6,14 @@ use console::style;
 
 use crate::ipc_client::DaemonClient;
 
+/// Safely truncate a string to at most `n` characters (not bytes).
+fn truncate(s: &str, n: usize) -> &str {
+    match s.char_indices().nth(n) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
 pub(crate) async fn status(socket: Option<&Path>) -> anyhow::Result<()> {
     let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
     let status = client.status().await.map_err(anyhow::Error::msg)?;
@@ -70,7 +78,7 @@ pub(crate) async fn peers(
         } else {
             dev.name.clone()
         };
-        let hash_short = &dev.destination_hash[..12.min(dev.destination_hash.len())];
+        let hash_short = truncate(&dev.destination_hash, 12);
         let styrene_marker = if dev.is_styrene_node {
             style("⬡").green().to_string()
         } else {
@@ -95,8 +103,8 @@ pub(crate) async fn send(
     eprintln!(
         "  {} sent to {}  (id: {})",
         style("✓").green().bold(),
-        &destination[..12.min(destination.len())],
-        &msg_id[..8.min(msg_id.len())]
+        truncate(destination, 12),
+        truncate(&msg_id, 8)
     );
 
     Ok(())
@@ -106,7 +114,7 @@ pub(crate) async fn messages(socket: Option<&Path>, peer: &str, limit: u32) -> a
     let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
     let msgs = client.messages(peer, limit).await.map_err(anyhow::Error::msg)?;
 
-    let peer_short = &peer[..12.min(peer.len())];
+    let peer_short = truncate(peer, 12);
     eprintln!();
     eprintln!(
         "  {} ({} messages with {peer_short}…)",
@@ -190,7 +198,7 @@ pub(crate) async fn fleet_status(
     let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
 
     if let Some(dest) = node {
-        let node_short = &dest[..12.min(dest.len())];
+        let node_short = truncate(dest, 12);
         eprintln!();
         eprintln!("  {} (querying {node_short}…)", style("styrene fleet status").cyan().bold(),);
 
@@ -210,7 +218,7 @@ pub(crate) async fn fleet_status(
 
         for dev in &devices {
             let name = if dev.name.is_empty() { "(unnamed)".to_string() } else { dev.name.clone() };
-            let hash_short = &dev.destination_hash[..12.min(dev.destination_hash.len())];
+            let hash_short = truncate(&dev.destination_hash, 12);
             let marker = if dev.is_styrene_node {
                 style("⬡").green().to_string()
             } else {
@@ -233,7 +241,7 @@ pub(crate) async fn fleet_exec(
 ) -> anyhow::Result<()> {
     let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
 
-    let node_short = &node[..12.min(node.len())];
+    let node_short = truncate(node, 12);
     eprintln!("  {} exec on {node_short}…: {cmd} {}", style("→").cyan(), args.join(" "));
 
     let result = client.exec(node, cmd, args, timeout).await.map_err(anyhow::Error::msg)?;
@@ -265,7 +273,7 @@ pub(crate) async fn fleet_reboot(
 ) -> anyhow::Result<()> {
     let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
 
-    let node_short = &node[..12.min(node.len())];
+    let node_short = truncate(node, 12);
     if delay > 0 {
         eprintln!("  {} rebooting {node_short}… in {delay}s", style("→").cyan());
     } else {
