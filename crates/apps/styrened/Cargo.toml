@@ -17,7 +17,12 @@ styrene-ipc = { path = "../../libs/styrene-ipc", version = "0.1.0" }
 styrene-ipc-server = { path = "../../libs/styrene-ipc-server", version = "0.1.0" }
 styrene-services = { path = "../../libs/styrene-services", version = "0.1.0" }
 styrene-mesh = { workspace = true }
+styrene-tunnel = { path = "../../libs/styrene-tunnel", version = "0.1.0", features = ["wireguard"], optional = true }
+styrene-content = { path = "../../libs/styrene-content", version = "0.1.0", features = ["alloc", "std"] }
+anyhow.workspace = true
 async-trait.workspace = true
+ciborium = "0.2"
+tokio-util.workspace = true
 thiserror.workspace = true
 base64 = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
@@ -40,6 +45,10 @@ x25519-dalek = { workspace = true }
 x509-parser = { workspace = true }
 zeroize.workspace = true
 dirs = "6.0.0"
+
+[features]
+default = []
+wireguard = ["dep:styrene-tunnel"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

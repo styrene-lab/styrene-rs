@@ -343,6 +343,36 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         .protocol()
         .register(app_context.tunnel_arc())
         .await;
+
+    // Wire WireGuard backend into TunnelService on Linux when the feature is enabled.
+    #[cfg(all(target_os = "linux", feature = "wireguard"))]
+    {
+        use styrene_tunnel::wireguard::WireGuardBackend;
+        use styrene_tunnel::TunnelBackend;
+
+        // Derive a WireGuard-specific private key from the RNS identity via HKDF.
+        // This ensures a stable WG key tied to the node identity without storing
+        // a separate key file.
+        let wg_privkey = {
+            use hkdf::Hkdf;
+            use sha2::Sha256;
+            let identity_privkey = identity.to_private_key_bytes();
+            let hk = Hkdf::<Sha256>::new(Some(b"styrene-wg-key-v1"), &identity_privkey);
+            let mut okm = [0u8; 32];
+            hk.expand(b"wireguard", &mut okm).expect("HKDF expand");
+            okm
+        };
+
+        let wg_backend = Arc::new(WireGuardBackend::new());
+        wg_backend.set_private_key(&wg_privkey);
+        if wg_backend.is_available().await {
+            app_context.tunnel().set_backend(wg_backend.clone());
+            eprintln!("[daemon] WireGuard backend wired into TunnelService");
+        } else {
+            eprintln!("[daemon] WireGuard tools not available — tunnel state tracked without backend");
+        }
+    }
+
     eprintln!("[daemon] service workers started (inbound + announce + rpc-request + rpc-response + tunnel)");
 
     // --- Unix socket IPC server ---
