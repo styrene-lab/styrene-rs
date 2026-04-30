@@ -47,18 +47,12 @@ pub enum TunnelError {
     #[error("tunnel not established")]
     NotEstablished,
 
-    #[error("msgpack error: {0}")]
-    Msgpack(String),
-}
+    #[error("tunnel not found: {0}")]
+    NotFound(String),
 
-impl From<rmp_serde::decode::Error> for TunnelError {
-    fn from(e: rmp_serde::decode::Error) -> Self {
-        Self::Msgpack(e.to_string())
-    }
-}
+    #[error("tunnel configuration error: {0}")]
+    Config(String),
 
-impl From<rmp_serde::encode::Error> for TunnelError {
-    fn from(e: rmp_serde::encode::Error) -> Self {
-        Self::Msgpack(e.to_string())
-    }
+    #[error("CBOR error: {0}")]
+    Cbor(String),
 }
