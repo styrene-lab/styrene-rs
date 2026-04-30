@@ -155,6 +155,14 @@ impl Transport {
         self.iface_manager.clone()
     }
 
+    /// Return per-interface byte counter snapshots (tx_bytes, rx_bytes).
+    pub async fn interface_stats(
+        &self,
+    ) -> std::collections::HashMap<AddressHash, crate::transport::iface::InterfaceStatsSnapshot>
+    {
+        self.iface_manager.lock().await.interface_stats()
+    }
+
     pub fn iface_rx(&self) -> broadcast::Receiver<RxMessage> {
         self.iface_messages_tx.subscribe()
     }

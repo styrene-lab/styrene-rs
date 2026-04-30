@@ -2,9 +2,11 @@
 #![allow(clippy::unwrap_used)]
 
 use alloc::string::String;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::net::TcpListener;
+use tokio::sync::watch;
 
 use crate::transport::error::RnsError;
 
@@ -14,14 +16,21 @@ use super::{Interface, InterfaceContext, InterfaceManager};
 pub struct TcpServer {
     addr: String,
     iface_manager: Arc<tokio::sync::Mutex<InterfaceManager>>,
+    /// Sender for the actual bound address — set after `TcpListener::bind`.
+    /// Enables callers to discover the real port when binding to `:0`.
+    bound_addr_tx: watch::Sender<Option<SocketAddr>>,
 }
 
 impl TcpServer {
     pub fn new<T: Into<String>>(
         addr: T,
         iface_manager: Arc<tokio::sync::Mutex<InterfaceManager>>,
-    ) -> Self {
-        Self { addr: addr.into(), iface_manager }
+    ) -> (Self, watch::Receiver<Option<SocketAddr>>) {
+        let (bound_addr_tx, bound_addr_rx) = watch::channel(None);
+        (
+            Self { addr: addr.into(), iface_manager, bound_addr_tx },
+            bound_addr_rx,
+        )
     }
 
     /// Spawn the TCP server. Accepted client connections inherit the server's
@@ -50,9 +59,16 @@ impl TcpServer {
                 continue;
             }
 
-            log::info!("tcp_server: listen on <{}>", addr);
-
             let listener = listener.unwrap();
+
+            // Publish the actual bound address so callers can discover the
+            // real port when binding to `:0` (ephemeral port).
+            if let Ok(local_addr) = listener.local_addr() {
+                let _ = context.inner.lock().unwrap().bound_addr_tx.send(Some(local_addr));
+                log::info!("tcp_server: listen on <{}>", local_addr);
+            } else {
+                log::info!("tcp_server: listen on <{}>", addr);
+            }
 
             let tx_task = {
                 let cancel = context.cancel.clone();

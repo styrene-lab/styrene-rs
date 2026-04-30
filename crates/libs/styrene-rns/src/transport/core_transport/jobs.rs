@@ -103,6 +103,13 @@ pub(super) async fn manage_transport(
 
                         let mut handler = handler_arc.lock().await;
 
+                        // Record rx bytes for the originating interface.
+                        handler
+                            .iface_manager
+                            .lock()
+                            .await
+                            .record_rx(&message.address, packet.data.len() as u64);
+
                         if PACKET_TRACE {
                             log::debug!("tp: << rx({}) = {} {}", message.address, packet, packet.hash());
                         }
@@ -283,6 +290,8 @@ pub(super) async fn manage_transport(
                     _ = time::sleep(retry_interval) => {
                         let mut handler = handler.lock().await;
                         let now = Instant::now();
+
+                        // Receiver side: retry pending chunk requests
                         let requests = handler.resource_manager.retry_requests(now);
                         for (link_id, request) in requests {
                             let link = handler
@@ -296,6 +305,16 @@ pub(super) async fn manage_transport(
                                 drop(link_guard);
                                 handler.send_packet(packet).await;
                             }
+                        }
+
+                        // Sender side: poll outgoing resources to send data parts
+                        let outgoing_packets = handler.resource_manager.poll_outgoing(now);
+                        let outgoing_events = handler.resource_manager.drain_events();
+                        for (_link_id, packet) in outgoing_packets {
+                            handler.send_packet(packet).await;
+                        }
+                        for event in outgoing_events {
+                            let _ = handler.resource_events_tx.send(event);
                         }
                     }
                 }

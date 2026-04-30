@@ -284,6 +284,11 @@ impl PrivateIdentity {
         &self.sign_key
     }
 
+    /// Perform X25519 Diffie-Hellman with a peer's public key.
+    pub fn diffie_hellman(&self, peer_public: &PublicKey) -> SharedSecret {
+        self.private_key.diffie_hellman(peer_public)
+    }
+
     pub fn from_private_key_bytes(bytes: &[u8]) -> Result<Self, RnsError> {
         if bytes.len() != PRIVATE_KEY_LENGTH {
             return Err(RnsError::InvalidArgument);

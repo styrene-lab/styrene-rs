@@ -10,6 +10,7 @@ use rns_core::hash::AddressHash;
 use rns_core::identity::Identity;
 use rns_core::transport::core_transport::{AnnounceEvent, ReceivedData, SendPacketOutcome};
 use rns_core::transport::delivery::LinkSendResult;
+use rns_core::transport::resource::ResourceEvent;
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -17,12 +18,14 @@ use tokio::sync::broadcast;
 pub struct NullTransport {
     /// Lifecycle channel kept alive so `subscribe_lifecycle()` returns a valid receiver.
     _lifecycle_tx: broadcast::Sender<TransportLifecycleEvent>,
+    _resource_tx: broadcast::Sender<ResourceEvent>,
 }
 
 impl NullTransport {
     pub fn new() -> Self {
         let (_lifecycle_tx, _) = broadcast::channel(1);
-        Self { _lifecycle_tx }
+        let (_resource_tx, _) = broadcast::channel(1);
+        Self { _lifecycle_tx, _resource_tx }
     }
 }
 
@@ -79,6 +82,10 @@ impl MeshTransport for NullTransport {
 
     fn subscribe_lifecycle(&self) -> broadcast::Receiver<TransportLifecycleEvent> {
         self._lifecycle_tx.subscribe()
+    }
+
+    fn subscribe_resources(&self) -> broadcast::Receiver<ResourceEvent> {
+        self._resource_tx.subscribe()
     }
 
     async fn query_path(&self, _dest: &AddressHash) -> Option<(u8, AddressHash)> {

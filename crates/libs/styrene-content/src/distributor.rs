@@ -1,5 +1,7 @@
 use heapless::Vec as HVec;
 
+#[cfg(feature = "alloc")]
+use crate::{announce::ResourceAvailableAnnounce, manifest::StyreneManifest};
 use crate::{
     chunk_bitset::ChunkBitset,
     content_id::ContentId,
@@ -129,6 +131,27 @@ where
                 continue; // already have it
             }
 
+            // Drain any pending events (e.g. announces) before checking seeders.
+            // Without this, the first chunk request would fail with NoSeedersKnown
+            // if the announce hasn't been processed yet.
+            while self.seeder_for_chunk(manifest.content_id, i).is_none() {
+                let event = self
+                    .transport
+                    .recv_event()
+                    .await
+                    .map_err(|_| DistributorError::TransportError)?
+                    .ok_or(DistributorError::NoSeedersKnown)?;
+
+                match event {
+                    ContentEvent::Announce(ann) => {
+                        self.record_seeder(ann.content_id, ann.seeder_hash, ann.chunks_held);
+                    }
+                    other => {
+                        let _ = self.on_event(other).await;
+                    }
+                }
+            }
+
             let seeder = self
                 .seeder_for_chunk(manifest.content_id, i)
                 .ok_or(DistributorError::NoSeedersKnown)?;
@@ -196,9 +219,8 @@ where
             }
 
             ContentEvent::ChunkRequest { from, content_id, index } => {
-                let _chunk_size = 262144; // WiFi max — safe upper bound for stack buf
-                                          // For actual use, caller should pass the manifest to get the right size.
-                                          // This is a simplified serve path.
+                #[cfg(feature = "alloc")]
+                let chunk_size = 262144; // WiFi max — safe upper bound for stack buf
                 #[cfg(feature = "alloc")]
                 {
                     let mut buf = alloc::vec![0u8; chunk_size];

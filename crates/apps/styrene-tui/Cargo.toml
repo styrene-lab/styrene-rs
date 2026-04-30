@@ -30,9 +30,11 @@ styrene-micron = { workspace = true }
 # Daemon integration
 styrene-ipc = { path = "../../libs/styrene-ipc", version = "0.1.0" }
 styrene-ipc-server = { path = "../../libs/styrene-ipc-server", version = "0.1.0" }
+styrened = { path = "../styrened", version = "0.1.0" }
 
 # Utilities
 hex.workspace = true
+toml = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }
 serde.workspace = true
 serde_json.workspace = true

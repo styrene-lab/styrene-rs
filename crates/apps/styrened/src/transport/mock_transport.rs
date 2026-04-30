@@ -14,6 +14,7 @@ use rns_core::hash::AddressHash;
 use rns_core::identity::Identity;
 use rns_core::transport::core_transport::{AnnounceEvent, ReceivedData, SendPacketOutcome};
 use rns_core::transport::delivery::LinkSendResult;
+use rns_core::transport::resource::ResourceEvent;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -48,6 +49,7 @@ pub struct MockTransport {
     inbound_tx: broadcast::Sender<ReceivedData>,
     announce_tx: broadcast::Sender<AnnounceEvent>,
     lifecycle_tx: broadcast::Sender<TransportLifecycleEvent>,
+    resource_tx: broadcast::Sender<ResourceEvent>,
 
     // Call recording
     calls: Mutex<Vec<MockCall>>,
@@ -59,6 +61,7 @@ impl MockTransport {
         let (inbound_tx, _) = broadcast::channel(64);
         let (announce_tx, _) = broadcast::channel(64);
         let (lifecycle_tx, _) = broadcast::channel(16);
+        let (resource_tx, _) = broadcast::channel(16);
 
         Self {
             identity_addr,
@@ -71,6 +74,7 @@ impl MockTransport {
             inbound_tx,
             announce_tx,
             lifecycle_tx,
+            resource_tx,
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -196,6 +200,10 @@ impl MeshTransport for MockTransport {
 
     fn subscribe_lifecycle(&self) -> broadcast::Receiver<TransportLifecycleEvent> {
         self.lifecycle_tx.subscribe()
+    }
+
+    fn subscribe_resources(&self) -> broadcast::Receiver<ResourceEvent> {
+        self.resource_tx.subscribe()
     }
 
     async fn query_path(&self, _dest: &AddressHash) -> Option<(u8, AddressHash)> {

@@ -12,6 +12,9 @@ use rns_core::hash::AddressHash;
 use rns_core::identity::Identity;
 use rns_core::transport::core_transport::{AnnounceEvent, ReceivedData, SendPacketOutcome};
 use rns_core::transport::delivery::LinkSendResult;
+use rns_core::transport::iface::InterfaceStatsSnapshot;
+use rns_core::transport::resource::ResourceEvent;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -116,6 +119,11 @@ pub trait MeshTransport: Send + Sync {
     /// Subscribe to transport lifecycle transitions (connected/disconnected/reconnected).
     fn subscribe_lifecycle(&self) -> broadcast::Receiver<TransportLifecycleEvent>;
 
+    /// Subscribe to resource transfer events (completed resource reassembly).
+    /// Large payloads (> LINK_PACKET_MDU) are sent as resources — these events
+    /// carry the reassembled data after all chunks arrive.
+    fn subscribe_resources(&self) -> broadcast::Receiver<ResourceEvent>;
+
     // --- State queries ---
 
     /// Query path table for hop count and next-hop interface.
@@ -135,4 +143,11 @@ pub trait MeshTransport: Send + Sync {
 
     /// Shut down the transport gracefully.
     async fn shutdown(&self) -> Result<(), TransportError>;
+
+    /// Per-interface byte counter snapshots (tx_bytes, rx_bytes).
+    /// Keys are interface address hashes. Returns an empty map when the
+    /// transport backend does not track per-interface stats.
+    async fn interface_stats(&self) -> HashMap<AddressHash, InterfaceStatsSnapshot> {
+        HashMap::new()
+    }
 }

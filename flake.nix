@@ -9,10 +9,15 @@
   };
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
 
     crane.url = "github:ipetkov/crane";
+
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
 
     nix2container = {
       url = "github:nlewo/nix2container";
@@ -20,7 +25,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, crane, nix2container }:
+  outputs = { self, nixpkgs, flake-utils, crane, rust-overlay, nix2container }:
     let
       # NixOS module — available on all systems
       nixosModule = { config, lib, pkgs, ... }:
@@ -197,8 +202,12 @@
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
-        craneLib = crane.mkLib pkgs;
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
+        rustToolchain = pkgs.rust-bin.stable.latest.default;
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
         commitSha =
           if self ? shortRev then self.shortRev
@@ -224,9 +233,7 @@
             sqlite
             pkg-config
           ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.darwin.apple_sdk.frameworks.Security
-            pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-            pkgs.darwin.apple_sdk.frameworks.IOKit
+            pkgs.libiconv
           ];
           nativeBuildInputs = with pkgs; [
             pkg-config

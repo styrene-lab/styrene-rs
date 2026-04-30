@@ -66,10 +66,12 @@ pub trait ProtocolHandler: Send + Sync {
 /// Registry of protocol handlers.
 ///
 /// Routes inbound messages to the appropriate handler based on the
-/// `protocol` field. If no handler matches, the default handler is used.
+/// `protocol` field. Multiple handlers can register for the same type —
+/// they are tried in registration order until one returns `Handled` or
+/// `Reply`. If no handler matches, the default handler is used.
 pub struct ProtocolRegistry {
     handlers: Mutex<Vec<Arc<dyn ProtocolHandler>>>,
-    type_index: Mutex<HashMap<String, usize>>,
+    type_index: Mutex<HashMap<String, Vec<usize>>>,
     default_handler: Mutex<Option<Arc<dyn ProtocolHandler>>>,
 }
 
@@ -84,6 +86,7 @@ impl ProtocolRegistry {
     }
 
     /// Register a protocol handler. Its protocol_types() are indexed for dispatch.
+    /// Multiple handlers for the same type are tried in registration order.
     pub async fn register(&self, handler: Arc<dyn ProtocolHandler>) {
         let mut handlers = self.handlers.lock().await;
         let idx = handlers.len();
@@ -92,7 +95,7 @@ impl ProtocolRegistry {
 
         let mut index = self.type_index.lock().await;
         for t in types {
-            index.insert(t, idx);
+            index.entry(t).or_default().push(idx);
         }
     }
 
@@ -103,15 +106,25 @@ impl ProtocolRegistry {
     }
 
     /// Dispatch an inbound message to the appropriate handler.
+    ///
+    /// If multiple handlers are registered for the same protocol type,
+    /// they are tried in registration order. The first handler that returns
+    /// `Handled` or `Reply` wins. `NotHandled` passes to the next handler.
     pub async fn dispatch(&self, message: &InboundMessage) -> HandleResult {
         let handlers = self.handlers.lock().await;
         let index = self.type_index.lock().await;
 
-        // Try protocol-specific handler
+        // Try protocol-specific handlers
         if let Some(protocol) = &message.protocol {
-            if let Some(&idx) = index.get(protocol) {
-                if let Some(handler) = handlers.get(idx) {
-                    return handler.handle(message).await;
+            if let Some(indices) = index.get(protocol) {
+                for &idx in indices {
+                    if let Some(handler) = handlers.get(idx) {
+                        let result = handler.handle(message).await;
+                        match &result {
+                            HandleResult::NotHandled => continue,
+                            _ => return result,
+                        }
+                    }
                 }
             }
         }

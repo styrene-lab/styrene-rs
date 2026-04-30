@@ -10,7 +10,7 @@ pub use delivery::{decide_delivery, DeliveryDecision};
 pub use payload::Payload;
 pub use state::State;
 pub use types::{MessageMethod, MessageState, TransportMethod, UnverifiedReason};
-pub use wire::WireMessage;
+pub use wire::{decrypt_for_identity, WireMessage};
 
 use crate::error::LxmfError;
 use alloc::string::String;

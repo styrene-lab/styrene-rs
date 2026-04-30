@@ -51,7 +51,7 @@ impl ProtocolHandler for RpcResponseHandler {
         match message.message_type {
             StatusResponse | ExecResult | RebootResult | ConfigUpdateResult | SelfUpdateResult
             | InboxResponse | MessagesResponse => {
-                if self.fleet.handle_response(message) {
+                if self.fleet.handle_response(message, &msg.source_hash) {
                     HandleResult::Handled
                 } else {
                     HandleResult::NotHandled

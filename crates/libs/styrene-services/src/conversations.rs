@@ -276,6 +276,17 @@ impl ConversationStore {
         Ok(())
     }
 
+    /// Mute or unmute a conversation.
+    pub fn set_muted(&self, peer_hash: &str, muted: bool) -> Result<(), ServiceError> {
+        let conn = self.conn.lock().map_err(|e| ServiceError::Storage(e.to_string()))?;
+        conn.execute(
+            "INSERT INTO conversation_meta (peer_hash, muted) VALUES (?1, ?2)
+             ON CONFLICT(peer_hash) DO UPDATE SET muted = ?2",
+            params![peer_hash, muted as i32],
+        )?;
+        Ok(())
+    }
+
     /// Update delivery status for a message.
     pub fn update_delivery_status(
         &self,
