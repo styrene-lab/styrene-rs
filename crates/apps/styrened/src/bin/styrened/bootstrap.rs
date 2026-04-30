@@ -254,9 +254,10 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     } else {
         Arc::new(NullTransport::new())
     };
-    // Share the real SQLite store with the service architecture.
-    // RpcDaemon holds its own Arc<Mutex<MessagesStore>>; we create a second
-    // handle to the same on-disk database so both codepaths see the same data.
+    // Share the SAME SQLite store between RpcDaemon and AppContext.
+    // Previously these were separate connections which caused read-after-write
+    // visibility issues (inbound writes via RpcDaemon weren't visible to
+    // DaemonFacade queries via AppContext due to SQLite connection caching).
     let shared_store = Arc::new(std::sync::Mutex::new(
         MessagesStore::open(&db_path).expect("app_context shared store"),
     ));
@@ -353,6 +354,21 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
             eprintln!("[daemon] IPC server listening on {}", ipc_server.socket_path().display())
         }
         Err(e) => eprintln!("[daemon] IPC server failed to start: {e}"),
+    }
+
+    // Bridge daemon events → IPC server so clients receive pushed events.
+    {
+        let event_tx = ipc_server.event_sender();
+        let mut daemon_rx = app_context.events().subscribe_daemon_events();
+        tokio::spawn(async move {
+            loop {
+                match daemon_rx.recv().await {
+                    Ok(event) => { let _ = event_tx.send(event); }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
     }
 
     BootstrapContext { rpc_addr, daemon, rpc_tls, app_context, daemon_facade, ipc_server }
