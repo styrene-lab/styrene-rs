@@ -40,19 +40,10 @@ if [ "$RC" -eq 0 ]; then
     elif echo "$OUTPUT" | grep -qi "tunnel\|protocol.*handler"; then
         pass "T25: tunnel handler is registered (visible in node status)"
     else
-        # The tunnel subcommand may not exist yet — check if the daemon
-        # at least has protocol dispatch (proven by messaging working)
-        echo "  INFO: T25: tunnel subcommand not available yet"
-        echo "  INFO: tunnel status output: $TUNNEL_OUTPUT"
-        # Protocol dispatch works (T09-T12 prove LXMF works), so the
-        # handler registration path exists even if tunnel handler is not
-        # wired up yet. Mark as pass with caveat.
-        if echo "$OUTPUT" | grep -qi "running\|online\|ok"; then
-            pass "T25: daemon running with protocol dispatch (tunnel handler TBD)"
-        else
-            fail "T25: tunnel handler is registered"
-            echo "    status output: $OUTPUT"
-        fi
+        # Tunnel subcommand not available — fail explicitly, do not mask
+        fail "T25: tunnel handler is not registered (tunnel subcommand not available)"
+        echo "    tunnel status output: $TUNNEL_OUTPUT"
+        echo "    node status output: $OUTPUT"
     fi
 else
     fail "T25: tunnel handler is registered (daemon unreachable, exit $RC)"
@@ -98,21 +89,9 @@ else
             echo "    beta tunnel status: $BETA_TUNNEL"
         fi
     else
-        # Tunnel offer CLI does not exist yet — fall back to sending a raw
-        # message and checking that the messaging layer can carry it
-        echo "  INFO: T26: 'tunnel offer' subcommand not available yet (exit $OFFER_RC)"
-        echo "  INFO: output: $OFFER_OUTPUT"
-        echo "  INFO: falling back to raw message delivery test for tunnel payload"
-
-        # Send a regular message with tunnel-like content to prove the
-        # messaging path that tunnel negotiation will use is functional
-        SEND_OUTPUT=$(styrene --socket tcp://alpha:9002 send "$BETA_DEST" "TUNNEL_OFFER:test" 2>&1) && SEND_RC=0 || SEND_RC=$?
-        if [ "$SEND_RC" -eq 0 ]; then
-            pass "T26: messaging path for tunnel negotiation is functional"
-        else
-            fail "T26: messaging path for tunnel negotiation (exit $SEND_RC)"
-            echo "    output: $SEND_OUTPUT"
-        fi
+        # Tunnel offer CLI does not exist — fail explicitly, do not mask with fallback
+        fail "T26: tunnel offer command not available (exit $OFFER_RC)"
+        echo "    output: $OFFER_OUTPUT"
     fi
 fi
 

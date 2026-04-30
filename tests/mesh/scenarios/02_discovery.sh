@@ -28,24 +28,18 @@ else
     fail "T07: hub sees gamma (timeout ${TIMEOUT}s)"
 fi
 
-# T08: Alpha sees at least 2 peers (hub + beta, possibly gamma)
-# Edge nodes may not see names, but they see peer hashes via announces
-ELAPSED=0
-FOUND=false
-while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
-    PEERS=$(styrene --socket tcp://alpha:9002 peers 2>&1)
-    PEER_COUNT=$(echo "$PEERS" | grep -oE '[0-9]+ peers' | grep -oE '[0-9]+' | head -1)
-    if [ "${PEER_COUNT:-0}" -ge 2 ]; then
-        FOUND=true
-        break
-    fi
-    sleep 2
-    ELAPSED=$((ELAPSED + 2))
-done
-if [ "$FOUND" = true ]; then
-    pass "T08: alpha sees at least 2 peers ($PEER_COUNT found)"
+# T08: Alpha sees hub and beta by name
+# Verify specific peers, not just a count
+if wait_for_peer tcp://alpha:9002 hub "$TIMEOUT"; then
+    pass "T08a: alpha sees hub"
 else
-    fail "T08: alpha sees at least 2 peers (timeout ${TIMEOUT}s, found ${PEER_COUNT:-0})"
+    fail "T08a: alpha sees hub (timeout ${TIMEOUT}s)"
+fi
+
+if wait_for_peer tcp://alpha:9002 beta "$TIMEOUT"; then
+    pass "T08b: alpha sees beta"
+else
+    fail "T08b: alpha sees beta (timeout ${TIMEOUT}s)"
 fi
 
 echo "RESULTS: $_PASS_COUNT $_FAIL_COUNT"

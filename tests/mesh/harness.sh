@@ -61,20 +61,33 @@ assert_output_not_contains() {
 }
 
 # Poll a node's peer list until a given peer name appears.
+# Uses shorter poll intervals (1s) for the first 30s, then extends to 3s.
+# On timeout, prints debug output showing visible peers.
 # Usage: wait_for_peer tcp://hub:9001 alpha 60
 wait_for_peer() {
     local socket_url="$1"
     local peer_name="$2"
     local timeout="${3:-60}"
     local elapsed=0
+    local interval
 
     while [ "$elapsed" -lt "$timeout" ]; do
         if styrene --socket "$socket_url" peers 2>&1 | grep -qiF "$peer_name"; then
             return 0
         fi
-        sleep 2
-        elapsed=$((elapsed + 2))
+        # Poll faster initially (1s), then back off to 3s after 30s
+        if [ "$elapsed" -lt 30 ]; then
+            interval=1
+        else
+            interval=3
+        fi
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
     done
+    # Debug: show what peers are visible on timeout
+    echo "    wait_for_peer timeout: '$peer_name' not found on $socket_url after ${timeout}s" >&2
+    echo "    visible peers:" >&2
+    styrene --socket "$socket_url" peers 2>&1 | head -10 >&2
     return 1
 }
 

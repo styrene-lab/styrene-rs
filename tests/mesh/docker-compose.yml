@@ -32,6 +32,12 @@ services:
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
       - LXMF_DISPLAY_NAME=hub
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('127.0.0.1', 9001)); s.close()"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
     ports:
       - "${MESH_HUB_PORT:-9001}:9001"
     networks:
@@ -53,13 +59,20 @@ services:
         sleep 3
         python3 /relay/tcp_relay.py /run/styrene/daemon.sock 9002
     depends_on:
-      - hub
+      hub:
+        condition: service_healthy
     volumes:
       - ./configs/alpha.toml:/etc/styrene/config.toml:ro
       - ./tcp_relay.py:/relay/tcp_relay.py:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
       - LXMF_DISPLAY_NAME=alpha
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('127.0.0.1', 9002)); s.close()"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
     ports:
       - "${MESH_ALPHA_PORT:-9002}:9002"
     networks:
@@ -80,13 +93,20 @@ services:
         sleep 3
         python3 /relay/tcp_relay.py /run/styrene/daemon.sock 9003
     depends_on:
-      - hub
+      hub:
+        condition: service_healthy
     volumes:
       - ./configs/beta.toml:/etc/styrene/config.toml:ro
       - ./tcp_relay.py:/relay/tcp_relay.py:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
       - LXMF_DISPLAY_NAME=beta
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('127.0.0.1', 9003)); s.close()"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
     ports:
       - "${MESH_BETA_PORT:-9003}:9003"
     networks:
@@ -107,13 +127,20 @@ services:
         sleep 3
         python3 /relay/tcp_relay.py /run/styrene/daemon.sock 9004
     depends_on:
-      - hub
+      hub:
+        condition: service_healthy
     volumes:
       - ./configs/gamma.toml:/etc/styrene/config.toml:ro
       - ./tcp_relay.py:/relay/tcp_relay.py:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
       - LXMF_DISPLAY_NAME=gamma
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('127.0.0.1', 9004)); s.close()"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+      start_period: 10s
     ports:
       - "${MESH_GAMMA_PORT:-9004}:9004"
     networks:
@@ -132,10 +159,14 @@ services:
         sleep 15
         /harness/run_tests.sh
     depends_on:
-      - hub
-      - alpha
-      - beta
-      - gamma
+      hub:
+        condition: service_healthy
+      alpha:
+        condition: service_healthy
+      beta:
+        condition: service_healthy
+      gamma:
+        condition: service_healthy
     environment:
       - STYRENE_SOCKET=tcp://hub:9001
     networks:

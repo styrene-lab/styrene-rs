@@ -11,10 +11,13 @@ echo "  Suite: Resilience"
 
 # Check if we have docker CLI access
 if ! command -v docker &>/dev/null; then
-    echo "  SKIP: T21-T24: docker CLI not available in container"
+    echo "  WARNING: T21-T24: docker CLI not available in container"
+    echo "  WARNING: Resilience tests SKIPPED — results are incomplete"
     echo "  NOTE: Run resilience tests from the host or mount the Docker socket"
+    # Report skipped tests as failures so CI does not silently pass
+    _FAIL_COUNT=4
     echo "RESULTS: $_PASS_COUNT $_FAIL_COUNT"
-    exit 0
+    exit 1
 fi
 
 RECOVERY_TIMEOUT=60
