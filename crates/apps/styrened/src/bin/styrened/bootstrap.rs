@@ -338,7 +338,12 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
             app_context.auth_arc(),
         )))
         .await;
-    eprintln!("[daemon] service workers started (inbound + announce + rpc-request + rpc-response)");
+    // Register tunnel protocol handler
+    app_context
+        .protocol()
+        .register(app_context.tunnel_arc())
+        .await;
+    eprintln!("[daemon] service workers started (inbound + announce + rpc-request + rpc-response + tunnel)");
 
     // --- Unix socket IPC server ---
     let ipc_config = styrene_ipc_server::IpcServerConfig {
