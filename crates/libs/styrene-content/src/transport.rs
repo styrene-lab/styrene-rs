@@ -1,7 +1,5 @@
 use core::fmt;
 
-use heapless::Vec as HVec;
-
 use crate::{announce::ResourceAvailableAnnounce, content_id::ContentId};
 
 /// Maximum chunk data size for no_alloc ContentEvent variants.

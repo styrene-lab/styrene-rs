@@ -974,6 +974,10 @@ async fn dispatch_fleet_apply(
     let profile_bytes = base64::engine::general_purpose::STANDARD
         .decode(profile_b64)
         .map_err(|e| format!("invalid base64 profile: {e}"))?;
+    // Issue 4: Reject oversized profiles after base64 decode
+    if profile_bytes.len() > 4 * 1024 * 1024 {
+        return Err("decoded profile exceeds 4 MB limit".into());
+    }
     let verify = payload
         .get("verify")
         .and_then(|v| v.as_bool())
