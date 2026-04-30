@@ -10,11 +10,28 @@ use async_trait::async_trait;
 use rns_core::destination::DestinationName;
 use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use styrene_mesh::tunnel_payloads::{self, TunnelAccept, TunnelOffer, TunnelReject, TunnelTeardown};
 use styrene_mesh::{StyreneMessage, StyreneMessageType};
 use styrene_services::protocol_registry::{HandleResult, InboundMessage, ProtocolHandler};
+
+/// Peer state stored when a tunnel is established.
+#[derive(Debug, Clone)]
+pub struct TunnelPeerState {
+    /// Peer's WireGuard public key (base64).
+    pub wg_pubkey: String,
+    /// Peer's endpoint (IP:port), if known.
+    pub endpoint: String,
+    /// Peer's mesh overlay IPv6 address.
+    pub mesh_ip: String,
+    /// Pre-shared key (base64) for this tunnel.
+    pub psk: String,
+    /// MTU preference.
+    pub mtu: u16,
+    /// Timestamp when the tunnel was established.
+    pub established_at: i64,
+}
 
 /// Tunnel lifecycle management and protocol handler.
 pub struct TunnelService {
@@ -25,17 +42,35 @@ pub struct TunnelService {
     #[allow(dead_code)]
     local_wg_privkey: [u8; 32],
     local_endpoint: Mutex<Option<String>>,
-    /// Pending outbound offers: nonce → peer_identity.
-    pending_offers: Mutex<HashMap<String, String>>,
-    /// Seen nonces for replay protection.
-    seen_nonces: Mutex<HashSet<String>>,
-    /// Active tunnel peer identities.
-    active_tunnels: Mutex<HashSet<String>>,
+    /// Whether transport is wired (prevents sends on NullTransport).
+    wired: bool,
+    /// Pending outbound offers: nonce → (peer_identity, offer details).
+    pending_offers: Mutex<HashMap<String, PendingOffer>>,
+    /// Seen nonces: nonce → timestamp (time-windowed replay protection).
+    seen_nonces: Mutex<HashMap<String, i64>>,
+    /// Active tunnels: peer_identity → peer state.
+    active_tunnels: Mutex<HashMap<String, TunnelPeerState>>,
+    /// Allowed peer identities (empty = allow all).
+    allowed_peers: Mutex<Option<Vec<String>>>,
 }
 
+#[derive(Clone)]
+struct PendingOffer {
+    peer_identity: String,
+    psk: String,
+    mtu: u16,
+}
+
+/// Max nonces to track before eviction of old entries.
+const MAX_NONCE_CACHE: usize = 10_000;
+/// Nonce expiry window (seconds) — matches timestamp tolerance.
+const NONCE_EXPIRY_SECS: i64 = 300;
+/// Timestamp tolerance for offers (seconds).
+const TIMESTAMP_TOLERANCE_SECS: i64 = 300;
+
 impl TunnelService {
-    /// Create a placeholder service (no transport wired yet).
-    /// Call `wire_transport()` during bootstrap to enable tunnel operations.
+    /// Create a placeholder service (not wired to transport).
+    /// Tunnel operations will fail gracefully until `with_transport()` is used.
     pub fn new() -> Self {
         Self {
             transport: Arc::new(crate::transport::null_transport::NullTransport::new()),
@@ -44,9 +79,11 @@ impl TunnelService {
             local_wg_pubkey: String::new(),
             local_wg_privkey: [0u8; 32],
             local_endpoint: Mutex::new(None),
+            wired: false,
             pending_offers: Mutex::new(HashMap::new()),
-            seen_nonces: Mutex::new(HashSet::new()),
-            active_tunnels: Mutex::new(HashSet::new()),
+            seen_nonces: Mutex::new(HashMap::new()),
+            active_tunnels: Mutex::new(HashMap::new()),
+            allowed_peers: Mutex::new(None),
         }
     }
 
@@ -67,9 +104,11 @@ impl TunnelService {
             local_wg_pubkey: pubkey_b64,
             local_wg_privkey: wg_privkey,
             local_endpoint: Mutex::new(None),
+            wired: true,
             pending_offers: Mutex::new(HashMap::new()),
-            seen_nonces: Mutex::new(HashSet::new()),
-            active_tunnels: Mutex::new(HashSet::new()),
+            seen_nonces: Mutex::new(HashMap::new()),
+            active_tunnels: Mutex::new(HashMap::new()),
+            allowed_peers: Mutex::new(None),
         }
     }
 
@@ -77,8 +116,43 @@ impl TunnelService {
         *self.local_endpoint.lock().expect("lock") = Some(endpoint);
     }
 
+    /// Set allowed peers. None = allow all. Some(vec) = only these identities.
+    pub fn set_allowed_peers(&self, peers: Option<Vec<String>>) {
+        *self.allowed_peers.lock().expect("lock") = peers;
+    }
+
+    /// Check if a peer is authorized for tunnel establishment.
+    fn is_peer_allowed(&self, peer: &str) -> bool {
+        match self.allowed_peers.lock().expect("lock").as_ref() {
+            None => true, // no allowlist = allow all
+            Some(list) => list.iter().any(|p| p == peer),
+        }
+    }
+
+    /// Get active tunnel state for a peer.
+    pub fn get_peer_state(&self, peer: &str) -> Option<TunnelPeerState> {
+        self.active_tunnels.lock().expect("lock").get(peer).cloned()
+    }
+
+    /// Get all active tunnel peer identities.
+    pub fn active_peers(&self) -> Vec<String> {
+        self.active_tunnels
+            .lock()
+            .expect("lock")
+            .keys()
+            .cloned()
+            .collect()
+    }
+
     /// Initiate a tunnel to a peer. Sends TUNNEL_OFFER via LXMF.
     pub async fn initiate_tunnel(&self, peer_identity: &str) -> Result<String, String> {
+        if !self.wired {
+            return Err("tunnel service not wired to transport".into());
+        }
+        if !self.transport.is_connected() {
+            return Err("transport not connected".into());
+        }
+
         let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash);
         let endpoint = self
             .local_endpoint
@@ -96,16 +170,20 @@ impl TunnelService {
             wg_pubkey: self.local_wg_pubkey.clone(),
             endpoint,
             mesh_ip,
-            psk: psk_b64,
+            psk: psk_b64.clone(),
             mtu: 1420,
             nonce: nonce.clone(),
             timestamp: tunnel_payloads::now_ts(),
         };
 
-        self.pending_offers
-            .lock()
-            .expect("lock")
-            .insert(nonce.clone(), peer_identity.to_string());
+        self.pending_offers.lock().expect("lock").insert(
+            nonce.clone(),
+            PendingOffer {
+                peer_identity: peer_identity.to_string(),
+                psk: psk_b64,
+                mtu: 1420,
+            },
+        );
 
         let payload = rmp_serde::to_vec(&offer).map_err(|e| format!("encode: {e}"))?;
         self.send_tunnel_message(peer_identity, StyreneMessageType::TunnelOffer, &payload)
@@ -126,8 +204,25 @@ impl TunnelService {
         }
 
         let now = tunnel_payloads::now_ts();
-        if (now - offer.timestamp).unsigned_abs() > 300 {
+        if (now - offer.timestamp).unsigned_abs() > TIMESTAMP_TOLERANCE_SECS as u64 {
             eprintln!("[tunnel] rejected TUNNEL_OFFER: stale timestamp");
+            return HandleResult::Handled;
+        }
+
+        if !self.is_peer_allowed(source) {
+            eprintln!(
+                "[tunnel] rejected TUNNEL_OFFER from {}: not in allowlist",
+                &source[..12.min(source.len())]
+            );
+            // Send reject
+            if let Ok(payload) = rmp_serde::to_vec(&TunnelReject {
+                reason: "peer not authorized".into(),
+                offer_nonce: offer.nonce.clone(),
+            }) {
+                let _ = self
+                    .send_tunnel_message(source, StyreneMessageType::TunnelReject, &payload)
+                    .await;
+            }
             return HandleResult::Handled;
         }
 
@@ -160,10 +255,18 @@ impl TunnelService {
                 .await;
         }
 
-        self.active_tunnels
-            .lock()
-            .expect("lock")
-            .insert(source.to_string());
+        // Store full peer state
+        self.active_tunnels.lock().expect("lock").insert(
+            source.to_string(),
+            TunnelPeerState {
+                wg_pubkey: offer.wg_pubkey,
+                endpoint: offer.endpoint,
+                mesh_ip: offer.mesh_ip,
+                psk: offer.psk,
+                mtu: offer.mtu,
+                established_at: tunnel_payloads::now_ts(),
+            },
+        );
 
         eprintln!(
             "[tunnel] sent TUNNEL_ACCEPT to {}",
@@ -174,16 +277,19 @@ impl TunnelService {
     }
 
     async fn handle_accept(&self, source: &str, accept: TunnelAccept) -> HandleResult {
-        let peer = self
+        let pending = self
             .pending_offers
             .lock()
             .expect("lock")
             .remove(&accept.offer_nonce);
 
-        if peer.is_none() {
-            eprintln!("[tunnel] rejected TUNNEL_ACCEPT: unknown offer_nonce");
-            return HandleResult::Handled;
-        }
+        let pending = match pending {
+            Some(p) => p,
+            None => {
+                eprintln!("[tunnel] rejected TUNNEL_ACCEPT: unknown offer_nonce");
+                return HandleResult::Handled;
+            }
+        };
 
         eprintln!(
             "[tunnel] received TUNNEL_ACCEPT from {} endpoint={}",
@@ -191,10 +297,18 @@ impl TunnelService {
             accept.endpoint
         );
 
-        self.active_tunnels
-            .lock()
-            .expect("lock")
-            .insert(source.to_string());
+        // Store full peer state
+        self.active_tunnels.lock().expect("lock").insert(
+            source.to_string(),
+            TunnelPeerState {
+                wg_pubkey: accept.wg_pubkey,
+                endpoint: accept.endpoint,
+                mesh_ip: accept.mesh_ip,
+                psk: pending.psk,
+                mtu: pending.mtu,
+                established_at: tunnel_payloads::now_ts(),
+            },
+        );
 
         HandleResult::Handled
     }
@@ -214,12 +328,24 @@ impl TunnelService {
         HandleResult::Handled
     }
 
+    /// Check and record a nonce. Returns true if new, false if duplicate.
+    /// Uses time-windowed eviction instead of full cache clear.
     fn check_nonce(&self, nonce: &str) -> bool {
+        let now = tunnel_payloads::now_ts();
         let mut seen = self.seen_nonces.lock().expect("lock");
-        if seen.len() > 10_000 {
-            seen.clear();
+
+        // Evict expired entries when cache is full
+        if seen.len() >= MAX_NONCE_CACHE {
+            seen.retain(|_, ts| now - *ts < NONCE_EXPIRY_SECS);
         }
-        seen.insert(nonce.to_string())
+
+        // Check if nonce was already seen
+        if seen.contains_key(nonce) {
+            return false;
+        }
+
+        seen.insert(nonce.to_string(), now);
+        true
     }
 
     async fn send_tunnel_message(
@@ -271,15 +397,6 @@ impl TunnelService {
         .map_err(|e| format!("deliver: {e}"))?;
 
         Ok(())
-    }
-
-    pub fn active_peers(&self) -> Vec<String> {
-        self.active_tunnels
-            .lock()
-            .expect("lock")
-            .iter()
-            .cloned()
-            .collect()
     }
 }
 
