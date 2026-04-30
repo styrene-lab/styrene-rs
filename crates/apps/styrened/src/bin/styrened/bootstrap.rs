@@ -121,7 +121,8 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     if let Some(addr) = args.transport.clone().filter(|_| node_role.runs_transport()) {
         let transport_identity =
             rns_core::transport::identity_bridge::to_transport_private_identity(&identity);
-        let config = TransportConfig::new("daemon", &transport_identity, true);
+        let mut config = TransportConfig::new("daemon", &transport_identity, true);
+        config.set_retransmit(true);
         let mut transport_instance = Transport::new(config);
         transport_instance
             .set_receipt_handler(Box::new(ReceiptBridge::new(
