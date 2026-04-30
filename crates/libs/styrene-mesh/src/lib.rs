@@ -40,6 +40,7 @@
 //! - [`styrene`](https://crates.io/crates/styrene) — Meta-crate re-exporting all
 
 pub mod wire;
+pub mod tunnel_payloads;
 
 #[cfg(feature = "pqc")]
 pub mod pqc;

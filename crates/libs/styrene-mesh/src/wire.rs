@@ -1,7 +1,7 @@
 //! Styrene wire protocol encode/decode.
 //!
-//! This module must produce byte-identical output to Python's
-//! `styrened/src/styrened/models/styrene_wire.py`.
+//! Payload encoding uses CBOR (RFC 8949) via `ciborium` for deterministic
+//! encoding, COSE compatibility, and IETF governance.
 
 use rand_core::OsRng;
 use rand_core::RngCore;
@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{NAMESPACE, WIRE_VERSION};
 
-/// Wire protocol header size: 10 (namespace) + 1 (version) + 1 (type) + 16 (request_id) = 28
-const HEADER_SIZE: usize = 29; // 11 (namespace) + 1 (version) + 1 (type) + 16 (request_id)
+/// Wire protocol header size: 11 (namespace) + 1 (version) + 1 (type) + 16 (request_id)
+const HEADER_SIZE: usize = 29;
 
 /// Errors from wire protocol operations.
 #[derive(Debug, thiserror::Error)]
@@ -27,11 +27,11 @@ pub enum WireError {
     #[error("unknown message type: 0x{0:02x}")]
     UnknownMessageType(u8),
 
-    #[error("msgpack decode error: {0}")]
-    MsgpackDecode(#[from] rmp_serde::decode::Error),
+    #[error("CBOR decode error: {0}")]
+    CborDecode(String),
 
-    #[error("msgpack encode error: {0}")]
-    MsgpackEncode(#[from] rmp_serde::encode::Error),
+    #[error("CBOR encode error: {0}")]
+    CborEncode(String),
 }
 
 /// Styrene wire protocol message types.
@@ -113,6 +113,29 @@ pub enum StyreneMessageType {
     #[cfg(feature = "pqc")]
     PqcCapabilityAck = 0xD7,
 
+    // Tunnel Negotiation (0xD8-0xDF) — WireGuard/VPN tunnel lifecycle
+    /// Initiator proposes a tunnel to the responder.
+    /// Payload: {wg_pubkey, endpoint, mesh_ip, psk, mtu, nonce, timestamp}
+    TunnelOffer = 0xD8,
+    /// Responder accepts the tunnel offer.
+    /// Payload: {wg_pubkey, endpoint, mesh_ip, nonce, timestamp}
+    TunnelAccept = 0xD9,
+    /// Responder rejects the tunnel offer.
+    /// Payload: {reason, nonce}
+    TunnelReject = 0xDA,
+    /// Either side tears down an established tunnel.
+    /// Payload: {tunnel_id, nonce}
+    TunnelTeardown = 0xDB,
+    /// Either side initiates a rekey with a new PSK.
+    /// Payload: {tunnel_id, new_psk, nonce, timestamp}
+    TunnelRekey = 0xDC,
+    /// Periodic keepalive for the tunnel control channel.
+    /// Payload: {tunnel_id, nonce}
+    TunnelKeepalive = 0xDD,
+    /// Hub broadcasts topology updates to peers.
+    /// Payload: {peers: [{identity, endpoint, mesh_ip}], nonce}
+    TunnelTopology = 0xDE,
+
     // Content Distribution (0xE0-0xE3)
     /// A node announces availability of content chunks.
     ResourceAvailable = 0xE0,
@@ -180,6 +203,13 @@ impl StyreneMessageType {
             0xD6 => Ok(Self::PqcCapability),
             #[cfg(feature = "pqc")]
             0xD7 => Ok(Self::PqcCapabilityAck),
+            0xD8 => Ok(Self::TunnelOffer),
+            0xD9 => Ok(Self::TunnelAccept),
+            0xDA => Ok(Self::TunnelReject),
+            0xDB => Ok(Self::TunnelTeardown),
+            0xDC => Ok(Self::TunnelRekey),
+            0xDD => Ok(Self::TunnelKeepalive),
+            0xDE => Ok(Self::TunnelTopology),
             0xE0 => Ok(Self::ResourceAvailable),
             0xE1 => Ok(Self::ChunkRequest),
             0xE2 => Ok(Self::ChunkResponse),
@@ -206,14 +236,18 @@ pub struct ResourceAvailablePayload {
 }
 
 impl ResourceAvailablePayload {
-    /// Encode to msgpack bytes for embedding in a `StyreneMessage` payload.
+    /// Encode to CBOR bytes for embedding in a `StyreneMessage` payload.
     pub fn encode(&self) -> Result<Vec<u8>, WireError> {
-        Ok(rmp_serde::to_vec(self)?)
+        let mut buf = Vec::new();
+        ciborium::into_writer(self, &mut buf)
+            .map_err(|e| WireError::CborEncode(e.to_string()))?;
+        Ok(buf)
     }
 
-    /// Decode from msgpack bytes.
+    /// Decode from CBOR bytes.
     pub fn decode(data: &[u8]) -> Result<Self, WireError> {
-        Ok(rmp_serde::from_slice(data)?)
+        ciborium::from_reader(data)
+            .map_err(|e| WireError::CborDecode(e.to_string()))
     }
 }
 
@@ -227,11 +261,18 @@ pub struct ChunkRequestPayload {
 }
 
 impl ChunkRequestPayload {
+    /// Encode to CBOR bytes for embedding in a `StyreneMessage` payload.
     pub fn encode(&self) -> Result<Vec<u8>, WireError> {
-        Ok(rmp_serde::to_vec(self)?)
+        let mut buf = Vec::new();
+        ciborium::into_writer(self, &mut buf)
+            .map_err(|e| WireError::CborEncode(e.to_string()))?;
+        Ok(buf)
     }
+
+    /// Decode from CBOR bytes.
     pub fn decode(data: &[u8]) -> Result<Self, WireError> {
-        Ok(rmp_serde::from_slice(data)?)
+        ciborium::from_reader(data)
+            .map_err(|e| WireError::CborDecode(e.to_string()))
     }
 }
 
@@ -248,11 +289,18 @@ pub struct ChunkResponsePayload {
 }
 
 impl ChunkResponsePayload {
+    /// Encode to CBOR bytes for embedding in a `StyreneMessage` payload.
     pub fn encode(&self) -> Result<Vec<u8>, WireError> {
-        Ok(rmp_serde::to_vec(self)?)
+        let mut buf = Vec::new();
+        ciborium::into_writer(self, &mut buf)
+            .map_err(|e| WireError::CborEncode(e.to_string()))?;
+        Ok(buf)
     }
+
+    /// Decode from CBOR bytes.
     pub fn decode(data: &[u8]) -> Result<Self, WireError> {
-        Ok(rmp_serde::from_slice(data)?)
+        ciborium::from_reader(data)
+            .map_err(|e| WireError::CborDecode(e.to_string()))
     }
 }
 
@@ -261,7 +309,7 @@ impl ChunkResponsePayload {
 /// A Styrene wire protocol message.
 #[derive(Debug, Clone)]
 pub struct StyreneMessage {
-    /// Wire format version (currently always 0x01).
+    /// Wire format version (currently always 0x02).
     pub version: u8,
     /// Message type.
     pub message_type: StyreneMessageType,
@@ -347,7 +395,8 @@ mod tests {
 
     #[test]
     fn roundtrip_with_payload() {
-        let payload = rmp_serde::to_vec(&serde_json::json!({"hostname": "styrene-node"}))
+        let mut payload = Vec::new();
+        ciborium::into_writer(&serde_json::json!({"hostname": "styrene-node"}), &mut payload)
             .expect("encode payload");
         let msg = StyreneMessage::new(StyreneMessageType::StatusResponse, &payload);
         let encoded = msg.encode();
