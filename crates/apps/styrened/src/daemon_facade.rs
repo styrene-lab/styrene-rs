@@ -634,6 +634,21 @@ impl DaemonFleet for DaemonFacade {
         self.require(&Capability::Exec)?;
         Err(Self::not_implemented("terminal_close"))
     }
+
+    async fn fleet_apply(
+        &self,
+        dest: &str,
+        profile_bytes: Vec<u8>,
+        verify: bool,
+        timeout: Option<u64>,
+    ) -> Result<ConfigApplyResult, IpcError> {
+        self.require(&Capability::UpdateConfig)?;
+        self.ctx
+            .fleet()
+            .apply(dest, &profile_bytes, verify, timeout)
+            .await
+            .map_err(internal)
+    }
 }
 
 #[async_trait]

@@ -273,6 +273,29 @@ impl DaemonClient {
         let frame = self.rpc(MessageType::CmdRebootDevice, &p).await?;
         Ok(frame.payload)
     }
+
+    pub async fn fleet_apply(
+        &mut self,
+        dest: &str,
+        profile_bytes: &[u8],
+        verify: bool,
+        timeout_secs: u64,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        use base64::Engine;
+        let profile_b64 =
+            base64::engine::general_purpose::STANDARD.encode(profile_bytes);
+        let mut p = HashMap::new();
+        p.insert("destination_hash".into(), MpValue::String(dest.into()));
+        p.insert("profile".into(), MpValue::String(profile_b64.into()));
+        p.insert("verify".into(), MpValue::Boolean(verify));
+        p.insert(
+            "timeout".into(),
+            MpValue::Integer(rmpv::Integer::from(timeout_secs)),
+        );
+        self.with_timeout(timeout_secs);
+        let frame = self.rpc(MessageType::CmdFleetApply, &p).await?;
+        Ok(frame.payload)
+    }
 }
 
 fn default_socket_path() -> PathBuf {

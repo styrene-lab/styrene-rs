@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use console::style;
+use toml;
 
 use crate::ipc_client::DaemonClient;
 
@@ -402,6 +403,83 @@ pub(crate) async fn fleet_reboot(
         eprintln!("  {} reboot initiated", style("✓").green().bold());
     } else {
         eprintln!("  {} reboot failed", style("✗").red().bold());
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn fleet_apply(
+    socket: Option<&Path>,
+    node: &str,
+    profile_path: &Path,
+    verify: bool,
+    timeout: u64,
+) -> anyhow::Result<()> {
+    // Read and validate profile
+    let profile_bytes = std::fs::read(profile_path)
+        .map_err(|e| anyhow::anyhow!("failed to read profile: {e}"))?;
+
+    // Quick TOML validation
+    let profile_str = std::str::from_utf8(&profile_bytes)
+        .map_err(|_| anyhow::anyhow!("profile is not valid UTF-8"))?;
+    let _: toml::Value = toml::from_str(profile_str)
+        .map_err(|e| anyhow::anyhow!("profile is not valid TOML: {e}"))?;
+
+    // Warn if unsigned and verify enabled
+    if verify {
+        let parsed: toml::Value = toml::from_str(profile_str).unwrap();
+        let has_sig = parsed.get("meta").and_then(|m| m.get("signature")).is_some();
+        if !has_sig {
+            eprintln!(
+                "  {} profile has no signature — verification will fail on remote",
+                style("!").yellow().bold()
+            );
+        }
+    }
+
+    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+
+    let node_short = truncate(node, 12);
+    eprintln!("  {} applying profile to {node_short}…", style("→").cyan());
+    if verify {
+        eprintln!("  {} signature verification enabled", style("✓").dim());
+    }
+
+    let result = client
+        .fleet_apply(node, &profile_bytes, verify, timeout)
+        .await
+        .map_err(anyhow::Error::msg)?;
+
+    let verified = result.get("verified").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let exit_code = result.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(-1);
+    let stdout = result.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+    let stderr = result.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+
+    if verified {
+        eprintln!("  {} signature verified", style("✓").green().bold());
+    }
+
+    if !stdout.is_empty() {
+        print!("{stdout}");
+        if !stdout.ends_with('\n') {
+            println!();
+        }
+    }
+    if !stderr.is_empty() {
+        eprint!("{stderr}");
+        if !stderr.ends_with('\n') {
+            eprintln!();
+        }
+    }
+
+    if success {
+        eprintln!("  {} profile applied successfully", style("✓").green().bold());
+    } else {
+        eprintln!(
+            "  {} profile apply failed (exit code {exit_code})",
+            style("✗").red().bold()
+        );
     }
 
     Ok(())

@@ -71,4 +71,13 @@ pub trait DaemonFleet: Send + Sync {
 
     /// Close a terminal session.
     async fn terminal_close(&self, session_id: &str) -> Result<bool, IpcError>;
+
+    /// Push a signed profile to a remote node, verify, and apply it.
+    async fn fleet_apply(
+        &self,
+        dest: &str,
+        profile_bytes: Vec<u8>,
+        verify: bool,
+        timeout: Option<u64>,
+    ) -> Result<ConfigApplyResult, IpcError>;
 }

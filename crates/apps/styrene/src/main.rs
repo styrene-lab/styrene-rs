@@ -95,6 +95,9 @@ async fn main() -> anyhow::Result<()> {
             cli::FleetAction::Reboot { ref node, delay } => {
                 commands::fleet_reboot(socket, node, *delay).await
             }
+            cli::FleetAction::Apply { ref node, ref profile, no_verify, timeout } => {
+                commands::fleet_apply(socket, node, profile, !no_verify, *timeout).await
+            }
         },
     }
 }

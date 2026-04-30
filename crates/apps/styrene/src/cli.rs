@@ -153,4 +153,17 @@ pub enum FleetAction {
         #[arg(long, default_value = "0")]
         delay: u64,
     },
+    /// Push a signed profile to a remote node and apply it
+    Apply {
+        /// Destination node hash
+        node: String,
+        /// Path to signed profile TOML
+        profile: std::path::PathBuf,
+        /// Skip signature verification on remote node
+        #[arg(long)]
+        no_verify: bool,
+        /// Timeout in seconds (default: 120, profiles need time for darwin-rebuild)
+        #[arg(long, default_value = "120")]
+        timeout: u64,
+    },
 }

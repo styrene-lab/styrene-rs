@@ -236,6 +236,15 @@ impl DaemonFleet for TestDaemon {
     async fn terminal_close(&self, _session: &str) -> Result<bool, IpcError> {
         Err(IpcError::not_implemented("fleet"))
     }
+    async fn fleet_apply(
+        &self,
+        _dest: &str,
+        _profile_bytes: Vec<u8>,
+        _verify: bool,
+        _timeout: Option<u64>,
+    ) -> Result<ConfigApplyResult, IpcError> {
+        Err(IpcError::not_implemented("fleet"))
+    }
 }
 
 #[async_trait]

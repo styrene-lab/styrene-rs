@@ -7114,6 +7114,7 @@ name = "styrene"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "clap",
  "console",
  "rmpv",
@@ -7122,6 +7123,7 @@ dependencies = [
  "styrene-tui",
  "styrened",
  "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -7255,6 +7257,7 @@ name = "styrene-ipc-server"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "env_logger",
  "log",
  "rmp-serde",
