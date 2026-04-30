@@ -196,6 +196,38 @@ impl DaemonClient {
         Ok(frame.payload)
     }
 
+    // ── Tunnel operations ───────────────────────────────────────────────
+
+    pub async fn list_tunnels(&mut self) -> Result<Vec<HashMap<String, MpValue>>, String> {
+        let frame = self.rpc(MessageType::QueryTunnels, &HashMap::new()).await?;
+        let arr = frame
+            .payload
+            .get("tunnels")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| "no tunnels array".to_string())?;
+        Ok(arr
+            .iter()
+            .filter_map(|v| {
+                let m = v.as_map()?;
+                Some(
+                    m.iter()
+                        .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.clone())))
+                        .collect(),
+                )
+            })
+            .collect())
+    }
+
+    pub async fn tunnel_status_rpc(
+        &mut self,
+        peer: &str,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("peer_hash".into(), MpValue::String(peer.into()));
+        let frame = self.rpc(MessageType::QueryTunnelStatus, &p).await?;
+        Ok(frame.payload)
+    }
+
     // ── Fleet operations ────────────────────────────────────────────────
 
     pub async fn device_status(

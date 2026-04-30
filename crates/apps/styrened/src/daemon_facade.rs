@@ -281,25 +281,40 @@ impl DaemonMessaging for DaemonFacade {
         Ok(self.ctx.discovery().resolve_name(name, prefix))
     }
 
-    async fn pin_conversation(&self, _peer_hash: &str) -> Result<bool, IpcError> {
+    async fn pin_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
         self.require(&Capability::Chat)?;
-        // TODO: wire to ConversationStore when integrated
-        Err(Self::not_implemented("pin_conversation"))
+        self.ctx
+            .conversations()
+            .set_pinned(peer_hash, true)
+            .map_err(|e| IpcError::Internal { message: e.to_string() })?;
+        Ok(true)
     }
 
-    async fn unpin_conversation(&self, _peer_hash: &str) -> Result<bool, IpcError> {
+    async fn unpin_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("unpin_conversation"))
+        self.ctx
+            .conversations()
+            .set_pinned(peer_hash, false)
+            .map_err(|e| IpcError::Internal { message: e.to_string() })?;
+        Ok(true)
     }
 
-    async fn mute_conversation(&self, _peer_hash: &str) -> Result<bool, IpcError> {
+    async fn mute_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("mute_conversation"))
+        self.ctx
+            .conversations()
+            .set_muted(peer_hash, true)
+            .map_err(|e| IpcError::Internal { message: e.to_string() })?;
+        Ok(true)
     }
 
-    async fn unmute_conversation(&self, _peer_hash: &str) -> Result<bool, IpcError> {
+    async fn unmute_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
         self.require(&Capability::Chat)?;
-        Err(Self::not_implemented("unmute_conversation"))
+        self.ctx
+            .conversations()
+            .set_muted(peer_hash, false)
+            .map_err(|e| IpcError::Internal { message: e.to_string() })?;
+        Ok(true)
     }
 }
 
@@ -322,8 +337,19 @@ impl DaemonStatus for DaemonFacade {
 
     async fn query_config(&self) -> Result<ConfigSnapshot, IpcError> {
         self.require(&Capability::Status)?;
-        // Return a minimal snapshot. Full config mapping is follow-on work.
-        Ok(ConfigSnapshot::default())
+        let mut snapshot = ConfigSnapshot::default();
+        let config_svc = self.ctx.config();
+        snapshot.values.insert("role".into(), serde_json::json!(config_svc.node_role().to_string()));
+        if let Some(path) = config_svc.config_path() {
+            snapshot
+                .values
+                .insert("config_path".into(), serde_json::json!(path.display().to_string()));
+        }
+        let interfaces = config_svc.interfaces();
+        if !interfaces.is_empty() {
+            snapshot.values.insert("interface_count".into(), serde_json::json!(interfaces.len()));
+        }
+        Ok(snapshot)
     }
 
     async fn query_devices(&self, _styrene_only: bool) -> Result<Vec<DeviceInfo>, IpcError> {
@@ -620,11 +646,37 @@ impl DaemonEvents for DaemonFacade {
 #[async_trait]
 impl DaemonTunnel for DaemonFacade {
     async fn list_tunnels(&self) -> Result<Vec<TunnelInfo>, IpcError> {
-        Err(Self::not_implemented("list_tunnels"))
+        self.require(&Capability::Status)?;
+        let peers = self.ctx.tunnel().active_peers();
+        let mut tunnels = Vec::with_capacity(peers.len());
+        for peer in peers {
+            if let Some(state) = self.ctx.tunnel().get_peer_state(&peer) {
+                let mut info = TunnelInfo::default();
+                info.peer_hash = peer;
+                info.backend = String::from("wireguard");
+                info.state = String::from("established");
+                info.remote_endpoint = Some(state.endpoint.clone());
+                info.established_at = Some(state.established_at);
+                tunnels.push(info);
+            }
+        }
+        Ok(tunnels)
     }
 
-    async fn tunnel_status(&self, _peer_hash: &str) -> Result<TunnelInfo, IpcError> {
-        Err(Self::not_implemented("tunnel_status"))
+    async fn tunnel_status(&self, peer_hash: &str) -> Result<TunnelInfo, IpcError> {
+        self.require(&Capability::Status)?;
+        let state = self
+            .ctx
+            .tunnel()
+            .get_peer_state(peer_hash)
+            .ok_or_else(|| IpcError::not_found("tunnel", peer_hash))?;
+        let mut info = TunnelInfo::default();
+        info.peer_hash = peer_hash.to_string();
+        info.backend = String::from("wireguard");
+        info.state = String::from("established");
+        info.remote_endpoint = Some(state.endpoint.clone());
+        info.established_at = Some(state.established_at);
+        Ok(info)
     }
 
     async fn tunnel_rekey(&self, _peer_hash: &str) -> Result<bool, IpcError> {
@@ -636,7 +688,8 @@ impl DaemonTunnel for DaemonFacade {
     }
 
     async fn list_tunnel_sas(&self, _peer_hash: &str) -> Result<Vec<TunnelSaInfo>, IpcError> {
-        Err(Self::not_implemented("list_tunnel_sas"))
+        self.require(&Capability::Status)?;
+        Ok(Vec::new())
     }
 }
 

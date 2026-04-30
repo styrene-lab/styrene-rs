@@ -192,23 +192,54 @@ pub(crate) async fn config(socket: Option<&Path>) -> anyhow::Result<()> {
 
 pub(crate) async fn tunnel_list(socket: Option<&Path>) -> anyhow::Result<()> {
     let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
-    let devices = client.devices(true).await.map_err(anyhow::Error::msg)?;
 
-    eprintln!();
-    eprintln!("  {} ({} styrene peers)", style("styrene tunnel list").cyan().bold(), devices.len());
-    eprintln!();
-    eprintln!(
-        "  {}",
-        style("tunnel status is not yet available — showing known styrene peers").dim()
-    );
-    eprintln!();
+    match client.list_tunnels().await {
+        Ok(tunnels) => {
+            eprintln!();
+            eprintln!(
+                "  {} ({} active)",
+                style("styrene tunnel list").cyan().bold(),
+                tunnels.len()
+            );
+            eprintln!();
 
-    for dev in &devices {
-        let name = if dev.name.is_empty() { "(unnamed)".to_string() } else { dev.name.clone() };
-        let hash_short = truncate(&dev.destination_hash, 12);
-        eprintln!("  {} {hash_short}…  {name}", style("○").dim());
+            if tunnels.is_empty() {
+                eprintln!("  {} no active tunnels", style("○").dim());
+            }
+
+            for t in &tunnels {
+                let peer = t.get("peer_hash").and_then(|v| v.as_str()).unwrap_or("?");
+                let state = t.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let endpoint = t.get("remote_endpoint").and_then(|v| v.as_str()).unwrap_or("");
+                let marker = if state == "established" {
+                    style("⬡").green().to_string()
+                } else {
+                    style("○").dim().to_string()
+                };
+                eprintln!("  {marker} {}…  {state}  {endpoint}", truncate(peer, 12));
+            }
+            eprintln!();
+        }
+        Err(e) => {
+            // Fallback: show styrene peers instead
+            let devices = client.devices(true).await.map_err(anyhow::Error::msg)?;
+            eprintln!();
+            eprintln!(
+                "  {} ({} styrene peers)",
+                style("styrene tunnel list").cyan().bold(),
+                devices.len()
+            );
+            eprintln!("  {}", style(format!("tunnel query unavailable: {e}")).dim());
+            eprintln!();
+            for dev in &devices {
+                let name =
+                    if dev.name.is_empty() { "(unnamed)".to_string() } else { dev.name.clone() };
+                let hash_short = truncate(&dev.destination_hash, 12);
+                eprintln!("  {} {hash_short}…  {name}", style("○").dim());
+            }
+            eprintln!();
+        }
     }
-    eprintln!();
 
     Ok(())
 }
