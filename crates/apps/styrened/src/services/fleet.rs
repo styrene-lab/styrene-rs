@@ -168,6 +168,16 @@ impl FleetService {
         verify: bool,
         timeout: Option<u64>,
     ) -> Result<ConfigApplyResult, std::io::Error> {
+        // Issue 2: Reject oversized profiles before hex encoding
+        const MAX_PROFILE_SIZE: usize = 2 * 1024 * 1024; // 2 MB
+        if profile_bytes.len() > MAX_PROFILE_SIZE {
+            return Err(std::io::Error::other(format!(
+                "profile too large: {} bytes (max {} bytes)",
+                profile_bytes.len(),
+                MAX_PROFILE_SIZE
+            )));
+        }
+
         let timeout = Duration::from_secs(timeout.unwrap_or(120));
 
         let payload = cbor_encode(&serde_json::json!({

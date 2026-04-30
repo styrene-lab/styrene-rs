@@ -3,7 +3,6 @@
 use std::path::Path;
 
 use console::style;
-use toml;
 
 use crate::ipc_client::DaemonClient;
 
@@ -415,6 +414,9 @@ pub(crate) async fn fleet_apply(
     verify: bool,
     timeout: u64,
 ) -> anyhow::Result<()> {
+    // Issue 8: Clamp timeout to reasonable bounds (10s to 1h)
+    let timeout = timeout.min(3600).max(10);
+
     // Read and validate profile
     let profile_bytes = std::fs::read(profile_path)
         .map_err(|e| anyhow::anyhow!("failed to read profile: {e}"))?;

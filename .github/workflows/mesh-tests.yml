@@ -1,0 +1,45 @@
+name: Mesh Integration Tests
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "crates/**"
+      - "tests/mesh/**"
+  pull_request:
+    branches: [master, main]
+    paths:
+      - "crates/**"
+      - "tests/mesh/**"
+
+jobs:
+  mesh:
+    name: Mesh Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build images
+        run: docker compose -f tests/mesh/docker-compose.yml build
+
+      - name: Run mesh tests
+        run: |
+          docker compose -f tests/mesh/docker-compose.yml up --exit-code-from operator --abort-on-container-exit
+
+      - name: Capture logs
+        if: failure()
+        run: |
+          docker compose -f tests/mesh/docker-compose.yml logs --no-color > mesh-logs.txt 2>&1
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesh-logs
+          path: mesh-logs.txt
+          retention-days: 7
+
+      - name: Cleanup
+        if: always()
+        run: docker compose -f tests/mesh/docker-compose.yml down -v

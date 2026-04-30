@@ -295,10 +295,10 @@ fn normalize_propagation_payload_bytes(
 }
 
 #[allow(dead_code)]
-fn propagation_payload_hash_input<'a>(
-    transient_data: &'a [u8],
+fn propagation_payload_hash_input(
+    transient_data: &[u8],
     target_cost: u32,
-) -> Result<&'a [u8], std::io::Error> {
+) -> Result<&[u8], std::io::Error> {
     if target_cost == 0 {
         return Ok(split_propagation_stamp(transient_data)
             .map(|(lxm_data, _stamp)| lxm_data)

@@ -79,6 +79,12 @@ const NONCE_EXPIRY_SECS: i64 = 300;
 /// Timestamp tolerance for offers (seconds).
 const TIMESTAMP_TOLERANCE_SECS: i64 = 300;
 
+impl Default for TunnelService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TunnelService {
     /// Create a placeholder service (not wired to transport).
     /// Tunnel operations will fail gracefully until `with_transport()` is used.

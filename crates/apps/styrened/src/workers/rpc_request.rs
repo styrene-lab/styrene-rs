@@ -9,12 +9,21 @@
 use crate::services::{AuthService, Capability, MessagingService};
 use crate::transport::mesh_transport::MeshTransport;
 use async_trait::async_trait;
+use rand_core::{OsRng, RngCore};
 use rns_core::destination::DestinationName;
 use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use std::sync::Arc;
 use styrene_mesh::{StyreneMessage, StyreneMessageType};
 use styrene_services::protocol_registry::{HandleResult, InboundMessage, ProtocolHandler};
+
+/// RAII guard that removes a temp file on drop (including panics).
+struct TempFileGuard(String);
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
 
 /// Protocol handler that processes incoming Styrene RPC requests
 /// and sends responses back to the requesting peer.
@@ -142,10 +151,36 @@ impl RpcRequestHandler {
     }
 
     fn handle_config_update(&self, payload: &[u8]) -> Vec<u8> {
-        let request: serde_json::Value =
-            ciborium::from_reader(payload).unwrap_or(serde_json::Value::Null);
+        // Issue 3: Propagate CBOR deserialization errors instead of silent null
+        let request: serde_json::Value = match ciborium::from_reader(payload) {
+            Ok(v) => v,
+            Err(e) => {
+                return Self::cbor_encode(&serde_json::json!({
+                    "success": false, "verified": false, "exit_code": -1,
+                    "stdout": "", "stderr": format!("invalid CBOR payload: {e}"),
+                }));
+            }
+        };
 
-        let profile_hex = request.get("profile").and_then(|v| v.as_str()).unwrap_or("");
+        // Issue 5: Reject missing or empty profile hex
+        let profile_hex = match request.get("profile").and_then(|v| v.as_str()) {
+            Some(h) if !h.is_empty() => h,
+            _ => {
+                return Self::cbor_encode(&serde_json::json!({
+                    "success": false, "verified": false, "exit_code": -1,
+                    "stdout": "", "stderr": "missing or empty profile",
+                }));
+            }
+        };
+
+        // Issue 5: Size limit on hex string (8 MB hex = 4 MB decoded)
+        if profile_hex.len() > 8 * 1024 * 1024 {
+            return Self::cbor_encode(&serde_json::json!({
+                "success": false, "verified": false, "exit_code": -1,
+                "stdout": "", "stderr": format!("profile too large: {} bytes", profile_hex.len()),
+            }));
+        }
+
         let verify = request.get("verify").and_then(|v| v.as_bool()).unwrap_or(true);
 
         // Decode profile bytes from hex
@@ -159,18 +194,42 @@ impl RpcRequestHandler {
             }
         };
 
-        // Write to temp file (use timestamp + pid for uniqueness)
+        // Issue 1: Write to temp file with random component, O_EXCL, and 0o600 permissions
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let tmp_path = format!("/tmp/styrene-profile-{ts}.toml");
-        if let Err(e) = std::fs::write(&tmp_path, &profile_bytes) {
-            return Self::cbor_encode(&serde_json::json!({
-                "success": false, "verified": false, "exit_code": -1,
-                "stdout": "", "stderr": format!("failed to write temp profile: {e}"),
-            }));
+        let random_suffix = OsRng.next_u64();
+        let tmp_path = format!("/tmp/styrene-profile-{ts}-{random_suffix:016x}.toml");
+
+        {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut file = match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true) // O_EXCL — fails if exists
+                .mode(0o600)
+                .open(&tmp_path)
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    return Self::cbor_encode(&serde_json::json!({
+                        "success": false, "verified": false, "exit_code": -1,
+                        "stdout": "", "stderr": format!("failed to create temp profile: {e}"),
+                    }));
+                }
+            };
+            if let Err(e) = file.write_all(&profile_bytes) {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Self::cbor_encode(&serde_json::json!({
+                    "success": false, "verified": false, "exit_code": -1,
+                    "stdout": "", "stderr": format!("failed to write temp profile: {e}"),
+                }));
+            }
         }
+
+        // RAII guard ensures cleanup on all exit paths (including panics)
+        let _guard = TempFileGuard(tmp_path.clone());
 
         // Verify if requested
         let mut verified = false;
@@ -183,7 +242,6 @@ impl RpcRequestHandler {
                     verified = true;
                 }
                 Ok(output) => {
-                    let _ = std::fs::remove_file(&tmp_path);
                     return Self::cbor_encode(&serde_json::json!({
                         "success": false, "verified": false,
                         "exit_code": output.status.code().unwrap_or(-1),
@@ -193,7 +251,6 @@ impl RpcRequestHandler {
                     }));
                 }
                 Err(e) => {
-                    let _ = std::fs::remove_file(&tmp_path);
                     return Self::cbor_encode(&serde_json::json!({
                         "success": false, "verified": false, "exit_code": -1,
                         "stdout": "", "stderr": format!("nex not found or failed to run: {e}"),
@@ -206,7 +263,6 @@ impl RpcRequestHandler {
         let apply_output = std::process::Command::new("nex")
             .args(["profile", "apply", &tmp_path])
             .output();
-        let _ = std::fs::remove_file(&tmp_path);
 
         match apply_output {
             Ok(output) => Self::cbor_encode(&serde_json::json!({

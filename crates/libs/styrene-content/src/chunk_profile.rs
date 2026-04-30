@@ -40,7 +40,7 @@ impl ChunkProfile {
     /// Number of chunks required to cover `file_size` bytes.
     pub const fn chunk_count_for(self, file_size: u64) -> u32 {
         let cs = self.chunk_size() as u64;
-        ((file_size + cs - 1) / cs) as u32
+        file_size.div_ceil(cs) as u32
     }
 
     pub fn from_u8(v: u8) -> Option<Self> {
