@@ -188,6 +188,82 @@ pub(crate) async fn config(socket: Option<&Path>) -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Tunnel operations ───────────────────────────────────────────────────────
+
+pub(crate) async fn tunnel_list(socket: Option<&Path>) -> anyhow::Result<()> {
+    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let devices = client.devices(true).await.map_err(anyhow::Error::msg)?;
+
+    eprintln!();
+    eprintln!("  {} ({} styrene peers)", style("styrene tunnel list").cyan().bold(), devices.len());
+    eprintln!();
+    eprintln!(
+        "  {}",
+        style("tunnel status is not yet available — showing known styrene peers").dim()
+    );
+    eprintln!();
+
+    for dev in &devices {
+        let name = if dev.name.is_empty() { "(unnamed)".to_string() } else { dev.name.clone() };
+        let hash_short = truncate(&dev.destination_hash, 12);
+        eprintln!("  {} {hash_short}…  {name}", style("○").dim());
+    }
+    eprintln!();
+
+    Ok(())
+}
+
+pub(crate) async fn tunnel_status(socket: Option<&Path>, peer: &str) -> anyhow::Result<()> {
+    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let devices = client.devices(true).await.map_err(anyhow::Error::msg)?;
+
+    let peer_short = truncate(peer, 12);
+    eprintln!();
+    eprintln!("  {} ({peer_short}…)", style("styrene tunnel status").cyan().bold(),);
+    eprintln!();
+
+    let found = devices
+        .iter()
+        .find(|d| d.destination_hash.starts_with(peer) || d.identity_hash.starts_with(peer));
+
+    if let Some(dev) = found {
+        let name = if dev.name.is_empty() { "(unnamed)".to_string() } else { dev.name.clone() };
+        eprintln!("  peer    {}", dev.destination_hash);
+        eprintln!("  name    {name}");
+        eprintln!("  status  {}", dev.status);
+        eprintln!("  tunnel  {}", style("not yet available").dim());
+    } else {
+        eprintln!("  {} peer {peer_short}… not found", style("✗").red().bold());
+    }
+    eprintln!();
+
+    Ok(())
+}
+
+pub(crate) fn tunnel_establish(peer: &str) {
+    let peer_short = truncate(peer, 12);
+    eprintln!();
+    eprintln!("  {} tunnel establish ({peer_short}…)", style("⚠").yellow().bold(),);
+    eprintln!();
+    eprintln!(
+        "  {}",
+        style("not yet available — tunnel establishment is handled automatically via LXMF negotiation").dim()
+    );
+    eprintln!();
+}
+
+pub(crate) fn tunnel_teardown(peer: &str) {
+    let peer_short = truncate(peer, 12);
+    eprintln!();
+    eprintln!("  {} tunnel teardown ({peer_short}…)", style("⚠").yellow().bold(),);
+    eprintln!();
+    eprintln!(
+        "  {}",
+        style("not yet available — tunnel establishment is handled automatically via LXMF negotiation").dim()
+    );
+    eprintln!();
+}
+
 // ── Fleet operations ────────────────────────────────────────────────────────
 
 pub(crate) async fn fleet_status(
