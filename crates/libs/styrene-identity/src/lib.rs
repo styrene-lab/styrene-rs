@@ -99,6 +99,8 @@ pub mod discover;
 #[cfg(feature = "file-signer")]
 pub mod file_signer;
 #[cfg(feature = "signing")]
+pub mod export;
+#[cfg(feature = "signing")]
 pub mod format;
 #[cfg(feature = "signing")]
 pub mod identity;
@@ -117,5 +119,10 @@ pub use derive::{
 };
 pub use discover::{discover, DiscoveredIdentity};
 #[cfg(feature = "signing")]
-pub use identity::{identity_hash, identity_pubkey, IdentityInfo, IDENTITY_HASH_BYTES};
+pub use export::AllPublicKeys;
+#[cfg(feature = "signing")]
+pub use identity::{
+    identity_hash, identity_pubkey, identity_sign, identity_verify, IdentityInfo, PublicIdentity,
+    IDENTITY_HASH_BYTES,
+};
 pub use signer::{IdentitySigner, SignerChain, SignerError, SignerTier};
