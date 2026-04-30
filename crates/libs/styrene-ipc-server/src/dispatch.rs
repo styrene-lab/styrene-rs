@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use base64::Engine as _;
 use styrene_ipc::traits::Daemon;
 
 use crate::wire::MessageType;
@@ -111,6 +112,7 @@ pub async fn dispatch(
         MessageType::QueryTunnels => dispatch_query_tunnels(daemon).await,
         MessageType::QueryTunnelStatus => dispatch_query_tunnel_status(daemon, &payload).await,
         MessageType::CmdTunnelTeardown => dispatch_tunnel_teardown(daemon, &payload).await,
+        MessageType::CmdFleetApply => dispatch_fleet_apply(daemon, &payload).await,
         _ => Err(format!("unimplemented message type: 0x{:02x}", msg_type as u8)),
     }
 }
@@ -957,5 +959,39 @@ async fn dispatch_tunnel_teardown(
     let ok = daemon.tunnel_teardown(peer).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("success".into(), rmpv::Value::Boolean(ok));
+    ok_payload(p)
+}
+
+// ── Fleet Apply ─────────────────────────────────────────────────────────────
+
+async fn dispatch_fleet_apply(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let dest = validate_hash(dest)?;
+    let profile_b64 = val_str(payload, "profile").ok_or("missing profile")?;
+    let profile_bytes = base64::engine::general_purpose::STANDARD
+        .decode(profile_b64)
+        .map_err(|e| format!("invalid base64 profile: {e}"))?;
+    let verify = payload
+        .get("verify")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let timeout = payload
+        .get("timeout")
+        .and_then(|v| v.as_u64());
+
+    let result = daemon
+        .fleet_apply(dest, profile_bytes, verify, timeout)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut p = Payload::new();
+    p.insert("success".into(), rmpv::Value::Boolean(result.success));
+    p.insert("verified".into(), rmpv::Value::Boolean(result.verified));
+    p.insert("exit_code".into(), rmpv::Value::from(result.exit_code));
+    p.insert("stdout".into(), rmpv::Value::String(result.stdout.into()));
+    p.insert("stderr".into(), rmpv::Value::String(result.stderr.into()));
     ok_payload(p)
 }

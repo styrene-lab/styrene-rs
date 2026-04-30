@@ -265,6 +265,16 @@ impl DaemonFleet for StubDaemon {
     async fn terminal_close(&self, _session_id: &str) -> Result<bool, IpcError> {
         Err(IpcError::not_implemented("terminal_close"))
     }
+
+    async fn fleet_apply(
+        &self,
+        _dest: &str,
+        _profile_bytes: Vec<u8>,
+        _verify: bool,
+        _timeout: Option<u64>,
+    ) -> Result<ConfigApplyResult, IpcError> {
+        Err(IpcError::not_implemented("fleet_apply"))
+    }
 }
 
 #[async_trait]
@@ -400,6 +410,7 @@ mod tests {
         assert!(stub.terminal_input("sid", b"data").await.is_err());
         assert!(stub.terminal_resize("sid", 24, 80).await.is_err());
         assert!(stub.terminal_close("sid").await.is_err());
+        assert!(stub.fleet_apply("abc", vec![], true, None).await.is_err());
 
         // DaemonTunnel
         assert!(stub.list_tunnels().await.is_err());

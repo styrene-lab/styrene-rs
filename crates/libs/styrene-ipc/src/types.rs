@@ -189,6 +189,16 @@ pub struct SelfUpdateResult {
     pub target_version: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
+pub struct ConfigApplyResult {
+    pub success: bool,
+    pub verified: bool,
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
 // ── Terminal sessions ─────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

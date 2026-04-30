@@ -12,7 +12,7 @@ use rns_core::hash::AddressHash;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use styrene_ipc::types::{ExecResult, RebootResult, RemoteStatusInfo};
+use styrene_ipc::types::{ConfigApplyResult, ExecResult, RebootResult, RemoteStatusInfo};
 use styrene_mesh::{StyreneMessage, StyreneMessageType};
 use tokio::sync::oneshot;
 
@@ -158,6 +158,49 @@ impl FleetService {
         result.accepted = response.message_type == StyreneMessageType::RebootResult;
         result.delay_secs = delay;
         Ok(result)
+    }
+
+    /// Push a signed profile to a remote node and apply it.
+    pub async fn apply(
+        &self,
+        dest_hash: &str,
+        profile_bytes: &[u8],
+        verify: bool,
+        timeout: Option<u64>,
+    ) -> Result<ConfigApplyResult, std::io::Error> {
+        let timeout = Duration::from_secs(timeout.unwrap_or(120));
+
+        let payload = cbor_encode(&serde_json::json!({
+            "profile": hex::encode(profile_bytes),
+            "verify": verify,
+        }))?;
+
+        let response = self
+            .rpc_call(dest_hash, StyreneMessageType::ConfigUpdate, &payload, timeout)
+            .await?;
+
+        if response.message_type != StyreneMessageType::ConfigUpdateResult {
+            return Err(std::io::Error::other(format!(
+                "unexpected response type: {:?}",
+                response.message_type
+            )));
+        }
+
+        let result: HashMap<String, serde_json::Value> = cbor_decode(&response.payload)?;
+
+        let mut apply_result = ConfigApplyResult::default();
+        apply_result.success =
+            result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+        apply_result.verified =
+            result.get("verified").and_then(|v| v.as_bool()).unwrap_or(false);
+        apply_result.exit_code =
+            result.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(-1) as i32;
+        apply_result.stdout =
+            result.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        apply_result.stderr =
+            result.get("stderr").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        Ok(apply_result)
     }
 
     /// Query remote device's inbox (conversation list) via RPC.
