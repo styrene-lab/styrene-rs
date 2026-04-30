@@ -116,8 +116,8 @@ pub fn generate_nonce() -> String {
 
 /// Helper: derive a deterministic mesh overlay IPv6 address from an identity hash.
 ///
-/// Uses BLAKE2b-128(identity_hash) to produce the interface ID portion
-/// of a ULA IPv6 address in the fd73:7479:7265:6e65::/64 prefix.
+/// Uses SHA-256(identity_hash) truncated to 8 bytes for the interface ID
+/// portion of a ULA IPv6 address in the fd73:7479:7265:6e65::/64 prefix.
 pub fn derive_mesh_ip(identity_hash: &str) -> String {
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(identity_hash.as_bytes());

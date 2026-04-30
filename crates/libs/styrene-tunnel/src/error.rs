@@ -53,6 +53,18 @@ pub enum TunnelError {
     #[error("tunnel configuration error: {0}")]
     Config(String),
 
+    #[error("tunnel negotiation timed out")]
+    Timeout,
+
+    #[error("duplicate nonce: {0}")]
+    NonceDuplicate(String),
+
+    #[error("endpoint unreachable: {0}")]
+    EndpointUnreachable(String),
+
+    #[error("tunnel offer rejected: {0}")]
+    Rejected(String),
+
     #[error("CBOR error: {0}")]
     Cbor(String),
 }
