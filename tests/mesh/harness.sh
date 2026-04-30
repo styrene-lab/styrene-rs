@@ -69,7 +69,7 @@ wait_for_peer() {
     local elapsed=0
 
     while [ "$elapsed" -lt "$timeout" ]; do
-        if styrene --socket "$socket_url" peers 2>/dev/null | grep -qF "$peer_name"; then
+        if styrene --socket "$socket_url" peers 2>&1 | grep -qiF "$peer_name"; then
             return 0
         fi
         sleep 2

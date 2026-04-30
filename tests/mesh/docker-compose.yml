@@ -23,14 +23,15 @@ services:
     entrypoint: ["bash", "-c"]
     command:
       - |
-        styrened &
+        styrened --socket /run/styrene/daemon.sock --config /etc/styrene/config.toml --transport 0.0.0.0:4242 --announce-interval-secs 15 &
         sleep 3
-        python3 /relay/tcp_relay.py "$${STYRENE_RUNTIME_DIR}/control.sock" 9001
+        python3 /relay/tcp_relay.py /run/styrene/daemon.sock 9001
     volumes:
       - ./configs/hub.toml:/etc/styrene/config.toml:ro
       - ./tcp_relay.py:/relay/tcp_relay.py:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
+      - LXMF_DISPLAY_NAME=hub
     ports:
       - "${MESH_HUB_PORT:-9001}:9001"
     networks:
@@ -48,9 +49,9 @@ services:
     command:
       - |
         sleep 5
-        styrened &
+        styrened --socket /run/styrene/daemon.sock --config /etc/styrene/config.toml --transport 0.0.0.0:4242 --announce-interval-secs 15 &
         sleep 3
-        python3 /relay/tcp_relay.py "$${STYRENE_RUNTIME_DIR}/control.sock" 9002
+        python3 /relay/tcp_relay.py /run/styrene/daemon.sock 9002
     depends_on:
       - hub
     volumes:
@@ -58,6 +59,7 @@ services:
       - ./tcp_relay.py:/relay/tcp_relay.py:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
+      - LXMF_DISPLAY_NAME=alpha
     ports:
       - "${MESH_ALPHA_PORT:-9002}:9002"
     networks:
@@ -74,9 +76,9 @@ services:
     command:
       - |
         sleep 5
-        styrened &
+        styrened --socket /run/styrene/daemon.sock --config /etc/styrene/config.toml --transport 0.0.0.0:4242 --announce-interval-secs 15 &
         sleep 3
-        python3 /relay/tcp_relay.py "$${STYRENE_RUNTIME_DIR}/control.sock" 9003
+        python3 /relay/tcp_relay.py /run/styrene/daemon.sock 9003
     depends_on:
       - hub
     volumes:
@@ -84,6 +86,7 @@ services:
       - ./tcp_relay.py:/relay/tcp_relay.py:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
+      - LXMF_DISPLAY_NAME=beta
     ports:
       - "${MESH_BETA_PORT:-9003}:9003"
     networks:
@@ -100,9 +103,9 @@ services:
     command:
       - |
         sleep 5
-        styrened &
+        styrened --socket /run/styrene/daemon.sock --config /etc/styrene/config.toml --transport 0.0.0.0:4242 --announce-interval-secs 15 &
         sleep 3
-        python3 /relay/tcp_relay.py "$${STYRENE_RUNTIME_DIR}/control.sock" 9004
+        python3 /relay/tcp_relay.py /run/styrene/daemon.sock 9004
     depends_on:
       - hub
     volumes:
@@ -110,6 +113,7 @@ services:
       - ./tcp_relay.py:/relay/tcp_relay.py:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
+      - LXMF_DISPLAY_NAME=gamma
     ports:
       - "${MESH_GAMMA_PORT:-9004}:9004"
     networks:
@@ -136,6 +140,7 @@ services:
       - STYRENE_SOCKET=tcp://hub:9001
     networks:
       - mesh-core
+      - mesh-isolated
 
 networks:
   mesh-core:
