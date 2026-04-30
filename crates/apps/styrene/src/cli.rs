@@ -91,6 +91,35 @@ pub enum Command {
         #[command(subcommand)]
         action: FleetAction,
     },
+
+    /// Tunnel management — inspect and control peer tunnels
+    #[cfg(feature = "cli")]
+    Tunnel {
+        #[command(subcommand)]
+        action: TunnelAction,
+    },
+}
+
+#[cfg(feature = "cli")]
+#[derive(Subcommand)]
+pub enum TunnelAction {
+    /// List active tunnels
+    List,
+    /// Show status of a specific tunnel
+    Status {
+        /// Peer identity hash
+        peer: String,
+    },
+    /// Establish a tunnel to a peer (not yet implemented — requires daemon-side wiring)
+    Establish {
+        /// Peer identity hash
+        peer: String,
+    },
+    /// Tear down a tunnel
+    Teardown {
+        /// Peer identity hash
+        peer: String,
+    },
 }
 
 #[cfg(feature = "cli")]

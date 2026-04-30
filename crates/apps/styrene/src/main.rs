@@ -32,10 +32,15 @@ async fn main() -> anyhow::Result<()> {
         }
 
         #[cfg(feature = "daemon")]
-        Some(Command::Daemon { rpc: _, db: _, config: _, identity: _, ephemeral: _ }) => {
-            // TODO: wire up styrened::run() with these args
-            eprintln!("Daemon startup not yet wired — use `styrened` binary for now");
-            std::process::exit(1);
+        Some(Command::Daemon { rpc: _, db, config, identity, ephemeral }) => {
+            styrened::daemon::run(styrened::daemon::DaemonConfig2 {
+                db,
+                config,
+                identity,
+                socket: socket.map(std::path::PathBuf::from),
+                ephemeral,
+            })
+            .await
         }
 
         #[cfg(feature = "cli")]
@@ -64,6 +69,20 @@ async fn main() -> anyhow::Result<()> {
 
         #[cfg(feature = "cli")]
         Some(Command::Config) => commands::config(socket).await,
+
+        #[cfg(feature = "cli")]
+        Some(Command::Tunnel { ref action }) => match action {
+            cli::TunnelAction::List => commands::tunnel_list(socket).await,
+            cli::TunnelAction::Status { ref peer } => commands::tunnel_status(socket, peer).await,
+            cli::TunnelAction::Establish { ref peer } => {
+                commands::tunnel_establish(peer);
+                Ok(())
+            }
+            cli::TunnelAction::Teardown { ref peer } => {
+                commands::tunnel_teardown(peer);
+                Ok(())
+            }
+        },
 
         #[cfg(feature = "cli")]
         Some(Command::Fleet { ref action }) => match action {
