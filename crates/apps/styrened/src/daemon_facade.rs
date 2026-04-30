@@ -468,17 +468,31 @@ impl DaemonStatus for DaemonFacade {
 
     async fn list_interfaces(&self) -> Result<Vec<InterfaceDetail>, IpcError> {
         self.require(&Capability::Status)?;
-        let configs = self.ctx.config().interfaces();
-        Ok(configs
+        // Read from StatusService which holds the authoritative runtime list
+        // (populated at bootstrap, includes auto-detected daemon-transport).
+        let records = self.ctx.status().interfaces();
+
+        // Fetch per-interface byte counters from the transport layer and
+        // aggregate them. The stats map is keyed by runtime AddressHash which
+        // doesn't correspond 1:1 with config-level InterfaceRecords, so we
+        // sum across all runtime interfaces and distribute the totals evenly.
+        let stats = self.ctx.transport().interface_stats().await;
+        let (total_tx, total_rx) =
+            stats.values().fold((0u64, 0u64), |(tx, rx), s| (tx + s.tx_bytes, rx + s.rx_bytes));
+        let n = records.len().max(1) as u64;
+
+        Ok(records
             .into_iter()
-            .map(|iface| {
+            .map(|rec| {
                 let mut d = InterfaceDetail::default();
-                d.name = iface.name.unwrap_or_else(|| iface.kind.clone());
-                d.kind = iface.kind;
-                d.enabled = iface.enabled.unwrap_or(false);
+                d.name = rec.name.unwrap_or_else(|| rec.kind.clone());
+                d.kind = rec.kind;
+                d.enabled = rec.enabled;
                 d.status = if d.enabled { "active".into() } else { "disabled".into() };
-                d.host = iface.host;
-                d.port = iface.port;
+                d.host = rec.host;
+                d.port = rec.port;
+                d.tx_bytes = total_tx / n;
+                d.rx_bytes = total_rx / n;
                 d
             })
             .collect())
@@ -683,8 +697,14 @@ impl DaemonTunnel for DaemonFacade {
         Err(Self::not_implemented("tunnel_rekey"))
     }
 
-    async fn tunnel_teardown(&self, _peer_hash: &str) -> Result<bool, IpcError> {
-        Err(Self::not_implemented("tunnel_teardown"))
+    async fn tunnel_teardown(&self, peer_hash: &str) -> Result<bool, IpcError> {
+        self.require(&Capability::Exec)?;
+        self.ctx
+            .tunnel()
+            .teardown_tunnel(peer_hash)
+            .await
+            .map_err(|e| IpcError::Internal { message: e })?;
+        Ok(true)
     }
 
     async fn list_tunnel_sas(&self, _peer_hash: &str) -> Result<Vec<TunnelSaInfo>, IpcError> {
@@ -847,8 +867,9 @@ mod tests {
         let result = facade.send_chat(SendChatRequest::default()).await;
         assert!(matches!(result, Err(IpcError::Internal { .. })));
 
+        // list_tunnels returns Ok(empty) because TunnelService is wired but has no peers.
         let result = facade.list_tunnels().await;
-        assert!(matches!(result, Err(IpcError::NotImplemented { .. })));
+        assert!(result.unwrap().is_empty());
     }
 
     #[tokio::test]

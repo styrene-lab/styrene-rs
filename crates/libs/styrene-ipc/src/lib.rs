@@ -10,14 +10,16 @@
 //!
 //! # Trait hierarchy
 //!
-//! Five focused traits combine into one composite:
+//! Seven focused traits combine into one composite:
 //!
 //! - [`DaemonMessaging`] — chat, conversations, contacts
 //! - [`DaemonIdentity`] — local node identity
 //! - [`DaemonStatus`] — health, config, device discovery
 //! - [`DaemonFleet`] — remote device operations, terminal sessions
 //! - [`DaemonEvents`] — event subscriptions via broadcast channels
-//! - [`Daemon`] — composite (auto-implemented for all five)
+//! - [`DaemonTunnel`] — VPN tunnel management
+//! - [`DaemonPages`] — NomadNet page browsing
+//! - [`Daemon`] — composite (auto-implemented for all seven)
 
 pub mod error;
 pub mod traits;

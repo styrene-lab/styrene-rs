@@ -22,6 +22,7 @@ use crate::transport::mesh_transport::{MeshTransport, TransportError};
 use lxmf::inbound_decode::InboundPayloadMode;
 use rns_core::destination::{DestinationDesc, DestinationName};
 use rns_core::hash::AddressHash;
+use sha2::Digest as _;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -114,8 +115,10 @@ impl MessagingService {
         )
         .map_err(|e| std::io::Error::other(format!("wire encode: {e}")))?;
 
-        // Generate message ID and persist
-        let msg_id = hex::encode(&payload[..8]); // First 8 bytes of wire as ID
+        // Generate message ID as SHA-256(dest || source || payload_without_stamp),
+        // matching the inbound decoder's wire_message_id_hex computation.
+        let msg_id = lxmf::inbound_decode::outbound_message_id_hex(&payload)
+            .unwrap_or_else(|| hex::encode(sha2::Sha256::digest(&payload)));
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)

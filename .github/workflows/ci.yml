@@ -60,3 +60,10 @@ jobs:
         run: cd tests/interop/python && python3 generate_fixtures.py
       - name: Run interop tests
         run: cargo test --package styrene-rns --features interop-tests,transport
+
+  lipstyk:
+    name: lipstyk
+    uses: styrene-lab/lipstyk/.github/workflows/lipstyk.yml@main
+    with:
+      paths: "crates/"
+      threshold: 50

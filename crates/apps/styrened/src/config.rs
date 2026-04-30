@@ -30,10 +30,23 @@ pub fn default_data_dir() -> PathBuf {
     home_dir().join(".local").join("share").join("styrene")
 }
 
-/// Default config file path: ~/.config/styrene/config.yaml
-/// Matches Python's styrened.paths.core_config().
+/// Default config file path: ~/.config/styrene/config.toml
+///
+/// Falls back to `config.yaml` if the TOML file does not exist (migration
+/// path from Python's styrened which used YAML). The Rust daemon parses
+/// TOML regardless of the file extension.
 pub fn default_config_path() -> PathBuf {
-    default_config_dir().join("config.yaml")
+    let toml_path = default_config_dir().join("config.toml");
+    if toml_path.exists() {
+        return toml_path;
+    }
+    // Legacy fallback — Python daemon used config.yaml
+    let yaml_path = default_config_dir().join("config.yaml");
+    if yaml_path.exists() {
+        return yaml_path;
+    }
+    // Default to .toml for new installs
+    toml_path
 }
 
 /// Default database path: ~/.local/share/styrene/messages.db
@@ -124,6 +137,18 @@ impl DaemonConfig {
             .collect()
     }
 
+    /// Return the configured TCP server bind address, if any.
+    pub fn tcp_server_endpoint(&self) -> Option<String> {
+        self.interfaces
+            .iter()
+            .find(|iface| iface.enabled.unwrap_or(false) && iface.kind == "tcp_server")
+            .and_then(|iface| {
+                let host = iface.host.as_deref().unwrap_or("0.0.0.0");
+                let port = iface.port?;
+                Some(format!("{}:{}", host, port))
+            })
+    }
+
     pub fn tcp_client_endpoints(&self) -> Vec<(String, u16)> {
         self.enabled_tcp_clients()
             .iter()
@@ -179,8 +204,13 @@ mod tests {
         // data dir: ~/.local/share/styrene/
         let data_dir = super::default_data_dir();
         assert!(data_dir.ends_with("styrene"), "data_dir={data_dir:?}");
-        // config file in config dir
-        assert!(super::default_config_path().ends_with("styrene/config.yaml"));
+        // config file in config dir (defaults to .toml for new installs)
+        let config_path = super::default_config_path();
+        assert!(
+            config_path.ends_with("styrene/config.toml")
+                || config_path.ends_with("styrene/config.yaml"),
+            "config_path={config_path:?}"
+        );
         // db in data dir
         assert!(super::default_db_path().ends_with("styrene/messages.db"));
         // identity in config dir

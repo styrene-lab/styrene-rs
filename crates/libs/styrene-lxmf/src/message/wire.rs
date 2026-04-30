@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use base64::Engine;
 use ed25519_dalek::Signature;
 use rand_core::CryptoRngCore;
-use rns_core::crypt::fernet::{Fernet, PlainText, FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE};
+use rns_core::crypt::fernet::{Fernet, PlainText, Token, FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE};
 use rns_core::identity::{DerivedKey, Identity, PrivateIdentity, PUBLIC_KEY_LENGTH};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -261,6 +261,43 @@ impl WireMessage {
             .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(encoded))
             .map_err(|e| LxmfError::Decode(format!("invalid lxm uri payload: {e}")))
     }
+}
+
+/// Decrypt data that was encrypted with `encrypt_for_identity`.
+///
+/// The ciphertext format is: `ephemeral_public_key(32) || fernet_token(variable)`.
+/// The receiver performs DH with their private key and the ephemeral public key,
+/// derives the Fernet key pair, and decrypts the token.
+pub fn decrypt_for_identity<R: CryptoRngCore + Copy>(
+    receiver: &PrivateIdentity,
+    ciphertext: &[u8],
+    rng: R,
+) -> Result<Vec<u8>, LxmfError> {
+    if ciphertext.len() <= PUBLIC_KEY_LENGTH {
+        return Err(LxmfError::Decode("ciphertext too short".into()));
+    }
+
+    let mut ephemeral_bytes = [0u8; PUBLIC_KEY_LENGTH];
+    ephemeral_bytes.copy_from_slice(&ciphertext[..PUBLIC_KEY_LENGTH]);
+    let ephemeral_public = PublicKey::from(ephemeral_bytes);
+
+    let shared = receiver.diffie_hellman(&ephemeral_public);
+    let derived = DerivedKey::new(&shared, Some(receiver.address_hash().as_slice()));
+    let key_bytes = derived.as_bytes();
+    let split = key_bytes.len() / 2;
+
+    let fernet = Fernet::new_from_slices(&key_bytes[..split], &key_bytes[split..], rng);
+    let token = Token::from(&ciphertext[PUBLIC_KEY_LENGTH..]);
+    let token = fernet
+        .verify(token)
+        .map_err(|e| LxmfError::Decode(format!("fernet verify: {e:?}")))?;
+
+    let mut out = vec![0u8; ciphertext.len()];
+    let plaintext = fernet
+        .decrypt(token, &mut out)
+        .map_err(|e| LxmfError::Decode(format!("fernet decrypt: {e:?}")))?;
+
+    Ok(plaintext.as_slice().to_vec())
 }
 
 fn encrypt_for_identity<R: CryptoRngCore + Copy>(

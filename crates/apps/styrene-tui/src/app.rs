@@ -60,8 +60,8 @@ impl Workspace {
 pub enum InputMode {
     /// Default — input bar shows status
     Normal,
-    /// Command mode — `:` prefix
-    Command,
+    /// Command mode — `:` prefix, buffer holds typed text after `:`
+    Command { buffer: String },
     /// Search mode — `/` prefix, filters sidebar
     Search { query: String },
     /// Compose mode — writing a chat message
@@ -339,7 +339,7 @@ impl App {
 
         let input_height = match self.input_mode {
             InputMode::Compose => 3u16,
-            InputMode::Command | InputMode::Search { .. } => 1,
+            InputMode::Command { .. } | InputMode::Search { .. } => 1,
             InputMode::Normal => 1,
         };
 
@@ -845,11 +845,12 @@ impl App {
                     area,
                 );
             }
-            InputMode::Command => {
+            InputMode::Command { buffer } => {
                 f.render_widget(
                     Paragraph::new(Line::from(vec![
                         Span::styled(" :", Style::default().fg(t.accent())),
-                        Span::styled("_", Style::default().fg(t.fg())),
+                        Span::styled(buffer, Style::default().fg(t.fg())),
+                        Span::styled("_", Style::default().fg(t.muted())),
                     ]))
                     .style(Style::default().bg(t.surface_bg())),
                     area,

@@ -50,6 +50,15 @@ pub fn decode_inbound_message(
     })
 }
 
+/// Compute the canonical message ID for an outbound LXMF wire payload.
+///
+/// Uses the same derivation as the inbound decoder: SHA-256 of
+/// destination + source + payload (without stamp). This ensures
+/// sender and receiver agree on the message ID.
+pub fn outbound_message_id_hex(candidate: &[u8]) -> Option<String> {
+    wire_message_id_hex(candidate)
+}
+
 fn wire_message_id_hex(candidate: &[u8]) -> Option<String> {
     const SIGNATURE_LEN: usize = 64;
     const HEADER_LEN: usize = 16 + 16 + SIGNATURE_LEN;

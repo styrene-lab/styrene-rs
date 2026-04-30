@@ -104,6 +104,7 @@ impl AppContext {
 
         // Phase 11: Tunnel (depends on transport)
         let tunnel = Arc::new(TunnelService::new());
+        tunnel.set_events(events.clone());
 
         // Phase 12: Page server (NomadNet-compatible page hosting)
         let pages = Arc::new(PageService::with_default_dir());

@@ -11,6 +11,7 @@ mod app;
 mod daemon;
 mod mesh_state;
 mod micron_widget;
+mod onboarding;
 mod tui;
 
 use anyhow::Result;
@@ -88,6 +89,35 @@ async fn run(
         }
     }
 
+    // ── Onboarding wizard ─────────────────────────────────────────────────────
+    let env = onboarding::detect::scan_environment();
+    let daemon_mode = if env.needs_wizard() {
+        let mut wizard = onboarding::WizardState::new(env);
+        loop {
+            terminal.draw(|f| wizard.draw(f, app.theme.as_ref()))?;
+            if event::poll(Duration::from_millis(16))? {
+                if let Event::Key(k) = event::read()? {
+                    if k.kind == KeyEventKind::Press {
+                        match wizard.handle_key(k) {
+                            onboarding::WizardAction::Complete(result) => {
+                                if let Err(e) = result.apply() {
+                                    app.conversation.push_system(&format!(
+                                        "⬡ setup error: {e} — continuing with defaults"
+                                    ));
+                                }
+                                break result.daemon_mode;
+                            }
+                            onboarding::WizardAction::Quit => return Ok(()),
+                            onboarding::WizardAction::Continue => {}
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        onboarding::load_tui_prefs().daemon_mode_or_default()
+    };
+
     // ── Welcome + effects ────────────────────────────────────────────────────
     {
         let t = app.theme.as_ref();
@@ -95,10 +125,50 @@ async fn run(
     }
     app.push_welcome();
 
-    // ── Daemon connection ────────────────────────────────────────────────────
+    // ── Daemon connection (mode-aware) ──────────────────────────────────────
     let (daemon_tx, mut daemon_rx) = tokio::sync::mpsc::channel::<daemon::TuiEvent>(128);
 
-    match daemon::connect(None).await {
+    let connect_result = match daemon_mode {
+        onboarding::setup::DaemonMode::Embedded => {
+            // TODO: embedded daemon bootstrap (Step 6)
+            // For now, fall back to standard socket connect
+            app.conversation.push_system("⬡ embedded daemon not yet implemented — trying socket");
+            daemon::connect(None).await
+        }
+        onboarding::setup::DaemonMode::Background => {
+            // Try to spawn styrened as a child process, then connect
+            match std::process::Command::new("styrened")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                Ok(_child) => {
+                    app.conversation.push_system("⬡ starting daemon...");
+                    // Give the daemon a moment to create its socket
+                    let mut connected = Err("timeout".to_string());
+                    for _ in 0..30 {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        match daemon::connect(None).await {
+                            Ok(result) => {
+                                connected = Ok(result);
+                                break;
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+                    connected
+                }
+                Err(e) => {
+                    app.conversation
+                        .push_system(&format!("⬡ failed to start daemon: {e} — trying socket"));
+                    daemon::connect(None).await
+                }
+            }
+        }
+        onboarding::setup::DaemonMode::ConnectExisting => daemon::connect(None).await,
+    };
+
+    match connect_result {
         Ok((handle, mut event_rx)) => {
             app.daemon_connected = true;
             app.conversation.push_system("⬡ daemon connected");
@@ -160,7 +230,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     // ── Input mode routing ──────────────────────────────────────────────────
     match &app.input_mode {
         InputMode::Compose => return handle_compose_key(app, key),
-        InputMode::Command => return handle_command_key(app, key),
+        InputMode::Command { .. } => return handle_command_key(app, key),
         InputMode::Search { .. } => return handle_search_key(app, key),
         InputMode::Normal => {}
     }
@@ -191,7 +261,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
         // Mode triggers
         (KeyCode::Char(':'), _) => {
-            app.input_mode = InputMode::Command;
+            app.input_mode = InputMode::Command { buffer: String::new() };
             app.focus = Focus::Input;
         }
         (KeyCode::Char('/'), _) => {
@@ -324,12 +394,84 @@ fn handle_command_key(app: &mut App, key: KeyEvent) -> bool {
             app.focus = Focus::Sidebar;
         }
         KeyCode::Enter => {
-            // TODO: parse and execute command
+            let buffer = match &app.input_mode {
+                InputMode::Command { buffer } => buffer.clone(),
+                _ => String::new(),
+            };
             app.input_mode = InputMode::Normal;
             app.focus = Focus::Sidebar;
+            return execute_command(app, &buffer);
+        }
+        KeyCode::Char(c) => {
+            if let InputMode::Command { ref mut buffer } = app.input_mode {
+                buffer.push(c);
+            }
+        }
+        KeyCode::Backspace => {
+            if let InputMode::Command { ref mut buffer } = app.input_mode {
+                buffer.pop();
+            }
         }
         _ => {}
     }
+    false
+}
+
+/// Parse and execute a command-mode string. Returns true if the app should quit.
+fn execute_command(app: &mut App, input: &str) -> bool {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let mut parts = trimmed.splitn(2, ' ');
+    let cmd = parts.next().unwrap_or("");
+    let arg = parts.next().unwrap_or("").trim();
+
+    match cmd {
+        "q" | "quit" => return true,
+
+        "connect" => {
+            if arg.is_empty() {
+                app.conversation.push_system("usage: :connect <addr>");
+            } else {
+                app.conversation
+                    .push_system(&format!("⬡ connect to {arg} — not yet wired (daemon reconnect TODO)"));
+            }
+        }
+
+        "disconnect" => {
+            if app.daemon_connected {
+                app.daemon_connected = false;
+                app.rns_initialized = false;
+                app.transport_active = false;
+                app.conversation.push_system("⬡ disconnected from daemon");
+                app.activity.push(crate::mesh_state::ActivityEntry::new(
+                    crate::mesh_state::ActivityKind::LinkDown,
+                    "daemon",
+                    "disconnected by operator",
+                ));
+            } else {
+                app.conversation.push_system("⬡ not connected");
+            }
+        }
+
+        "help" => {
+            app.conversation.push_system(
+                "⬡ commands:\n\n  \
+                 :q, :quit        exit\n  \
+                 :connect <addr>  connect to daemon\n  \
+                 :disconnect      disconnect from daemon\n  \
+                 :help            show this message",
+            );
+        }
+
+        other => {
+            app.conversation
+                .push_system(&format!("unknown command: {other}"));
+        }
+    }
+
     false
 }
 

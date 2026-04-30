@@ -127,8 +127,8 @@ async fn daemon_trait_object_not_implemented_methods() {
     let ctx = make_ctx();
     let daemon: Arc<dyn Daemon> = Arc::new(DaemonFacade::new(ctx, "caller".into()));
 
-    // These should all return NotImplemented, not panic
-    assert!(matches!(daemon.list_tunnels().await, Err(IpcError::NotImplemented { .. })));
+    // list_tunnels returns Ok(empty) because TunnelService is wired but has no peers.
+    assert!(daemon.list_tunnels().await.unwrap().is_empty());
     // send_chat returns Internal error (no transport) rather than NotImplemented
     assert!(matches!(
         daemon.send_chat(SendChatRequest::default()).await,

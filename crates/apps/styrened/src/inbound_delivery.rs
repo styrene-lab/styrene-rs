@@ -1,5 +1,7 @@
 use crate::storage::messages::MessageRecord;
-use lxmf::inbound_decode::{decode_inbound_message, InboundPayloadMode};
+pub use lxmf::inbound_decode::InboundPayloadMode;
+use lxmf::inbound_decode::decode_inbound_message;
+use lxmf::WireMessage;
 
 use crate::lxmf_bridge::rmpv_to_json;
 
@@ -73,6 +75,31 @@ fn decode_inbound_payload_mode(
         receipt_status: None,
         read: false,
     })
+}
+
+/// Verify the Ed25519 signature on an LXMF wire message.
+///
+/// Returns `true` if the signature is valid for the given identity,
+/// `false` if verification fails or the message has no signature.
+/// Returns `None` if the wire bytes can't be parsed.
+pub fn verify_inbound_signature(
+    payload: &[u8],
+    mode: InboundPayloadMode,
+    fallback_destination: [u8; 16],
+    sender_identity: &rns_core::identity::Identity,
+) -> Option<bool> {
+    let wire = match mode {
+        InboundPayloadMode::FullWire => payload.to_vec(),
+        InboundPayloadMode::DestinationStripped => {
+            let mut with_dest = Vec::with_capacity(16 + payload.len());
+            with_dest.extend_from_slice(&fallback_destination);
+            with_dest.extend_from_slice(payload);
+            with_dest
+        }
+    };
+
+    let wire_msg = WireMessage::unpack(&wire).ok()?;
+    Some(wire_msg.verify(sender_identity).unwrap_or(false))
 }
 
 fn inbound_mode_label(mode: InboundPayloadMode) -> &'static str {

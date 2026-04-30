@@ -58,13 +58,13 @@ jobs:
         run: |
           cargo publish -p styrene-rns --allow-dirty || echo "styrene-rns already published"
           sleep 30
-          cargo publish -p styrene-rns-transport --allow-dirty || echo "styrene-rns-transport already published"
-          sleep 30
           cargo publish -p styrene-lxmf --allow-dirty || echo "styrene-lxmf already published"
           sleep 30
           cargo publish -p styrene-mesh --allow-dirty || echo "styrene-mesh already published"
           sleep 30
-          cargo publish -p styrene --allow-dirty || echo "styrene already published"
+          cargo publish -p styrene-ipc --allow-dirty || echo "styrene-ipc already published"
+          sleep 30
+          cargo publish -p styrene-ipc-server --allow-dirty || echo "styrene-ipc-server already published"
 
   release:
     name: GitHub Release

@@ -146,6 +146,8 @@ impl Transport {
             handler.resource_manager.start_send(&link_guard, data, metadata)?;
         drop(link_guard);
         handler.send_packet(packet).await;
+        // Move from pending_outgoing → outgoing so poll_outgoing can send parts
+        handler.resource_manager.confirm_outbound_dispatch(resource_hash, true);
         Ok(resource_hash)
     }
 

@@ -8,6 +8,8 @@ pub mod tcp_client;
 pub mod tcp_server;
 pub mod udp;
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -92,10 +94,41 @@ pub trait Interface {
     fn mtu() -> usize;
 }
 
+/// Per-interface byte counters for tx/rx traffic.
+///
+/// Stored as `Arc` so multiple tasks can read without locking
+/// the `InterfaceManager` itself. All updates use relaxed ordering
+/// — the counters are monotonic diagnostics, not synchronisation primitives.
+pub struct InterfaceStats {
+    pub tx_bytes: AtomicU64,
+    pub rx_bytes: AtomicU64,
+}
+
+impl InterfaceStats {
+    pub fn new() -> Self {
+        Self { tx_bytes: AtomicU64::new(0), rx_bytes: AtomicU64::new(0) }
+    }
+}
+
+impl Default for InterfaceStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Snapshot of per-interface byte counters returned by
+/// [`InterfaceManager::interface_stats`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InterfaceStatsSnapshot {
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+}
+
 struct LocalInterface {
     address: AddressHash,
     tx_send: InterfaceTxSender,
     stop: CancellationToken,
+    stats: Arc<InterfaceStats>,
 }
 
 pub struct InterfaceContext<T: Interface> {
@@ -113,6 +146,9 @@ pub struct InterfaceManager {
     rx_send: InterfaceRxSender,
     cancel: CancellationToken,
     ifaces: Vec<LocalInterface>,
+    /// Shared stats map so callers can look up per-interface counters without
+    /// holding the `InterfaceManager` tokio mutex.
+    stats_map: Arc<Mutex<HashMap<AddressHash, Arc<InterfaceStats>>>>,
 }
 
 const DEFAULT_IFACE_TX_QUEUE_CAPACITY: usize = 128;
@@ -139,7 +175,14 @@ impl InterfaceManager {
         let (rx_send, rx_recv) = InterfaceChannel::make_rx_channel(rx_cap);
         let rx_recv = Arc::new(tokio::sync::Mutex::new(rx_recv));
 
-        Self { counter: 0, rx_recv, rx_send, cancel: CancellationToken::new(), ifaces: Vec::new() }
+        Self {
+            counter: 0,
+            rx_recv,
+            rx_send,
+            cancel: CancellationToken::new(),
+            ifaces: Vec::new(),
+            stats_map: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub fn new_channel(&mut self, tx_cap: usize) -> InterfaceChannel {
@@ -153,8 +196,10 @@ impl InterfaceManager {
         log::debug!("iface: create channel {}", address);
 
         let stop = CancellationToken::new();
+        let stats = Arc::new(InterfaceStats::new());
 
-        self.ifaces.push(LocalInterface { address, tx_send, stop: stop.clone() });
+        self.stats_map.lock().unwrap().insert(address, stats.clone());
+        self.ifaces.push(LocalInterface { address, tx_send, stop: stop.clone(), stats });
 
         InterfaceChannel { rx_channel: self.rx_send.clone(), tx_channel: tx_recv, address, stop }
     }
@@ -216,11 +261,19 @@ impl InterfaceManager {
     }
 
     pub fn cleanup(&mut self) {
-        self.ifaces.retain(|iface| !iface.stop.is_cancelled());
+        let mut map = self.stats_map.lock().unwrap();
+        self.ifaces.retain(|iface| {
+            let alive = !iface.stop.is_cancelled();
+            if !alive {
+                map.remove(&iface.address);
+            }
+            alive
+        });
     }
 
     pub async fn send(&self, message: TxMessage) -> TxDispatchTrace {
         let mut trace = TxDispatchTrace::default();
+        let pkt_bytes = message.packet.data.len() as u64;
         for iface in &self.ifaces {
             let should_send = match message.tx_type {
                 TxMessageType::Broadcast(address) => {
@@ -239,6 +292,7 @@ impl InterfaceManager {
                 match iface.tx_send.try_send(message) {
                     Ok(()) => {
                         trace.sent_ifaces += 1;
+                        iface.stats.tx_bytes.fetch_add(pkt_bytes, Ordering::Relaxed);
                     }
                     Err(mpsc::error::TrySendError::Full(_)) => {
                         match tokio::time::timeout(
@@ -249,6 +303,7 @@ impl InterfaceManager {
                         {
                             Ok(Ok(())) => {
                                 trace.sent_ifaces += 1;
+                                iface.stats.tx_bytes.fetch_add(pkt_bytes, Ordering::Relaxed);
                                 if tx_diag_enabled() {
                                     log::warn!(
                                         "iface: recovered from full tx queue on {} for {:?}",
@@ -288,5 +343,37 @@ impl InterfaceManager {
         }
 
         trace
+    }
+
+    /// Record received bytes for an interface (called from the transport loop
+    /// when an `RxMessage` arrives).
+    pub fn record_rx(&self, address: &AddressHash, bytes: u64) {
+        if let Some(stats) = self.stats_map.lock().unwrap().get(address) {
+            stats.rx_bytes.fetch_add(bytes, Ordering::Relaxed);
+        }
+    }
+
+    /// Return a snapshot of per-interface byte counters.
+    pub fn interface_stats(&self) -> HashMap<AddressHash, InterfaceStatsSnapshot> {
+        self.stats_map
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(addr, stats)| {
+                (
+                    *addr,
+                    InterfaceStatsSnapshot {
+                        tx_bytes: stats.tx_bytes.load(Ordering::Relaxed),
+                        rx_bytes: stats.rx_bytes.load(Ordering::Relaxed),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Return the shared stats map so callers can read counters without
+    /// holding the `InterfaceManager` tokio mutex.
+    pub fn stats_map(&self) -> Arc<Mutex<HashMap<AddressHash, Arc<InterfaceStats>>>> {
+        self.stats_map.clone()
     }
 }

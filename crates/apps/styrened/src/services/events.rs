@@ -168,6 +168,23 @@ impl EventService {
         self.daemon_tx.subscribe()
     }
 
+    /// Emit a tunnel state change event.
+    pub fn emit_tunnel_state(&self, peer_hash: &str, state: &str, backend: &str) {
+        self.publish(RpcEvent {
+            event_type: format!("tunnel_{state}"),
+            payload: serde_json::json!({
+                "peer_hash": peer_hash,
+                "state": state,
+                "backend": backend,
+            }),
+        });
+        let _ = self.daemon_tx.send(DaemonEvent::TunnelStateChange {
+            peer_hash: peer_hash.to_string(),
+            state: state.to_string(),
+            backend: backend.to_string(),
+        });
+    }
+
     /// Emit a device/peer update event (announce received or status change).
     pub fn emit_device_update(&self, peer_hash: &str) {
         self.publish(RpcEvent {

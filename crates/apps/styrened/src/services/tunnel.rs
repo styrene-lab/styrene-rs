@@ -5,6 +5,7 @@
 //!
 //! Registered as a ProtocolHandler for the "tunnel" protocol type.
 
+use crate::services::events::EventService;
 use crate::transport::mesh_transport::MeshTransport;
 use async_trait::async_trait;
 use rns_core::destination::DestinationName;
@@ -57,6 +58,8 @@ pub struct TunnelService {
     active_tunnels: Mutex<HashMap<String, TunnelPeerState>>,
     /// Allowed peer identities (empty = allow all).
     allowed_peers: Mutex<Option<Vec<String>>>,
+    /// Optional event service for emitting tunnel state changes.
+    events: Mutex<Option<Arc<EventService>>>,
     /// Optional WireGuard backend for configuring actual tunnels.
     #[cfg(feature = "wireguard")]
     backend: Mutex<Option<Arc<WireGuardBackend>>>,
@@ -92,6 +95,7 @@ impl TunnelService {
             seen_nonces: Mutex::new(HashMap::new()),
             active_tunnels: Mutex::new(HashMap::new()),
             allowed_peers: Mutex::new(None),
+            events: Mutex::new(None),
             #[cfg(feature = "wireguard")]
             backend: Mutex::new(None),
         }
@@ -119,6 +123,7 @@ impl TunnelService {
             seen_nonces: Mutex::new(HashMap::new()),
             active_tunnels: Mutex::new(HashMap::new()),
             allowed_peers: Mutex::new(None),
+            events: Mutex::new(None),
             #[cfg(feature = "wireguard")]
             backend: Mutex::new(None),
         }
@@ -126,6 +131,18 @@ impl TunnelService {
 
     pub fn set_endpoint(&self, endpoint: String) {
         *self.local_endpoint.lock().expect("lock") = Some(endpoint);
+    }
+
+    /// Set the event service for emitting tunnel state changes.
+    pub fn set_events(&self, events: Arc<EventService>) {
+        *self.events.lock().expect("lock") = Some(events);
+    }
+
+    /// Emit a tunnel state change event if the event service is wired.
+    fn emit_state(&self, peer_hash: &str, state: &str) {
+        if let Some(events) = self.events.lock().expect("lock").as_ref() {
+            events.emit_tunnel_state(peer_hash, state, "wireguard");
+        }
     }
 
     /// Set allowed peers. None = allow all. Some(vec) = only these identities.
@@ -278,6 +295,55 @@ impl TunnelService {
             .collect()
     }
 
+    /// Tear down a tunnel to a peer (operator-initiated outbound teardown).
+    /// Removes peer from active tunnels, tears down WireGuard, and sends
+    /// TUNNEL_TEARDOWN to the remote peer.
+    pub async fn teardown_tunnel(&self, peer_identity: &str) -> Result<(), String> {
+        // Remove from active tunnels
+        let removed = self
+            .active_tunnels
+            .lock()
+            .expect("lock")
+            .remove(peer_identity);
+
+        if removed.is_none() {
+            return Err(format!(
+                "no active tunnel for {}",
+                &peer_identity[..12.min(peer_identity.len())]
+            ));
+        }
+
+        // Tear down WireGuard backend if available
+        #[cfg(feature = "wireguard")]
+        self.teardown_wireguard(peer_identity).await;
+
+        // Send TUNNEL_TEARDOWN to the remote peer
+        if self.wired && self.transport.is_connected() {
+            let teardown = TunnelTeardown {
+                peer_identity: self.identity_hash.clone(),
+                nonce: tunnel_payloads::generate_nonce(),
+            };
+            if let Ok(payload) = rmp_serde::to_vec(&teardown) {
+                let _ = self
+                    .send_tunnel_message(
+                        peer_identity,
+                        StyreneMessageType::TunnelTeardown,
+                        &payload,
+                    )
+                    .await;
+            }
+        }
+
+        self.emit_state(peer_identity, "torn_down");
+
+        eprintln!(
+            "[tunnel] operator-initiated teardown for {}",
+            &peer_identity[..12.min(peer_identity.len())]
+        );
+
+        Ok(())
+    }
+
     /// Initiate a tunnel to a peer. Sends TUNNEL_OFFER via LXMF.
     pub async fn initiate_tunnel(&self, peer_identity: &str) -> Result<String, String> {
         if !self.wired {
@@ -407,6 +473,8 @@ impl TunnelService {
         #[cfg(feature = "wireguard")]
         self.configure_wireguard(source, &peer_state).await;
 
+        self.emit_state(source, "established");
+
         eprintln!(
             "[tunnel] sent TUNNEL_ACCEPT to {}",
             &source[..12.min(source.len())]
@@ -429,6 +497,16 @@ impl TunnelService {
                 return HandleResult::Handled;
             }
         };
+
+        // Verify the accept came from the peer we sent the offer to.
+        if pending.peer_identity != source {
+            eprintln!(
+                "[tunnel] rejected TUNNEL_ACCEPT: source mismatch (expected {}, got {})",
+                &pending.peer_identity[..12.min(pending.peer_identity.len())],
+                &source[..12.min(source.len())]
+            );
+            return HandleResult::Handled;
+        }
 
         eprintln!(
             "[tunnel] received TUNNEL_ACCEPT from {} endpoint={}",
@@ -454,6 +532,8 @@ impl TunnelService {
         #[cfg(feature = "wireguard")]
         self.configure_wireguard(source, &peer_state).await;
 
+        self.emit_state(source, "established");
+
         HandleResult::Handled
     }
 
@@ -467,6 +547,8 @@ impl TunnelService {
         self.teardown_wireguard(source).await;
 
         self.active_tunnels.lock().expect("lock").remove(source);
+
+        self.emit_state(source, "torn_down");
 
         eprintln!(
             "[tunnel] received TUNNEL_TEARDOWN from {}",
@@ -610,6 +692,7 @@ impl ProtocolHandler for TunnelService {
                             .lock()
                             .expect("lock")
                             .remove(&reject.offer_nonce);
+                        self.emit_state(source, "rejected");
                         HandleResult::Handled
                     }
                     Err(e) => {

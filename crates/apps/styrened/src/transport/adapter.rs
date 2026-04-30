@@ -17,6 +17,9 @@ use rns_core::transport::core_transport::{
 };
 use rns_core::transport::delivery::LinkSendResult;
 use rns_core::transport::destination_ext::link::LinkEvent;
+use rns_core::transport::iface::InterfaceStatsSnapshot;
+use rns_core::transport::resource::ResourceEvent;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -189,6 +192,10 @@ impl MeshTransport for TokioTransportAdapter {
         self.lifecycle_tx.subscribe()
     }
 
+    fn subscribe_resources(&self) -> broadcast::Receiver<ResourceEvent> {
+        self.transport.resource_events()
+    }
+
     async fn query_path(&self, dest: &AddressHash) -> Option<(u8, AddressHash)> {
         self.transport.path_info(dest).await
     }
@@ -210,5 +217,9 @@ impl MeshTransport for TokioTransportAdapter {
         // For now, emit the lifecycle event.
         self.emit_lifecycle(TransportLifecycleEvent::Disconnected);
         Ok(())
+    }
+
+    async fn interface_stats(&self) -> HashMap<AddressHash, InterfaceStatsSnapshot> {
+        self.transport.interface_stats().await
     }
 }
