@@ -123,6 +123,6 @@ pub use export::AllPublicKeys;
 #[cfg(feature = "signing")]
 pub use identity::{
     identity_hash, identity_pubkey, identity_sign, identity_verify, IdentityInfo, PublicIdentity,
-    IDENTITY_HASH_BYTES,
+    SignedAttestation, IDENTITY_HASH_BYTES,
 };
 pub use signer::{IdentitySigner, SignerChain, SignerError, SignerTier};

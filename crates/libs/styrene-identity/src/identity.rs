@@ -8,7 +8,8 @@
 
 use ed25519_dalek::Verifier;
 use sha2::{Digest, Sha256};
-use zeroize::Zeroize;
+use subtle::ConstantTimeEq;
+use zeroize::Zeroizing;
 
 use crate::derive::{KeyDeriver, KeyPurpose};
 use crate::pubkey::{ed25519_verifying_key, sign_with_seed};
@@ -34,13 +35,16 @@ pub fn identity_hash(root: &RootSecret) -> String {
 /// The derived seed is zeroized after the public key is extracted.
 pub fn identity_pubkey(root: &RootSecret) -> [u8; 32] {
     let deriver = KeyDeriver::new(root.as_bytes());
-    let mut seed = deriver.derive(KeyPurpose::Signing);
+    let seed = Zeroizing::new(deriver.derive(KeyPurpose::Signing));
     let vk = ed25519_verifying_key(&seed);
-    seed.zeroize();
     vk.to_bytes()
 }
 
 /// Bundled identity information — hash and public key together.
+///
+/// Prefer [`PublicIdentity`] for new code — it provides the same fields
+/// plus `verify_hash()` and `verify()` methods.
+#[deprecated(since = "0.3.0", note = "use PublicIdentity instead")]
 #[derive(Debug, Clone)]
 pub struct IdentityInfo {
     /// The 32-character hex identity hash.
@@ -61,19 +65,36 @@ impl IdentityInfo {
 
 // ── High-level sign/verify ────────────────────────────────────────────────
 
+/// Self-contained signed attestation: hash + pubkey + signature.
+///
+/// Contains everything a verifier needs to check a signature without
+/// holding the root secret or fetching the pubkey from a separate channel.
+#[derive(Debug, Clone)]
+pub struct SignedAttestation {
+    /// The 32-character hex identity hash of the signer.
+    pub hash: String,
+    /// The raw 32-byte Ed25519 verifying (public) key.
+    pub pubkey: [u8; 32],
+    /// The 64-byte Ed25519 signature over the attested data.
+    pub signature: [u8; 64],
+}
+
 /// Sign arbitrary data with the identity's Ed25519 signing key.
 ///
-/// Returns `(identity_hash, signature)`. All seed material is zeroized
-/// after signing. This is the canonical way to attest data (profiles,
-/// audit records, agent delegations) — consumers should prefer this
-/// over manual `KeyDeriver` + `sign_with_seed` sequences.
-pub fn identity_sign(root: &RootSecret, data: &[u8]) -> (String, [u8; 64]) {
+/// Returns a [`SignedAttestation`] containing the identity hash, public key,
+/// and signature — everything a verifier needs. All seed material is
+/// zeroized after signing via RAII ([`Zeroizing`]).
+///
+/// This is the canonical way to attest data (profiles, audit records,
+/// agent delegations) — consumers should prefer this over manual
+/// `KeyDeriver` + `sign_with_seed` sequences.
+pub fn identity_sign(root: &RootSecret, data: &[u8]) -> SignedAttestation {
     let deriver = KeyDeriver::new(root.as_bytes());
-    let mut seed = deriver.derive(KeyPurpose::Signing);
+    let seed = Zeroizing::new(deriver.derive(KeyPurpose::Signing));
     let signature = sign_with_seed(&seed, data);
+    let pubkey = identity_pubkey(root);
     let hash = identity_hash(root);
-    seed.zeroize();
-    (hash, signature)
+    SignedAttestation { hash, pubkey, signature }
 }
 
 /// Verify a signature against an Ed25519 public key.
@@ -123,11 +144,15 @@ impl PublicIdentity {
 
     /// Verify that this pubkey matches a claimed identity hash.
     ///
+    /// Uses constant-time comparison to prevent timing side-channels.
     /// Recomputes `SHA-256(pubkey)[..16]` and compares against `claimed_hash`.
     /// This is the binding check that prevents an attacker from substituting
     /// a different pubkey for a known identity hash.
     pub fn verify_hash(&self, claimed_hash: &str) -> bool {
-        self.hash == claimed_hash
+        let ours = self.hash.as_bytes();
+        let theirs = claimed_hash.as_bytes();
+        // Length check first (not secret), then constant-time content compare
+        ours.len() == theirs.len() && ours.ct_eq(theirs).into()
     }
 
     /// Verify a signature over `data` using this identity's public key.
@@ -144,6 +169,8 @@ mod tests {
         RootSecret::new([fill; 32])
     }
 
+    // ── Hash tests ────────────────────────────────────────────────────────
+
     #[test]
     fn identity_hash_deterministic() {
         let root = test_root(0x42);
@@ -156,10 +183,8 @@ mod tests {
     fn identity_hash_is_32_hex_chars() {
         let h = identity_hash(&test_root(0x42));
         assert_eq!(h.len(), 32, "identity hash must be 32 hex chars");
-        assert!(
-            h.chars().all(|c| c.is_ascii_hexdigit()),
-            "identity hash must be valid hex"
-        );
+        assert_eq!(h.len(), IDENTITY_HASH_BYTES * 2);
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
@@ -170,6 +195,27 @@ mod tests {
     }
 
     #[test]
+    fn identity_hash_no_collisions_in_100_roots() {
+        let mut hashes = std::collections::HashSet::new();
+        for i in 0u32..100 {
+            let mut r = [0u8; 32];
+            r[..4].copy_from_slice(&i.to_le_bytes());
+            let h = identity_hash(&RootSecret::new(r));
+            assert!(hashes.insert(h), "hash collision at iteration {i}");
+        }
+    }
+
+    #[test]
+    fn test_vector_identity_hash() {
+        let root = test_root(0x42);
+        let h = identity_hash(&root);
+        assert_eq!(h, "6279e31aff9bc151638ac305d88ab6bc");
+    }
+
+    // ── IdentityInfo (deprecated, backwards compat) ───────────────────────
+
+    #[test]
+    #[allow(deprecated)]
     fn identity_info_matches_individual_functions() {
         let root = test_root(0x42);
         let info = IdentityInfo::from_root(&root);
@@ -177,23 +223,36 @@ mod tests {
         assert_eq!(info.pubkey, identity_pubkey(&root));
     }
 
+    // ── Sign/verify ───────────────────────────────────────────────────────
+
     #[test]
-    fn identity_sign_and_verify_roundtrip() {
+    fn identity_sign_returns_self_contained_attestation() {
         let root = test_root(0x42);
         let data = b"test data for signing";
-        let (hash, sig) = identity_sign(&root, data);
-        let pubkey = identity_pubkey(&root);
+        let att = identity_sign(&root, data);
 
-        assert_eq!(hash, identity_hash(&root));
-        assert!(identity_verify(&pubkey, data, &sig));
+        assert_eq!(att.hash, identity_hash(&root));
+        assert_eq!(att.pubkey, identity_pubkey(&root));
+        assert!(identity_verify(&att.pubkey, data, &att.signature));
+    }
+
+    #[test]
+    fn identity_sign_pubkey_can_verify_independently() {
+        let root = test_root(0x42);
+        let data = b"self-contained verification test";
+        let att = identity_sign(&root, data);
+
+        // Verifier has only the attestation — no root secret
+        let pi = PublicIdentity::from_pubkey(att.pubkey);
+        assert!(pi.verify_hash(&att.hash));
+        assert!(pi.verify(data, &att.signature));
     }
 
     #[test]
     fn identity_verify_rejects_tampered_data() {
         let root = test_root(0x42);
-        let (_, sig) = identity_sign(&root, b"original");
-        let pubkey = identity_pubkey(&root);
-        assert!(!identity_verify(&pubkey, b"tampered", &sig));
+        let att = identity_sign(&root, b"original");
+        assert!(!identity_verify(&att.pubkey, b"tampered", &att.signature));
     }
 
     #[test]
@@ -201,10 +260,22 @@ mod tests {
         let root_a = test_root(0x01);
         let root_b = test_root(0x02);
         let data = b"signed by A";
-        let (_, sig) = identity_sign(&root_a, data);
+        let att = identity_sign(&root_a, data);
         let pubkey_b = identity_pubkey(&root_b);
-        assert!(!identity_verify(&pubkey_b, data, &sig));
+        assert!(!identity_verify(&pubkey_b, data, &att.signature));
     }
+
+    #[test]
+    fn identity_verify_rejects_zero_pubkey() {
+        assert!(!identity_verify(&[0u8; 32], b"data", &[0u8; 64]));
+    }
+
+    #[test]
+    fn identity_verify_rejects_all_ones_pubkey() {
+        assert!(!identity_verify(&[0xFFu8; 32], b"data", &[0u8; 64]));
+    }
+
+    // ── PublicIdentity ────────────────────────────────────────────────────
 
     #[test]
     fn public_identity_from_pubkey() {
@@ -216,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn public_identity_from_hex() {
+    fn public_identity_from_hex_valid() {
         let root = test_root(0x42);
         let pubkey = identity_pubkey(&root);
         let hex_str = hex::encode(pubkey);
@@ -225,37 +296,57 @@ mod tests {
     }
 
     #[test]
-    fn public_identity_from_hex_rejects_invalid() {
+    fn public_identity_from_hex_edge_cases() {
+        // Not hex
         assert!(PublicIdentity::from_hex("not-hex").is_err());
-        assert!(PublicIdentity::from_hex("aabb").is_err()); // too short
+        // Empty
+        assert!(PublicIdentity::from_hex("").is_err());
+        // Too short (4 bytes)
+        assert!(PublicIdentity::from_hex("aabbccdd").is_err());
+        // 31 bytes (62 hex chars)
+        assert!(PublicIdentity::from_hex(&"aa".repeat(31)).is_err());
+        // 33 bytes (66 hex chars)
+        assert!(PublicIdentity::from_hex(&"aa".repeat(33)).is_err());
+        // Odd length (63 hex chars)
+        assert!(PublicIdentity::from_hex(&format!("{}a", "aa".repeat(31))).is_err());
+        // Exactly 32 bytes (64 hex chars) — valid
+        assert!(PublicIdentity::from_hex(&"aa".repeat(32)).is_ok());
     }
 
     #[test]
-    fn public_identity_verify_hash() {
+    fn public_identity_verify_hash_constant_time() {
         let root = test_root(0x42);
         let pi = PublicIdentity::from_pubkey(identity_pubkey(&root));
-        assert!(pi.verify_hash(&identity_hash(&root)));
-        assert!(!pi.verify_hash("0000000000000000000000000000000"));
+        let correct = identity_hash(&root);
+
+        assert!(pi.verify_hash(&correct));
+        assert!(!pi.verify_hash("00000000000000000000000000000000"));
+        assert!(!pi.verify_hash("")); // different length
+        assert!(!pi.verify_hash("too-short"));
+        assert!(!pi.verify_hash(&format!("{correct}extra"))); // longer
     }
 
     #[test]
     fn public_identity_verify_signature() {
         let root = test_root(0x42);
         let data = b"signed data";
-        let (_, sig) = identity_sign(&root, data);
-        let pi = PublicIdentity::from_pubkey(identity_pubkey(&root));
-        assert!(pi.verify(data, &sig));
-        assert!(!pi.verify(b"wrong data", &sig));
+        let att = identity_sign(&root, data);
+        let pi = PublicIdentity::from_pubkey(att.pubkey);
+        assert!(pi.verify(data, &att.signature));
+        assert!(!pi.verify(b"wrong data", &att.signature));
     }
 
     #[test]
-    fn test_vector_identity_hash() {
-        // Pinned test vector: root = [0x42; 32]
-        let root = test_root(0x42);
-        let h = identity_hash(&root);
-        assert_eq!(
-            h, "6279e31aff9bc151638ac305d88ab6bc",
-            "pinned identity hash for root=[0x42; 32]"
-        );
+    fn public_identity_cross_key_isolation() {
+        let root_a = test_root(0x01);
+        let root_b = test_root(0x02);
+        let data = b"test";
+        let att_a = identity_sign(&root_a, data);
+        let pi_b = PublicIdentity::from_pubkey(identity_pubkey(&root_b));
+
+        // Signature from A must NOT verify under B's pubkey
+        assert!(!pi_b.verify(data, &att_a.signature));
+        // And B's hash must not match A's
+        assert!(!pi_b.verify_hash(&att_a.hash));
     }
 }
