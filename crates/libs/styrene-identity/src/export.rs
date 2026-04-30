@@ -5,7 +5,7 @@
 //! provides a single `AllPublicKeys::from_root()` that derives everything
 //! in one pass with proper zeroization.
 
-use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 use crate::derive::{KeyDeriver, KeyPurpose};
 use crate::format;
@@ -53,25 +53,24 @@ impl AllPublicKeys {
 
         let deriver = KeyDeriver::new(root.as_bytes());
 
-        // SSH host key
-        let mut ssh_seed = deriver.derive(KeyPurpose::SshHost);
-        let ssh_host_pubkey = format::ssh_pubkey(&ssh_seed, "styrene");
-        let ssh_host_fingerprint = format::ssh_pubkey_fingerprint(&ssh_seed);
-        ssh_seed.zeroize();
+        // SSH host key — Zeroizing wrapper guarantees cleanup even on panic
+        let (ssh_host_pubkey, ssh_host_fingerprint) = {
+            let seed = Zeroizing::new(deriver.derive(KeyPurpose::SshHost));
+            (format::ssh_pubkey(&seed, "styrene"), format::ssh_pubkey_fingerprint(&seed))
+        };
 
         // WireGuard
-        let mut wg_secret = deriver.derive(KeyPurpose::WireGuard);
-        let wireguard_pubkey = format::wireguard_pubkey(&wg_secret);
-        wg_secret.zeroize();
+        let wireguard_pubkey = {
+            let secret = Zeroizing::new(deriver.derive(KeyPurpose::WireGuard));
+            format::wireguard_pubkey(&secret)
+        };
 
         // age recipient (feature-gated)
         let age_recipient = {
             #[cfg(feature = "age-format")]
             {
-                let mut age_secret = deriver.derive(KeyPurpose::Age);
-                let r = format::age_recipient(&age_secret);
-                age_secret.zeroize();
-                r
+                let secret = Zeroizing::new(deriver.derive(KeyPurpose::Age));
+                format::age_recipient(&secret)
             }
             #[cfg(not(feature = "age-format"))]
             {
