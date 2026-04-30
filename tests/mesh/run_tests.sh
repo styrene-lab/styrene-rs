@@ -21,10 +21,15 @@ MAX_WAIT=120
 ELAPSED=0
 while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
     # Check if hub is responding and has at least one peer
-    if OUTPUT=$(styrene --socket tcp://hub:9001 status 2>/dev/null); then
-        if styrene --socket tcp://hub:9001 peers 2>/dev/null | grep -qE "."; then
-            echo "Mesh is up (waited ${ELAPSED}s)"
-            break
+    # Note: styrene outputs to stderr, not stdout
+    if OUTPUT=$(styrene --socket tcp://hub:9001 status 2>&1); then
+        PEERS=$(styrene --socket tcp://hub:9001 peers 2>&1)
+        if echo "$PEERS" | grep -q "peers)"; then
+            PEER_COUNT=$(echo "$PEERS" | grep "peers)" | grep -oE "[0-9]+" | head -1)
+            if [ "${PEER_COUNT:-0}" -gt 0 ]; then
+                echo "Mesh is up — $PEER_COUNT peers (waited ${ELAPSED}s)"
+                break
+            fi
         fi
     fi
     sleep 3
