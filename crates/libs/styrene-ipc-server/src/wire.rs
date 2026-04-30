@@ -135,6 +135,11 @@ pub enum MessageType {
     GetAdapterState = 0x72,
     GetActivityHistory = 0x73,
 
+    // Tunnel queries (0x90-0x9F)
+    QueryTunnels = 0x90,
+    QueryTunnelStatus = 0x91,
+    CmdTunnelTeardown = 0x92,
+
     // Responses (0x80-0x8F)
     Result = 0x81,
     Error = 0x82,
@@ -223,6 +228,9 @@ impl MessageType {
             0x71 => Ok(Self::CmdProvisionAdapter),
             0x72 => Ok(Self::GetAdapterState),
             0x73 => Ok(Self::GetActivityHistory),
+            0x90 => Ok(Self::QueryTunnels),
+            0x91 => Ok(Self::QueryTunnelStatus),
+            0x92 => Ok(Self::CmdTunnelTeardown),
             0x80 => Ok(Self::Pong),
             0x81 => Ok(Self::Result),
             0x82 => Ok(Self::Error),

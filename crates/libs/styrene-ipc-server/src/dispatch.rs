@@ -108,6 +108,9 @@ pub async fn dispatch(
         MessageType::CmdSend => dispatch_send(daemon, &payload).await,
         MessageType::CmdBoundarySnapshot => dispatch_boundary_snapshot().await,
         MessageType::CmdProvisionAdapter => dispatch_provision_adapter().await,
+        MessageType::QueryTunnels => dispatch_query_tunnels(daemon).await,
+        MessageType::QueryTunnelStatus => dispatch_query_tunnel_status(daemon, &payload).await,
+        MessageType::CmdTunnelTeardown => dispatch_tunnel_teardown(daemon, &payload).await,
         _ => Err(format!("unimplemented message type: 0x{:02x}", msg_type as u8)),
     }
 }
@@ -898,5 +901,61 @@ async fn dispatch_self_update(
     if let Some(v) = &result.target_version {
         p.insert("target_version".into(), rmpv::Value::from(v.as_str()));
     }
+    ok_payload(p)
+}
+
+// ── Tunnel ─────────────────────────────────────────────────────────────────
+
+async fn dispatch_query_tunnels(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
+    let tunnels = daemon.list_tunnels().await.map_err(|e| e.to_string())?;
+    let list: Vec<rmpv::Value> = tunnels
+        .iter()
+        .map(|t| {
+            rmpv::Value::Map(vec![
+                (rmpv::Value::from("peer_hash"), rmpv::Value::from(t.peer_hash.as_str())),
+                (rmpv::Value::from("backend"), rmpv::Value::from(t.backend.as_str())),
+                (rmpv::Value::from("state"), rmpv::Value::from(t.state.as_str())),
+                (
+                    rmpv::Value::from("remote_endpoint"),
+                    rmpv::Value::from(t.remote_endpoint.as_deref().unwrap_or("")),
+                ),
+                (
+                    rmpv::Value::from("established_at"),
+                    rmpv::Value::from(t.established_at.unwrap_or(0)),
+                ),
+            ])
+        })
+        .collect();
+    let mut p = Payload::new();
+    p.insert("tunnels".into(), rmpv::Value::Array(list));
+    ok_payload(p)
+}
+
+async fn dispatch_query_tunnel_status(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let peer = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let info = daemon.tunnel_status(peer).await.map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("peer_hash".into(), rmpv::Value::from(info.peer_hash.as_str()));
+    p.insert("backend".into(), rmpv::Value::from(info.backend.as_str()));
+    p.insert("state".into(), rmpv::Value::from(info.state.as_str()));
+    p.insert(
+        "remote_endpoint".into(),
+        rmpv::Value::from(info.remote_endpoint.as_deref().unwrap_or("")),
+    );
+    p.insert("established_at".into(), rmpv::Value::from(info.established_at.unwrap_or(0)));
+    ok_payload(p)
+}
+
+async fn dispatch_tunnel_teardown(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let peer = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let ok = daemon.tunnel_teardown(peer).await.map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("success".into(), rmpv::Value::Boolean(ok));
     ok_payload(p)
 }
