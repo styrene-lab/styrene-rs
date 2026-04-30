@@ -20,6 +20,7 @@ use crate::services::{
 use crate::storage::messages::MessagesStore;
 use crate::transport::mesh_transport::MeshTransport;
 use rns_core::identity::PrivateIdentity;
+use styrene_services::conversations::ConversationStore;
 use styrene_services::node_store::NodeStore;
 
 /// Composition root — wires all daemon services together.
@@ -44,6 +45,7 @@ pub struct AppContext {
     tunnel: Arc<TunnelService>,
     propagation: Arc<PropagationService>,
     pages: Arc<PageService>,
+    conversations: Arc<ConversationStore>,
 }
 
 impl AppContext {
@@ -106,6 +108,9 @@ impl AppContext {
         // Phase 12: Page server (NomadNet-compatible page hosting)
         let pages = Arc::new(PageService::with_default_dir());
 
+        // Phase 13: Conversation metadata (pin/mute)
+        let conversations = Arc::new(ConversationStore::in_memory().expect("in-memory conversation store"));
+
         Self {
             transport,
             store: store_ref,
@@ -123,6 +128,7 @@ impl AppContext {
             propagation,
             tunnel,
             pages,
+            conversations,
         }
     }
 
@@ -168,8 +174,16 @@ impl AppContext {
         &self.auth
     }
 
+    pub fn auth_arc(&self) -> Arc<AuthService> {
+        self.auth.clone()
+    }
+
     pub fn auto_reply(&self) -> &AutoReplyService {
         &self.auto_reply
+    }
+
+    pub fn auto_reply_arc(&self) -> Arc<AutoReplyService> {
+        self.auto_reply.clone()
     }
 
     pub fn messaging(&self) -> &MessagingService {
@@ -216,6 +230,10 @@ impl AppContext {
         &self.tunnel
     }
 
+    pub fn tunnel_arc(&self) -> Arc<TunnelService> {
+        self.tunnel.clone()
+    }
+
     /// LXMF propagation store-and-forward service.
     pub fn propagation(&self) -> &PropagationService {
         &self.propagation
@@ -233,5 +251,10 @@ impl AppContext {
     /// The persistent node store.
     pub fn node_store(&self) -> &Arc<NodeStore> {
         &self.node_store
+    }
+
+    /// Conversation metadata store (pin/mute state).
+    pub fn conversations(&self) -> &ConversationStore {
+        &self.conversations
     }
 }
