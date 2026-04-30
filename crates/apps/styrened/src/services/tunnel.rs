@@ -16,6 +16,11 @@ use styrene_mesh::tunnel_payloads::{self, TunnelAccept, TunnelOffer, TunnelRejec
 use styrene_mesh::{StyreneMessage, StyreneMessageType};
 use styrene_services::protocol_registry::{HandleResult, InboundMessage, ProtocolHandler};
 
+#[cfg(feature = "wireguard")]
+use styrene_tunnel::wireguard::WireGuardBackend;
+#[cfg(feature = "wireguard")]
+use styrene_tunnel::TunnelBackend;
+
 /// Peer state stored when a tunnel is established.
 #[derive(Debug, Clone)]
 pub struct TunnelPeerState {
@@ -52,6 +57,9 @@ pub struct TunnelService {
     active_tunnels: Mutex<HashMap<String, TunnelPeerState>>,
     /// Allowed peer identities (empty = allow all).
     allowed_peers: Mutex<Option<Vec<String>>>,
+    /// Optional WireGuard backend for configuring actual tunnels.
+    #[cfg(feature = "wireguard")]
+    backend: Mutex<Option<Arc<WireGuardBackend>>>,
 }
 
 #[derive(Clone)]
@@ -84,6 +92,8 @@ impl TunnelService {
             seen_nonces: Mutex::new(HashMap::new()),
             active_tunnels: Mutex::new(HashMap::new()),
             allowed_peers: Mutex::new(None),
+            #[cfg(feature = "wireguard")]
+            backend: Mutex::new(None),
         }
     }
 
@@ -109,6 +119,8 @@ impl TunnelService {
             seen_nonces: Mutex::new(HashMap::new()),
             active_tunnels: Mutex::new(HashMap::new()),
             allowed_peers: Mutex::new(None),
+            #[cfg(feature = "wireguard")]
+            backend: Mutex::new(None),
         }
     }
 
@@ -119,6 +131,128 @@ impl TunnelService {
     /// Set allowed peers. None = allow all. Some(vec) = only these identities.
     pub fn set_allowed_peers(&self, peers: Option<Vec<String>>) {
         *self.allowed_peers.lock().expect("lock") = peers;
+    }
+
+    /// Set the WireGuard backend for configuring actual tunnels.
+    /// If not set, tunnel negotiation state is still tracked but no
+    /// WireGuard configuration is performed.
+    #[cfg(feature = "wireguard")]
+    pub fn set_backend(&self, backend: Arc<WireGuardBackend>) {
+        *self.backend.lock().expect("lock") = Some(backend);
+    }
+
+    /// Configure WireGuard for a peer using the stored tunnel state.
+    /// Logs warnings and continues on failure — the protocol state is still valid.
+    #[cfg(feature = "wireguard")]
+    async fn configure_wireguard(&self, peer_identity: &str, state: &TunnelPeerState) {
+        use base64::Engine;
+        use std::net::IpAddr;
+
+        let backend = self.backend.lock().expect("lock").clone();
+        let backend = match backend {
+            Some(b) => b,
+            None => return, // no backend wired — skip silently
+        };
+
+        // Parse endpoint into (IpAddr, port)
+        let (remote_endpoint, remote_port) = if state.endpoint.is_empty() {
+            (None, None)
+        } else {
+            match state.endpoint.rsplit_once(':') {
+                Some((ip_str, port_str)) => {
+                    let ip = ip_str.parse::<IpAddr>().ok();
+                    let port = port_str.parse::<u16>().ok();
+                    (ip, port)
+                }
+                None => (None, None),
+            }
+        };
+
+        // Decode wg_pubkey from base64 to [u8; 32]
+        let peer_x25519_public = match base64::engine::general_purpose::STANDARD
+            .decode(&state.wg_pubkey)
+        {
+            Ok(bytes) if bytes.len() == 32 => {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&bytes);
+                Some(arr)
+            }
+            Ok(_) => {
+                eprintln!("[tunnel] WireGuard: peer pubkey wrong length, skipping backend config");
+                return;
+            }
+            Err(e) => {
+                eprintln!("[tunnel] WireGuard: failed to decode peer pubkey: {e}");
+                return;
+            }
+        };
+
+        // Decode PSK from base64 to [u8; 32]
+        let psk = match base64::engine::general_purpose::STANDARD.decode(&state.psk) {
+            Ok(bytes) if bytes.len() == 32 => {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&bytes);
+                arr
+            }
+            Ok(_) => {
+                eprintln!("[tunnel] WireGuard: PSK wrong length, skipping backend config");
+                return;
+            }
+            Err(e) => {
+                eprintln!("[tunnel] WireGuard: failed to decode PSK: {e}");
+                return;
+            }
+        };
+
+        let params = styrene_tunnel::traits::TunnelParams {
+            peer_identity: peer_identity.to_string(),
+            remote_endpoint,
+            remote_port,
+            psk,
+            peer_x25519_public,
+            peer_mesh_ip: Some(state.mesh_ip.clone()),
+            mtu: Some(state.mtu),
+        };
+
+        match backend.establish(params).await {
+            Ok(tunnel_id) => {
+                eprintln!(
+                    "[tunnel] WireGuard peer configured: {}",
+                    &tunnel_id[..12.min(tunnel_id.len())]
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[tunnel] WireGuard establish failed for {}: {e} (tunnel state still valid)",
+                    &peer_identity[..12.min(peer_identity.len())]
+                );
+            }
+        }
+    }
+
+    /// Tear down WireGuard configuration for a peer.
+    #[cfg(feature = "wireguard")]
+    async fn teardown_wireguard(&self, peer_identity: &str) {
+        let backend = self.backend.lock().expect("lock").clone();
+        let backend = match backend {
+            Some(b) => b,
+            None => return,
+        };
+
+        match backend.teardown(peer_identity).await {
+            Ok(()) => {
+                eprintln!(
+                    "[tunnel] WireGuard peer removed: {}",
+                    &peer_identity[..12.min(peer_identity.len())]
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "[tunnel] WireGuard teardown failed for {}: {e}",
+                    &peer_identity[..12.min(peer_identity.len())]
+                );
+            }
+        }
     }
 
     /// Check if a peer is authorized for tunnel establishment.
@@ -256,17 +390,22 @@ impl TunnelService {
         }
 
         // Store full peer state
-        self.active_tunnels.lock().expect("lock").insert(
-            source.to_string(),
-            TunnelPeerState {
-                wg_pubkey: offer.wg_pubkey,
-                endpoint: offer.endpoint,
-                mesh_ip: offer.mesh_ip,
-                psk: offer.psk,
-                mtu: offer.mtu,
-                established_at: tunnel_payloads::now_ts(),
-            },
-        );
+        let peer_state = TunnelPeerState {
+            wg_pubkey: offer.wg_pubkey,
+            endpoint: offer.endpoint,
+            mesh_ip: offer.mesh_ip,
+            psk: offer.psk,
+            mtu: offer.mtu,
+            established_at: tunnel_payloads::now_ts(),
+        };
+        self.active_tunnels
+            .lock()
+            .expect("lock")
+            .insert(source.to_string(), peer_state.clone());
+
+        // Configure WireGuard backend if available
+        #[cfg(feature = "wireguard")]
+        self.configure_wireguard(source, &peer_state).await;
 
         eprintln!(
             "[tunnel] sent TUNNEL_ACCEPT to {}",
@@ -298,17 +437,22 @@ impl TunnelService {
         );
 
         // Store full peer state
-        self.active_tunnels.lock().expect("lock").insert(
-            source.to_string(),
-            TunnelPeerState {
-                wg_pubkey: accept.wg_pubkey,
-                endpoint: accept.endpoint,
-                mesh_ip: accept.mesh_ip,
-                psk: pending.psk,
-                mtu: pending.mtu,
-                established_at: tunnel_payloads::now_ts(),
-            },
-        );
+        let peer_state = TunnelPeerState {
+            wg_pubkey: accept.wg_pubkey,
+            endpoint: accept.endpoint,
+            mesh_ip: accept.mesh_ip,
+            psk: pending.psk,
+            mtu: pending.mtu,
+            established_at: tunnel_payloads::now_ts(),
+        };
+        self.active_tunnels
+            .lock()
+            .expect("lock")
+            .insert(source.to_string(), peer_state.clone());
+
+        // Configure WireGuard backend if available
+        #[cfg(feature = "wireguard")]
+        self.configure_wireguard(source, &peer_state).await;
 
         HandleResult::Handled
     }
@@ -317,6 +461,10 @@ impl TunnelService {
         if !self.check_nonce(&teardown.nonce) {
             return HandleResult::Handled;
         }
+
+        // Tear down WireGuard backend if available (before removing state)
+        #[cfg(feature = "wireguard")]
+        self.teardown_wireguard(source).await;
 
         self.active_tunnels.lock().expect("lock").remove(source);
 
