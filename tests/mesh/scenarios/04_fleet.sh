@@ -34,7 +34,8 @@ fi
 
 # T16: Fleet exec — run a simple command on alpha via hub
 # Get alpha's full destination hash from its own identity
-ALPHA_HASH=$(styrene --socket tcp://alpha:9002 identity 2>&1 | grep "hash" | awk '{print $2}')
+# Fleet exec uses the destination hash (not identity hash)
+ALPHA_HASH=$(styrene --socket tcp://alpha:9002 identity 2>&1 | grep "dest" | awk '{print $2}')
 if [ -n "$ALPHA_HASH" ]; then
     OUTPUT=$(styrene --socket tcp://hub:9001 fleet exec "$ALPHA_HASH" echo fleet-test 2>&1) && RC=0 || RC=$?
     if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "fleet-test"; then

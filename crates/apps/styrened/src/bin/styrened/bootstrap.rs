@@ -130,10 +130,11 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
             )))
             .await;
         let iface_manager = transport_instance.iface_manager();
+        let (tcp_server, _bound_addr_rx) = TcpServer::new(addr.clone(), iface_manager.clone());
         let server_iface = iface_manager
             .lock()
             .await
-            .spawn(TcpServer::new(addr.clone(), iface_manager.clone()), TcpServer::spawn);
+            .spawn(tcp_server, TcpServer::spawn);
         eprintln!("[daemon] tcp_server enabled iface={} bind={}", server_iface, addr);
         if let Some(config) = daemon_config.as_ref() {
             for (host, port) in config.tcp_client_endpoints() {
@@ -201,7 +202,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         announce_bridge,
     ));
     let local_delivery_hash = delivery_destination_hash_hex.clone();
-    daemon.set_delivery_destination_hash(delivery_destination_hash_hex);
+    daemon.set_delivery_destination_hash(delivery_destination_hash_hex.clone());
     daemon.replace_interfaces(configured_interfaces);
     daemon.set_propagation_state(transport.is_some(), None, 0);
 
@@ -285,6 +286,11 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     }
     // Wire signing identity into services that need outbound delivery
     app_context.set_signer(Arc::new(identity.clone()));
+    // Wire delivery destination hash into IdentityService so DaemonFacade can
+    // return it in query_identity responses (needed for LXMF messaging).
+    app_context
+        .identity()
+        .set_delivery_destination_hash(local_delivery_hash.clone());
     eprintln!("[daemon] service architecture initialized (AppContext + DaemonFacade + signer)");
 
     // Enable propagation if node role is Hub
@@ -294,13 +300,14 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     }
 
     // --- Service-layer workers (inbound + announce processing) ---
-    styrened::workers::inbound::spawn_inbound_worker(
+    styrened::workers::inbound::spawn_inbound_worker_with_auto_reply(
         app_context.transport_arc(),
         app_context.messaging_arc(),
         app_context.protocol_arc(),
         app_context.events_arc(),
         app_context.propagation_arc(),
         local_delivery_hash,
+        Some(app_context.auto_reply_arc()),
     );
 
     // Spawn propagation expiry cleanup task
@@ -321,7 +328,15 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
             app_context.fleet_arc(),
         )))
         .await;
-    eprintln!("[daemon] service workers started (inbound + announce + rpc-response)");
+    app_context
+        .protocol()
+        .register(std::sync::Arc::new(styrened::workers::rpc_request::RpcRequestHandler::new(
+            app_context.transport_arc(),
+            std::sync::Arc::new(identity.clone()),
+            app_context.auth_arc(),
+        )))
+        .await;
+    eprintln!("[daemon] service workers started (inbound + announce + rpc-request + rpc-response)");
 
     // --- Unix socket IPC server ---
     let ipc_config = styrene_ipc_server::IpcServerConfig {

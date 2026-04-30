@@ -174,11 +174,14 @@ impl DaemonClient {
         title: Option<&str>,
     ) -> Result<String, String> {
         let mut p = HashMap::new();
-        p.insert("destination_hash".into(), MpValue::String(destination.into()));
+        // Daemon dispatch expects "peer_hash" not "destination_hash"
+        p.insert("peer_hash".into(), MpValue::String(destination.into()));
         p.insert("content".into(), MpValue::String(content.into()));
         if let Some(t) = title {
             p.insert("title".into(), MpValue::String(t.into()));
         }
+        // Send may need to establish an LXMF link — give it more time
+        self.with_timeout(30);
         let frame = self.rpc(MessageType::CmdSendChat, &p).await?;
         Ok(mp_str(&frame.payload, "message_id"))
     }
