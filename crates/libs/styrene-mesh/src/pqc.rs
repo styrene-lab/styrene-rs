@@ -1,8 +1,7 @@
 //! PQC session protocol payload types.
 //!
-//! These structs represent the msgpack-encoded payloads carried inside
-//! `StyreneMessage` for PQC tunnel establishment. The wire format must
-//! match Python `styrened`'s PQC session implementation byte-for-byte.
+//! These structs represent the CBOR-encoded payloads carried inside
+//! `StyreneMessage` for PQC tunnel establishment.
 
 use serde::{Deserialize, Serialize};
 
@@ -203,8 +202,12 @@ mod tests {
             mlkem_encapsulation_key: vec![0x02; 1184],
             identity_hash: vec![0x03; 16],
         };
-        let encoded = rmp_serde::to_vec(&payload).expect("encode");
-        let decoded: PqcInitiatePayload = rmp_serde::from_slice(&encoded).expect("decode");
+        let encoded = {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&payload, &mut buf).expect("encode");
+            buf
+        };
+        let decoded: PqcInitiatePayload = ciborium::from_reader(encoded.as_slice()).expect("decode");
         assert_eq!(decoded.version, 1);
         assert_eq!(decoded.session_id.len(), 16);
         assert_eq!(decoded.x25519_public.len(), 32);
@@ -221,8 +224,12 @@ mod tests {
             encrypted_confirm: vec![0x03; 44], // 12 nonce + 16 tag + 16 data
             identity_hash: vec![0x04; 16],
         };
-        let encoded = rmp_serde::to_vec(&payload).expect("encode");
-        let decoded: PqcRespondPayload = rmp_serde::from_slice(&encoded).expect("decode");
+        let encoded = {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&payload, &mut buf).expect("encode");
+            buf
+        };
+        let decoded: PqcRespondPayload = ciborium::from_reader(encoded.as_slice()).expect("decode");
         assert_eq!(decoded.mlkem_ciphertext.len(), 1088);
     }
 
@@ -230,8 +237,12 @@ mod tests {
     fn confirm_payload_roundtrip() {
         let payload =
             PqcConfirmPayload { session_id: vec![0xAB; 16], encrypted_confirm: vec![0x03; 44] };
-        let encoded = rmp_serde::to_vec(&payload).expect("encode");
-        let decoded: PqcConfirmPayload = rmp_serde::from_slice(&encoded).expect("decode");
+        let encoded = {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&payload, &mut buf).expect("encode");
+            buf
+        };
+        let decoded: PqcConfirmPayload = ciborium::from_reader(encoded.as_slice()).expect("decode");
         assert_eq!(decoded.session_id.len(), 16);
     }
 
@@ -242,8 +253,12 @@ mod tests {
             sequence: 42,
             ciphertext: vec![0xFF; 256],
         };
-        let encoded = rmp_serde::to_vec(&payload).expect("encode");
-        let decoded: PqcDataPayload = rmp_serde::from_slice(&encoded).expect("decode");
+        let encoded = {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&payload, &mut buf).expect("encode");
+            buf
+        };
+        let decoded: PqcDataPayload = ciborium::from_reader(encoded.as_slice()).expect("decode");
         assert_eq!(decoded.sequence, 42);
     }
 
@@ -254,8 +269,12 @@ mod tests {
             reason: close_reason::NORMAL,
             message: Some("done".into()),
         };
-        let encoded = rmp_serde::to_vec(&payload).expect("encode");
-        let decoded: PqcClosePayload = rmp_serde::from_slice(&encoded).expect("decode");
+        let encoded = {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&payload, &mut buf).expect("encode");
+            buf
+        };
+        let decoded: PqcClosePayload = ciborium::from_reader(encoded.as_slice()).expect("decode");
         assert_eq!(decoded.reason, 0);
         assert_eq!(decoded.message.as_deref(), Some("done"));
     }
@@ -270,8 +289,12 @@ mod tests {
             tunnel_port: Some(4500),
             mtu: Some(1420),
         };
-        let encoded = rmp_serde::to_vec(&payload).expect("encode");
-        let decoded: PqcCapabilityPayload = rmp_serde::from_slice(&encoded).expect("decode");
+        let encoded = {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&payload, &mut buf).expect("encode");
+            buf
+        };
+        let decoded: PqcCapabilityPayload = ciborium::from_reader(encoded.as_slice()).expect("decode");
         assert_eq!(decoded.tunnel_capabilities, capability_flags::TUNNEL_EITHER);
         assert_eq!(decoded.tunnel_port, Some(4500));
     }
@@ -285,8 +308,12 @@ mod tests {
             tunnel_port: Some(500),
             mtu: Some(1400),
         };
-        let encoded = rmp_serde::to_vec(&payload).expect("encode");
-        let decoded: PqcCapabilityAckPayload = rmp_serde::from_slice(&encoded).expect("decode");
+        let encoded = {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&payload, &mut buf).expect("encode");
+            buf
+        };
+        let decoded: PqcCapabilityAckPayload = ciborium::from_reader(encoded.as_slice()).expect("decode");
         assert_eq!(decoded.selected_tunnel, capability_flags::TUNNEL_STRONGSWAN);
     }
 
@@ -299,8 +326,12 @@ mod tests {
             mlkem_key_material: vec![0x02; 1184],
             is_initiation: true,
         };
-        let encoded = rmp_serde::to_vec(&payload).expect("encode");
-        let decoded: PqcRekeyPayload = rmp_serde::from_slice(&encoded).expect("decode");
+        let encoded = {
+            let mut buf = Vec::new();
+            ciborium::into_writer(&payload, &mut buf).expect("encode");
+            buf
+        };
+        let decoded: PqcRekeyPayload = ciborium::from_reader(encoded.as_slice()).expect("decode");
         assert_eq!(decoded.ratchet_step, 1);
         assert!(decoded.is_initiation);
     }
