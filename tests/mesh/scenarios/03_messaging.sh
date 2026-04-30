@@ -7,17 +7,17 @@ echo "  Suite: Messaging"
 
 MSG_TIMEOUT=30
 
-# Get each node's full destination hash by querying its own identity
-ALPHA_DEST=$(styrene --socket tcp://alpha:9002 identity 2>&1 | grep "dest" | awk '{print $2}')
-BETA_DEST=$(styrene --socket tcp://beta:9003 identity 2>&1 | grep "dest" | awk '{print $2}')
-GAMMA_DEST=$(styrene --socket tcp://gamma:9004 identity 2>&1 | grep "dest" | awk '{print $2}')
+# Get each node's LXMF destination hash (for addressing messages)
+ALPHA_DEST=$(styrene --socket tcp://alpha:9002 identity 2>&1 | grep "lxmf" | awk '{print $2}')
+BETA_DEST=$(styrene --socket tcp://beta:9003 identity 2>&1 | grep "lxmf" | awk '{print $2}')
+GAMMA_DEST=$(styrene --socket tcp://gamma:9004 identity 2>&1 | grep "lxmf" | awk '{print $2}')
 
-echo "  alpha dest: ${ALPHA_DEST:-UNKNOWN}"
-echo "  beta dest:  ${BETA_DEST:-UNKNOWN}"
-echo "  gamma dest: ${GAMMA_DEST:-UNKNOWN}"
+echo "  alpha lxmf: ${ALPHA_DEST:-UNKNOWN}"
+echo "  beta lxmf:  ${BETA_DEST:-UNKNOWN}"
+echo "  gamma lxmf: ${GAMMA_DEST:-UNKNOWN}"
 
 if [ -z "$BETA_DEST" ] || [ -z "$ALPHA_DEST" ]; then
-    echo "  SKIP: T09-T10: LXMF destinations not available (daemon may not support messaging yet)"
+    echo "  SKIP: T09-T10: LXMF destinations not available"
 else
     # T09: Send message from alpha to beta
     OUTPUT=$(styrene --socket tcp://alpha:9002 send "$BETA_DEST" "hello from alpha" 2>&1) && RC=0 || RC=$?
@@ -48,7 +48,7 @@ else
 fi
 
 if [ -z "$GAMMA_DEST" ] || [ -z "$ALPHA_DEST" ]; then
-    echo "  SKIP: T11-T12: LXMF destinations not available (daemon may not support messaging yet)"
+    echo "  SKIP: T11-T12: LXMF destinations not available"
 else
     # T11: Send message from alpha to gamma (cross-network via hub)
     OUTPUT=$(styrene --socket tcp://alpha:9002 send "$GAMMA_DEST" "hello across networks" 2>&1) && RC=0 || RC=$?
