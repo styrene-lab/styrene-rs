@@ -16,20 +16,22 @@ echo "========================================"
 echo ""
 
 # --- Wait for mesh stabilization ---
-echo "Waiting for mesh to stabilize..."
+echo "Waiting for mesh to stabilize (expecting 3 peers on hub)..."
+echo "Initial stabilization wait (30s)..."
+sleep 30
 MAX_WAIT=120
 ELAPSED=0
 while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
-    # Check if hub is responding and has at least one peer
+    # Check if hub is responding and has all 3 expected peers (alpha, beta, gamma)
     # Note: styrene outputs to stderr, not stdout
     if OUTPUT=$(styrene --socket tcp://hub:9001 status 2>&1); then
         PEERS=$(styrene --socket tcp://hub:9001 peers 2>&1)
-        if echo "$PEERS" | grep -q "peers)"; then
-            PEER_COUNT=$(echo "$PEERS" | grep "peers)" | grep -oE "[0-9]+" | head -1)
-            if [ "${PEER_COUNT:-0}" -gt 0 ]; then
-                echo "Mesh is up — $PEER_COUNT peers (waited ${ELAPSED}s)"
-                break
-            fi
+        PEER_COUNT=$(echo "$PEERS" | grep -c "⬡\|○" || true)
+        if [ "$PEER_COUNT" -ge 3 ]; then
+            echo "Mesh stabilized with $PEER_COUNT peers (waited $((ELAPSED + 30))s)"
+            break
+        else
+            echo "  ... $PEER_COUNT/3 peers visible so far"
         fi
     fi
     sleep 3
@@ -37,7 +39,9 @@ while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
 done
 
 if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
-    echo "ERROR: Mesh did not stabilize within ${MAX_WAIT}s"
+    echo "ERROR: Mesh did not stabilize within $((MAX_WAIT + 30))s (only $PEER_COUNT/3 peers)"
+    # Show what peers we can see for debugging
+    styrene --socket tcp://hub:9001 peers 2>&1 || true
     exit 1
 fi
 

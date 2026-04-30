@@ -5,7 +5,7 @@ source /harness/harness.sh
 
 echo "  Suite: Messaging"
 
-MSG_TIMEOUT=45
+MSG_TIMEOUT=90
 
 # Get each node's LXMF destination hash (for addressing messages)
 # and identity hash (for querying received messages — the store uses identity hash)
@@ -25,6 +25,10 @@ if [ -z "$BETA_DEST" ] || [ -z "$ALPHA_DEST" ]; then
 else
     # T09: Send message from alpha to beta
     # Wait for announce propagation to ensure alpha can resolve beta
+    echo "  waiting for alpha to see beta before sending..."
+    if ! wait_for_peer tcp://alpha:9002 beta 60; then
+        echo "  WARNING: alpha may not see beta yet, attempting send anyway"
+    fi
     sleep 5
     OUTPUT=$(styrene --socket tcp://alpha:9002 send "$BETA_DEST" "hello from alpha" 2>&1) && RC=0 || RC=$?
     if [ "$RC" -eq 0 ]; then
@@ -35,7 +39,8 @@ else
     fi
 
     # T10: Beta receives message from alpha
-    sleep 10
+    # Allow transport time to establish link for delivery
+    sleep 15
     ELAPSED=0
     RECEIVED=false
     while [ "$ELAPSED" -lt "$MSG_TIMEOUT" ]; do
