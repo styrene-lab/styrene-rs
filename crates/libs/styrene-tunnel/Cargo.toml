@@ -30,8 +30,8 @@ zeroize = { workspace = true, features = ["derive"] }
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }
-rmp-serde.workspace = true
 hex.workspace = true
+base64 = { workspace = true, optional = true }
 
 # Async runtime
 tokio = { workspace = true, features = ["sync", "time", "net"], optional = true }
@@ -50,8 +50,10 @@ tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 default = ["std"]
 std = []
 strongswan = ["tokio", "async-trait", "log"]
-wireguard = ["tokio", "async-trait", "log"]
+wireguard = ["tokio", "async-trait", "log", "base64"]
 tunnel = ["strongswan", "wireguard"]
+# Enables TunnelBackend trait without platform-specific backends.
+testing = ["tokio", "async-trait", "log"]
 
 [lints]
 workspace = true

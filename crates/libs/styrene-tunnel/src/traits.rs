@@ -3,6 +3,9 @@
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 
+#[cfg(any(feature = "strongswan", feature = "wireguard", feature = "testing"))]
+use crate::error::TunnelError;
+
 /// Unique identifier for a tunnel instance.
 pub type TunnelId = String;
 
@@ -67,7 +70,7 @@ pub struct TunnelParams {
 ///
 /// Both strongSwan (IPsec + ML-KEM) and WireGuard implement this trait,
 /// allowing the orchestrator to manage tunnels uniformly.
-#[cfg(any(feature = "strongswan", feature = "wireguard"))]
+#[cfg(any(feature = "strongswan", feature = "wireguard", feature = "testing"))]
 #[async_trait::async_trait]
 pub trait TunnelBackend: Send + Sync {
     /// Human-readable name of this backend (e.g., "strongswan", "wireguard").
@@ -95,7 +98,7 @@ pub trait TunnelBackend: Send + Sync {
 /// Tunnel backend that is not yet implemented (compile-time placeholder).
 ///
 /// Used when neither `strongswan` nor `wireguard` features are enabled.
-#[cfg(not(any(feature = "strongswan", feature = "wireguard")))]
+#[cfg(not(any(feature = "strongswan", feature = "wireguard", feature = "testing")))]
 pub trait TunnelBackend: Send + Sync {
     fn name(&self) -> &str;
 }
