@@ -8,11 +8,14 @@ echo "  Suite: Messaging"
 MSG_TIMEOUT=30
 
 # Get each node's LXMF destination hash (for addressing messages)
+# and identity hash (for querying received messages — the store uses identity hash)
 ALPHA_DEST=$(styrene --socket tcp://alpha:9002 identity 2>&1 | grep "lxmf" | awk '{print $2}')
+ALPHA_IDHASH=$(styrene --socket tcp://alpha:9002 identity 2>&1 | grep "^  hash" | awk '{print $2}')
 BETA_DEST=$(styrene --socket tcp://beta:9003 identity 2>&1 | grep "lxmf" | awk '{print $2}')
 GAMMA_DEST=$(styrene --socket tcp://gamma:9004 identity 2>&1 | grep "lxmf" | awk '{print $2}')
 
 echo "  alpha lxmf: ${ALPHA_DEST:-UNKNOWN}"
+echo "  alpha hash: ${ALPHA_IDHASH:-UNKNOWN}"
 echo "  beta lxmf:  ${BETA_DEST:-UNKNOWN}"
 echo "  gamma lxmf: ${GAMMA_DEST:-UNKNOWN}"
 
@@ -32,7 +35,7 @@ else
     ELAPSED=0
     RECEIVED=false
     while [ "$ELAPSED" -lt "$MSG_TIMEOUT" ]; do
-        MSGS=$(styrene --socket tcp://beta:9003 messages "$ALPHA_DEST" 2>&1)
+        MSGS=$(styrene --socket tcp://beta:9003 messages "$ALPHA_IDHASH" 2>&1)
         if echo "$MSGS" | grep -qF "hello from alpha"; then
             RECEIVED=true
             break
@@ -63,7 +66,7 @@ else
     ELAPSED=0
     RECEIVED=false
     while [ "$ELAPSED" -lt "$MSG_TIMEOUT" ]; do
-        MSGS=$(styrene --socket tcp://gamma:9004 messages "$ALPHA_DEST" 2>&1)
+        MSGS=$(styrene --socket tcp://gamma:9004 messages "$ALPHA_IDHASH" 2>&1)
         if echo "$MSGS" | grep -qF "hello across networks"; then
             RECEIVED=true
             break
