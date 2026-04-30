@@ -18,6 +18,10 @@ pub struct TunnelInfo {
     pub backend: String,
     /// Remote peer's RNS identity hash (hex).
     pub peer_identity: String,
+    /// Peer's WireGuard public key (base64). Needed for teardown/rekey.
+    pub peer_wg_pubkey: Option<String>,
+    /// Peer's mesh overlay IP.
+    pub peer_mesh_ip: Option<String>,
     /// Remote endpoint IP address.
     pub remote_endpoint: Option<IpAddr>,
     /// Local tunnel interface name (e.g., "ipsec0", "wg-styrene").
@@ -54,14 +58,16 @@ pub enum TunnelState {
 pub struct TunnelParams {
     /// Remote peer's RNS identity hash.
     pub peer_identity: String,
-    /// Remote endpoint address for the tunnel.
-    pub remote_endpoint: IpAddr,
-    /// Remote endpoint port.
-    pub remote_port: u16,
-    /// Pre-shared key derived from PQC session (32 bytes).
+    /// Remote endpoint address (None for NAT'd peers using outbound-only mode).
+    pub remote_endpoint: Option<IpAddr>,
+    /// Remote endpoint port (None for NAT'd peers).
+    pub remote_port: Option<u16>,
+    /// Pre-shared key derived from PQC session or DH exchange (32 bytes).
     pub psk: [u8; 32],
     /// Peer's X25519 public key (for WireGuard), 32 bytes.
     pub peer_x25519_public: Option<[u8; 32]>,
+    /// Peer's mesh overlay IPv6 address (for allowed-ips routing).
+    pub peer_mesh_ip: Option<String>,
     /// Preferred MTU for the tunnel interface.
     pub mtu: Option<u16>,
 }
