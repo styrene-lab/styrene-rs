@@ -50,6 +50,14 @@ impl Capability {
     pub const ADAPTER_PROVISION: &str = "adapter.provision";
     pub const RELAY_ADMIN: &str = "relay.admin";
 
+    // ── Tunnel (tiered) ─────────────────────────────────────────
+    /// View tunnel status and list active tunnels (Peer)
+    pub const TUNNEL_STATUS: &str = "tunnel.status";
+    /// Initiate or accept tunnel establishment (Operator)
+    pub const TUNNEL_ESTABLISH: &str = "tunnel.establish";
+    /// Tear down an active tunnel (Operator)
+    pub const TUNNEL_TEARDOWN: &str = "tunnel.teardown";
+
     // ── Orthogonal (explicit grant only) ──────────────────────
     pub const VPN_HANDSHAKE: &str = "vpn.handshake";
     pub const RELAY_REJECT: &str = "relay.reject";
@@ -97,6 +105,10 @@ pub const ALL_CAPABILITIES: &[&str] = &[
     Capability::TERMINAL_FULL,
     Capability::ADAPTER_PROVISION,
     Capability::RELAY_ADMIN,
+    // Tunnel
+    Capability::TUNNEL_STATUS,
+    Capability::TUNNEL_ESTABLISH,
+    Capability::TUNNEL_TEARDOWN,
     // Orthogonal
     Capability::VPN_HANDSHAKE,
     Capability::RELAY_REJECT,
@@ -122,6 +134,8 @@ pub const PEER_CAPS: &[&str] = &[
     Capability::RELAY_LIST,
     Capability::RELAY_TEARDOWN,
     Capability::RELAY_ACCEPT,
+    // Tunnel: all peers can view tunnel status
+    Capability::TUNNEL_STATUS,
     // Aether: all peers can query and report
     Capability::AETHER_QUERY,
     Capability::AETHER_REPORT,
@@ -143,6 +157,7 @@ pub const MONITOR_CAPS: &[&str] = &[
     Capability::RELAY_LIST,
     Capability::RELAY_TEARDOWN,
     Capability::RELAY_ACCEPT,
+    Capability::TUNNEL_STATUS,
     Capability::AETHER_QUERY,
     Capability::AETHER_REPORT,
     // Monitor
@@ -168,6 +183,7 @@ pub const OPERATOR_CAPS: &[&str] = &[
     Capability::RELAY_LIST,
     Capability::RELAY_TEARDOWN,
     Capability::RELAY_ACCEPT,
+    Capability::TUNNEL_STATUS,
     Capability::AETHER_QUERY,
     Capability::AETHER_REPORT,
     // Monitor
@@ -183,6 +199,8 @@ pub const OPERATOR_CAPS: &[&str] = &[
     Capability::RELAY_ACCEPT_PERMANENT,
     Capability::RELAY_PRIORITIZE,
     Capability::RELAY_BRIDGE,
+    Capability::TUNNEL_ESTABLISH,
+    Capability::TUNNEL_TEARDOWN,
     // Operator can delegate
     Capability::AETHER_DELEGATE,
 ];
@@ -205,6 +223,7 @@ pub const ADMIN_CAPS: &[&str] = &[
     Capability::RELAY_LIST,
     Capability::RELAY_TEARDOWN,
     Capability::RELAY_ACCEPT,
+    Capability::TUNNEL_STATUS,
     Capability::AETHER_QUERY,
     Capability::AETHER_REPORT,
     // Monitor
@@ -220,6 +239,8 @@ pub const ADMIN_CAPS: &[&str] = &[
     Capability::RELAY_ACCEPT_PERMANENT,
     Capability::RELAY_PRIORITIZE,
     Capability::RELAY_BRIDGE,
+    Capability::TUNNEL_ESTABLISH,
+    Capability::TUNNEL_TEARDOWN,
     Capability::AETHER_DELEGATE,
     // Admin
     Capability::RPC_EXEC,
@@ -290,6 +311,25 @@ mod tests {
         }
         assert!(ALL_CAPABILITIES.contains(&Capability::VPN_HANDSHAKE));
         assert!(ALL_CAPABILITIES.contains(&Capability::RELAY_REJECT));
+    }
+
+    #[test]
+    fn tunnel_caps_in_hierarchy() {
+        // tunnel.status is Peer-level
+        assert!(PEER_CAPS.contains(&Capability::TUNNEL_STATUS));
+        assert!(MONITOR_CAPS.contains(&Capability::TUNNEL_STATUS));
+        assert!(OPERATOR_CAPS.contains(&Capability::TUNNEL_STATUS));
+        assert!(ADMIN_CAPS.contains(&Capability::TUNNEL_STATUS));
+
+        // tunnel.establish and tunnel.teardown are Operator-level
+        assert!(!PEER_CAPS.contains(&Capability::TUNNEL_ESTABLISH));
+        assert!(!MONITOR_CAPS.contains(&Capability::TUNNEL_ESTABLISH));
+        assert!(OPERATOR_CAPS.contains(&Capability::TUNNEL_ESTABLISH));
+        assert!(ADMIN_CAPS.contains(&Capability::TUNNEL_ESTABLISH));
+
+        assert!(!PEER_CAPS.contains(&Capability::TUNNEL_TEARDOWN));
+        assert!(OPERATOR_CAPS.contains(&Capability::TUNNEL_TEARDOWN));
+        assert!(ADMIN_CAPS.contains(&Capability::TUNNEL_TEARDOWN));
     }
 
     #[test]
