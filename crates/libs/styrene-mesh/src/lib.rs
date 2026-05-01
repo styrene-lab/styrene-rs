@@ -41,6 +41,7 @@
 
 pub mod wire;
 pub mod tunnel_payloads;
+pub mod i2p;
 
 #[cfg(feature = "pqc")]
 pub mod pqc;

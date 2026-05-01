@@ -53,6 +53,7 @@ impl Capability {
     // ── Orthogonal (explicit grant only) ──────────────────────
     pub const VPN_HANDSHAKE: &str = "vpn.handshake";
     pub const RELAY_REJECT: &str = "relay.reject";
+    pub const I2P_PROXY: &str = "i2p.proxy";
 
     // ── Agent-to-agent (aether) ───────────────────────────────
     pub const AETHER_DELEGATE: &str = "aether.delegate";
@@ -99,6 +100,7 @@ pub const ALL_CAPABILITIES: &[&str] = &[
     // Orthogonal
     Capability::VPN_HANDSHAKE,
     Capability::RELAY_REJECT,
+    Capability::I2P_PROXY,
     // Aether
     Capability::AETHER_DELEGATE,
     Capability::AETHER_QUERY,

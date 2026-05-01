@@ -88,6 +88,18 @@ pub enum StyreneMessageType {
     InboxResponse = 0x64,
     MessagesResponse = 0x65,
 
+    // Hub Services — I2P Proxy (0x84-0x88)
+    /// Client requests HTTP fetch through hub's i2pd router.
+    I2pProxyRequest = 0x84,
+    /// Hub returns HTTP response headers and metadata.
+    I2pProxyResponse = 0x85,
+    /// Hub sends a chunk of the response body.
+    I2pProxyData = 0x86,
+    /// Hub reports an error for a proxy request.
+    I2pProxyError = 0x87,
+    /// Either side aborts an in-flight proxy request.
+    I2pProxyClose = 0x88,
+
     // Terminal Sessions (0xC0-0xCF)
     TerminalRequest = 0xC0,
     TerminalAccept = 0xC1,
@@ -182,6 +194,11 @@ impl StyreneMessageType {
             0x63 => Ok(Self::SelfUpdateResult),
             0x64 => Ok(Self::InboxResponse),
             0x65 => Ok(Self::MessagesResponse),
+            0x84 => Ok(Self::I2pProxyRequest),
+            0x85 => Ok(Self::I2pProxyResponse),
+            0x86 => Ok(Self::I2pProxyData),
+            0x87 => Ok(Self::I2pProxyError),
+            0x88 => Ok(Self::I2pProxyClose),
             0xC0 => Ok(Self::TerminalRequest),
             0xC1 => Ok(Self::TerminalAccept),
             0xC2 => Ok(Self::TerminalData),
@@ -508,6 +525,11 @@ mod tests {
             StyreneMessageType::TerminalData,
             StyreneMessageType::TerminalResize,
             StyreneMessageType::TerminalClose,
+            StyreneMessageType::I2pProxyRequest,
+            StyreneMessageType::I2pProxyResponse,
+            StyreneMessageType::I2pProxyData,
+            StyreneMessageType::I2pProxyError,
+            StyreneMessageType::I2pProxyClose,
             #[cfg(feature = "pqc")]
             StyreneMessageType::PqcInitiate,
             #[cfg(feature = "pqc")]
