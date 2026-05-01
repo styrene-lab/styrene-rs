@@ -17,6 +17,8 @@ use crate::services::{
     IdentityService, MessagingService, PageService, PropagationService, ProtocolService,
     StatusService, TunnelService,
 };
+#[cfg(feature = "i2p-proxy")]
+use crate::services::I2pProxyService;
 use crate::storage::messages::MessagesStore;
 use crate::transport::mesh_transport::MeshTransport;
 use rns_core::identity::PrivateIdentity;
@@ -43,6 +45,8 @@ pub struct AppContext {
     protocol: Arc<ProtocolService>,
     events: Arc<EventService>,
     tunnel: Arc<TunnelService>,
+    #[cfg(feature = "i2p-proxy")]
+    i2p_proxy: Arc<I2pProxyService>,
     propagation: Arc<PropagationService>,
     pages: Arc<PageService>,
     conversations: Arc<ConversationStore>,
@@ -106,7 +110,12 @@ impl AppContext {
         let tunnel = Arc::new(TunnelService::new());
         tunnel.set_events(events.clone());
 
-        // Phase 12: Page server (NomadNet-compatible page hosting)
+        // Phase 12: I2P proxy (optional, feature-gated)
+        // Created as placeholder — signer wired later via set_signer().
+        #[cfg(feature = "i2p-proxy")]
+        let i2p_proxy = Arc::new(I2pProxyService::new());
+
+        // Phase 13: Page server (NomadNet-compatible page hosting)
         let pages = Arc::new(PageService::with_default_dir());
 
         // Phase 13: Conversation metadata (pin/mute)
@@ -128,6 +137,8 @@ impl AppContext {
             events,
             propagation,
             tunnel,
+            #[cfg(feature = "i2p-proxy")]
+            i2p_proxy,
             pages,
             conversations,
         }
@@ -139,7 +150,13 @@ impl AppContext {
     /// Enables MessagingService.send_chat() and FleetService RPC calls.
     pub fn set_signer(&self, signer: Arc<PrivateIdentity>) {
         self.messaging.set_signer(self.transport.clone(), signer.clone());
-        self.fleet.set_signer(self.transport.clone(), signer);
+        self.fleet.set_signer(self.transport.clone(), signer.clone());
+        #[cfg(feature = "i2p-proxy")]
+        self.i2p_proxy.set_signer(
+            self.transport.clone(),
+            signer,
+            self.identity.identity_hash().to_string(),
+        );
     }
 
     // --- Accessors ---
@@ -233,6 +250,16 @@ impl AppContext {
 
     pub fn tunnel_arc(&self) -> Arc<TunnelService> {
         self.tunnel.clone()
+    }
+
+    #[cfg(feature = "i2p-proxy")]
+    pub fn i2p_proxy(&self) -> &I2pProxyService {
+        &self.i2p_proxy
+    }
+
+    #[cfg(feature = "i2p-proxy")]
+    pub fn i2p_proxy_arc(&self) -> Arc<I2pProxyService> {
+        self.i2p_proxy.clone()
     }
 
     /// LXMF propagation store-and-forward service.

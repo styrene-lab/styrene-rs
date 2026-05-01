@@ -344,6 +344,16 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         .register(app_context.tunnel_arc())
         .await;
 
+    // Register I2P proxy protocol handler (when feature is enabled)
+    #[cfg(feature = "i2p-proxy")]
+    {
+        app_context
+            .protocol()
+            .register(app_context.i2p_proxy_arc())
+            .await;
+        eprintln!("[daemon] I2P proxy service registered");
+    }
+
     // Wire WireGuard backend into TunnelService on Linux when the feature is enabled.
     #[cfg(all(target_os = "linux", feature = "wireguard"))]
     {

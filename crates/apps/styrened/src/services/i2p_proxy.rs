@@ -31,13 +31,13 @@ const MAX_RESPONSE_BODY: usize = 1024 * 1024;
 
 /// I2P HTTP proxy service for the hub.
 pub struct I2pProxyService {
-    transport: Arc<dyn MeshTransport>,
-    signer: Arc<PrivateIdentity>,
-    identity_hash: String,
+    transport: Mutex<Arc<dyn MeshTransport>>,
+    signer: Mutex<Arc<PrivateIdentity>>,
+    identity_hash: Mutex<String>,
     /// i2pd HTTP proxy address.
     i2pd_proxy_addr: String,
     /// Whether transport is wired.
-    wired: bool,
+    wired: Mutex<bool>,
     /// Rate limiter: identity_hash → list of request timestamps.
     rate_limits: Mutex<HashMap<String, Vec<Instant>>>,
     /// Active request count per identity (for concurrency limiting).
@@ -54,32 +54,28 @@ impl I2pProxyService {
     /// Create a placeholder service (not wired to transport).
     pub fn new() -> Self {
         Self {
-            transport: Arc::new(crate::transport::null_transport::NullTransport::new()),
-            signer: Arc::new(PrivateIdentity::new_from_rand(rand_core::OsRng)),
-            identity_hash: String::new(),
+            transport: Mutex::new(Arc::new(crate::transport::null_transport::NullTransport::new())),
+            signer: Mutex::new(Arc::new(PrivateIdentity::new_from_rand(rand_core::OsRng))),
+            identity_hash: Mutex::new(String::new()),
             i2pd_proxy_addr: "http://127.0.0.1:4444".to_string(),
-            wired: false,
+            wired: Mutex::new(false),
             rate_limits: Mutex::new(HashMap::new()),
             active_requests: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Create a fully wired service.
-    pub fn with_transport(
+    /// Wire a signing identity and transport for outbound delivery.
+    /// Called after construction when the identity is available.
+    pub fn set_signer(
+        &self,
         transport: Arc<dyn MeshTransport>,
         signer: Arc<PrivateIdentity>,
         identity_hash: String,
-        i2pd_proxy_addr: String,
-    ) -> Self {
-        Self {
-            transport,
-            signer,
-            identity_hash,
-            i2pd_proxy_addr,
-            wired: true,
-            rate_limits: Mutex::new(HashMap::new()),
-            active_requests: Mutex::new(HashMap::new()),
-        }
+    ) {
+        *self.transport.lock().unwrap() = transport;
+        *self.signer.lock().unwrap() = signer;
+        *self.identity_hash.lock().unwrap() = identity_hash;
+        *self.wired.lock().unwrap() = true;
     }
 
     /// Check rate limit for an identity. Returns true if allowed.
@@ -327,6 +323,7 @@ impl I2pProxyService {
     }
 
     /// Send a StyreneMessage to a peer via LXMF (same pattern as TunnelService).
+    /// Send a StyreneMessage to a peer via LXMF (same pattern as TunnelService).
     async fn send_i2p_message(
         &self,
         peer_identity: &str,
@@ -349,7 +346,10 @@ impl I2pProxyService {
             AddressHash::new(truncated)
         };
 
-        let source_hash = self.transport.identity_hash();
+        let transport = self.transport.lock().unwrap().clone();
+        let signer = self.signer.lock().unwrap().clone();
+
+        let source_hash = transport.identity_hash();
         let mut source_bytes = [0u8; 16];
         source_bytes.copy_from_slice(source_hash.as_slice());
         let mut dest_bytes = [0u8; 16];
@@ -361,12 +361,12 @@ impl I2pProxyService {
             "",
             "",
             Some(serde_json::json!({"protocol": "i2p_proxy", "custom_data": wire_hex})),
-            &self.signer,
+            &signer,
         )
         .map_err(|e| format!("wire encode: {e}"))?;
 
         crate::services::MessagingService::deliver(
-            self.transport.as_ref(),
+            transport.as_ref(),
             delivery_addr,
             &lxmf_payload,
         )
@@ -407,7 +407,7 @@ impl ProtocolHandler for I2pProxyService {
 
         match message.message_type {
             StyreneMessageType::I2pProxyRequest => {
-                if !self.wired {
+                if !*self.wired.lock().unwrap() {
                     eprintln!("[i2p-proxy] not wired to transport, ignoring request");
                     return HandleResult::Handled;
                 }
