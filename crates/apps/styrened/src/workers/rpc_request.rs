@@ -130,14 +130,36 @@ impl RpcRequestHandler {
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
             .unwrap_or_default();
 
+        // Validate args count and individual arg length
+        if args.len() > 256 {
+            return Self::cbor_encode(&serde_json::json!({
+                "exit_code": -1, "stdout": "", "stderr": "too many arguments (max 256)"
+            }));
+        }
+        const MAX_ARG_LEN: usize = 32 * 1024;
+        if args.iter().any(|a| a.len() > MAX_ARG_LEN) {
+            return Self::cbor_encode(&serde_json::json!({
+                "exit_code": -1, "stdout": "", "stderr": "argument too long (max 32KB each)"
+            }));
+        }
+
         let output = std::process::Command::new(cmd).args(&args).output();
 
+        const MAX_OUTPUT: usize = 1024 * 1024; // 1 MB
         match output {
-            Ok(output) => Self::cbor_encode(&serde_json::json!({
-                "exit_code": output.status.code().unwrap_or(-1),
-                "stdout": String::from_utf8_lossy(&output.stdout),
-                "stderr": String::from_utf8_lossy(&output.stderr),
-            })),
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(
+                    &output.stdout[..output.stdout.len().min(MAX_OUTPUT)],
+                );
+                let stderr = String::from_utf8_lossy(
+                    &output.stderr[..output.stderr.len().min(MAX_OUTPUT)],
+                );
+                Self::cbor_encode(&serde_json::json!({
+                    "exit_code": output.status.code().unwrap_or(-1),
+                    "stdout": stdout,
+                    "stderr": stderr,
+                }))
+            }
             Err(e) => Self::cbor_encode(&serde_json::json!({
                 "exit_code": -1,
                 "stdout": "",
@@ -155,9 +177,10 @@ impl RpcRequestHandler {
         let request: serde_json::Value = match ciborium::from_reader(payload) {
             Ok(v) => v,
             Err(e) => {
+                eprintln!("[rpc-request] invalid CBOR payload: {e}");
                 return Self::cbor_encode(&serde_json::json!({
                     "success": false, "verified": false, "exit_code": -1,
-                    "stdout": "", "stderr": format!("invalid CBOR payload: {e}"),
+                    "stdout": "", "stderr": "invalid request payload",
                 }));
             }
         };
@@ -173,8 +196,8 @@ impl RpcRequestHandler {
             }
         };
 
-        // Issue 5: Size limit on hex string (8 MB hex = 4 MB decoded)
-        if profile_hex.len() > 8 * 1024 * 1024 {
+        // Size limit on hex string (4 MB hex = 2 MB decoded, matches FleetService limit)
+        if profile_hex.len() > 4 * 1024 * 1024 {
             return Self::cbor_encode(&serde_json::json!({
                 "success": false, "verified": false, "exit_code": -1,
                 "stdout": "", "stderr": format!("profile too large: {} bytes", profile_hex.len()),
@@ -221,9 +244,10 @@ impl RpcRequestHandler {
             };
             if let Err(e) = file.write_all(&profile_bytes) {
                 let _ = std::fs::remove_file(&tmp_path);
+                eprintln!("[rpc-request] failed to write temp profile: {e}");
                 return Self::cbor_encode(&serde_json::json!({
                     "success": false, "verified": false, "exit_code": -1,
-                    "stdout": "", "stderr": format!("failed to write temp profile: {e}"),
+                    "stdout": "", "stderr": "internal error",
                 }));
             }
         }
@@ -251,9 +275,10 @@ impl RpcRequestHandler {
                     }));
                 }
                 Err(e) => {
+                    eprintln!("[rpc-request] nex verify failed to run: {e}");
                     return Self::cbor_encode(&serde_json::json!({
                         "success": false, "verified": false, "exit_code": -1,
-                        "stdout": "", "stderr": format!("nex not found or failed to run: {e}"),
+                        "stdout": "", "stderr": "profile verification unavailable",
                     }));
                 }
             }

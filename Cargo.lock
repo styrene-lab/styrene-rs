@@ -7214,7 +7214,7 @@ dependencies = [
 
 [[package]]
 name = "styrene-identity"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -7234,6 +7234,7 @@ dependencies = [
  "sha3",
  "ssh-agent-lib",
  "ssh-key",
+ "subtle",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
