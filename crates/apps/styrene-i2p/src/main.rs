@@ -25,9 +25,12 @@ struct Cli {
     #[arg(long)]
     hub: Option<String>,
 
-    /// i2pd HTTP proxy address (for direct mode, bypassing mesh)
-    #[arg(long)]
-    i2pd_direct: Option<String>,
+    /// i2pd HTTP proxy address.
+    /// Local i2pd: http://127.0.0.1:4444
+    /// Hub's i2pd (via port-forward or direct): http://<hub-ip>:4444
+    /// Omit to use hub discovery over mesh (not yet implemented).
+    #[arg(long, env = "STYRENE_I2PD_ADDR")]
+    i2pd: Option<String>,
 
     /// Install as a system service (launchd on macOS, systemd on Linux)
     #[arg(long)]
@@ -39,32 +42,51 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     if cli.install_service {
-        install_service(&cli.bind)?;
+        install_service(&cli.bind, cli.i2pd.as_deref())?;
         return Ok(());
     }
 
-    eprintln!("[styrene-i2p] starting proxy on {}", cli.bind);
+    let i2pd_addr = match cli.i2pd {
+        Some(ref addr) => addr.clone(),
+        None => {
+            // Try common defaults
+            let defaults = [
+                "http://127.0.0.1:4444",     // Local i2pd
+                "http://i2pd.styrene-forge.svc:4444", // K8s in-cluster
+            ];
+            let mut found = None;
+            for addr in defaults {
+                if let Ok(client) = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(2))
+                    .build()
+                {
+                    if client.get(addr).send().await.is_ok() {
+                        found = Some(addr.to_string());
+                        break;
+                    }
+                }
+            }
+            found.unwrap_or_else(|| {
+                eprintln!("[styrene-i2p] no i2pd found at default addresses");
+                eprintln!("[styrene-i2p] specify with --i2pd <addr> or STYRENE_I2PD_ADDR env");
+                eprintln!("[styrene-i2p] examples:");
+                eprintln!("  styrene-i2p --i2pd http://127.0.0.1:4444     # local i2pd");
+                eprintln!("  styrene-i2p --i2pd http://192.168.0.10:4444  # hub i2pd");
+                std::process::exit(1);
+            })
+        }
+    };
 
-    if let Some(ref direct) = cli.i2pd_direct {
-        eprintln!("[styrene-i2p] direct mode — proxying to i2pd at {direct}");
-        proxy::run_direct(&cli.bind, direct).await?;
-    } else {
-        let hub = cli.hub.as_deref().unwrap_or("auto");
-        eprintln!("[styrene-i2p] mesh mode — hub: {hub}");
-        // TODO: RNS mesh transport integration
-        // For now, fall back to requiring --i2pd-direct
-        anyhow::bail!(
-            "Mesh mode not yet implemented. Use --i2pd-direct <addr> for direct i2pd proxy, \
-             e.g.: styrene-i2p --i2pd-direct http://127.0.0.1:4444"
-        );
-    }
+    eprintln!("[styrene-i2p] proxy on {} → i2pd at {}", cli.bind, i2pd_addr);
+    proxy::run_direct(&cli.bind, &i2pd_addr).await?;
 
     Ok(())
 }
 
-fn install_service(bind: &str) -> anyhow::Result<()> {
+fn install_service(bind: &str, i2pd: Option<&str>) -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
     let exe_path = exe.display();
+    let i2pd_addr = i2pd.unwrap_or("http://127.0.0.1:4444");
 
     #[cfg(target_os = "macos")]
     {
@@ -80,6 +102,8 @@ fn install_service(bind: &str) -> anyhow::Result<()> {
         <string>{exe_path}</string>
         <string>--bind</string>
         <string>{bind}</string>
+        <string>--i2pd</string>
+        <string>{i2pd_addr}</string>
     </array>
     <key>KeepAlive</key>
     <true/>
@@ -110,7 +134,7 @@ Description=Styrene I2P Proxy
 After=network.target
 
 [Service]
-ExecStart={exe_path} --bind {bind}
+ExecStart={exe_path} --bind {bind} --i2pd {i2pd_addr}
 Restart=on-failure
 RestartSec=5
 
