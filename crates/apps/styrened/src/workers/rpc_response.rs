@@ -80,7 +80,7 @@ mod tests {
             crate::services::fleet::PendingRequest {
                 tx,
                 created_at: std::time::Instant::now(),
-                dest_hash: "test".into(),
+                dest_hash: "peer".into(),
             },
         );
 

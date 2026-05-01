@@ -310,7 +310,15 @@ impl FleetService {
     /// random request_id provides anti-forgery correlation.
     pub fn handle_response(&self, message: StyreneMessage, source_hash: &str) -> bool {
         let mut pending = self.pending.lock().unwrap();
-        if let Some(req) = pending.remove(&message.request_id) {
+        if let Some(req) = pending.get(&message.request_id) {
+            if req.dest_hash != source_hash {
+                eprintln!(
+                    "[fleet] response source mismatch: expected {}, got {}",
+                    req.dest_hash, source_hash
+                );
+                return false;
+            }
+            let req = pending.remove(&message.request_id).unwrap();
             eprintln!(
                 "[fleet] rpc response correlated: from={} dest={}",
                 source_hash,
@@ -331,6 +339,9 @@ impl FleetService {
         payload: &[u8],
         timeout: Duration,
     ) -> Result<StyreneMessage, std::io::Error> {
+        // Lazy cleanup of expired requests (5 min TTL)
+        self.cleanup_expired(Duration::from_secs(300));
+
         let transport = self.transport.get().cloned().ok_or_else(|| {
             std::io::Error::other("transport not available — call set_signer() first")
         })?;
@@ -450,7 +461,11 @@ mod tests {
         let request_id = [42u8; 16];
         svc.pending.lock().unwrap().insert(
             request_id,
-            PendingRequest { tx, created_at: std::time::Instant::now(), dest_hash: "test".into() },
+            PendingRequest {
+                tx,
+                created_at: std::time::Instant::now(),
+                dest_hash: "test-source".into(),
+            },
         );
         assert_eq!(svc.pending_count(), 1);
 
@@ -458,6 +473,29 @@ mod tests {
             StyreneMessage::with_request_id(StyreneMessageType::StatusResponse, request_id, &[]);
         assert!(svc.handle_response(response, "test-source"));
         assert_eq!(svc.pending_count(), 0);
+    }
+
+    #[test]
+    fn handle_response_rejects_source_mismatch() {
+        let svc = FleetService::new();
+        let (tx, _rx) = oneshot::channel();
+        let request_id = [42u8; 16];
+        svc.pending.lock().unwrap().insert(
+            request_id,
+            PendingRequest {
+                tx,
+                created_at: std::time::Instant::now(),
+                dest_hash: "expected-source".into(),
+            },
+        );
+        assert_eq!(svc.pending_count(), 1);
+
+        let response =
+            StyreneMessage::with_request_id(StyreneMessageType::StatusResponse, request_id, &[]);
+        // Response from wrong source should be rejected
+        assert!(!svc.handle_response(response, "wrong-source"));
+        // Request should still be pending
+        assert_eq!(svc.pending_count(), 1);
     }
 
     #[test]
