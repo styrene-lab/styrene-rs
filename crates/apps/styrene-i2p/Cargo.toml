@@ -17,7 +17,7 @@ styrene-mesh = { workspace = true }
 rns_core = { package = "styrene-rns", path = "../../libs/styrene-rns", version = "0.1.0" }
 anyhow.workspace = true
 ciborium = "0.2"
-clap = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive", "env"] }
 hex.workspace = true
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
