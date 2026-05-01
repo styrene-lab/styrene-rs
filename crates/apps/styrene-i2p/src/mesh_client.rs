@@ -184,23 +184,17 @@ impl MeshClient {
         });
         self.pending.lock().await.insert(request_id, pending_req.clone());
 
-        // Send via LXMF
+        // Send via LXMF — hub_delivery_hash is the delivery destination hash directly
         let wire_bytes = msg.encode();
         let wire_hex = hex::encode(&wire_bytes);
 
-        let hub_bytes: [u8; 16] = hex::decode(&self.hub_delivery_hash)
-            .map_err(|e| anyhow::anyhow!("invalid hub hash: {e}"))?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("hub hash must be 16 bytes"))?;
-
-        let delivery_addr = {
-            let name = DestinationName::new("lxmf", "delivery");
-            let mut combined = Vec::with_capacity(48);
-            combined.extend_from_slice(name.as_name_hash_slice());
-            combined.extend_from_slice(&hub_bytes);
-            let truncated = rns_core::hash::address_hash(&combined);
-            AddressHash::new(truncated)
-        };
+        let dest_bytes_vec: Vec<u8> = hex::decode(&self.hub_delivery_hash)
+            .map_err(|e| anyhow::anyhow!("invalid hub delivery hash: {e}"))?;
+        let delivery_addr = AddressHash::new(
+            dest_bytes_vec
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("hub delivery hash must be 16 bytes"))?,
+        );
 
         let source_hash = self.transport.identity_hash();
         let mut source_bytes = [0u8; 16];
