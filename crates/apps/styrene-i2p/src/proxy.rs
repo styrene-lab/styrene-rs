@@ -3,6 +3,7 @@
 //! In direct mode, forwards to a local i2pd HTTP proxy.
 //! In mesh mode (future), serializes as I2pProxyRequest over RNS.
 
+use crate::mesh_client::MeshClient;
 use anyhow::Result;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -187,4 +188,104 @@ fn error_response(code: u16, message: &str) -> Response<Full<Bytes>> {
         .header("Content-Type", "text/plain")
         .body(Full::new(Bytes::from(format!("{message}\n"))))
         .unwrap()
+}
+
+/// Run the proxy in mesh mode — forward .i2p requests to the hub via RNS.
+pub async fn run_mesh(bind: &str, client: Arc<MeshClient>) -> Result<()> {
+    let addr: SocketAddr = bind.parse()?;
+    let listener = TcpListener::bind(addr).await?;
+
+    eprintln!("[proxy] mesh mode listening on {addr}");
+
+    loop {
+        let (stream, peer) = listener.accept().await?;
+        let client = client.clone();
+
+        tokio::spawn(async move {
+            let io = TokioIo::new(stream);
+            let svc = service_fn(move |req| {
+                let client = client.clone();
+                handle_mesh_request(req, client, peer)
+            });
+
+            if let Err(e) = http1::Builder::new().serve_connection(io, svc).await {
+                if !e.to_string().contains("connection closed") {
+                    eprintln!("[proxy] connection error from {peer}: {e}");
+                }
+            }
+        });
+    }
+}
+
+async fn handle_mesh_request(
+    req: Request<hyper::body::Incoming>,
+    client: Arc<MeshClient>,
+    peer: SocketAddr,
+) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let host = uri
+        .host()
+        .or_else(|| {
+            req.headers()
+                .get("host")
+                .and_then(|h| h.to_str().ok())
+                .map(|h| h.split(':').next().unwrap_or(h))
+        })
+        .unwrap_or("");
+
+    if !host.ends_with(".i2p") {
+        return Ok(error_response(502, "This proxy only handles .i2p domains."));
+    }
+
+    eprintln!("[proxy] mesh {method} {uri} from {peer}");
+
+    // Collect headers
+    let mut headers = Vec::new();
+    for (name, value) in req.headers() {
+        if let Ok(v) = value.to_str() {
+            if !matches!(
+                name.to_string().to_lowercase().as_str(),
+                "connection" | "proxy-connection" | "keep-alive" | "transfer-encoding"
+            ) {
+                headers.push((name.to_string(), v.to_string()));
+            }
+        }
+    }
+
+    // Collect body
+    let body_bytes = match req.collect().await {
+        Ok(b) => {
+            let b = b.to_bytes();
+            if b.is_empty() { None } else { Some(b.to_vec()) }
+        }
+        Err(e) => {
+            eprintln!("[proxy] failed to read request body: {e}");
+            return Ok(error_response(502, "Failed to read request body"));
+        }
+    };
+
+    // Send via mesh
+    let url = uri.to_string();
+    match client
+        .proxy_request(method.as_str(), &url, headers, body_bytes)
+        .await
+    {
+        Ok(resp) => {
+            let mut builder = Response::builder().status(resp.status);
+            for (name, value) in &resp.headers {
+                if !matches!(name.as_str(), "connection" | "transfer-encoding" | "keep-alive") {
+                    builder = builder.header(name.as_str(), value.as_str());
+                }
+            }
+            eprintln!("[proxy] mesh {}: {} bytes for {url}", resp.status, resp.body.len());
+            Ok(builder
+                .body(Full::new(Bytes::from(resp.body)))
+                .unwrap())
+        }
+        Err(e) => {
+            eprintln!("[proxy] mesh error for {url}: {e}");
+            Ok(error_response(502, &format!("Mesh proxy error: {e}")))
+        }
+    }
 }

@@ -14,7 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 styrene-mesh = { workspace = true }
-rns_core = { package = "styrene-rns", path = "../../libs/styrene-rns", version = "0.1.0" }
+styrened = { path = "../styrened", version = "0.1.0" }
+rns_core = { package = "styrene-rns", path = "../../libs/styrene-rns", version = "0.1.0", features = ["transport"] }
 anyhow.workspace = true
 ciborium = "0.2"
 clap = { workspace = true, features = ["derive", "env"] }
@@ -23,6 +24,7 @@ hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
+rand_core = { workspace = true, features = ["getrandom"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 dirs = "6.0.0"
 serde = { workspace = true }
