@@ -76,9 +76,25 @@ async fn daemon_trait_object_auto_reply_roundtrip() {
 
 #[tokio::test]
 async fn daemon_trait_object_blocked_caller() {
-    let ctx = make_ctx();
-    ctx.auth().block("evil");
-    let daemon: Arc<dyn Daemon> = Arc::new(DaemonFacade::new(ctx, "evil".into()));
+    use styrene_rbac::RbacPolicy;
+    use styrened::services::PolicyService;
+
+    let mut policy = RbacPolicy::default();
+    policy.block("deadbeef");
+
+    let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
+    let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
+    let node_store = Arc::new(styrene_services::node_store::NodeStore::in_memory().unwrap());
+    let ctx = Arc::new(AppContext::with_policy(
+        transport,
+        "daemon-identity".into(),
+        store,
+        node_store,
+        PolicyService::new(policy),
+    ));
+
+    let daemon: Arc<dyn Daemon> =
+        Arc::new(DaemonFacade::new(ctx, "deadbeef11112222333344445555aaaa".into()));
 
     let result = daemon.query_status().await;
     assert!(matches!(result, Err(IpcError::Unavailable { .. })));
@@ -86,23 +102,41 @@ async fn daemon_trait_object_blocked_caller() {
 
 #[tokio::test]
 async fn multiple_facades_same_context() {
-    let ctx = make_ctx();
+    use styrene_rbac::{RbacPolicy, RosterEntry};
+    use styrened::services::PolicyService;
+
+    let mut policy = RbacPolicy::default();
+    policy.add_entry(
+        RosterEntry::new("aaaa1111bbbb2222cccc3333dddd4444", styrene_rbac::Role::Admin)
+            .with_label("admin"),
+    );
+
+    let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
+    let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
+    let node_store = Arc::new(styrene_services::node_store::NodeStore::in_memory().unwrap());
+    let ctx = Arc::new(AppContext::with_policy(
+        transport,
+        "daemon-identity".into(),
+        store,
+        node_store,
+        PolicyService::new(policy),
+    ));
 
     // Two facades with different caller identities
-    let admin_facade: Arc<dyn Daemon> = Arc::new(DaemonFacade::new(ctx.clone(), "admin".into()));
-    let peer_facade: Arc<dyn Daemon> = Arc::new(DaemonFacade::new(ctx.clone(), "peer".into()));
-
-    // Set admin as Operator
-    ctx.auth().set_role("admin", styrened::services::Role::Operator);
+    let admin_facade: Arc<dyn Daemon> =
+        Arc::new(DaemonFacade::new(ctx.clone(), "aaaa1111bbbb2222cccc3333dddd4444".into()));
+    let peer_facade: Arc<dyn Daemon> =
+        Arc::new(DaemonFacade::new(ctx.clone(), "bbbb2222cccc3333dddd4444eeee5555".into()));
 
     // Both can query status
     assert!(admin_facade.query_status().await.is_ok());
     assert!(peer_facade.query_status().await.is_ok());
 
-    // Only admin can exec (returns Internal in test mode — no transport)
+    // Admin can exec (returns Internal in test mode — no transport)
     let admin_exec = admin_facade.exec("dest", "ls", vec![], None).await;
     assert!(matches!(admin_exec, Err(IpcError::Internal { .. })));
 
+    // Peer cannot exec
     let peer_exec = peer_facade.exec("dest", "ls", vec![], None).await;
     assert!(matches!(peer_exec, Err(IpcError::Unavailable { .. })));
 }

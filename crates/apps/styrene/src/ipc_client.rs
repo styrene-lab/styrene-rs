@@ -216,6 +216,27 @@ impl DaemonClient {
         Ok(frame.payload)
     }
 
+    pub async fn tunnel_establish(
+        &mut self,
+        peer: &str,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("peer_hash".into(), MpValue::String(peer.into()));
+        self.with_timeout(30);
+        let frame = self.rpc(MessageType::CmdTunnelEstablish, &p).await?;
+        Ok(frame.payload)
+    }
+
+    pub async fn tunnel_teardown_rpc(
+        &mut self,
+        peer: &str,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("peer_hash".into(), MpValue::String(peer.into()));
+        let frame = self.rpc(MessageType::CmdTunnelTeardown, &p).await?;
+        Ok(frame.payload)
+    }
+
     // ── Fleet operations ────────────────────────────────────────────────
 
     pub async fn device_status(
@@ -282,6 +303,36 @@ impl DaemonClient {
         );
         self.with_timeout(timeout_secs);
         let frame = self.rpc(MessageType::CmdFleetApply, &p).await?;
+        Ok(frame.payload)
+    }
+
+    pub async fn fleet_grant(
+        &mut self,
+        identity_hash: &str,
+        role: &str,
+        label: &str,
+        grants: &[String],
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("identity_hash".into(), MpValue::String(identity_hash.into()));
+        p.insert("role".into(), MpValue::String(role.into()));
+        p.insert("label".into(), MpValue::String(label.into()));
+        if !grants.is_empty() {
+            let mp_grants: Vec<MpValue> =
+                grants.iter().map(|g| MpValue::String(g.clone().into())).collect();
+            p.insert("grants".into(), MpValue::Array(mp_grants));
+        }
+        let frame = self.rpc(MessageType::CmdFleetGrant, &p).await?;
+        Ok(frame.payload)
+    }
+
+    pub async fn fleet_revoke(
+        &mut self,
+        identity_hash: &str,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("identity_hash".into(), MpValue::String(identity_hash.into()));
+        let frame = self.rpc(MessageType::CmdFleetRevoke, &p).await?;
         Ok(frame.payload)
     }
 }

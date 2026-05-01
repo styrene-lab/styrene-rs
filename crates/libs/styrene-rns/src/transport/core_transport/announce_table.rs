@@ -182,7 +182,7 @@ impl AnnounceTable {
         }
 
         let now = Instant::now();
-        let hops = announce.header.hops + 1;
+        let hops = announce.header.hops.saturating_add(1);
 
         let entry = AnnounceEntry {
             packet: *announce,

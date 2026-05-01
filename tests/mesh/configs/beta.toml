@@ -4,3 +4,6 @@ enabled = true
 host = "hub"
 port = 4242
 name = "peer-to-hub"
+
+[rbac]
+default_role = "operator"

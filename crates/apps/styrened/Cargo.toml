@@ -19,6 +19,7 @@ styrene-services = { path = "../../libs/styrene-services", version = "0.1.0" }
 styrene-mesh = { workspace = true }
 styrene-tunnel = { path = "../../libs/styrene-tunnel", version = "0.1.0", features = ["wireguard"], optional = true }
 styrene-content = { path = "../../libs/styrene-content", version = "0.1.0", features = ["alloc", "std"] }
+styrene-rbac = { path = "../../libs/styrene-rbac", version = "0.1.0", features = ["config", "signing"] }
 anyhow.workspace = true
 async-trait.workspace = true
 ciborium = "0.2"

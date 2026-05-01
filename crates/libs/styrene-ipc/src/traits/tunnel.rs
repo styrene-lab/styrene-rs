@@ -23,4 +23,7 @@ pub trait DaemonTunnel: Send + Sync {
 
     /// List Security Associations (SAs) for a tunnel.
     async fn list_tunnel_sas(&self, peer_hash: &str) -> Result<Vec<TunnelSaInfo>, IpcError>;
+
+    /// Initiate tunnel establishment to a peer. Returns a negotiation nonce.
+    async fn tunnel_establish(&self, peer_hash: &str) -> Result<String, IpcError>;
 }

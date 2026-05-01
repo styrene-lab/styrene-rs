@@ -60,7 +60,7 @@ impl PathTable {
         transport_id: Option<AddressHash>,
         iface: AddressHash,
     ) {
-        let hops = announce.header.hops + 1;
+        let hops = announce.header.hops.saturating_add(1);
 
         if let Some(existing_entry) = self.map.get(&announce.destination) {
             if hops >= existing_entry.hops {
@@ -106,7 +106,7 @@ impl PathTable {
                     ifac_flag: IfacFlag::Open, // IFAC applied at interface layer
                     header_type: HeaderType::Type2,
                     propagation_type: PropagationType::Transport,
-                    hops: original_packet.header.hops + 1,
+                    hops: original_packet.header.hops.saturating_add(1),
                     ..original_packet.header
                 },
                 ifac: None,

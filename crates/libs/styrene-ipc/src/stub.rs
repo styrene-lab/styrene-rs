@@ -275,6 +275,20 @@ impl DaemonFleet for StubDaemon {
     ) -> Result<ConfigApplyResult, IpcError> {
         Err(IpcError::not_implemented("fleet_apply"))
     }
+
+    async fn fleet_grant(
+        &self,
+        _identity_hash: &str,
+        _role: &str,
+        _label: &str,
+        _grants: Vec<String>,
+    ) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("fleet_grant"))
+    }
+
+    async fn fleet_revoke(&self, _identity_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("fleet_revoke"))
+    }
 }
 
 #[async_trait]
@@ -297,6 +311,10 @@ impl DaemonTunnel for StubDaemon {
 
     async fn list_tunnel_sas(&self, _peer_hash: &str) -> Result<Vec<TunnelSaInfo>, IpcError> {
         Err(IpcError::not_implemented("list_tunnel_sas"))
+    }
+
+    async fn tunnel_establish(&self, _peer_hash: &str) -> Result<String, IpcError> {
+        Err(IpcError::not_implemented("tunnel_establish"))
     }
 }
 

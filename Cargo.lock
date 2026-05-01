@@ -7167,6 +7167,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "blake3",
+ "ciborium",
  "ed25519-dalek",
  "heapless",
  "hex",
@@ -7181,6 +7182,7 @@ dependencies = [
  "styrene-ipc-server",
  "styrene-lxmf",
  "styrene-mesh",
+ "styrene-rbac",
  "styrene-rns",
  "styrene-services",
  "styrene-tunnel",
@@ -7240,7 +7242,7 @@ dependencies = [
 
 [[package]]
 name = "styrene-identity"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "argon2",
  "async-trait",
@@ -7372,8 +7374,11 @@ dependencies = [
 name = "styrene-rbac"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
+ "hex",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -7522,6 +7527,7 @@ dependencies = [
  "styrene-ipc-server",
  "styrene-lxmf",
  "styrene-mesh",
+ "styrene-rbac",
  "styrene-rns",
  "styrene-services",
  "styrene-tunnel",

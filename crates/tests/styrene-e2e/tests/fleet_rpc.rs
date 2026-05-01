@@ -9,6 +9,7 @@
 
 use std::time::Duration;
 use styrene_e2e::helpers::{with_timeout, two_connected_nodes};
+use styrene_rbac::{RosterEntry, Role};
 
 #[tokio::test]
 async fn device_status_rpc_roundtrip() {
@@ -57,10 +58,9 @@ async fn exec_rpc_roundtrip() {
     with_timeout(async {
         let (alice, bob) = two_connected_nodes("alice-exec", "bob-exec").await;
 
-        // Grant alice Operator role on bob's auth service so exec is allowed
-        bob.app_context
-            .auth()
-            .set_role(&alice.identity_hash, styrened::services::auth::Role::Operator);
+        // Grant alice Admin role on bob's policy service so exec is allowed
+        let entry = RosterEntry::new(&alice.identity_hash, Role::Admin);
+        bob.app_context.policy().grant(entry, bob.app_context.store()).expect("grant");
 
         let result = alice
             .app_context

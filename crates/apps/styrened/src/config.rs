@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use styrene_rbac::RbacPolicy;
 
 fn home_dir() -> PathBuf {
     std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."))
@@ -97,6 +98,9 @@ pub struct DaemonConfig {
     pub interfaces: Vec<InterfaceConfig>,
     #[serde(default)]
     pub role: NodeRole,
+    /// RBAC policy — role roster, blocked prefixes, default role.
+    #[serde(default)]
+    pub rbac: Option<RbacPolicy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

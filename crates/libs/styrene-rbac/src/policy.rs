@@ -87,6 +87,16 @@ pub struct RbacPolicy {
     /// with one of these prefixes is treated as `Role::Blocked`.
     #[cfg_attr(feature = "config", serde(default))]
     blocked: Vec<String>,
+
+    /// Hub public keys trusted to sign roster entries.
+    #[cfg_attr(feature = "config", serde(default))]
+    trusted_hubs: Vec<crate::signed::TrustedHub>,
+
+    /// Hub-signed roster entries. Verified against `trusted_hubs` during
+    /// `normalize()`. Valid entries supplement the static roster — the
+    /// static roster takes precedence on conflict.
+    #[cfg_attr(feature = "config", serde(default))]
+    hub_entries: Vec<crate::signed::SignedRosterEntry>,
 }
 
 #[allow(dead_code)] // Referenced by serde(default) when config feature enabled
@@ -96,13 +106,25 @@ fn default_role() -> Role {
 
 impl Default for RbacPolicy {
     fn default() -> Self {
-        Self { default_role: Role::Peer, roster: Vec::new(), blocked: Vec::new() }
+        Self {
+            default_role: Role::Peer,
+            roster: Vec::new(),
+            blocked: Vec::new(),
+            trusted_hubs: Vec::new(),
+            hub_entries: Vec::new(),
+        }
     }
 }
 
 impl RbacPolicy {
     pub fn new(default_role: Role) -> Self {
-        Self { default_role, roster: Vec::new(), blocked: Vec::new() }
+        Self {
+            default_role,
+            roster: Vec::new(),
+            blocked: Vec::new(),
+            trusted_hubs: Vec::new(),
+            hub_entries: Vec::new(),
+        }
     }
 
     /// Normalize and validate a deserialized policy, reporting every issue.
@@ -272,11 +294,44 @@ impl RbacPolicy {
         self.blocked.len()
     }
 
+    // ── Hub entries ──────────────────────────────────────────
+
+    /// Add a trusted hub whose signed roster entries will be accepted.
+    pub fn add_trusted_hub(&mut self, hub: crate::signed::TrustedHub) {
+        if !self.trusted_hubs.iter().any(|h| h.hub_hash == hub.hub_hash) {
+            self.trusted_hubs.push(hub);
+        }
+    }
+
+    /// Read-only access to trusted hubs.
+    pub fn trusted_hubs(&self) -> &[crate::signed::TrustedHub] {
+        &self.trusted_hubs
+    }
+
+    /// Add a hub-signed roster entry. The entry is stored as-is — callers
+    /// should verify the signature and check trusted_hubs before calling this.
+    pub fn add_hub_entry(&mut self, entry: crate::signed::SignedRosterEntry) {
+        // Deduplicate by identity hash (last wins)
+        let normalized = entry.entry.identity_hash.to_ascii_lowercase();
+        self.hub_entries.retain(|e| e.entry.identity_hash.to_ascii_lowercase() != normalized);
+        self.hub_entries.push(entry);
+    }
+
+    /// Read-only access to hub-signed entries.
+    pub fn hub_entries(&self) -> &[crate::signed::SignedRosterEntry] {
+        &self.hub_entries
+    }
+
+    /// Remove all hub-signed entries (used before re-verifying at startup).
+    pub fn clear_hub_entries(&mut self) {
+        self.hub_entries.clear();
+    }
+
     // ── Policy evaluation ─────────────────────────────────────
 
     /// Resolve the effective role for an identity.
     ///
-    /// Check order: blocked list (prefix match) → explicit roster → default role.
+    /// Check order: blocked → static roster → hub entries → default role.
     pub fn resolve_role(&self, identity_hash: &str) -> Role {
         let normalized = identity_hash.to_ascii_lowercase();
 
@@ -285,20 +340,30 @@ impl RbacPolicy {
             return Role::Blocked;
         }
 
-        // 2. Explicit roster
+        // 2. Explicit (static) roster — takes precedence over hub entries
         if let Some(entry) = self.roster.iter().find(|e| e.identity_hash == normalized) {
             return entry.role;
         }
 
-        // 3. Default
+        // 3. Hub-signed entries (verified during normalize)
+        if let Some(hub_entry) = self
+            .hub_entries
+            .iter()
+            .find(|e| e.entry.identity_hash.to_ascii_lowercase() == normalized)
+        {
+            return hub_entry.entry.role;
+        }
+
+        // 4. Default
         self.default_role
     }
 
     /// Check whether an identity holds a specific capability.
     ///
-    /// Capabilities come from two sources:
-    /// 1. The role's cumulative capability set.
-    /// 2. Explicit grants on the roster entry.
+    /// Capabilities come from three sources (in order):
+    /// 1. Static roster entry (role caps + explicit grants).
+    /// 2. Hub-signed entry (role caps + explicit grants).
+    /// 3. Default role's capability set.
     pub fn has_capability(&self, identity_hash: &str, cap: &str) -> bool {
         let normalized = identity_hash.to_ascii_lowercase();
 
@@ -307,9 +372,18 @@ impl RbacPolicy {
             return false;
         }
 
-        // Check roster entry (role caps + explicit grants).
+        // Check static roster entry (role caps + explicit grants).
         if let Some(entry) = self.roster.iter().find(|e| e.identity_hash == normalized) {
             return entry.has_capability(cap);
+        }
+
+        // Check hub-signed entry (role caps + explicit grants).
+        if let Some(hub_entry) = self
+            .hub_entries
+            .iter()
+            .find(|e| e.entry.identity_hash.to_ascii_lowercase() == normalized)
+        {
+            return hub_entry.entry.has_capability(cap);
         }
 
         // Fall back to default role's capability set.

@@ -15,7 +15,7 @@
 //! per the decided split (Option C). MessagingService orchestrates:
 //! transport.request_path → poll resolve_identity → send_via_link → fallback send_raw.
 
-use crate::inbound_delivery::decode_inbound_payload;
+use crate::inbound_delivery::decode_inbound_payload_with_diagnostics;
 use crate::lxmf_bridge;
 use crate::storage::messages::{MessageRecord, MessagesStore};
 use crate::transport::mesh_transport::{MeshTransport, TransportError};
@@ -37,6 +37,10 @@ pub struct MessagingService {
     transport: std::sync::OnceLock<Arc<dyn MeshTransport>>,
     /// Signing key for LXMF wire messages (set once via set_signer).
     signer: std::sync::OnceLock<Arc<rns_core::identity::PrivateIdentity>>,
+    /// Optional propagation hub delivery hash for offline peer fallback.
+    propagation_hub: std::sync::OnceLock<String>,
+    /// Fleet service for sending propagation ingest via RPC (avoids double LXMF wrapping).
+    fleet: std::sync::OnceLock<Arc<crate::services::FleetService>>,
 }
 
 impl MessagingService {
@@ -47,6 +51,8 @@ impl MessagingService {
             receipt_map: Mutex::new(HashMap::new()),
             transport: std::sync::OnceLock::new(),
             signer: std::sync::OnceLock::new(),
+            propagation_hub: std::sync::OnceLock::new(),
+            fleet: std::sync::OnceLock::new(),
         }
     }
 
@@ -60,6 +66,18 @@ impl MessagingService {
         let _ = self.signer.set(signer);
     }
 
+    /// Set the propagation hub delivery hash for offline peer fallback.
+    /// When direct delivery fails ("peer not announced"), messages are
+    /// routed to this hub via PropagationIngest instead of failing.
+    pub fn set_propagation_hub(
+        &self,
+        hub_delivery_hash: String,
+        fleet: Arc<crate::services::FleetService>,
+    ) {
+        let _ = self.propagation_hub.set(hub_delivery_hash);
+        let _ = self.fleet.set(fleet);
+    }
+
     /// Create a stub for tests (in-memory store).
     pub fn new() -> Self {
         let store = MessagesStore::in_memory().expect("in-memory store");
@@ -67,6 +85,8 @@ impl MessagingService {
             store: Arc::new(Mutex::new(store)),
             receipt_map: Mutex::new(HashMap::new()),
             transport: std::sync::OnceLock::new(),
+            propagation_hub: std::sync::OnceLock::new(),
+            fleet: std::sync::OnceLock::new(),
             signer: std::sync::OnceLock::new(),
         }
     }
@@ -151,8 +171,47 @@ impl MessagingService {
                 let _ = store.lock().unwrap().update_receipt_status(&msg_id, "sent: direct");
             }
             Err(e) => {
-                let status = format!("failed: {e}");
-                let _ = store.lock().unwrap().update_receipt_status(&msg_id, &status);
+                let err_msg = e.to_string();
+                // If direct delivery failed because the peer is not announced,
+                // try routing through the configured propagation hub.
+                if err_msg.contains("not announced") || err_msg.contains("not resolved") {
+                    if let Some(hub_hash) = self.propagation_hub.get() {
+                        eprintln!(
+                            "[messaging] direct delivery failed, routing via propagation hub {}",
+                            hub_hash
+                        );
+                        let hub_result = Self::deliver_via_hub(
+                            transport.as_ref(),
+                            hub_hash,
+                            peer_hash,
+                            &payload,
+                            &signer,
+                        )
+                        .await;
+                        match hub_result {
+                            Ok(_) => {
+                                let _ = store
+                                    .lock()
+                                    .unwrap()
+                                    .update_receipt_status(&msg_id, "queued: propagation");
+                                return Ok(msg_id);
+                            }
+                            Err(hub_err) => {
+                                let status = format!("failed: hub delivery: {hub_err}");
+                                let _ = store
+                                    .lock()
+                                    .unwrap()
+                                    .update_receipt_status(&msg_id, &status);
+                            }
+                        }
+                    } else {
+                        let status = format!("failed: {e}");
+                        let _ = store.lock().unwrap().update_receipt_status(&msg_id, &status);
+                    }
+                } else {
+                    let status = format!("failed: {e}");
+                    let _ = store.lock().unwrap().update_receipt_status(&msg_id, &status);
+                }
             }
         }
 
@@ -204,20 +263,93 @@ impl MessagingService {
         }
     }
 
+    /// Route a message through a propagation hub for offline peer delivery.
+    ///
+    /// Builds a PropagationIngest StyreneMessage wrapping the LXMF payload,
+    /// sends it to the hub via normal link delivery. The hub stores the
+    /// message for later retrieval by the destination peer.
+    async fn deliver_via_hub(
+        transport: &dyn MeshTransport,
+        hub_delivery_hash: &str,
+        dest_hash_hex: &str,
+        lxmf_payload: &[u8],
+        signer: &rns_core::identity::PrivateIdentity,
+    ) -> Result<(), TransportError> {
+        use styrene_mesh::wire::PropagationIngestPayload;
+        use styrene_mesh::{StyreneMessage, StyreneMessageType};
+
+        let ingest = PropagationIngestPayload {
+            dest_hash: dest_hash_hex.to_string(),
+            lxmf_bytes: lxmf_payload.to_vec(),
+            source_hash: Some(hex::encode(transport.identity_hash().as_slice())),
+        };
+
+        let mut payload_buf = Vec::new();
+        ciborium::into_writer(&ingest, &mut payload_buf)
+            .map_err(|e| TransportError::SendFailed(format!("CBOR encode: {e}")))?;
+
+        let wire_msg = StyreneMessage::new(StyreneMessageType::PropagationIngest, &payload_buf);
+        let wire_bytes = wire_msg.encode();
+
+        // Build LXMF envelope targeting the hub
+        let hub_bytes: [u8; 16] = hex::decode(hub_delivery_hash)
+            .map_err(|e| TransportError::SendFailed(format!("invalid hub hash: {e}")))?
+            .try_into()
+            .map_err(|_| TransportError::SendFailed("hub hash must be 16 bytes".into()))?;
+
+        let source_hash = transport.identity_hash();
+        let mut source_bytes = [0u8; 16];
+        source_bytes.copy_from_slice(source_hash.as_slice());
+
+        let fields = serde_json::json!({
+            "protocol": "styrene",
+            "custom_type": "styrene.io",
+            "custom_data": hex::encode(&wire_bytes),
+        });
+
+        let hub_lxmf = crate::lxmf_bridge::build_wire_message(
+            source_bytes,
+            hub_bytes,
+            "",
+            "",
+            Some(fields),
+            signer,
+        )
+        .map_err(|e| TransportError::SendFailed(format!("wire encode: {e}")))?;
+
+        let hub_addr = AddressHash::new(hub_bytes);
+        Self::deliver(transport, hub_addr, &hub_lxmf)
+            .await
+            .map_err(|e| TransportError::SendFailed(format!("hub delivery: {e}")))?;
+
+        Ok(())
+    }
+
     // --- Inbound ---
 
     /// Accept an inbound message from the transport layer.
     ///
     /// Decodes the LXMF wire payload and persists it to the message store.
-    /// Returns the decoded MessageRecord on success, None if decode fails.
+    /// Returns the decoded MessageRecord on success, None if decode/insert fails.
     pub fn accept_inbound(
         &self,
         destination: [u8; 16],
         data: &[u8],
         payload_mode: InboundPayloadMode,
     ) -> Option<MessageRecord> {
-        let record = decode_inbound_payload(destination, data, payload_mode)?;
-        self.store.lock().unwrap().insert_message(&record).ok()?;
+        let (record, diag) =
+            decode_inbound_payload_with_diagnostics(destination, data, payload_mode);
+        let record = match record {
+            Some(r) => r,
+            None => {
+                eprintln!("[messaging] decode failed: {}", diag.summary());
+                return None;
+            }
+        };
+        if let Err(e) = self.store.lock().unwrap().insert_message(&record) {
+            eprintln!("[messaging] insert_message failed: {e}");
+            return None;
+        }
         Some(record)
     }
 

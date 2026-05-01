@@ -142,6 +142,14 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     let is_local =
                         local_delivery_hash.as_ref().is_some_and(|local| *local == dest_hex);
 
+                    if !is_local {
+                        eprintln!(
+                            "[worker] non-local message: dest={} local={:?}",
+                            dest_hex,
+                            local_delivery_hash.as_deref().unwrap_or("none")
+                        );
+                    }
+
                     if !is_local && propagation.is_enabled() {
                         match propagation.store_for_propagation(&dest_hex, data, None) {
                             Ok(true) => {

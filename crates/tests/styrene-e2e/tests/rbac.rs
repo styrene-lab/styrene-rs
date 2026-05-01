@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use styrene_e2e::helpers::{with_timeout, two_connected_nodes, SETTLE};
 use styrene_e2e::node::TestNodeBuilder;
+use styrene_rbac::{RosterEntry, Role};
 use styrened::daemon_facade::DaemonFacade;
 use styrene_ipc::error::IpcError;
 use styrene_ipc::traits::*;
@@ -23,8 +24,8 @@ async fn blocked_caller_denied_all_operations() {
             .build()
             .await;
 
-        let blocked_id = "blocked_peer_identity_hash_here";
-        node.app_context.auth().block(blocked_id);
+        let blocked_id = "aabbccddaabbccddaabbccddaabbccdd";
+        node.app_context.policy().block(blocked_id, node.app_context.store()).expect("block");
 
         let facade = DaemonFacade::new(node.app_context.clone(), blocked_id.into());
 
@@ -63,7 +64,7 @@ async fn peer_role_can_chat_but_not_exec() {
             .await;
 
         // Default role is Peer for unknown callers
-        let peer_id = "unknown_peer_identity_hash_1234";
+        let peer_id = "ddccbbaa99887766ddccbbaa99887766";
         let facade = DaemonFacade::new(node.app_context.clone(), peer_id.into());
 
         // Peer can query status (Status capability is in Peer role)
@@ -104,10 +105,9 @@ async fn operator_role_can_exec() {
             .build()
             .await;
 
-        let operator_id = "operator_identity_hash_1234abcd";
-        node.app_context
-            .auth()
-            .set_role(operator_id, styrened::services::auth::Role::Operator);
+        let operator_id = "aabb00112233445566778899aabbccdd";
+        let entry = RosterEntry::new(operator_id, Role::Admin);
+        node.app_context.policy().grant(entry, node.app_context.store()).expect("grant");
 
         let facade = DaemonFacade::new(node.app_context.clone(), operator_id.into());
 
@@ -147,16 +147,16 @@ async fn unblock_restores_access() {
             .build()
             .await;
 
-        let peer_id = "toggle_block_identity_hash_1234";
+        let peer_id = "11223344556677881122334455667788";
 
         // Block, verify denied
-        node.app_context.auth().block(peer_id);
+        node.app_context.policy().block(peer_id, node.app_context.store()).expect("block");
         let facade = DaemonFacade::new(node.app_context.clone(), peer_id.into());
         let result = facade.query_status().await;
         assert!(matches!(result, Err(IpcError::Unavailable { .. })));
 
         // Unblock, verify restored
-        node.app_context.auth().unblock(peer_id);
+        node.app_context.policy().unblock(peer_id, node.app_context.store()).expect("unblock");
         let result = facade.query_status().await;
         assert!(result.is_ok(), "unblocked peer should have access restored");
     })

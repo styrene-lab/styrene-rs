@@ -1,9 +1,9 @@
-//! DaemonFacade — thin Daemon trait implementation with auth enforcement.
+//! DaemonFacade — thin Daemon trait implementation with RBAC enforcement.
 //!
 //! The IPC-facing dispatch layer. Holds `Arc<AppContext>` and delegates
-//! to services after checking auth via `AuthService::check()`.
+//! to services after checking capabilities via `PolicyService::has_capability()`.
 //!
-//! **Call direction**: IPC → DaemonFacade → AuthService.check() → Service → storage/transport.
+//! **Call direction**: IPC → DaemonFacade → PolicyService.has_capability() → Service → storage/transport.
 //! Services never call DaemonFacade. Services access each other through AppContext accessors.
 //!
 //! Package I — see ownership-matrix.md §DaemonFacade.
@@ -18,8 +18,9 @@ use styrene_ipc::traits::*;
 use styrene_ipc::types::*;
 
 use crate::app_context::AppContext;
-use crate::services::{AutoReplyMode, Capability};
+use crate::services::AutoReplyMode;
 use crate::storage::messages::MessageRecord;
+use styrene_rbac::Capability;
 
 /// Convert an io::Error to IpcError::Internal.
 fn internal(e: std::io::Error) -> IpcError {
@@ -43,7 +44,7 @@ fn record_to_message_info(r: MessageRecord) -> MessageInfo {
 
 /// Thin IPC-facing facade implementing the `Daemon` composite trait.
 ///
-/// - Checks RBAC via `auth.check(caller, capability)` before every delegation
+/// - Checks RBAC via `policy.has_capability(caller, cap)` before every delegation
 /// - Delegates to the appropriate service through AppContext
 /// - Maps service errors to IpcError
 ///
@@ -68,11 +69,11 @@ impl DaemonFacade {
     }
 
     /// Check a capability and return IpcError if denied.
-    fn require(&self, capability: &Capability) -> Result<(), IpcError> {
-        if self.ctx.auth().check(&self.caller_identity, capability) {
+    fn require(&self, capability: &str) -> Result<(), IpcError> {
+        if self.ctx.policy().has_capability(&self.caller_identity, capability) {
             Ok(())
         } else {
-            Err(IpcError::Unavailable { reason: format!("permission denied for {:?}", capability) })
+            Err(IpcError::Unavailable { reason: format!("permission denied for {}", capability) })
         }
     }
 
@@ -84,7 +85,7 @@ impl DaemonFacade {
 #[async_trait]
 impl DaemonIdentity for DaemonFacade {
     async fn query_identity(&self) -> Result<IdentityInfo, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let svc = self.ctx.identity();
         let dest = svc.delivery_destination_hash().unwrap_or_default();
         let mut info = IdentityInfo::default();
@@ -103,7 +104,7 @@ impl DaemonIdentity for DaemonFacade {
         icon: Option<&str>,
         short_name: Option<&str>,
     ) -> Result<bool, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let changed = self.ctx.identity().set_identity(display_name, icon, short_name);
         if changed {
             // Re-announce with updated identity
@@ -113,7 +114,7 @@ impl DaemonIdentity for DaemonFacade {
     }
 
     async fn announce(&self) -> Result<bool, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         self.ctx.identity().announce(None).await;
         Ok(true)
     }
@@ -122,7 +123,7 @@ impl DaemonIdentity for DaemonFacade {
 #[async_trait]
 impl DaemonMessaging for DaemonFacade {
     async fn send_chat(&self, request: SendChatRequest) -> Result<MessageId, IpcError> {
-        self.require(&Capability::Chat)?;
+        self.require(Capability::CHAT_SEND)?;
         self.ctx
             .messaging()
             .send_chat(&request.peer_hash, &request.content, request.title.as_deref())
@@ -131,22 +132,22 @@ impl DaemonMessaging for DaemonFacade {
     }
 
     async fn mark_read(&self, peer_hash: &str) -> Result<u64, IpcError> {
-        self.require(&Capability::Chat)?;
+        self.require(Capability::CHAT_SEND)?;
         self.ctx.messaging().mark_read(peer_hash).map_err(internal)
     }
 
     async fn delete_conversation(&self, peer_hash: &str) -> Result<u64, IpcError> {
-        self.require(&Capability::Chat)?;
+        self.require(Capability::CHAT_SEND)?;
         self.ctx.messaging().delete_conversation(peer_hash).map_err(internal)
     }
 
     async fn delete_message(&self, message_id: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Chat)?;
+        self.require(Capability::CHAT_SEND)?;
         self.ctx.messaging().delete_message(message_id).map_err(internal)
     }
 
     async fn retry_message(&self, message_id: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Chat)?;
+        self.require(Capability::CHAT_SEND)?;
         // Look up the original message, re-deliver if outbound and failed
         let msg = self
             .ctx
@@ -171,7 +172,7 @@ impl DaemonMessaging for DaemonFacade {
         &self,
         include_unread: bool,
     ) -> Result<Vec<ConversationInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let summaries =
             self.ctx.messaging().list_conversations(include_unread).map_err(internal)?;
         Ok(summaries
@@ -195,7 +196,7 @@ impl DaemonMessaging for DaemonFacade {
         limit: u32,
         before_ts: Option<i64>,
     ) -> Result<Vec<MessageInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let records = self
             .ctx
             .messaging()
@@ -210,7 +211,7 @@ impl DaemonMessaging for DaemonFacade {
         peer_hash: Option<&str>,
         limit: u32,
     ) -> Result<Vec<MessageInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let records = self
             .ctx
             .messaging()
@@ -220,7 +221,7 @@ impl DaemonMessaging for DaemonFacade {
     }
 
     async fn query_attachment(&self, message_id: &str) -> Result<Vec<u8>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         // Verify the message exists
         let _msg = self
             .ctx
@@ -239,7 +240,7 @@ impl DaemonMessaging for DaemonFacade {
         alias: Option<&str>,
         notes: Option<&str>,
     ) -> Result<ContactInfo, IpcError> {
-        self.require(&Capability::Chat)?;
+        self.require(Capability::CHAT_SEND)?;
         let c = self.ctx.messaging().set_contact(peer_hash, alias, notes).map_err(internal)?;
         let mut info = ContactInfo::default();
         info.peer_hash = c.peer_hash;
@@ -251,12 +252,12 @@ impl DaemonMessaging for DaemonFacade {
     }
 
     async fn remove_contact(&self, peer_hash: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Chat)?;
+        self.require(Capability::CHAT_SEND)?;
         self.ctx.messaging().remove_contact(peer_hash).map_err(internal)
     }
 
     async fn query_contacts(&self) -> Result<Vec<ContactInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let contacts = self.ctx.messaging().list_contacts().map_err(internal)?;
         Ok(contacts
             .into_iter()
@@ -277,12 +278,12 @@ impl DaemonMessaging for DaemonFacade {
         name: &str,
         prefix: Option<&str>,
     ) -> Result<Option<PeerHash>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         Ok(self.ctx.discovery().resolve_name(name, prefix))
     }
 
     async fn pin_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Chat)?;
+        self.require(Capability::CHAT_SEND)?;
         self.ctx
             .conversations()
             .set_pinned(peer_hash, true)
@@ -291,7 +292,7 @@ impl DaemonMessaging for DaemonFacade {
     }
 
     async fn unpin_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Chat)?;
+        self.require(Capability::CHAT_SEND)?;
         self.ctx
             .conversations()
             .set_pinned(peer_hash, false)
@@ -300,7 +301,7 @@ impl DaemonMessaging for DaemonFacade {
     }
 
     async fn mute_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Chat)?;
+        self.require(Capability::CHAT_SEND)?;
         self.ctx
             .conversations()
             .set_muted(peer_hash, true)
@@ -309,7 +310,7 @@ impl DaemonMessaging for DaemonFacade {
     }
 
     async fn unmute_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Chat)?;
+        self.require(Capability::CHAT_SEND)?;
         self.ctx
             .conversations()
             .set_muted(peer_hash, false)
@@ -321,7 +322,7 @@ impl DaemonMessaging for DaemonFacade {
 #[async_trait]
 impl DaemonStatus for DaemonFacade {
     async fn query_status(&self) -> Result<DaemonStatusInfo, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let status = self.ctx.status();
         let mut info = DaemonStatusInfo::default();
         info.uptime = status.uptime_secs();
@@ -336,7 +337,7 @@ impl DaemonStatus for DaemonFacade {
     }
 
     async fn query_config(&self) -> Result<ConfigSnapshot, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let mut snapshot = ConfigSnapshot::default();
         let config_svc = self.ctx.config();
         snapshot.values.insert("role".into(), serde_json::json!(config_svc.node_role().to_string()));
@@ -353,7 +354,7 @@ impl DaemonStatus for DaemonFacade {
     }
 
     async fn query_devices(&self, _styrene_only: bool) -> Result<Vec<DeviceInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let announces = self
             .ctx
             .discovery()
@@ -377,7 +378,7 @@ impl DaemonStatus for DaemonFacade {
     }
 
     async fn query_path_info(&self, dest_hash: &str) -> Result<PathInfo, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let dest_bytes: [u8; 16] = hex::decode(dest_hash)
             .map_err(|e| IpcError::invalid_request(format!("invalid hash: {e}")))?
             .try_into()
@@ -395,7 +396,7 @@ impl DaemonStatus for DaemonFacade {
     }
 
     async fn query_auto_reply(&self) -> Result<AutoReplyConfig, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let config = self.ctx.auto_reply().config();
         let mut ar = AutoReplyConfig::default();
         ar.mode = match config.mode {
@@ -414,7 +415,7 @@ impl DaemonStatus for DaemonFacade {
         message: Option<&str>,
         cooldown_secs: Option<u64>,
     ) -> Result<bool, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let auto_reply_mode = match mode {
             "disabled" | "off" => AutoReplyMode::Disabled,
             "all" => AutoReplyMode::All,
@@ -434,31 +435,37 @@ impl DaemonStatus for DaemonFacade {
     }
 
     async fn save_config(&self, config: ConfigSnapshot) -> Result<bool, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         self.ctx.config().apply_snapshot(&config).map_err(internal)?;
         Ok(true)
     }
 
     async fn block_peer(&self, identity_hash: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Status)?;
-        let store = self.ctx.store();
-        let store = store.lock().unwrap();
-        store
-            .block_peer(identity_hash)
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
+        // Prevent self-block: blocking the daemon's own identity would lock out local IPC.
+        if self.caller_identity.starts_with(identity_hash)
+            || identity_hash.starts_with(&self.caller_identity)
+        {
+            return Err(IpcError::invalid_request(
+                "cannot block the daemon's own identity",
+            ));
+        }
+        self.ctx
+            .policy()
+            .block(identity_hash, self.ctx.store())
             .map_err(|e| IpcError::Internal { message: format!("block_peer failed: {e}") })
     }
 
     async fn unblock_peer(&self, identity_hash: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Status)?;
-        let store = self.ctx.store();
-        let store = store.lock().unwrap();
-        store
-            .unblock_peer(identity_hash)
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
+        self.ctx
+            .policy()
+            .unblock(identity_hash, self.ctx.store())
             .map_err(|e| IpcError::Internal { message: format!("unblock_peer failed: {e}") })
     }
 
     async fn blocked_peers(&self) -> Result<Vec<String>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let store = self.ctx.store();
         let store = store.lock().unwrap();
         store
@@ -467,7 +474,7 @@ impl DaemonStatus for DaemonFacade {
     }
 
     async fn list_interfaces(&self) -> Result<Vec<InterfaceDetail>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         // Read from StatusService which holds the authoritative runtime list
         // (populated at bootstrap, includes auto-detected daemon-transport).
         let records = self.ctx.status().interfaces();
@@ -499,7 +506,7 @@ impl DaemonStatus for DaemonFacade {
     }
 
     async fn search_peers(&self, query: &str, limit: u32) -> Result<Vec<DeviceInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         let query_lower = query.to_lowercase();
         let all_nodes = self
             .ctx
@@ -531,13 +538,13 @@ impl DaemonStatus for DaemonFacade {
     }
 
     async fn bookmark_peer(&self, identity_hash: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         self.ctx.discovery().bookmark_peer(identity_hash).map_err(internal)?;
         Ok(true)
     }
 
     async fn unbookmark_peer(&self, identity_hash: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         self.ctx
             .discovery()
             .node_store()
@@ -554,7 +561,7 @@ impl DaemonFleet for DaemonFacade {
         dest: &str,
         timeout: Option<u64>,
     ) -> Result<RemoteStatusInfo, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         self.ctx.fleet().device_status(dest, timeout).await.map_err(internal)
     }
 
@@ -565,7 +572,7 @@ impl DaemonFleet for DaemonFacade {
         args: Vec<String>,
         timeout: Option<u64>,
     ) -> Result<ExecResult, IpcError> {
-        self.require(&Capability::Exec)?;
+        self.require(Capability::RPC_EXEC)?;
         self.ctx.fleet().exec(dest, cmd, &args, timeout).await.map_err(internal)
     }
 
@@ -575,7 +582,7 @@ impl DaemonFleet for DaemonFacade {
         delay: Option<u64>,
         timeout: Option<u64>,
     ) -> Result<RebootResult, IpcError> {
-        self.require(&Capability::Reboot)?;
+        self.require(Capability::RPC_REBOOT)?;
         self.ctx.fleet().reboot_device(dest, delay, timeout).await.map_err(internal)
     }
 
@@ -585,7 +592,7 @@ impl DaemonFleet for DaemonFacade {
         _version: Option<&str>,
         _timeout: Option<u64>,
     ) -> Result<SelfUpdateResult, IpcError> {
-        self.require(&Capability::UpdateConfig)?;
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
         Err(Self::not_implemented("self_update"))
     }
 
@@ -595,7 +602,7 @@ impl DaemonFleet for DaemonFacade {
         limit: u32,
         timeout: Option<u64>,
     ) -> Result<Vec<ConversationInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         self.ctx.fleet().remote_inbox(dest, limit, timeout).await.map_err(internal)
     }
 
@@ -606,17 +613,17 @@ impl DaemonFleet for DaemonFacade {
         limit: u32,
         timeout: Option<u64>,
     ) -> Result<Vec<MessageInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         self.ctx.fleet().remote_messages(dest, peer_hash, limit, timeout).await.map_err(internal)
     }
 
     async fn terminal_open(&self, _request: TerminalOpenRequest) -> Result<SessionId, IpcError> {
-        self.require(&Capability::Exec)?;
+        self.require(Capability::RPC_EXEC)?;
         Err(Self::not_implemented("terminal_open"))
     }
 
     async fn terminal_input(&self, _session_id: &str, _data: &[u8]) -> Result<bool, IpcError> {
-        self.require(&Capability::Exec)?;
+        self.require(Capability::RPC_EXEC)?;
         Err(Self::not_implemented("terminal_input"))
     }
 
@@ -626,12 +633,12 @@ impl DaemonFleet for DaemonFacade {
         _rows: u16,
         _cols: u16,
     ) -> Result<bool, IpcError> {
-        self.require(&Capability::Exec)?;
+        self.require(Capability::RPC_EXEC)?;
         Err(Self::not_implemented("terminal_resize"))
     }
 
     async fn terminal_close(&self, _session_id: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Exec)?;
+        self.require(Capability::RPC_EXEC)?;
         Err(Self::not_implemented("terminal_close"))
     }
 
@@ -642,12 +649,88 @@ impl DaemonFleet for DaemonFacade {
         verify: bool,
         timeout: Option<u64>,
     ) -> Result<ConfigApplyResult, IpcError> {
-        self.require(&Capability::UpdateConfig)?;
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
         self.ctx
             .fleet()
             .apply(dest, &profile_bytes, verify, timeout)
             .await
             .map_err(internal)
+    }
+
+    async fn fleet_grant(
+        &self,
+        identity_hash: &str,
+        role: &str,
+        label: &str,
+        grants: Vec<String>,
+    ) -> Result<bool, IpcError> {
+        self.require(Capability::RPC_EXEC)?; // Admin-level operation
+
+        let rbac_role = styrene_rbac::Role::from_name(role)
+            .ok_or_else(|| IpcError::invalid_request(format!("unknown role: {role}")))?;
+
+        // Prevent privilege escalation: caller cannot grant a role higher than their own.
+        let caller_role = self.ctx.policy().resolve_role(&self.caller_identity);
+        if rbac_role > caller_role {
+            return Err(IpcError::Unavailable {
+                reason: format!(
+                    "cannot grant role {} (higher than caller's {})",
+                    rbac_role.as_str(),
+                    caller_role.as_str(),
+                ),
+            });
+        }
+
+        // Prevent granting capabilities the caller doesn't hold.
+        for cap in &grants {
+            if !self.ctx.policy().has_capability(&self.caller_identity, cap) {
+                return Err(IpcError::Unavailable {
+                    reason: format!(
+                        "cannot grant capability {} (caller does not hold it)",
+                        cap,
+                    ),
+                });
+            }
+        }
+
+        let entry = styrene_rbac::RosterEntry::new(identity_hash, rbac_role)
+            .with_label(label)
+            .with_grants(grants);
+        self.ctx
+            .policy()
+            .grant(entry, self.ctx.store())
+            .map_err(|e| IpcError::Internal { message: e })?;
+        Ok(true)
+    }
+
+    async fn fleet_revoke(&self, identity_hash: &str) -> Result<bool, IpcError> {
+        self.require(Capability::RPC_EXEC)?; // Admin-level operation
+
+        // Prevent self-revocation: revoking the daemon's own Admin would lock out local IPC.
+        if identity_hash.to_ascii_lowercase() == self.caller_identity.to_ascii_lowercase() {
+            return Err(IpcError::invalid_request(
+                "cannot revoke the daemon's own role (self-lockout protection)",
+            ));
+        }
+
+        // Prevent revoking identities with a higher role than the caller.
+        let caller_role = self.ctx.policy().resolve_role(&self.caller_identity);
+        let target_role = self.ctx.policy().resolve_role(identity_hash);
+        if target_role > caller_role {
+            return Err(IpcError::Unavailable {
+                reason: format!(
+                    "cannot revoke {} (role {} is higher than caller's {})",
+                    identity_hash,
+                    target_role.as_str(),
+                    caller_role.as_str(),
+                ),
+            });
+        }
+
+        self.ctx
+            .policy()
+            .revoke(identity_hash, self.ctx.store())
+            .map_err(|e| IpcError::Internal { message: e })
     }
 }
 
@@ -657,17 +740,17 @@ impl DaemonEvents for DaemonFacade {
         &self,
         peer_hashes: &[String],
     ) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         Ok(self.ctx.events().subscribe_messages(peer_hashes))
     }
 
     async fn subscribe_devices(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         Ok(self.ctx.events().subscribe_devices())
     }
 
     async fn subscribe_links(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         Ok(self.ctx.events().subscribe_links())
     }
 }
@@ -675,7 +758,7 @@ impl DaemonEvents for DaemonFacade {
 #[async_trait]
 impl DaemonTunnel for DaemonFacade {
     async fn list_tunnels(&self) -> Result<Vec<TunnelInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::TUNNEL_STATUS)?;
         let peers = self.ctx.tunnel().active_peers();
         let mut tunnels = Vec::with_capacity(peers.len());
         for peer in peers {
@@ -693,7 +776,7 @@ impl DaemonTunnel for DaemonFacade {
     }
 
     async fn tunnel_status(&self, peer_hash: &str) -> Result<TunnelInfo, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::TUNNEL_STATUS)?;
         let state = self
             .ctx
             .tunnel()
@@ -708,12 +791,25 @@ impl DaemonTunnel for DaemonFacade {
         Ok(info)
     }
 
-    async fn tunnel_rekey(&self, _peer_hash: &str) -> Result<bool, IpcError> {
-        Err(Self::not_implemented("tunnel_rekey"))
+    async fn tunnel_rekey(&self, peer_hash: &str) -> Result<bool, IpcError> {
+        self.require(Capability::TUNNEL_ESTABLISH)?;
+        self.ctx
+            .tunnel()
+            .teardown_tunnel(peer_hash)
+            .await
+            .map_err(|e| IpcError::Internal { message: e })?;
+        // If re-establishment fails, the tunnel is now down. The caller gets
+        // an error and must manually re-establish.
+        if let Err(e) = self.ctx.tunnel().initiate_tunnel(peer_hash).await {
+            return Err(IpcError::Internal {
+                message: format!("tunnel torn down but re-establish failed: {e}"),
+            });
+        }
+        Ok(true)
     }
 
     async fn tunnel_teardown(&self, peer_hash: &str) -> Result<bool, IpcError> {
-        self.require(&Capability::Exec)?;
+        self.require(Capability::TUNNEL_TEARDOWN)?;
         self.ctx
             .tunnel()
             .teardown_tunnel(peer_hash)
@@ -723,8 +819,17 @@ impl DaemonTunnel for DaemonFacade {
     }
 
     async fn list_tunnel_sas(&self, _peer_hash: &str) -> Result<Vec<TunnelSaInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         Ok(Vec::new())
+    }
+
+    async fn tunnel_establish(&self, peer_hash: &str) -> Result<String, IpcError> {
+        self.require(Capability::TUNNEL_ESTABLISH)?;
+        self.ctx
+            .tunnel()
+            .initiate_tunnel(peer_hash)
+            .await
+            .map_err(|e| IpcError::Internal { message: e })
     }
 }
 
@@ -736,7 +841,7 @@ impl DaemonPages for DaemonFacade {
         path: &str,
         _timeout: Option<u64>,
     ) -> Result<PageContent, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
 
         // Local page serving (host is empty, "local", or our own identity hash)
         if host.is_empty() || host == "local" || host == self.ctx.identity().identity_hash() {
@@ -761,7 +866,7 @@ impl DaemonPages for DaemonFacade {
         host: &str,
         _timeout: Option<u64>,
     ) -> Result<Vec<PageInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
 
         if host.is_empty() || host == "local" || host == self.ctx.identity().identity_hash() {
             let pages = self.ctx.pages().list_pages();
@@ -780,7 +885,7 @@ impl DaemonPages for DaemonFacade {
     }
 
     async fn page_hosts(&self) -> Result<Vec<DeviceInfo>, IpcError> {
-        self.require(&Capability::Status)?;
+        self.require(Capability::RPC_STATUS)?;
         // Return nodes that have page capabilities
         let announces = self
             .ctx
@@ -889,14 +994,25 @@ mod tests {
 
     #[tokio::test]
     async fn blocked_caller_gets_denied() {
+        use styrene_rbac::RbacPolicy;
+        use crate::services::PolicyService;
+
+        let mut policy = RbacPolicy::default();
+        policy.block("deadbeef"); // block prefix
+
         let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
         let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
-        let ctx = Arc::new(AppContext::new(transport, "daemon".into(), store));
+        let node_store = Arc::new(styrene_services::node_store::NodeStore::in_memory().unwrap());
+        let ctx = Arc::new(AppContext::with_policy(
+            transport,
+            "daemon".into(),
+            store,
+            node_store,
+            PolicyService::new(policy),
+        ));
 
-        // Block the caller
-        ctx.auth().block("blocked-caller");
-
-        let facade = DaemonFacade::new(ctx, "blocked-caller".into());
+        // Caller whose hash starts with blocked prefix
+        let facade = DaemonFacade::new(ctx, "deadbeef11112222333344445555aaaa".into());
         let result = facade.query_status().await;
         assert!(matches!(result, Err(IpcError::Unavailable { .. })));
     }
@@ -907,7 +1023,7 @@ mod tests {
         let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
         let ctx = Arc::new(AppContext::new(transport, "daemon".into(), store));
         // Default role is Peer — can chat/status but not exec
-        let facade = DaemonFacade::new(ctx, "peer-caller".into());
+        let facade = DaemonFacade::new(ctx, "aaaa1111bbbb2222cccc3333dddd4444".into());
 
         let result = facade.exec("dest", "ls", vec![], None).await;
         assert!(matches!(result, Err(IpcError::Unavailable { .. })));
