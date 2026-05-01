@@ -17,6 +17,7 @@ members = [
   "crates/apps/styrened",
   "crates/apps/styrene",
   "crates/apps/styrene-dx",
+  "crates/apps/styrene-i2p",
   "crates/apps/styrene-tui",
   "crates/bindings/styrene-native", "crates/libs/styrene-services",
   "crates/libs/styrene-mqtt",

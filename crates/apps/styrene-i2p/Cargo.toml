@@ -1,0 +1,30 @@
+[package]
+name = "styrene-i2p"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Local HTTP proxy for .i2p eepsites over the Styrene mesh"
+
+[[bin]]
+name = "styrene-i2p"
+path = "src/main.rs"
+
+[dependencies]
+styrene-mesh = { workspace = true }
+rns_core = { package = "styrene-rns", path = "../../libs/styrene-rns", version = "0.1.0" }
+anyhow.workspace = true
+ciborium = "0.2"
+clap = { workspace = true, features = ["derive"] }
+hex.workspace = true
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+dirs = "6.0.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
