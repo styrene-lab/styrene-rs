@@ -6,7 +6,8 @@
 //! by building a response with the same request_id and delivering it
 //! back via the transport layer.
 
-use crate::services::{AuthService, Capability, MessagingService};
+use crate::services::{MessagingService, PolicyService};
+use styrene_rbac::Capability;
 use crate::transport::mesh_transport::MeshTransport;
 use async_trait::async_trait;
 use rand_core::{OsRng, RngCore};
@@ -33,16 +34,16 @@ impl Drop for TempFileGuard {
 pub struct RpcRequestHandler {
     transport: Arc<dyn MeshTransport>,
     signer: Arc<PrivateIdentity>,
-    auth: Arc<AuthService>,
+    policy: Arc<PolicyService>,
 }
 
 impl RpcRequestHandler {
     pub fn new(
         transport: Arc<dyn MeshTransport>,
         signer: Arc<PrivateIdentity>,
-        auth: Arc<AuthService>,
+        policy: Arc<PolicyService>,
     ) -> Self {
-        Self { transport, signer, auth }
+        Self { transport, signer, policy }
     }
 
     /// Build and send a response message back to the source peer.
@@ -350,7 +351,7 @@ impl ProtocolHandler for RpcRequestHandler {
                 )
             }
             StyreneMessageType::Exec => {
-                if !self.auth.check(source, &Capability::Exec) {
+                if !self.policy.has_capability(source, Capability::RPC_EXEC) {
                     eprintln!(
                         "[rpc-request] DENIED exec from {} — insufficient privileges",
                         source
@@ -360,7 +361,7 @@ impl ProtocolHandler for RpcRequestHandler {
                         Self::cbor_encode(&serde_json::json!({
                             "exit_code": -1,
                             "stdout": "",
-                            "stderr": "permission denied: caller lacks Exec capability",
+                            "stderr": format!("permission denied: caller lacks {} capability", Capability::RPC_EXEC),
                         })),
                     )
                 } else {
@@ -371,7 +372,7 @@ impl ProtocolHandler for RpcRequestHandler {
                 }
             }
             StyreneMessageType::Reboot => {
-                if !self.auth.check(source, &Capability::Reboot) {
+                if !self.policy.has_capability(source, Capability::RPC_REBOOT) {
                     eprintln!(
                         "[rpc-request] DENIED reboot from {} — insufficient privileges",
                         source
@@ -380,7 +381,7 @@ impl ProtocolHandler for RpcRequestHandler {
                         StyreneMessageType::RebootResult,
                         Self::cbor_encode(&serde_json::json!({
                             "accepted": false,
-                            "error": "permission denied: caller lacks Reboot capability",
+                            "error": format!("permission denied: caller lacks {} capability", Capability::RPC_REBOOT),
                         })),
                     )
                 } else {
@@ -391,7 +392,7 @@ impl ProtocolHandler for RpcRequestHandler {
                 }
             }
             StyreneMessageType::ConfigUpdate => {
-                if !self.auth.check(source, &Capability::UpdateConfig) {
+                if !self.policy.has_capability(source, Capability::RPC_CONFIG_UPDATE) {
                     eprintln!(
                         "[rpc-request] DENIED config_update from {} — insufficient privileges",
                         source
@@ -403,7 +404,7 @@ impl ProtocolHandler for RpcRequestHandler {
                             "verified": false,
                             "exit_code": -1,
                             "stdout": "",
-                            "stderr": "permission denied: caller lacks UpdateConfig capability",
+                            "stderr": format!("permission denied: caller lacks {} capability", Capability::RPC_CONFIG_UPDATE),
                         })),
                     )
                 } else {

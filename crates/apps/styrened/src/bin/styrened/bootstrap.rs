@@ -270,11 +270,101 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         .expect("open node store"),
     );
 
-    let app_context = Arc::new(AppContext::with_node_store(
+    // --- RBAC policy: config → DB overlay → normalize ---
+    let rbac_policy = {
+        let mut policy = daemon_config
+            .as_ref()
+            .and_then(|c| c.rbac.clone())
+            .unwrap_or_default();
+
+        // Overlay roster entries from SQLite (DB wins on conflict)
+        {
+            let store_guard = shared_store.lock().unwrap();
+            if let Ok(db_entries) = store_guard.load_rbac_roster() {
+                for entry in db_entries {
+                    policy.add_entry(entry);
+                }
+            }
+            // Merge blocked_peers table into policy
+            if let Ok(blocked) = store_guard.blocked_peers() {
+                for hash in blocked {
+                    policy.block(&hash);
+                }
+            }
+        }
+
+        // Auto-roster the daemon's own identity as Admin so the local CLI
+        // (which authenticates as the daemon) retains full administrative access.
+        let own_hash = hex::encode(identity.address_hash().as_slice());
+        if policy.get_entry(&own_hash).is_none() {
+            policy.add_entry(
+                styrene_rbac::RosterEntry::new(&own_hash, styrene_rbac::Role::Admin)
+                    .with_label("local"),
+            );
+        }
+
+        // Verify hub-signed entries against trusted hubs.
+        // Entries with invalid signatures, unknown hubs, or expiry are dropped.
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let trusted = policy.trusted_hubs().to_vec();
+            let hub_entries: Vec<_> = policy.hub_entries().to_vec();
+            let total = hub_entries.len();
+            policy.clear_hub_entries();
+            // Re-add only verified entries
+            for entry in hub_entries {
+                if entry.is_expired(now) {
+                    eprintln!(
+                        "[daemon] rbac: dropping expired hub entry for {}",
+                        entry.entry.identity_hash,
+                    );
+                } else if !trusted.iter().any(|h| h.matches(&entry)) {
+                    eprintln!(
+                        "[daemon] rbac: dropping hub entry for {} — hub {} not trusted",
+                        entry.entry.identity_hash, entry.hub_hash,
+                    );
+                } else if !entry.verify() {
+                    eprintln!(
+                        "[daemon] rbac: dropping hub entry for {} — invalid signature",
+                        entry.entry.identity_hash,
+                    );
+                } else {
+                    policy.add_hub_entry(entry);
+                }
+            }
+            if total > 0 {
+                eprintln!(
+                    "[daemon] rbac: {}/{} hub-signed entries verified ({} trusted hubs)",
+                    policy.hub_entries().len(),
+                    total,
+                    trusted.len(),
+                );
+            }
+        }
+
+        let warnings = policy.normalize();
+        for w in &warnings {
+            eprintln!("[daemon] rbac: {w:?}");
+        }
+        eprintln!(
+            "[daemon] RBAC policy loaded: {} roster entries, {} hub entries, {} blocked prefixes, default_role={:?}",
+            policy.entries().len(),
+            policy.hub_entries().len(),
+            policy.blocked_count(),
+            policy.default_role,
+        );
+        policy
+    };
+
+    let app_context = Arc::new(AppContext::with_policy(
         mesh_transport,
         hex::encode(identity.address_hash().as_slice()),
         shared_store,
         node_store,
+        styrened::services::PolicyService::new(rbac_policy),
     ));
     let daemon_facade = Arc::new(DaemonFacade::new(
         app_context.clone(),
@@ -335,7 +425,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         .register(std::sync::Arc::new(styrened::workers::rpc_request::RpcRequestHandler::new(
             app_context.transport_arc(),
             std::sync::Arc::new(identity.clone()),
-            app_context.auth_arc(),
+            app_context.policy_arc(),
         )))
         .await;
     // Register tunnel protocol handler

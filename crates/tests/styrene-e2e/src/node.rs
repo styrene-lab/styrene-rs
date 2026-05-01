@@ -45,6 +45,8 @@ pub struct TestNodeBuilder {
     tcp_client_addrs: Vec<SocketAddr>,
     identity: Option<PrivateIdentity>,
     retransmit: bool,
+    propagation_enabled: bool,
+    propagation_hub: Option<String>,
 }
 
 impl TestNodeBuilder {
@@ -57,6 +59,8 @@ impl TestNodeBuilder {
             tcp_client_addrs: Vec::new(),
             identity: None,
             retransmit: false,
+            propagation_enabled: false,
+            propagation_hub: None,
         }
     }
 
@@ -82,6 +86,19 @@ impl TestNodeBuilder {
     /// Required for hub nodes that route between non-adjacent peers.
     pub fn retransmit(mut self, enabled: bool) -> Self {
         self.retransmit = enabled;
+        self
+    }
+
+    /// Enable propagation (store-and-forward for offline peers).
+    /// Registers PropagationRequestHandler for handling ingest/fetch/delete.
+    pub fn propagation(mut self, enabled: bool) -> Self {
+        self.propagation_enabled = enabled;
+        self
+    }
+
+    /// Set the propagation hub delivery hash for offline peer fallback.
+    pub fn propagation_hub(mut self, hub_delivery_hash: String) -> Self {
+        self.propagation_hub = Some(hub_delivery_hash);
         self
     }
 
@@ -221,10 +238,34 @@ impl TestNodeBuilder {
                 styrened::workers::rpc_request::RpcRequestHandler::new(
                     app_context.transport_arc(),
                     Arc::new(identity.clone()),
-                    app_context.auth_arc(),
+                    app_context.policy_arc(),
                 ),
             ))
             .await;
+
+        // Wire propagation hub if configured
+        if let Some(hub_hash) = &self.propagation_hub {
+            app_context
+                .messaging()
+                .set_propagation_hub(hub_hash.clone(), app_context.fleet_arc());
+        }
+
+        // Register propagation handler if enabled
+        if self.propagation_enabled {
+            app_context.propagation().set_enabled(true);
+            app_context
+                .protocol()
+                .register(Arc::new(
+                    styrened::workers::propagation_handler::PropagationRequestHandler::new(
+                        app_context.transport_arc(),
+                        Arc::new(identity.clone()),
+                        app_context.propagation_arc(),
+                        app_context.messaging_arc(),
+                        Some(delivery_hash.clone()),
+                    ),
+                ))
+                .await;
+        }
 
         TestNode {
             name: self.name,

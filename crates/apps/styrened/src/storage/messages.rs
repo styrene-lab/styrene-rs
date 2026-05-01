@@ -674,6 +674,12 @@ impl MessagesStore {
             CREATE TABLE IF NOT EXISTS blocked_peers (
                 identity_hash TEXT PRIMARY KEY,
                 blocked_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS rbac_roster (
+                identity_hash TEXT PRIMARY KEY,
+                role TEXT NOT NULL,
+                label TEXT NOT NULL DEFAULT '',
+                grants TEXT NOT NULL DEFAULT ''
             );",
         )?;
         Ok(())
@@ -719,6 +725,70 @@ impl MessagesStore {
             |row| row.get(0),
         )?;
         Ok(count > 0)
+    }
+
+    // ── RBAC Roster ─────────────────────────────────────────────────────
+
+    /// Load all RBAC roster entries from the database.
+    pub fn load_rbac_roster(&self) -> rusqlite::Result<Vec<styrene_rbac::RosterEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT identity_hash, role, label, grants FROM rbac_roster",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let hash: String = row.get(0)?;
+            let role_str: String = row.get(1)?;
+            let label: String = row.get(2)?;
+            let grants_csv: String = row.get(3)?;
+            Ok((hash, role_str, label, grants_csv))
+        })?;
+        let mut entries = Vec::new();
+        for row in rows {
+            let (hash, role_str, label, grants_csv) = row?;
+            let role = styrene_rbac::Role::from_name(&role_str)
+                .unwrap_or(styrene_rbac::Role::Peer);
+            let grants: Vec<String> = if grants_csv.is_empty() {
+                Vec::new()
+            } else if grants_csv.starts_with('[') {
+                // JSON array format (current)
+                serde_json::from_str(&grants_csv).unwrap_or_default()
+            } else {
+                // Legacy CSV format (migration path)
+                grants_csv.split(',').map(|s| s.trim().to_string()).collect()
+            };
+            entries.push(
+                styrene_rbac::RosterEntry::new(hash, role)
+                    .with_label(label)
+                    .with_grants(grants),
+            );
+        }
+        Ok(entries)
+    }
+
+    /// Insert or replace an RBAC roster entry.
+    ///
+    /// Identity hash is normalized to lowercase before storage to ensure
+    /// consistent lookups (DELETE by hash must match INSERT case).
+    /// Grants are stored as a JSON array for safe round-tripping.
+    pub fn upsert_rbac_entry(&self, entry: &styrene_rbac::RosterEntry) -> rusqlite::Result<()> {
+        let normalized_hash = entry.identity_hash.to_ascii_lowercase();
+        let grants_json = serde_json::to_string(entry.grants()).unwrap_or_default();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO rbac_roster (identity_hash, role, label, grants) VALUES (?1, ?2, ?3, ?4)",
+            params![normalized_hash, entry.role.as_str(), entry.label, grants_json],
+        )?;
+        Ok(())
+    }
+
+    /// Remove an RBAC roster entry by identity hash.
+    ///
+    /// Identity hash is normalized to lowercase to match stored format.
+    pub fn remove_rbac_entry(&self, identity_hash: &str) -> rusqlite::Result<bool> {
+        let normalized = identity_hash.to_ascii_lowercase();
+        let changed = self.conn.execute(
+            "DELETE FROM rbac_roster WHERE identity_hash = ?1",
+            params![normalized],
+        )?;
+        Ok(changed > 0)
     }
 
     /// Store an LXMF propagation packet for later delivery.

@@ -11,6 +11,7 @@ use styrene_e2e::helpers::{
 };
 use styrene_e2e::node::TestNodeBuilder;
 use styrene_mesh::{StyreneMessage, StyreneMessageType, WIRE_VERSION};
+use styrene_rbac::{RosterEntry, Role};
 
 // ── Wire Version Rejection ─────────────────────────────────────────────
 
@@ -203,10 +204,9 @@ async fn fleet_exec_on_own_delivery_hash() {
 
         tokio::time::sleep(SETTLE).await;
 
-        // Grant self Operator role
-        node.app_context
-            .auth()
-            .set_role(&node.identity_hash, styrened::services::auth::Role::Operator);
+        // Grant self Admin role (exec requires Admin)
+        let entry = RosterEntry::new(&node.identity_hash, Role::Admin);
+        node.app_context.policy().grant(entry, node.app_context.store()).expect("grant");
 
         // Exec on self — expected to fail because RNS links are between
         // two different nodes, not self-loops. The delivery pipeline will

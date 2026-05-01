@@ -23,7 +23,7 @@ fn send_backwards(packet: &Packet, entry: &LinkEntry) -> (Packet, AddressHash) {
         header: Header {
             ifac_flag: IfacFlag::Open, // IFAC is applied at the interface layer, not transport
             header_type: HeaderType::Type2,
-            hops: packet.header.hops + 1,
+            hops: packet.header.hops.saturating_add(1),
             ..packet.header
         },
         ifac: None,
@@ -62,7 +62,7 @@ impl LinkTable {
         }
 
         let now = Instant::now();
-        let taken_hops = link_request.header.hops + 1;
+        let taken_hops = link_request.header.hops.saturating_add(1);
 
         let entry = LinkEntry {
             timestamp: now,

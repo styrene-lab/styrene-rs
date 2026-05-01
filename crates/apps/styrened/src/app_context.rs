@@ -8,14 +8,14 @@
 //!
 //! AppContext does NOT implement the `Daemon` trait — that's `DaemonFacade`
 //! (Package I), which holds `Arc<AppContext>` and dispatches IPC calls
-//! through it after auth checks.
+//! through it after RBAC capability checks.
 
 use std::sync::{Arc, Mutex};
 
 use crate::services::{
-    AuthService, AutoReplyService, ConfigService, DiscoveryService, EventService, FleetService,
-    IdentityService, MessagingService, PageService, PropagationService, ProtocolService,
-    StatusService, TunnelService,
+    AutoReplyService, ConfigService, DiscoveryService, EventService, FleetService,
+    IdentityService, MessagingService, PageService, PolicyService, PropagationService,
+    ProtocolService, StatusService, TunnelService,
 };
 #[cfg(feature = "i2p-proxy")]
 use crate::services::I2pProxyService;
@@ -38,7 +38,7 @@ pub struct AppContext {
     config: Arc<ConfigService>,
     status: Arc<StatusService>,
     fleet: Arc<FleetService>,
-    auth: Arc<AuthService>,
+    policy: Arc<PolicyService>,
     auto_reply: Arc<AutoReplyService>,
     messaging: Arc<MessagingService>,
     discovery: Arc<DiscoveryService>,
@@ -67,6 +67,20 @@ impl AppContext {
         Self::with_node_store(transport, identity_hash, store, node_store)
     }
 
+    /// Construct with an explicit NodeStore and RBAC policy.
+    pub fn with_policy(
+        transport: Arc<dyn MeshTransport>,
+        identity_hash: String,
+        store: Arc<Mutex<MessagesStore>>,
+        node_store: Arc<NodeStore>,
+        policy: PolicyService,
+    ) -> Self {
+        let mut ctx =
+            Self::with_node_store(transport, identity_hash, store, node_store);
+        ctx.policy = Arc::new(policy);
+        ctx
+    }
+
     /// Construct with an explicit NodeStore (e.g., file-backed for production).
     pub fn with_node_store(
         transport: Arc<dyn MeshTransport>,
@@ -76,7 +90,7 @@ impl AppContext {
     ) -> Self {
         // Phase 1: Transport + config (foundation)
         let config = Arc::new(ConfigService::new());
-        let auth = Arc::new(AuthService::new());
+        let policy = Arc::new(PolicyService::default());
 
         // Phase 2: Identity (depends on transport)
         let identity = Arc::new(IdentityService::with_transport(identity_hash, transport.clone()));
@@ -129,7 +143,7 @@ impl AppContext {
             config,
             status,
             fleet,
-            auth,
+            policy,
             auto_reply,
             messaging,
             discovery,
@@ -188,12 +202,12 @@ impl AppContext {
         &self.status
     }
 
-    pub fn auth(&self) -> &AuthService {
-        &self.auth
+    pub fn policy(&self) -> &PolicyService {
+        &self.policy
     }
 
-    pub fn auth_arc(&self) -> Arc<AuthService> {
-        self.auth.clone()
+    pub fn policy_arc(&self) -> Arc<PolicyService> {
+        self.policy.clone()
     }
 
     pub fn auto_reply(&self) -> &AutoReplyService {

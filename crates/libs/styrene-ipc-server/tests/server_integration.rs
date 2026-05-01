@@ -245,6 +245,18 @@ impl DaemonFleet for TestDaemon {
     ) -> Result<ConfigApplyResult, IpcError> {
         Err(IpcError::not_implemented("fleet"))
     }
+    async fn fleet_grant(
+        &self,
+        _identity_hash: &str,
+        _role: &str,
+        _label: &str,
+        _grants: Vec<String>,
+    ) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("fleet"))
+    }
+    async fn fleet_revoke(&self, _identity_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("fleet"))
+    }
 }
 
 #[async_trait]
@@ -311,6 +323,9 @@ impl DaemonTunnel for TestDaemon {
     }
     async fn list_tunnel_sas(&self, _peer: &str) -> Result<Vec<TunnelSaInfo>, IpcError> {
         Ok(vec![])
+    }
+    async fn tunnel_establish(&self, _peer: &str) -> Result<String, IpcError> {
+        Err(IpcError::not_implemented("tunnel"))
     }
 }
 

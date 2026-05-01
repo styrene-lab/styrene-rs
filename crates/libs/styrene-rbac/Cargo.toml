@@ -11,14 +11,21 @@ description = "Role-based access control for the Styrene mesh — shared by styr
 default = ["std"]
 std = []
 config = ["dep:serde", "dep:serde_json"]
+signing = ["config", "dep:ed25519-dalek", "dep:sha2", "dep:hex"]
 
 [dependencies]
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+ed25519-dalek = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+ed25519-dalek = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
 [lints]
 workspace = true

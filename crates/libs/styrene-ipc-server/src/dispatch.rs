@@ -113,6 +113,9 @@ pub async fn dispatch(
         MessageType::QueryTunnelStatus => dispatch_query_tunnel_status(daemon, &payload).await,
         MessageType::CmdTunnelTeardown => dispatch_tunnel_teardown(daemon, &payload).await,
         MessageType::CmdFleetApply => dispatch_fleet_apply(daemon, &payload).await,
+        MessageType::CmdTunnelEstablish => dispatch_tunnel_establish(daemon, &payload).await,
+        MessageType::CmdFleetGrant => dispatch_fleet_grant(daemon, &payload).await,
+        MessageType::CmdFleetRevoke => dispatch_fleet_revoke(daemon, &payload).await,
         _ => Err(format!("unimplemented message type: 0x{:02x}", msg_type as u8)),
     }
 }
@@ -997,5 +1000,59 @@ async fn dispatch_fleet_apply(
     p.insert("exit_code".into(), rmpv::Value::from(result.exit_code));
     p.insert("stdout".into(), rmpv::Value::String(result.stdout.into()));
     p.insert("stderr".into(), rmpv::Value::String(result.stderr.into()));
+    ok_payload(p)
+}
+
+// ── Tunnel Establish ───────────────────────────────────────────────────────
+
+async fn dispatch_tunnel_establish(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let peer = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let peer = validate_hash(peer)?;
+    let nonce = daemon.tunnel_establish(peer).await.map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("success".into(), rmpv::Value::Boolean(true));
+    p.insert("nonce".into(), rmpv::Value::from(nonce.as_str()));
+    ok_payload(p)
+}
+
+// ── Fleet Grant / Revoke ───────────────────────────────────────────────────
+
+async fn dispatch_fleet_grant(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let identity_hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
+    let identity_hash = validate_hash(identity_hash)?;
+    let role = val_str(payload, "role").ok_or("missing role")?.to_string();
+    let label = val_str(payload, "label").unwrap_or("").to_string();
+    let grants: Vec<String> = payload
+        .get("grants")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let ok = daemon
+        .fleet_grant(identity_hash, &role, &label, grants)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("success".into(), rmpv::Value::Boolean(ok));
+    ok_payload(p)
+}
+
+async fn dispatch_fleet_revoke(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let identity_hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
+    let identity_hash = validate_hash(identity_hash)?;
+    let ok = daemon
+        .fleet_revoke(identity_hash)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut p = Payload::new();
+    p.insert("success".into(), rmpv::Value::Boolean(ok));
     ok_payload(p)
 }

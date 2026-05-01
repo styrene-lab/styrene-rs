@@ -271,28 +271,58 @@ pub(crate) async fn tunnel_status(socket: Option<&Path>, peer: &str) -> anyhow::
     Ok(())
 }
 
-pub(crate) fn tunnel_establish(peer: &str) {
-    let peer_short = truncate(peer, 12);
-    eprintln!();
-    eprintln!("  {} tunnel establish ({peer_short}…)", style("⚠").yellow().bold(),);
-    eprintln!();
-    eprintln!(
-        "  {}",
-        style("not yet available — tunnel establishment is handled automatically via LXMF negotiation").dim()
-    );
-    eprintln!();
+pub(crate) async fn tunnel_establish(
+    socket: Option<&Path>,
+    peer: &str,
+) -> anyhow::Result<()> {
+    tunnel_offer(socket, peer).await
 }
 
-pub(crate) fn tunnel_teardown(peer: &str) {
+pub(crate) async fn tunnel_offer(
+    socket: Option<&Path>,
+    peer: &str,
+) -> anyhow::Result<()> {
+    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+
     let peer_short = truncate(peer, 12);
-    eprintln!();
-    eprintln!("  {} tunnel teardown ({peer_short}…)", style("⚠").yellow().bold(),);
-    eprintln!();
-    eprintln!(
-        "  {}",
-        style("not yet available — tunnel establishment is handled automatically via LXMF negotiation").dim()
-    );
-    eprintln!();
+    eprintln!("  {} sending tunnel offer to {peer_short}…", style("→").cyan());
+
+    let result = client.tunnel_establish(peer).await.map_err(anyhow::Error::msg)?;
+
+    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if success {
+        let nonce = result.get("nonce").and_then(|v| v.as_str()).unwrap_or("?");
+        eprintln!(
+            "  {} tunnel offer sent (nonce: {})",
+            style("✓").green().bold(),
+            truncate(nonce, 8)
+        );
+    } else {
+        eprintln!("  {} tunnel offer failed", style("✗").red().bold());
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn tunnel_teardown(
+    socket: Option<&Path>,
+    peer: &str,
+) -> anyhow::Result<()> {
+    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+
+    let peer_short = truncate(peer, 12);
+    eprintln!("  {} tearing down tunnel to {peer_short}…", style("→").cyan());
+
+    let result = client.tunnel_teardown_rpc(peer).await.map_err(anyhow::Error::msg)?;
+
+    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    if success {
+        eprintln!("  {} tunnel torn down", style("✓").green().bold());
+    } else {
+        eprintln!("  {} tunnel teardown failed", style("✗").red().bold());
+    }
+
+    Ok(())
 }
 
 // ── Fleet operations ────────────────────────────────────────────────────────
@@ -482,6 +512,59 @@ pub(crate) async fn fleet_apply(
             "  {} profile apply failed (exit code {exit_code})",
             style("✗").red().bold()
         );
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn fleet_grant(
+    socket: Option<&Path>,
+    node: &str,
+    role: &str,
+    label: Option<&str>,
+    grants: &[String],
+) -> anyhow::Result<()> {
+    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+
+    let node_short = truncate(node, 12);
+    eprintln!("  {} granting {role} to {node_short}…", style("→").cyan());
+
+    let result = client
+        .fleet_grant(node, role, label.unwrap_or(""), grants)
+        .await
+        .map_err(anyhow::Error::msg)?;
+
+    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    if success {
+        eprintln!("  {} role granted: {role}", style("✓").green().bold());
+    } else {
+        eprintln!("  {} grant failed", style("✗").red().bold());
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn fleet_revoke(
+    socket: Option<&Path>,
+    node: &str,
+) -> anyhow::Result<()> {
+    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+
+    let node_short = truncate(node, 12);
+    eprintln!("  {} revoking role from {node_short}…", style("→").cyan());
+
+    let result = client
+        .fleet_revoke(node)
+        .await
+        .map_err(anyhow::Error::msg)?;
+
+    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    if success {
+        eprintln!("  {} role revoked", style("✓").green().bold());
+    } else {
+        eprintln!("  {} revoke failed (identity not in roster)", style("✗").red().bold());
     }
 
     Ok(())

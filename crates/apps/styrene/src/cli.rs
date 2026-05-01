@@ -110,8 +110,13 @@ pub enum TunnelAction {
         /// Peer identity hash
         peer: String,
     },
-    /// Establish a tunnel to a peer (not yet implemented — requires daemon-side wiring)
+    /// Initiate tunnel establishment to a peer
     Establish {
+        /// Peer identity hash
+        peer: String,
+    },
+    /// Send a tunnel offer to a peer (alias for establish)
+    Offer {
         /// Peer identity hash
         peer: String,
     },
@@ -165,5 +170,23 @@ pub enum FleetAction {
         /// Timeout in seconds (default: 120, profiles need time for darwin-rebuild)
         #[arg(long, default_value = "120")]
         timeout: u64,
+    },
+    /// Grant a role to a node in the RBAC roster
+    Grant {
+        /// Identity hash of the node
+        node: String,
+        /// Role to assign (admin, operator, monitor, peer)
+        role: String,
+        /// Human-readable label
+        #[arg(long)]
+        label: Option<String>,
+        /// Orthogonal capability grants (e.g. vpn.handshake)
+        #[arg(long)]
+        grants: Vec<String>,
+    },
+    /// Revoke a role assignment from the RBAC roster
+    Revoke {
+        /// Identity hash of the node
+        node: String,
     },
 }

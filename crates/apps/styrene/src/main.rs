@@ -75,12 +75,13 @@ async fn main() -> anyhow::Result<()> {
             cli::TunnelAction::List => commands::tunnel_list(socket).await,
             cli::TunnelAction::Status { ref peer } => commands::tunnel_status(socket, peer).await,
             cli::TunnelAction::Establish { ref peer } => {
-                commands::tunnel_establish(peer);
-                Ok(())
+                commands::tunnel_establish(socket, peer).await
+            }
+            cli::TunnelAction::Offer { ref peer } => {
+                commands::tunnel_offer(socket, peer).await
             }
             cli::TunnelAction::Teardown { ref peer } => {
-                commands::tunnel_teardown(peer);
-                Ok(())
+                commands::tunnel_teardown(socket, peer).await
             }
         },
 
@@ -97,6 +98,12 @@ async fn main() -> anyhow::Result<()> {
             }
             cli::FleetAction::Apply { ref node, ref profile, no_verify, timeout } => {
                 commands::fleet_apply(socket, node, profile, !no_verify, *timeout).await
+            }
+            cli::FleetAction::Grant { ref node, ref role, ref label, ref grants } => {
+                commands::fleet_grant(socket, node, role, label.as_deref(), grants).await
+            }
+            cli::FleetAction::Revoke { ref node } => {
+                commands::fleet_revoke(socket, node).await
             }
         },
     }

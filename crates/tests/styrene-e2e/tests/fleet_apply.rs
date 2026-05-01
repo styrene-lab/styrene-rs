@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 use styrene_e2e::helpers::{with_timeout, two_connected_nodes};
+use styrene_rbac::{RosterEntry, Role};
 
 #[tokio::test]
 async fn fleet_apply_profile_roundtrip() {
@@ -12,9 +13,8 @@ async fn fleet_apply_profile_roundtrip() {
         let (alice, bob) = two_connected_nodes("alice-apply", "bob-apply").await;
 
         // Grant alice Admin role on bob (UpdateConfig requires Admin)
-        bob.app_context
-            .auth()
-            .set_role(&alice.identity_hash, styrened::services::auth::Role::Admin);
+        let entry = RosterEntry::new(&alice.identity_hash, Role::Admin);
+        bob.app_context.policy().grant(entry, bob.app_context.store()).expect("grant");
 
         // Create a simple profile (TOML config)
         let profile = b"role = \"full_node\"\n\n[[interfaces]]\ntype = \"tcp_server\"\nenabled = true\nhost = \"0.0.0.0\"\nport = 4242\n";

@@ -21,9 +21,11 @@
 mod capability;
 mod policy;
 mod role;
+pub mod signed;
 mod warning;
 
 pub use capability::{Capability, ADMIN_CAPS, MONITOR_CAPS, OPERATOR_CAPS, PEER_CAPS};
 pub use policy::{RbacPolicy, RosterEntry, MIN_BLOCKED_PREFIX_LEN};
 pub use role::Role;
+pub use signed::{SignedRosterEntry, TrustedHub};
 pub use warning::PolicyWarning;

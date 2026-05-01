@@ -106,14 +106,17 @@ async fn rbac_identity_hash_matches_wire_source() {
             msgs[0].source, alice.identity_hash
         );
 
-        // And the identity_hash is what we'd pass to auth.set_role()
+        // And the identity_hash is what we'd pass to policy.grant()
+        use styrene_rbac::{RosterEntry, Role, Capability};
+        let entry = RosterEntry::new(&alice.identity_hash, Role::Admin);
         bob.app_context
-            .auth()
-            .set_role(&alice.identity_hash, styrened::services::auth::Role::Operator);
+            .policy()
+            .grant(entry, bob.app_context.store())
+            .expect("grant should succeed");
         assert!(
             bob.app_context
-                .auth()
-                .check(&msgs[0].source, &styrened::services::Capability::Exec),
+                .policy()
+                .has_capability(&msgs[0].source, Capability::RPC_EXEC),
             "RBAC check using wire source_hash should match role set via identity_hash"
         );
     })
@@ -125,10 +128,14 @@ async fn operator_grant_enables_exec_over_mesh() {
     with_timeout(async {
         let (alice, bob) = two_connected_nodes("alice-grant", "bob-grant").await;
 
-        // Grant alice Operator role on bob's auth service BEFORE the exec call
+        // Grant alice Admin role on bob's policy service BEFORE the exec call
+        // (RPC_EXEC requires Admin in the new RBAC model)
+        use styrene_rbac::{RosterEntry, Role};
+        let entry = RosterEntry::new(&alice.identity_hash, Role::Admin);
         bob.app_context
-            .auth()
-            .set_role(&alice.identity_hash, styrened::services::auth::Role::Operator);
+            .policy()
+            .grant(entry, bob.app_context.store())
+            .expect("grant should succeed");
 
         // Now alice can exec on bob
         let result = alice

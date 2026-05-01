@@ -5,16 +5,16 @@
 
 use std::time::Duration;
 use styrene_e2e::helpers::{with_timeout, two_connected_nodes};
+use styrene_rbac::{RosterEntry, Role};
 
 #[tokio::test]
 async fn exec_with_large_stdout() {
     with_timeout(async {
         let (alice, bob) = two_connected_nodes("alice-lg-rpc", "bob-lg-rpc").await;
 
-        // Grant alice Operator role on bob
-        bob.app_context
-            .auth()
-            .set_role(&alice.identity_hash, styrened::services::auth::Role::Operator);
+        // Grant alice Admin role on bob (exec requires Admin)
+        let entry = RosterEntry::new(&alice.identity_hash, Role::Admin);
+        bob.app_context.policy().grant(entry, bob.app_context.store()).expect("grant");
 
         // Execute a command that produces >1KB of output.
         // `seq 1 200` produces ~600 bytes of output (numbers 1-200, one per line).
@@ -54,9 +54,8 @@ async fn status_works_after_large_exec() {
     with_timeout(async {
         let (alice, bob) = two_connected_nodes("alice-post-lg", "bob-post-lg").await;
 
-        bob.app_context
-            .auth()
-            .set_role(&alice.identity_hash, styrened::services::auth::Role::Operator);
+        let entry = RosterEntry::new(&alice.identity_hash, Role::Admin);
+        bob.app_context.policy().grant(entry, bob.app_context.store()).expect("grant");
 
         // Large exec first
         let result = alice

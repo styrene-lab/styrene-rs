@@ -27,7 +27,7 @@ fn app_context_all_service_accessors_work() {
     let _ = ctx.config();
     let _ = ctx.status();
     let _ = ctx.fleet();
-    let _ = ctx.auth();
+    let _ = ctx.policy();
     let _ = ctx.auto_reply();
     let _ = ctx.messaging();
     let _ = ctx.discovery();

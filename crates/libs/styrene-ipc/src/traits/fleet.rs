@@ -80,4 +80,16 @@ pub trait DaemonFleet: Send + Sync {
         verify: bool,
         timeout: Option<u64>,
     ) -> Result<ConfigApplyResult, IpcError>;
+
+    /// Grant a role to an identity in the RBAC roster.
+    async fn fleet_grant(
+        &self,
+        identity_hash: &str,
+        role: &str,
+        label: &str,
+        grants: Vec<String>,
+    ) -> Result<bool, IpcError>;
+
+    /// Revoke a role assignment from the RBAC roster.
+    async fn fleet_revoke(&self, identity_hash: &str) -> Result<bool, IpcError>;
 }

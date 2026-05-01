@@ -5,6 +5,7 @@ use styrene_e2e::helpers::{
     with_timeout, await_inbound_message, two_connected_nodes, SETTLE,
 };
 use styrene_e2e::node::TestNodeBuilder;
+use styrene_rbac::{RosterEntry, Role};
 use styrened::daemon_facade::DaemonFacade;
 use styrene_ipc::traits::*;
 
@@ -80,9 +81,8 @@ async fn fleet_exec_nonexistent_command() {
     with_timeout(async {
         let (alice, bob) = two_connected_nodes("alice-execerr", "bob-execerr").await;
 
-        bob.app_context
-            .auth()
-            .set_role(&alice.identity_hash, styrened::services::auth::Role::Operator);
+        let entry = RosterEntry::new(&alice.identity_hash, Role::Admin);
+        bob.app_context.policy().grant(entry, bob.app_context.store()).expect("grant");
 
         // Execute a command that doesn't exist
         let result = alice
@@ -114,9 +114,8 @@ async fn fleet_exec_failing_command() {
     with_timeout(async {
         let (alice, bob) = two_connected_nodes("alice-execfail", "bob-execfail").await;
 
-        bob.app_context
-            .auth()
-            .set_role(&alice.identity_hash, styrened::services::auth::Role::Operator);
+        let entry = RosterEntry::new(&alice.identity_hash, Role::Admin);
+        bob.app_context.policy().grant(entry, bob.app_context.store()).expect("grant");
 
         // Execute `false` — exits with code 1
         let result = alice
@@ -139,9 +138,8 @@ async fn fleet_exec_preserves_stderr() {
     with_timeout(async {
         let (alice, bob) = two_connected_nodes("alice-stderr", "bob-stderr").await;
 
-        bob.app_context
-            .auth()
-            .set_role(&alice.identity_hash, styrened::services::auth::Role::Operator);
+        let entry = RosterEntry::new(&alice.identity_hash, Role::Admin);
+        bob.app_context.policy().grant(entry, bob.app_context.store()).expect("grant");
 
         // Write to stderr via sh
         let result = alice

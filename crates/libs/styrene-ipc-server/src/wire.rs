@@ -140,6 +140,9 @@ pub enum MessageType {
     QueryTunnelStatus = 0x91,
     CmdTunnelTeardown = 0x92,
     CmdFleetApply = 0x93,
+    CmdFleetGrant = 0x94,
+    CmdFleetRevoke = 0x95,
+    CmdTunnelEstablish = 0x96,
 
     // Responses (0x80-0x8F)
     Result = 0x81,
@@ -233,6 +236,9 @@ impl MessageType {
             0x91 => Ok(Self::QueryTunnelStatus),
             0x92 => Ok(Self::CmdTunnelTeardown),
             0x93 => Ok(Self::CmdFleetApply),
+            0x94 => Ok(Self::CmdFleetGrant),
+            0x95 => Ok(Self::CmdFleetRevoke),
+            0x96 => Ok(Self::CmdTunnelEstablish),
             0x80 => Ok(Self::Pong),
             0x81 => Ok(Self::Result),
             0x82 => Ok(Self::Error),
