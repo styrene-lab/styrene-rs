@@ -7,7 +7,7 @@ source /harness/harness.sh
 echo "  Suite: Identity"
 
 # T17: Query identity on hub
-OUTPUT=$(styrene --socket tcp://hub:9001 identity 2>&1) && RC=0 || RC=$?
+OUTPUT=$(styrene --socket "$HUB_SOCK" identity 2>&1) && RC=0 || RC=$?
 if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "hash"; then
     pass "T17: hub identity shows hash"
 else
@@ -16,7 +16,7 @@ else
 fi
 
 # T18: Query identity on alpha
-OUTPUT=$(styrene --socket tcp://alpha:9002 identity 2>&1) && RC=0 || RC=$?
+OUTPUT=$(styrene --socket "$ALPHA_SOCK" identity 2>&1) && RC=0 || RC=$?
 if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "hash"; then
     pass "T18: alpha identity shows hash"
 else
@@ -25,8 +25,8 @@ else
 fi
 
 # T19: Identities are unique (hub != alpha)
-HUB_HASH=$(styrene --socket tcp://hub:9001 identity 2>&1 | grep "hash" | awk '{print $2}')
-ALPHA_HASH=$(styrene --socket tcp://alpha:9002 identity 2>&1 | grep "hash" | awk '{print $2}')
+HUB_HASH=$(styrene --socket "$HUB_SOCK" identity 2>&1 | grep "hash" | awk '{print $2}')
+ALPHA_HASH=$(styrene --socket "$ALPHA_SOCK" identity 2>&1 | grep "hash" | awk '{print $2}')
 if [ -n "$HUB_HASH" ] && [ -n "$ALPHA_HASH" ] && [ "$HUB_HASH" != "$ALPHA_HASH" ]; then
     pass "T19: hub and alpha have different identities"
 else

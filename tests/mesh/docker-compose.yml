@@ -1,10 +1,10 @@
 # Mesh integration test topology.
 #
-# Hub:   TCP server on :4242, relay on :9001 — bridges mesh-core and mesh-isolated
-# Alpha: TCP client -> hub, relay on :9002 — mesh-core
-# Beta:  TCP client -> hub, relay on :9003 — mesh-core
-# Gamma: TCP client -> hub, relay on :9004 — mesh-isolated
-# Operator: CLI only, connects via tcp://hub:9001 — mesh-core
+# Hub:   TCP server on :4242, socket at /run/styrene/daemon.sock — bridges mesh-core and mesh-isolated
+# Alpha: TCP client -> hub, socket at /run/styrene/daemon.sock — mesh-core
+# Beta:  TCP client -> hub, socket at /run/styrene/daemon.sock — mesh-core
+# Gamma: TCP client -> hub, socket at /run/styrene/daemon.sock — mesh-isolated
+# Operator: CLI only, accesses daemon sockets via shared volumes
 #
 # Usage:
 #   docker compose -f tests/mesh/docker-compose.yml up -d --build
@@ -20,26 +20,28 @@ services:
     image: styrened-mesh:latest
     container_name: mesh-hub
     hostname: hub
-    entrypoint: ["bash", "-c"]
     command:
-      - |
-        styrened --socket /run/styrene/daemon.sock --config /etc/styrene/config.toml --transport 0.0.0.0:4242 --announce-interval-secs 15 &
-        sleep 3
-        python3 /relay/tcp_relay.py /run/styrene/daemon.sock 9001
+      - styrened
+      - --socket
+      - /run/styrene/daemon.sock
+      - --config
+      - /etc/styrene/config.toml
+      - --transport
+      - 0.0.0.0:4242
+      - --announce-interval-secs
+      - "15"
     volumes:
+      - hub-sock:/run/styrene
       - ./configs/hub.toml:/etc/styrene/config.toml:ro
-      - ./tcp_relay.py:/relay/tcp_relay.py:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
       - LXMF_DISPLAY_NAME=hub
     healthcheck:
-      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('127.0.0.1', 9001)); s.close()"]
+      test: ["CMD", "test", "-S", "/run/styrene/daemon.sock"]
       interval: 3s
       timeout: 2s
       retries: 20
       start_period: 10s
-    ports:
-      - "${MESH_HUB_PORT:-9001}:9001"
     networks:
       - mesh-core
       - mesh-isolated
@@ -55,26 +57,22 @@ services:
     command:
       - |
         sleep 5
-        styrened --socket /run/styrene/daemon.sock --config /etc/styrene/config.toml --transport 0.0.0.0:4242 --announce-interval-secs 15 &
-        sleep 3
-        python3 /relay/tcp_relay.py /run/styrene/daemon.sock 9002
+        styrened --socket /run/styrene/daemon.sock --config /etc/styrene/config.toml --transport 0.0.0.0:4242 --announce-interval-secs 15
     depends_on:
       hub:
         condition: service_healthy
     volumes:
+      - alpha-sock:/run/styrene
       - ./configs/alpha.toml:/etc/styrene/config.toml:ro
-      - ./tcp_relay.py:/relay/tcp_relay.py:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
       - LXMF_DISPLAY_NAME=alpha
     healthcheck:
-      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('127.0.0.1', 9002)); s.close()"]
+      test: ["CMD", "test", "-S", "/run/styrene/daemon.sock"]
       interval: 3s
       timeout: 2s
       retries: 20
       start_period: 10s
-    ports:
-      - "${MESH_ALPHA_PORT:-9002}:9002"
     networks:
       - mesh-core
 
@@ -89,26 +87,22 @@ services:
     command:
       - |
         sleep 5
-        styrened --socket /run/styrene/daemon.sock --config /etc/styrene/config.toml --transport 0.0.0.0:4242 --announce-interval-secs 15 &
-        sleep 3
-        python3 /relay/tcp_relay.py /run/styrene/daemon.sock 9003
+        styrened --socket /run/styrene/daemon.sock --config /etc/styrene/config.toml --transport 0.0.0.0:4242 --announce-interval-secs 15
     depends_on:
       hub:
         condition: service_healthy
     volumes:
+      - beta-sock:/run/styrene
       - ./configs/beta.toml:/etc/styrene/config.toml:ro
-      - ./tcp_relay.py:/relay/tcp_relay.py:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
       - LXMF_DISPLAY_NAME=beta
     healthcheck:
-      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('127.0.0.1', 9003)); s.close()"]
+      test: ["CMD", "test", "-S", "/run/styrene/daemon.sock"]
       interval: 3s
       timeout: 2s
       retries: 20
       start_period: 10s
-    ports:
-      - "${MESH_BETA_PORT:-9003}:9003"
     networks:
       - mesh-core
 
@@ -123,26 +117,22 @@ services:
     command:
       - |
         sleep 5
-        styrened --socket /run/styrene/daemon.sock --config /etc/styrene/config.toml --transport 0.0.0.0:4242 --announce-interval-secs 15 &
-        sleep 3
-        python3 /relay/tcp_relay.py /run/styrene/daemon.sock 9004
+        styrened --socket /run/styrene/daemon.sock --config /etc/styrene/config.toml --transport 0.0.0.0:4242 --announce-interval-secs 15
     depends_on:
       hub:
         condition: service_healthy
     volumes:
+      - gamma-sock:/run/styrene
       - ./configs/gamma.toml:/etc/styrene/config.toml:ro
-      - ./tcp_relay.py:/relay/tcp_relay.py:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
       - LXMF_DISPLAY_NAME=gamma
     healthcheck:
-      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('127.0.0.1', 9004)); s.close()"]
+      test: ["CMD", "test", "-S", "/run/styrene/daemon.sock"]
       interval: 3s
       timeout: 2s
       retries: 20
       start_period: 10s
-    ports:
-      - "${MESH_GAMMA_PORT:-9004}:9004"
     networks:
       - mesh-isolated
 
@@ -168,7 +158,15 @@ services:
       gamma:
         condition: service_healthy
     environment:
-      - STYRENE_SOCKET=tcp://hub:9001
+      HUB_SOCK: /run/styrene-hub/daemon.sock
+      ALPHA_SOCK: /run/styrene-alpha/daemon.sock
+      BETA_SOCK: /run/styrene-beta/daemon.sock
+      GAMMA_SOCK: /run/styrene-gamma/daemon.sock
+    volumes:
+      - hub-sock:/run/styrene-hub:ro
+      - alpha-sock:/run/styrene-alpha:ro
+      - beta-sock:/run/styrene-beta:ro
+      - gamma-sock:/run/styrene-gamma:ro
     networks:
       - mesh-core
       - mesh-isolated
@@ -178,3 +176,9 @@ networks:
     driver: bridge
   mesh-isolated:
     driver: bridge
+
+volumes:
+  hub-sock:
+  alpha-sock:
+  beta-sock:
+  gamma-sock:

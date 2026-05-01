@@ -17,8 +17,8 @@ echo "  Suite: Tunnel Negotiation"
 NEGOTIATION_TIMEOUT=30
 
 # Get node identity hashes for addressing
-ALPHA_DEST=$(styrene --socket tcp://alpha:9002 identity 2>&1 | grep "lxmf" | awk '{print $2}')
-BETA_DEST=$(styrene --socket tcp://beta:9003 identity 2>&1 | grep "lxmf" | awk '{print $2}')
+ALPHA_DEST=$(styrene --socket "$ALPHA_SOCK" identity 2>&1 | grep "lxmf" | awk '{print $2}')
+BETA_DEST=$(styrene --socket "$BETA_SOCK" identity 2>&1 | grep "lxmf" | awk '{print $2}')
 
 echo "  alpha lxmf: ${ALPHA_DEST:-UNKNOWN}"
 echo "  beta lxmf:  ${BETA_DEST:-UNKNOWN}"
@@ -27,11 +27,11 @@ echo "  beta lxmf:  ${BETA_DEST:-UNKNOWN}"
 # Check that the daemon exposes tunnel-related status or config.
 # Try `styrene status` output for protocol handlers, or check daemon logs
 # for handler registration.
-OUTPUT=$(styrene --socket tcp://alpha:9002 status 2>&1) && RC=0 || RC=$?
+OUTPUT=$(styrene --socket "$ALPHA_SOCK" status 2>&1) && RC=0 || RC=$?
 if [ "$RC" -eq 0 ]; then
     # The daemon is running; check if tunnel handler info appears in status
     # or if a tunnel subcommand exists
-    TUNNEL_OUTPUT=$(styrene --socket tcp://alpha:9002 tunnel status 2>&1) && TUNNEL_RC=0 || TUNNEL_RC=$?
+    TUNNEL_OUTPUT=$(styrene --socket "$ALPHA_SOCK" tunnel status 2>&1) && TUNNEL_RC=0 || TUNNEL_RC=$?
     if [ "$TUNNEL_RC" -eq 0 ]; then
         pass "T25: tunnel handler is registered (tunnel status responded)"
     elif echo "$TUNNEL_OUTPUT" | grep -qi "no active tunnel\|tunnel.*registered\|not connected"; then
@@ -61,7 +61,7 @@ else
     sleep 5
 
     # Attempt to use the tunnel CLI if it exists
-    OFFER_OUTPUT=$(styrene --socket tcp://alpha:9002 tunnel offer "$BETA_DEST" 2>&1) && OFFER_RC=0 || OFFER_RC=$?
+    OFFER_OUTPUT=$(styrene --socket "$ALPHA_SOCK" tunnel offer "$BETA_DEST" 2>&1) && OFFER_RC=0 || OFFER_RC=$?
 
     if [ "$OFFER_RC" -eq 0 ]; then
         # Tunnel offer command exists and succeeded
@@ -73,7 +73,7 @@ else
         NEGOTIATED=false
         while [ "$ELAPSED" -lt "$NEGOTIATION_TIMEOUT" ]; do
             # Check if beta has tunnel state referencing alpha
-            BETA_TUNNEL=$(styrene --socket tcp://beta:9003 tunnel status 2>&1) || true
+            BETA_TUNNEL=$(styrene --socket "$BETA_SOCK" tunnel status 2>&1) || true
             if echo "$BETA_TUNNEL" | grep -qi "alpha\|offer\|pending\|accept\|negotiat"; then
                 NEGOTIATED=true
                 break

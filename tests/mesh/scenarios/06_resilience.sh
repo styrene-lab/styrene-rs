@@ -34,7 +34,7 @@ fi
 sleep 10
 
 # Verify hub no longer sees alpha as a peer
-OUTPUT=$(styrene --socket tcp://hub:9001 peers 2>&1) || true
+OUTPUT=$(styrene --socket "$HUB_SOCK" peers 2>&1) || true
 if echo "$OUTPUT" | grep -qF "alpha"; then
     # Alpha might still appear briefly; not necessarily a failure
     echo "  INFO: T21b: alpha still in hub peer list (may be stale)"
@@ -51,7 +51,7 @@ else
 fi
 
 # Wait for alpha to reconnect to hub
-if wait_for_peer tcp://hub:9001 alpha "$RECOVERY_TIMEOUT"; then
+if wait_for_peer "$HUB_SOCK" alpha "$RECOVERY_TIMEOUT"; then
     pass "T22b: alpha reconnected to hub after restart"
 else
     fail "T22b: alpha reconnected to hub after restart (timeout ${RECOVERY_TIMEOUT}s)"
@@ -68,13 +68,13 @@ fi
 sleep 5
 
 # Alpha/beta should not crash — just lose connectivity
-# We can't query them via hub relay, but we can try their own relays
-OUTPUT=$(styrene --socket tcp://alpha:9002 status 2>&1) && RC=0 || RC=$?
+# We can try their own sockets directly
+OUTPUT=$(styrene --socket "$ALPHA_SOCK" status 2>&1) && RC=0 || RC=$?
 if [ "$RC" -eq 0 ]; then
     pass "T23b: alpha still running after hub stopped"
 else
-    # May fail because alpha relay is also affected; note but don't hard-fail
-    echo "  INFO: T23b: alpha status unreachable (expected if relay down)"
+    # May fail because alpha's socket volume is no longer accessible after restart
+    echo "  INFO: T23b: alpha status unreachable (expected if container restarted)"
 fi
 
 # T24: Restart hub, verify full mesh recovery
@@ -87,13 +87,13 @@ fi
 
 # Wait for mesh to recover
 sleep 15
-if wait_for_peer tcp://hub:9001 alpha "$RECOVERY_TIMEOUT"; then
+if wait_for_peer "$HUB_SOCK" alpha "$RECOVERY_TIMEOUT"; then
     pass "T24b: alpha reconnected after hub restart"
 else
     fail "T24b: alpha reconnected after hub restart (timeout ${RECOVERY_TIMEOUT}s)"
 fi
 
-if wait_for_peer tcp://hub:9001 beta "$RECOVERY_TIMEOUT"; then
+if wait_for_peer "$HUB_SOCK" beta "$RECOVERY_TIMEOUT"; then
     pass "T24c: beta reconnected after hub restart"
 else
     fail "T24c: beta reconnected after hub restart (timeout ${RECOVERY_TIMEOUT}s)"
