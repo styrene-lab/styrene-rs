@@ -250,15 +250,48 @@
           cargoExtraArgs = "-p styrened";
         });
 
+        # The daemon with I2P proxy feature
+        styrened-i2p = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
+          cargoExtraArgs = "-p styrened --features i2p-proxy";
+        });
+
+        # The I2P proxy client binary
+        styrene-i2p = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
+          cargoExtraArgs = "-p styrene-i2p";
+        });
+
         # The TUI binary
         styrene-tui = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
           cargoExtraArgs = "-p styrene-tui";
         });
 
+        # OCI images via nix2container
+        n2c = nix2container.packages.${system}.nix2container;
+
+        oci = n2c.buildImage {
+          name = "ghcr.io/styrene-lab/styrened";
+          tag = commitSha;
+          copyToRoot = [ styrened ];
+          config = {
+            entrypoint = [ "${styrened}/bin/styrened" ];
+          };
+        };
+
+        oci-i2p = n2c.buildImage {
+          name = "ghcr.io/styrene-lab/styrened-i2p";
+          tag = commitSha;
+          copyToRoot = [ styrened-i2p ];
+          config = {
+            entrypoint = [ "${styrened-i2p}/bin/styrened" ];
+          };
+        };
+
       in {
         packages = {
-          inherit styrened styrene-tui;
+          inherit styrened styrened-i2p styrene-i2p styrene-tui oci oci-i2p;
           default = styrened;
         };
 
