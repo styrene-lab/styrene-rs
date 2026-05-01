@@ -160,11 +160,14 @@ impl RpcRequestHandler {
                     "stderr": stderr,
                 }))
             }
-            Err(e) => Self::cbor_encode(&serde_json::json!({
-                "exit_code": -1,
-                "stdout": "",
-                "stderr": format!("exec error: {e}"),
-            })),
+            Err(e) => {
+                eprintln!("[rpc-request] exec failed: {e}");
+                Self::cbor_encode(&serde_json::json!({
+                    "exit_code": -1,
+                    "stdout": "",
+                    "stderr": "command execution failed",
+                }))
+            }
         }
     }
 
@@ -198,9 +201,10 @@ impl RpcRequestHandler {
 
         // Size limit on hex string (4 MB hex = 2 MB decoded, matches FleetService limit)
         if profile_hex.len() > 4 * 1024 * 1024 {
+            eprintln!("[rpc-request] rejecting oversized profile: {} bytes", profile_hex.len());
             return Self::cbor_encode(&serde_json::json!({
                 "success": false, "verified": false, "exit_code": -1,
-                "stdout": "", "stderr": format!("profile too large: {} bytes", profile_hex.len()),
+                "stdout": "", "stderr": "profile too large",
             }));
         }
 
@@ -210,9 +214,10 @@ impl RpcRequestHandler {
         let profile_bytes = match hex::decode(profile_hex) {
             Ok(b) => b,
             Err(e) => {
+                eprintln!("[rpc-request] invalid profile hex encoding: {e}");
                 return Self::cbor_encode(&serde_json::json!({
                     "success": false, "verified": false, "exit_code": -1,
-                    "stdout": "", "stderr": format!("invalid profile encoding: {e}"),
+                    "stdout": "", "stderr": "invalid profile encoding",
                 }))
             }
         };
@@ -236,9 +241,10 @@ impl RpcRequestHandler {
             {
                 Ok(f) => f,
                 Err(e) => {
+                    eprintln!("[rpc-request] failed to create temp profile: {e}");
                     return Self::cbor_encode(&serde_json::json!({
                         "success": false, "verified": false, "exit_code": -1,
-                        "stdout": "", "stderr": format!("failed to create temp profile: {e}"),
+                        "stdout": "", "stderr": "failed to create temp profile",
                     }));
                 }
             };
@@ -297,10 +303,13 @@ impl RpcRequestHandler {
                 "stdout": String::from_utf8_lossy(&output.stdout),
                 "stderr": String::from_utf8_lossy(&output.stderr),
             })),
-            Err(e) => Self::cbor_encode(&serde_json::json!({
-                "success": false, "verified": verified, "exit_code": -1,
-                "stdout": "", "stderr": format!("nex apply failed: {e}"),
-            })),
+            Err(e) => {
+                eprintln!("[rpc-request] nex apply failed to run: {e}");
+                Self::cbor_encode(&serde_json::json!({
+                    "success": false, "verified": verified, "exit_code": -1,
+                    "stdout": "", "stderr": "profile apply failed",
+                }))
+            }
         }
     }
 }
