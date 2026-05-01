@@ -1,11 +1,7 @@
-//! IPC client — connects to a running styrened daemon via Unix socket or TCP.
+//! IPC client — connects to a running styrened daemon via Unix socket.
 //!
 //! Provides `DaemonClient` with typed methods matching the `Daemon` trait
 //! surface. Uses the same msgpack wire protocol as the TUI and Python clients.
-//!
-//! Supports two connection modes:
-//! - Unix socket: `--socket /path/to/daemon.sock` (default)
-//! - TCP: `--socket tcp://host:port` (for container testing via IPC relay)
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,7 +9,7 @@ use std::pin::Pin;
 
 use rmpv::Value as MpValue;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::{TcpStream, UnixStream};
+use tokio::net::UnixStream;
 use tokio::time::{timeout, Duration};
 
 use styrene_ipc::types::{
@@ -24,53 +20,45 @@ use styrene_ipc_server::wire::{self, Frame, MessageType, REQUEST_ID_SIZE};
 /// Default timeout for RPC calls.
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Combined async read+write trait for transport-agnostic streams.
+/// Combined async read+write trait.
 trait AsyncStream: AsyncRead + AsyncWrite + Send + Unpin {}
 impl AsyncStream for UnixStream {}
-impl AsyncStream for TcpStream {}
-
-/// Transport-agnostic stream (Unix socket or TCP).
-type DynStream = Pin<Box<dyn AsyncStream>>;
 
 /// Client connection to a styrened daemon.
 pub struct DaemonClient {
-    stream: DynStream,
+    stream: Pin<Box<dyn AsyncStream>>,
     next_id: u64,
     /// Override timeout for the next RPC call (reset after use).
     next_timeout: Option<Duration>,
 }
 
 impl DaemonClient {
-    /// Connect to the daemon via Unix socket or TCP.
-    ///
-    /// If the path starts with `tcp://`, connects via TCP (e.g., `tcp://host:9001`).
-    /// Otherwise, connects via Unix socket at the given path.
+    /// Connect to the daemon via Unix socket.
     pub async fn connect(socket_path: Option<&Path>) -> Result<Self, String> {
         let path_str = socket_path
             .map(|p| p.to_string_lossy().to_string())
             .or_else(|| std::env::var("STYRENE_SOCKET").ok())
             .unwrap_or_else(|| default_socket_path().to_string_lossy().to_string());
 
-        let stream: DynStream = if path_str.starts_with("tcp://") {
-            // TCP mode: connect to host:port via IPC relay
-            let addr = path_str.strip_prefix("tcp://").ok_or("invalid tcp:// URL")?;
-            let tcp =
-                TcpStream::connect(addr).await.map_err(|e| format!("tcp connect {addr}: {e}"))?;
-            Box::pin(tcp)
-        } else {
-            // Unix socket mode (default)
-            let path = PathBuf::from(&path_str);
-            if !path.exists() {
-                return Err(format!(
-                    "daemon socket not found: {}\nIs styrene daemon running?",
-                    path.display()
-                ));
-            }
-            let unix = UnixStream::connect(&path)
-                .await
-                .map_err(|e| format!("connect {}: {e}", path.display()))?;
-            Box::pin(unix)
-        };
+        if path_str.starts_with("tcp://") {
+            return Err(
+                "TCP IPC mode has been removed for security reasons. \
+                 Use a Unix socket (default) or SSH tunnel for remote access."
+                    .into(),
+            );
+        }
+
+        let path = PathBuf::from(&path_str);
+        if !path.exists() {
+            return Err(format!(
+                "daemon socket not found: {}\nIs styrene daemon running?",
+                path.display()
+            ));
+        }
+        let unix = UnixStream::connect(&path)
+            .await
+            .map_err(|e| format!("connect {}: {e}", path.display()))?;
+        let stream: Pin<Box<dyn AsyncStream>> = Box::pin(unix);
 
         let mut client = Self { stream, next_id: 0, next_timeout: None };
 

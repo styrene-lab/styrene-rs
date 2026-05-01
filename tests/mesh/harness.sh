@@ -63,7 +63,7 @@ assert_output_not_contains() {
 # Poll a node's peer list until a given peer name appears.
 # Uses shorter poll intervals (1s) for the first 30s, then extends to 3s.
 # On timeout, prints debug output showing visible peers.
-# Usage: wait_for_peer tcp://hub:9001 alpha 60
+# Usage: wait_for_peer /run/styrene-hub/daemon.sock alpha 60
 wait_for_peer() {
     local socket_url="$1"
     local peer_name="$2"
