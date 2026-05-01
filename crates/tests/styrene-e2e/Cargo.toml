@@ -1,0 +1,47 @@
+[package]
+name = "styrene-e2e"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "End-to-end integration tests for styrene mesh"
+
+[lib]
+name = "styrene_e2e"
+
+[dependencies]
+# Internal crates
+styrened = { path = "../../apps/styrened" }
+rns_core = { package = "styrene-rns", path = "../../libs/styrene-rns", features = ["transport"] }
+styrene-tunnel = { path = "../../libs/styrene-tunnel", features = ["testing"] }
+styrene-content = { path = "../../libs/styrene-content", features = ["alloc", "tokio"] }
+styrene-mesh = { path = "../../libs/styrene-mesh", features = ["pqc"] }
+styrene-services = { path = "../../libs/styrene-services" }
+styrene-ipc = { path = "../../libs/styrene-ipc" }
+styrene-ipc-server = { path = "../../libs/styrene-ipc-server" }
+lxmf = { package = "styrene-lxmf", path = "../../libs/styrene-lxmf", features = ["std"] }
+styrene-identity = { path = "../../libs/styrene-identity", features = ["file-signer", "signing"] }
+
+# Async runtime
+tokio = { workspace = true, features = ["full", "test-util"] }
+
+# Utilities
+blake3 = "1"
+hex.workspace = true
+heapless = "0.8"
+rand_core = { workspace = true, features = ["getrandom"] }
+async-trait.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+rmpv = { workspace = true, features = ["with-serde"] }
+rmp-serde.workspace = true
+serde_bytes.workspace = true
+ed25519-dalek.workspace = true
+x25519-dalek = { workspace = true, features = ["static_secrets"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

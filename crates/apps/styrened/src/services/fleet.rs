@@ -310,15 +310,14 @@ impl FleetService {
     /// random request_id provides anti-forgery correlation.
     pub fn handle_response(&self, message: StyreneMessage, source_hash: &str) -> bool {
         let mut pending = self.pending.lock().unwrap();
-        if let Some(req) = pending.get(&message.request_id) {
-            if req.dest_hash != source_hash {
-                eprintln!(
-                    "[fleet] response source mismatch: expected {}, got {}",
-                    req.dest_hash, source_hash
-                );
-                return false;
-            }
-            let req = pending.remove(&message.request_id).unwrap();
+        // Note: req.dest_hash is the delivery destination hash we sent to,
+        // while source_hash is the responder's identity address hash from
+        // the LXMF wire. These are different hash types by design:
+        //   delivery = Hash(dest_name_hash || identity_hash)
+        //   identity = Hash(pubkey || verifying_key)
+        // The 128-bit random request_id provides anti-forgery correlation,
+        // and LXMF signature verification authenticates the sender.
+        if let Some(req) = pending.remove(&message.request_id) {
             eprintln!(
                 "[fleet] rpc response correlated: from={} dest={}",
                 source_hash,

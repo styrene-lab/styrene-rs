@@ -1,0 +1,39 @@
+[package]
+name = "styrene-mqtt"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MQTT 5.0 infrastructure for the Aether event fabric"
+keywords = ["styrene", "mqtt", "aether", "event-bus"]
+categories = ["network-programming"]
+
+[lib]
+name = "styrene_mqtt"
+
+[dependencies]
+tokio = { workspace = true, features = ["sync", "rt", "macros"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+rumqttc = { workspace = true }
+chrono = { workspace = true }
+futures-core = { workspace = true }
+pin-project-lite = { workspace = true }
+tracing = { workspace = true }
+bytes = "1"
+
+# Feature-gated
+rumqttd = { workspace = true, optional = true }
+
+[features]
+default = []
+embedded-broker = ["dep:rumqttd"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

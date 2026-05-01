@@ -79,6 +79,12 @@ pub enum StyreneMessageType {
     SelfUpdate = 0x43,
     InboxQuery = 0x44,
     MessagesQuery = 0x45,
+    /// Client sends LXMF payload to hub for offline destination storage.
+    PropagationIngest = 0x46,
+    /// Client requests queued messages from hub.
+    PropagationFetch = 0x47,
+    /// Client acknowledges receipt of messages (hub deletes them).
+    PropagationDelete = 0x48,
 
     // RPC Responses (0x60-0x7F)
     ExecResult = 0x60,
@@ -87,6 +93,9 @@ pub enum StyreneMessageType {
     SelfUpdateResult = 0x63,
     InboxResponse = 0x64,
     MessagesResponse = 0x65,
+    PropagationIngestResult = 0x66,
+    PropagationFetchResult = 0x67,
+    PropagationDeleteResult = 0x68,
 
     // Hub Services — I2P Proxy (0x84-0x88)
     /// Client requests HTTP fetch through hub's i2pd router.
@@ -188,12 +197,18 @@ impl StyreneMessageType {
             0x43 => Ok(Self::SelfUpdate),
             0x44 => Ok(Self::InboxQuery),
             0x45 => Ok(Self::MessagesQuery),
+            0x46 => Ok(Self::PropagationIngest),
+            0x47 => Ok(Self::PropagationFetch),
+            0x48 => Ok(Self::PropagationDelete),
             0x60 => Ok(Self::ExecResult),
             0x61 => Ok(Self::RebootResult),
             0x62 => Ok(Self::ConfigUpdateResult),
             0x63 => Ok(Self::SelfUpdateResult),
             0x64 => Ok(Self::InboxResponse),
             0x65 => Ok(Self::MessagesResponse),
+            0x66 => Ok(Self::PropagationIngestResult),
+            0x67 => Ok(Self::PropagationFetchResult),
+            0x68 => Ok(Self::PropagationDeleteResult),
             0x84 => Ok(Self::I2pProxyRequest),
             0x85 => Ok(Self::I2pProxyResponse),
             0x86 => Ok(Self::I2pProxyData),
@@ -319,6 +334,58 @@ impl ChunkResponsePayload {
         ciborium::from_reader(data)
             .map_err(|e| WireError::CborDecode(e.to_string()))
     }
+}
+
+// ── Propagation Payloads (0x46-0x48, 0x66-0x68) ────────────────────────────
+
+/// Payload for `PropagationIngest` (0x46): client sends LXMF message to hub for storage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PropagationIngestPayload {
+    /// Hex-encoded delivery destination hash of the offline recipient.
+    pub dest_hash: String,
+    /// Raw LXMF wire payload (signed, ready for delivery).
+    #[serde(with = "serde_bytes")]
+    pub lxmf_bytes: Vec<u8>,
+    /// Optional hex-encoded source identity hash.
+    pub source_hash: Option<String>,
+}
+
+/// Payload for `PropagationFetch` (0x47): client requests queued messages from hub.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PropagationFetchPayload {
+    /// Hex-encoded delivery destination hash to fetch messages for.
+    pub dest_hash: String,
+}
+
+/// Payload for `PropagationDelete` (0x48): client acknowledges receipt of messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PropagationDeletePayload {
+    /// Propagation store IDs to delete (from PropagationFetchResult).
+    pub ids: Vec<String>,
+}
+
+/// A single queued message in a fetch result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PropagationMessageEntry {
+    /// Propagation store ID (for later deletion via PropagationDelete).
+    pub id: String,
+    /// Raw LXMF wire payload.
+    #[serde(with = "serde_bytes")]
+    pub lxmf_bytes: Vec<u8>,
+}
+
+/// Payload for `PropagationFetchResult` (0x67): batch of queued messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PropagationFetchResultPayload {
+    pub messages: Vec<PropagationMessageEntry>,
+}
+
+/// Payload for `PropagationIngestResult` (0x66) and `PropagationDeleteResult` (0x68).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PropagationStatusPayload {
+    pub success: bool,
+    pub error: Option<String>,
+    pub count: Option<usize>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
