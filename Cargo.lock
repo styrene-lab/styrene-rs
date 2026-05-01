@@ -7167,6 +7167,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "blake3",
+ "ed25519-dalek",
  "heapless",
  "hex",
  "log",
@@ -7175,6 +7176,7 @@ dependencies = [
  "rmpv",
  "serde_bytes",
  "styrene-content",
+ "styrene-identity",
  "styrene-ipc",
  "styrene-ipc-server",
  "styrene-lxmf",
@@ -7185,6 +7187,7 @@ dependencies = [
  "styrened",
  "tempfile",
  "tokio",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -7213,8 +7216,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-i2p"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "ciborium",
+ "clap",
+ "dirs",
+ "hex",
+ "http-body-util",
+ "hyper 1.8.1",
+ "hyper-util",
+ "rand_core 0.6.4",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "styrene-mesh",
+ "styrene-rns",
+ "styrened",
+ "tokio",
+]
+
+[[package]]
 name = "styrene-identity"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "argon2",
  "async-trait",
@@ -7229,6 +7255,7 @@ dependencies = [
  "proptest",
  "rand 0.8.5",
  "rand_core 0.6.4",
+ "security-framework",
  "serde_json",
  "sha2",
  "sha3",
@@ -7481,6 +7508,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "rand_core 0.6.4",
+ "reqwest",
  "rmp-serde",
  "rmpv",
  "rusqlite",

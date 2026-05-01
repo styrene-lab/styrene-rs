@@ -23,9 +23,9 @@ use security_framework::passwords_options::AccessControlOptions;
 use crate::signer::{IdentitySigner, RootSecret, SignerError, SignerTier};
 
 /// Default Keychain service identifier.
-const SERVICE: &str = "io.styrene.identity";
+pub const SERVICE: &str = "io.styrene.identity";
 /// Default Keychain account name.
-const ACCOUNT: &str = "root-secret";
+pub const ACCOUNT: &str = "root-secret";
 
 /// Tier B signer — reads the root secret from the macOS/iOS Keychain
 /// with biometric authentication (Face ID / Touch ID).
@@ -54,12 +54,11 @@ impl KeychainSigner {
 
     /// Check if a biometric-protected identity exists in the Keychain.
     ///
-    /// This does NOT trigger a biometric prompt — it only checks existence.
+    /// Calls `generic_password()` which may trigger a biometric prompt if the
+    /// item is accessible without explicit auth. In practice, biometric-protected
+    /// items return `errSecInteractionNotAllowed` (-25308) or `errSecAuthFailed`
+    /// (-25293) before prompting, which we interpret as "exists".
     pub fn exists(&self) -> bool {
-        // Attempt to read with no authentication required for existence check.
-        // On macOS/iOS, querying for attributes (not data) doesn't trigger biometrics.
-        // But the simple generic_password API always requests data.
-        // Use a try-query that catches "auth required" as "exists".
         match generic_password(PasswordOptions::new_generic_password(&self.service, &self.account)) {
             Ok(_) => true,
             Err(e) => {
@@ -130,6 +129,9 @@ impl IdentitySigner for KeychainSigner {
             if code == -25293 || code == -128 {
                 // User cancelled biometric prompt
                 SignerError::AuthRequired("Biometric authentication cancelled".into())
+            } else if code == -25308 {
+                // Interaction not allowed (e.g. device locked, no UI context)
+                SignerError::AuthRequired("Biometric authentication required but not available in this context".into())
             } else if code == -25300 {
                 // Item not found
                 SignerError::KeyNotFound("No identity in Keychain".into())
