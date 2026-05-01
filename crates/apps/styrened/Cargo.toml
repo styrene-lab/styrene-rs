@@ -22,6 +22,7 @@ styrene-content = { path = "../../libs/styrene-content", version = "0.1.0", feat
 anyhow.workspace = true
 async-trait.workspace = true
 ciborium = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 tokio-util.workspace = true
 thiserror.workspace = true
 base64 = { workspace = true }
@@ -49,6 +50,7 @@ dirs = "6.0.0"
 [features]
 default = []
 wireguard = ["dep:styrene-tunnel"]
+i2p-proxy = ["dep:reqwest"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -17,6 +17,8 @@ pub mod config;
 pub mod discovery;
 pub mod events;
 pub mod fleet;
+#[cfg(feature = "i2p-proxy")]
+pub mod i2p_proxy;
 pub mod identity;
 pub mod messaging;
 pub mod pages;
@@ -38,4 +40,6 @@ pub use pages::PageService;
 pub use propagation::PropagationService;
 pub use protocol::ProtocolService;
 pub use status::{InterfaceRecord, PropagationState, StatusService};
+#[cfg(feature = "i2p-proxy")]
+pub use i2p_proxy::I2pProxyService;
 pub use tunnel::TunnelService;
