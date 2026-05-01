@@ -55,8 +55,9 @@ The operator's workstation connects to a mesh hub (or directly to nodes) via the
 # Local daemon
 styrene status
 
-# Remote daemon via TCP relay
-styrene --socket tcp://hub.example.com:9001 status
+# Remote daemon via SSH tunnel
+ssh -L /tmp/styrene-remote.sock:/run/styrene/daemon.sock user@remote-host
+styrene --socket /tmp/styrene-remote.sock status
 ```
 
 ---
