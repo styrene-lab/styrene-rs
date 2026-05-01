@@ -1,0 +1,31 @@
+# Multi-stage build for styrened with i2p-proxy feature
+# Stage 1: Build the binary
+# Stage 2: Minimal runtime image
+
+FROM rust:1.86-alpine AS build
+
+RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static sqlite-dev pkgconfig
+
+WORKDIR /build
+COPY . .
+
+# Build only the daemon with i2p-proxy feature
+RUN OPENSSL_STATIC=1 cargo build \
+    --release \
+    --package styrened \
+    --features i2p-proxy \
+    && strip target/release/styrened
+
+# ---
+
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates sqlite-libs
+
+COPY --from=build /build/target/release/styrened /usr/local/bin/styrened
+
+# Default transport + RPC ports
+EXPOSE 4242 4243
+
+ENTRYPOINT ["styrened"]
+CMD ["--transport", "0.0.0.0:4242", "--rpc", "0.0.0.0:4243"]
