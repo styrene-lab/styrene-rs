@@ -323,15 +323,21 @@ impl I2pProxyService {
     }
 
     /// Send a StyreneMessage to a peer via LXMF (same pattern as TunnelService).
-    /// Send a StyreneMessage to a peer via LXMF (same pattern as TunnelService).
+    /// Send a StyreneMessage to a peer.
+    ///
+    /// Sends the raw StyreneMessage bytes via the LXMF delivery mechanism,
+    /// using link-based delivery with Resource chunking for large payloads.
     async fn send_i2p_message(
         &self,
         peer_identity: &str,
         msg: &StyreneMessage,
     ) -> Result<(), String> {
-        let wire_bytes = msg.encode();
-        let wire_hex = hex::encode(&wire_bytes);
+        let transport = self.transport.lock().unwrap().clone();
 
+        // The peer_identity is the source_hash from the inbound message.
+        // We need to find the delivery destination for this peer.
+        // The inbound worker already resolved this — the peer's delivery
+        // destination is derived from their identity hash.
         let identity_bytes: [u8; 16] = hex::decode(peer_identity)
             .map_err(|e| format!("invalid peer hash: {e}"))?
             .try_into()
@@ -346,34 +352,65 @@ impl I2pProxyService {
             AddressHash::new(truncated)
         };
 
-        let transport = self.transport.lock().unwrap().clone();
-        let signer = self.signer.lock().unwrap().clone();
+        // Send the raw StyreneMessage bytes directly.
+        // For small messages, use send_raw (single packet).
+        // For larger messages that exceed packet MTU, this will fail
+        // and we need link-based delivery.
+        let wire_bytes = msg.encode();
 
-        let source_hash = transport.identity_hash();
-        let mut source_bytes = [0u8; 16];
-        source_bytes.copy_from_slice(source_hash.as_slice());
-        let mut dest_bytes = [0u8; 16];
-        dest_bytes.copy_from_slice(delivery_addr.as_slice());
-
-        let lxmf_payload = crate::lxmf_bridge::build_wire_message(
-            source_bytes,
-            dest_bytes,
-            "",
-            "",
-            Some(serde_json::json!({"protocol": "i2p_proxy", "custom_data": wire_hex})),
-            &signer,
-        )
-        .map_err(|e| format!("wire encode: {e}"))?;
-
-        // Use send_raw for path-based delivery — works over existing
-        // TCP connections without needing to establish a new link.
-        let outcome = transport.send_raw(delivery_addr, &lxmf_payload)
-            .await
-            .map_err(|e| format!("send_raw: {e}"))?;
-        eprintln!("[i2p-proxy] sent response to {} outcome={:?}",
-            &peer_identity[..12.min(peer_identity.len())], outcome);
-
-        Ok(())
+        if wire_bytes.len() < 400 {
+            // Fits in a single packet
+            match transport.send_raw(delivery_addr, &wire_bytes).await {
+                Ok(outcome) => {
+                    eprintln!(
+                        "[i2p-proxy] sent {:?} to {} ({} bytes, outcome={:?})",
+                        msg.message_type,
+                        &peer_identity[..12.min(peer_identity.len())],
+                        wire_bytes.len(),
+                        outcome,
+                    );
+                    Ok(())
+                }
+                Err(e) => Err(format!("send_raw: {e}")),
+            }
+        } else {
+            // Too large for single packet — need link-based delivery.
+            // Resolve the peer's identity for encrypted link delivery.
+            let peer_identity_key = transport.resolve_identity(&delivery_addr).await;
+            match peer_identity_key {
+                Some(id) => {
+                    let dest = rns_core::destination::DestinationDesc {
+                        address_hash: delivery_addr,
+                        identity: id,
+                        name: DestinationName::new("lxmf", "delivery"),
+                    };
+                    match transport
+                        .send_via_link(dest, &wire_bytes, std::time::Duration::from_secs(30))
+                        .await
+                    {
+                        Ok(_) => {
+                            eprintln!(
+                                "[i2p-proxy] sent {:?} to {} ({} bytes via link)",
+                                msg.message_type,
+                                &peer_identity[..12.min(peer_identity.len())],
+                                wire_bytes.len(),
+                            );
+                            Ok(())
+                        }
+                        Err(e) => Err(format!("send_via_link: {e}")),
+                    }
+                }
+                None => {
+                    // Identity not resolved — try send_raw anyway, it'll fail
+                    // for large payloads but at least we tried
+                    Err(format!(
+                        "peer identity not resolved for {} — cannot send {} byte response",
+                        &peer_identity[..12.min(peer_identity.len())],
+                        wire_bytes.len()
+                    ))
+                }
+            }
+        }
     }
 }
 

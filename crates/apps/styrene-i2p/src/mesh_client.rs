@@ -301,39 +301,32 @@ impl MeshClient {
                         }
                     };
 
-                    // Decode the LXMF wire message
-                    let record = match decode_inbound_payload(destination, bytes, payload_mode) {
-                        Some(r) => r,
-                        None => {
-                            // Not a valid LXMF message — try direct StyreneMessage decode
-                            if let Ok(msg) = StyreneMessage::decode(bytes) {
-                                Self::dispatch_response(&pending, msg).await;
-                            }
-                            continue;
+                    // Try direct StyreneMessage decode first (hub sends raw wire bytes)
+                    let msg = if let Ok(m) = StyreneMessage::decode(bytes) {
+                        m
+                    } else {
+                        // Fallback: try LXMF decode → extract custom_data
+                        let record = match decode_inbound_payload(destination, bytes, payload_mode) {
+                            Some(r) => r,
+                            None => continue,
+                        };
+                        let wire_hex = match record
+                            .fields
+                            .as_ref()
+                            .and_then(|f| f.get("custom_data"))
+                            .and_then(|v| v.as_str())
+                        {
+                            Some(h) => h.to_string(),
+                            None => continue,
+                        };
+                        let wire_bytes = match hex::decode(&wire_hex) {
+                            Ok(b) => b,
+                            Err(_) => continue,
+                        };
+                        match StyreneMessage::decode(&wire_bytes) {
+                            Ok(m) => m,
+                            Err(_) => continue,
                         }
-                    };
-
-                    // Extract custom_data from the LXMF fields
-                    let wire_hex = record
-                        .fields
-                        .as_ref()
-                        .and_then(|f| f.get("custom_data"))
-                        .and_then(|v| v.as_str());
-
-                    let wire_hex = match wire_hex {
-                        Some(h) => h,
-                        None => continue, // Not a styrene message
-                    };
-
-                    // Decode hex → StyreneMessage
-                    let wire_bytes = match hex::decode(wire_hex) {
-                        Ok(b) => b,
-                        Err(_) => continue,
-                    };
-
-                    let msg = match StyreneMessage::decode(&wire_bytes) {
-                        Ok(m) => m,
-                        Err(_) => continue,
                     };
 
                     eprintln!(
