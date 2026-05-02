@@ -16,6 +16,7 @@ path = "src/main.rs"
 styrene-mesh = { workspace = true }
 styrened = { path = "../styrened", version = "0.1.0" }
 rns_core = { package = "styrene-rns", path = "../../libs/styrene-rns", version = "0.1.0", features = ["transport"] }
+lxmf = { package = "styrene-lxmf", path = "../../libs/styrene-lxmf", version = "0.1.0", default-features = false, features = ["std"] }
 anyhow.workspace = true
 ciborium = "0.2"
 clap = { workspace = true, features = ["derive", "env"] }

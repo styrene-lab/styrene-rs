@@ -10,8 +10,10 @@ use anyhow::{Context, Result};
 use rns_core::destination::DestinationName;
 use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
-use rns_core::transport::core_transport::{ReceivedData, Transport, TransportConfig};
+use lxmf::inbound_decode::InboundPayloadMode;
+use rns_core::transport::core_transport::{ReceivedData, ReceivedPayloadMode, Transport, TransportConfig};
 use rns_core::transport::iface::tcp_client::TcpClient;
+use rns_core::transport::iface::tcp_server::TcpServer;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,6 +21,7 @@ use std::time::Duration;
 use styrene_mesh::i2p::{I2pProxyData, I2pProxyError, I2pProxyRequest, I2pProxyResponse};
 use styrene_mesh::{StyreneMessage, StyreneMessageType};
 use styrened::identity_store::load_or_create_identity;
+use styrened::inbound_delivery::decode_inbound_payload;
 use styrened::transport::adapter::TokioTransportAdapter;
 use styrened::transport::mesh_transport::MeshTransport;
 use tokio::sync::{broadcast, Mutex, Notify};
@@ -52,6 +55,7 @@ impl MeshClient {
     /// - `hub_addr`: TCP address of the hub (e.g., "192.168.0.10:4242")
     /// - `hub_delivery_hash`: hex-encoded delivery destination hash of the hub
     /// - `identity_path`: path to identity key file (created if missing)
+    /// - `listen_addr`: optional TCP listen address for return traffic (e.g., "0.0.0.0:4252")
     pub async fn new(
         hub_addr: &str,
         hub_delivery_hash: &str,
@@ -81,11 +85,21 @@ impl MeshClient {
         // Initialize transport
         let transport_identity =
             rns_core::transport::identity_bridge::to_transport_private_identity(&identity);
-        let config = TransportConfig::new("i2p-proxy-client", &transport_identity, true);
+        let mut config = TransportConfig::new("i2p-proxy-client", &transport_identity, true);
+        config.set_retransmit(true);
         let mut transport_instance = Transport::new(config);
 
-        // Connect to hub via TCP
+        // Start a TCP server so the hub can send responses back to us
         let iface_manager = transport_instance.iface_manager();
+        let listen_addr = "0.0.0.0:0".to_string(); // OS-assigned port
+        let (tcp_server, _bound_rx) = TcpServer::new(listen_addr.clone(), iface_manager.clone());
+        let server_iface = iface_manager
+            .lock()
+            .await
+            .spawn(tcp_server, TcpServer::spawn);
+        eprintln!("[mesh] TCP server iface={server_iface} (for return traffic)");
+
+        // Connect to hub via TCP
         let iface_id = iface_manager
             .lock()
             .await
@@ -265,6 +279,10 @@ impl MeshClient {
     }
 
     /// Background listener for inbound response messages.
+    ///
+    /// Inbound data arrives as raw LXMF wire bytes. We decode the LXMF
+    /// envelope, extract the `custom_data` field (hex-encoded StyreneMessage),
+    /// and dispatch to pending requests.
     async fn response_listener(
         mut rx: broadcast::Receiver<ReceivedData>,
         pending: Arc<Mutex<HashMap<[u8; 16], Arc<PendingRequest>>>>,
@@ -272,13 +290,59 @@ impl MeshClient {
         loop {
             match rx.recv().await {
                 Ok(data) => {
-                    // The inbound data arrives as raw bytes from RNS.
-                    // Try LXMF decode first, then extract styrene wire from custom_data.
-                    // For now, try direct StyreneMessage decode on the raw data.
                     let bytes = data.data.as_slice();
-                    if let Ok(msg) = StyreneMessage::decode(bytes) {
-                        Self::dispatch_response(&pending, msg).await;
-                    }
+                    let mut destination = [0u8; 16];
+                    destination.copy_from_slice(data.destination.as_slice());
+
+                    let payload_mode = match data.payload_mode {
+                        ReceivedPayloadMode::FullWire => InboundPayloadMode::FullWire,
+                        ReceivedPayloadMode::DestinationStripped => {
+                            InboundPayloadMode::DestinationStripped
+                        }
+                    };
+
+                    // Decode the LXMF wire message
+                    let record = match decode_inbound_payload(destination, bytes, payload_mode) {
+                        Some(r) => r,
+                        None => {
+                            // Not a valid LXMF message — try direct StyreneMessage decode
+                            if let Ok(msg) = StyreneMessage::decode(bytes) {
+                                Self::dispatch_response(&pending, msg).await;
+                            }
+                            continue;
+                        }
+                    };
+
+                    // Extract custom_data from the LXMF fields
+                    let wire_hex = record
+                        .fields
+                        .as_ref()
+                        .and_then(|f| f.get("custom_data"))
+                        .and_then(|v| v.as_str());
+
+                    let wire_hex = match wire_hex {
+                        Some(h) => h,
+                        None => continue, // Not a styrene message
+                    };
+
+                    // Decode hex → StyreneMessage
+                    let wire_bytes = match hex::decode(wire_hex) {
+                        Ok(b) => b,
+                        Err(_) => continue,
+                    };
+
+                    let msg = match StyreneMessage::decode(&wire_bytes) {
+                        Ok(m) => m,
+                        Err(_) => continue,
+                    };
+
+                    eprintln!(
+                        "[mesh] received {:?} (request_id={})",
+                        msg.message_type,
+                        hex::encode(&msg.request_id[..4])
+                    );
+
+                    Self::dispatch_response(&pending, msg).await;
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     eprintln!("[mesh] response listener lagged {n} messages");

@@ -365,13 +365,13 @@ impl I2pProxyService {
         )
         .map_err(|e| format!("wire encode: {e}"))?;
 
-        crate::services::MessagingService::deliver(
-            transport.as_ref(),
-            delivery_addr,
-            &lxmf_payload,
-        )
-        .await
-        .map_err(|e| format!("deliver: {e}"))?;
+        // Use send_raw for path-based delivery — works over existing
+        // TCP connections without needing to establish a new link.
+        let outcome = transport.send_raw(delivery_addr, &lxmf_payload)
+            .await
+            .map_err(|e| format!("send_raw: {e}"))?;
+        eprintln!("[i2p-proxy] sent response to {} outcome={:?}",
+            &peer_identity[..12.min(peer_identity.len())], outcome);
 
         Ok(())
     }
