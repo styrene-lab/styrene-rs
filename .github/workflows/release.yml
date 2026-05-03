@@ -2,13 +2,33 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag to release (e.g. v0.2.0). Must already exist on origin.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  packages: write
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag_name || github.ref_name }}
+  RELEASE_GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+  APPLE_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
+  APPLE_SIGNING_CERT_B64: ${{ secrets.APPLE_SIGNING_CERT_B64 }}
+  APPLE_SIGNING_CERT_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
+  APPLE_API_KEY_P8_B64: ${{ secrets.APPLE_API_KEY_P8_B64 }}
+  APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+  APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
 
 jobs:
+  # ── Validation ────────────────────────────────────────────────
   validate:
     name: Validate tag
     runs-on: ubuntu-latest
@@ -33,6 +53,7 @@ jobs:
     name: Full test suite
     needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -43,6 +64,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --no-deps -- -D warnings
       - run: cargo test --workspace
 
+  # ── Publish library crates ────────────────────────────────────
   publish:
     name: Publish to crates.io
     needs: test
@@ -65,38 +87,33 @@ jobs:
           sleep 30
           cargo publish -p styrene-ipc-server --allow-dirty || echo "styrene-ipc-server already published"
 
-  # ── Binary builds ────────────────────────────────────────────────────────
-
+  # ── Primary builds (macOS + Linux x86_64) ─────────────────────
   build:
-    name: Build ${{ matrix.name }}
+    name: Build ${{ matrix.target }}
     needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: linux-x86_64
-            runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            cross: false
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            zigbuild: true
             dx: true
-          - name: linux-aarch64
-            runner: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            cross: true
-            dx: false
-          - name: macos-arm64
-            runner: macos-14
-            target: aarch64-apple-darwin
-            cross: false
+          - target: x86_64-apple-darwin
+            os: macos-14
+            zigbuild: false
             dx: true
-          - name: macos-x86_64
-            runner: macos-13
-            target: x86_64-apple-darwin
-            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-14
+            zigbuild: false
             dx: true
-    runs-on: ${{ matrix.runner }}
+
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name || github.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -104,11 +121,18 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: release-${{ matrix.target }}
 
-      # Linux x86_64: webkit2gtk for styrene-dx
-      - name: Install Linux system deps
-        if: matrix.name == 'linux-x86_64'
+      - name: Install Zig
+        if: matrix.zigbuild
+        uses: mlugg/setup-zig@v2
+
+      - name: Install cargo-zigbuild
+        if: matrix.zigbuild
+        run: cargo install cargo-zigbuild
+
+      - name: Install Linux system deps (webkit2gtk for styrene-dx)
+        if: matrix.dx && runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -116,205 +140,342 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev
 
-      # Linux aarch64: use cross-rs
-      - name: Install cross-rs
-        if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
-      # Build daemon and TUI
-      - name: Build styrened
+      # Build daemon + TUI
+      - name: Build styrened + styrene-tui
         run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release -p styrened --target ${{ matrix.target }}
+          if [ "${{ matrix.zigbuild }}" = "true" ]; then
+            cargo zigbuild --release --target ${{ matrix.target }} -p styrened -p styrene-tui
           else
-            cargo build --release -p styrened --target ${{ matrix.target }}
+            cargo build --release --target ${{ matrix.target }} -p styrened -p styrene-tui
           fi
 
-      - name: Build styrene-tui
-        run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release -p styrene-tui --target ${{ matrix.target }}
-          else
-            cargo build --release -p styrene-tui --target ${{ matrix.target }}
-          fi
-
-      # Desktop app (optional — may fail on some targets)
+      # Desktop app (may fail — still experimental)
       - name: Build styrene-dx
         if: matrix.dx
         continue-on-error: true
-        run: cargo build --release -p styrene-dx --target ${{ matrix.target }}
-
-      # Upload individual binaries as artifacts
-      - name: Upload styrened
-        uses: actions/upload-artifact@v4
-        with:
-          name: styrened-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/styrened
-
-      - name: Upload styrene-tui
-        uses: actions/upload-artifact@v4
-        with:
-          name: styrene-tui-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/styrene-tui
-
-      - name: Upload styrene-dx
-        if: matrix.dx
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: styrene-dx-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/styrene-dx
-
-  # ── Package macOS universal binaries ─────────────────────────────────────
-
-  package-macos:
-    name: Package macOS
-    needs: build
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Extract version
-        id: version
-        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: "*-apple-darwin"
-          path: artifacts
-
-      - name: Create universal binaries
         run: |
-          VERSION=${{ steps.version.outputs.version }}
-          mkdir -p dist/styrene-${VERSION}-macos-universal
-          mkdir -p dist/styrene-${VERSION}-macos-arm64
-          mkdir -p dist/styrene-${VERSION}-macos-x86_64
+          if [ "${{ matrix.zigbuild }}" = "true" ]; then
+            cargo zigbuild --release --target ${{ matrix.target }} -p styrene-dx
+          else
+            cargo build --release --target ${{ matrix.target }} -p styrene-dx
+          fi
 
+      - name: Strip binaries
+        run: |
           for bin in styrened styrene-tui styrene-dx; do
-            ARM="artifacts/${bin}-aarch64-apple-darwin/${bin}"
-            X86="artifacts/${bin}-x86_64-apple-darwin/${bin}"
-
-            # Per-arch copies
-            if [ -f "$ARM" ]; then
-              cp "$ARM" "dist/styrene-${VERSION}-macos-arm64/${bin}"
-            fi
-            if [ -f "$X86" ]; then
-              cp "$X86" "dist/styrene-${VERSION}-macos-x86_64/${bin}"
-            fi
-
-            # Universal via lipo
-            if [ -f "$ARM" ] && [ -f "$X86" ]; then
-              lipo -create "$ARM" "$X86" -output "dist/styrene-${VERSION}-macos-universal/${bin}"
-              echo "Created universal binary: ${bin}"
-            elif [ -f "$ARM" ]; then
-              cp "$ARM" "dist/styrene-${VERSION}-macos-universal/${bin}"
-              echo "Using arm64 only for ${bin}"
+            BINARY="target/${{ matrix.target }}/release/${bin}"
+            [ -f "$BINARY" ] || continue
+            if command -v llvm-strip >/dev/null 2>&1; then
+              llvm-strip "$BINARY"
+            elif command -v strip >/dev/null 2>&1; then
+              strip "$BINARY" 2>/dev/null || true
             fi
           done
 
-      - name: Create archives
+      - name: Import Apple signing certificate
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_CERT_B64 != '' && env.APPLE_CODESIGN_IDENTITY != ''
+        env:
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          VERSION=${{ steps.version.outputs.version }}
-          cd dist
-          for dir in styrene-${VERSION}-macos-*; do
-            chmod +x ${dir}/*
-            tar -czf "${dir}.tar.gz" "$dir"
-            echo "Created ${dir}.tar.gz"
-          done
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/styrene-signing.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/styrene-signing.p12"
+          echo "$APPLE_SIGNING_CERT_B64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "${APPLE_SIGNING_CERT_PASSWORD:-}" -T /usr/bin/codesign -T /usr/bin/security -A
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
 
-      - name: Upload macOS archives
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-archives
-          path: dist/*.tar.gz
-
-  # ── Package Linux binaries ──────────────────────────────────────────────
-
-  package-linux:
-    name: Package Linux
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Extract version
-        id: version
-        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: "*-linux-*"
-          path: artifacts
-
-      - name: Create archives
+      - name: Sign macOS binaries
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_CERT_B64 != '' && env.APPLE_CODESIGN_IDENTITY != ''
         run: |
-          VERSION=${{ steps.version.outputs.version }}
-
-          # x86_64 (all three binaries)
-          mkdir -p dist/styrene-${VERSION}-linux-x86_64
           for bin in styrened styrene-tui styrene-dx; do
-            SRC="artifacts/${bin}-x86_64-unknown-linux-gnu/${bin}"
-            if [ -f "$SRC" ]; then
-              cp "$SRC" "dist/styrene-${VERSION}-linux-x86_64/${bin}"
-            fi
+            BINARY="target/${{ matrix.target }}/release/${bin}"
+            [ -f "$BINARY" ] || continue
+            codesign --force --options runtime --timestamp --sign "$APPLE_CODESIGN_IDENTITY" "$BINARY"
+            codesign --verify --deep --strict --verbose=2 "$BINARY"
           done
-          chmod +x dist/styrene-${VERSION}-linux-x86_64/*
-          tar -czf "dist/styrene-${VERSION}-linux-x86_64.tar.gz" -C dist "styrene-${VERSION}-linux-x86_64"
 
-          # aarch64 (daemon + tui only)
-          mkdir -p dist/styrene-${VERSION}-linux-aarch64
-          for bin in styrened styrene-tui; do
-            SRC="artifacts/${bin}-aarch64-unknown-linux-gnu/${bin}"
-            if [ -f "$SRC" ]; then
-              cp "$SRC" "dist/styrene-${VERSION}-linux-aarch64/${bin}"
-            fi
-          done
-          chmod +x dist/styrene-${VERSION}-linux-aarch64/*
-          tar -czf "dist/styrene-${VERSION}-linux-aarch64.tar.gz" -C dist "styrene-${VERSION}-linux-aarch64"
-
-      - name: Generate checksums
+      - name: Notarize macOS binaries
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_CERT_B64 != '' && env.APPLE_CODESIGN_IDENTITY != '' && env.APPLE_API_KEY_P8_B64 != ''
         run: |
-          cd dist
-          sha256sum *.tar.gz > SHA256SUMS.txt
+          set -euo pipefail
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          echo "$APPLE_API_KEY_P8_B64" | base64 --decode > "$KEY_PATH"
+          for bin in styrened styrene-tui styrene-dx; do
+            BINARY="target/${{ matrix.target }}/release/${bin}"
+            [ -f "$BINARY" ] || continue
+            NOTARY_ZIP="$RUNNER_TEMP/${bin}-${{ matrix.target }}-notary.zip"
+            ditto -c -k --keepParent "$BINARY" "$NOTARY_ZIP"
+            for attempt in 1 2 3; do
+              echo "Notarizing ${bin} (attempt $attempt/3)..."
+              if xcrun notarytool submit "$NOTARY_ZIP" \
+                --key "$KEY_PATH" --key-id "$APPLE_API_KEY_ID" \
+                --issuer "$APPLE_API_ISSUER" --timeout 10m --wait; then
+                echo "Notarization succeeded for ${bin}"
+                break
+              fi
+              [ "$attempt" -eq 3 ] && echo "::warning::Notarization failed for ${bin}" && break
+              sleep 30
+            done
+          done
 
-      - name: Upload Linux archives
+      - name: Create archive
+        run: |
+          VERSION=${RELEASE_TAG#v}
+          ARCHIVE="styrene-${VERSION}-${{ matrix.target }}.tar.gz"
+          STAGING="styrene-${VERSION}-${{ matrix.target }}"
+          mkdir -p "$STAGING"
+          for bin in styrened styrene-tui styrene-dx; do
+            BINARY="target/${{ matrix.target }}/release/${bin}"
+            [ -f "$BINARY" ] && cp "$BINARY" "$STAGING/"
+          done
+          chmod +x "$STAGING"/*
+          tar czf "$ARCHIVE" "$STAGING"
+          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+
+      - name: Generate SHA256 checksum
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+          else
+            shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+          fi
+
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-archives
+          name: build-${{ matrix.target }}
           path: |
-            dist/*.tar.gz
-            dist/SHA256SUMS.txt
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
 
-  # ── GitHub Release ──────────────────────────────────────────────────────
-
-  release:
-    name: GitHub Release
-    needs: [publish, package-macos, package-linux]
+  # ── Extended build (Linux ARM — slow cross-compile) ──────────
+  build-extended:
+    name: Build aarch64-unknown-linux-gnu
+    needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild
+
+      - name: Build styrened + styrene-tui
+        run: cargo zigbuild --release --target aarch64-unknown-linux-gnu -p styrened -p styrene-tui
+
+      - name: Strip binaries
+        run: |
+          for bin in styrened styrene-tui; do
+            BINARY="target/aarch64-unknown-linux-gnu/release/${bin}"
+            [ -f "$BINARY" ] && llvm-strip "$BINARY" 2>/dev/null || strip "$BINARY" 2>/dev/null || true
+          done
+
+      - name: Create archive
+        run: |
+          VERSION=${RELEASE_TAG#v}
+          ARCHIVE="styrene-${VERSION}-aarch64-unknown-linux-gnu.tar.gz"
+          STAGING="styrene-${VERSION}-aarch64-unknown-linux-gnu"
+          mkdir -p "$STAGING"
+          cp target/aarch64-unknown-linux-gnu/release/styrened "$STAGING/"
+          cp target/aarch64-unknown-linux-gnu/release/styrene-tui "$STAGING/"
+          chmod +x "$STAGING"/*
+          tar czf "$ARCHIVE" "$STAGING"
+          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+
+      - name: Generate SHA256 checksum
+        run: sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-aarch64-unknown-linux-gnu
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
+
+  # ── Linux ABI validation ─────────────────────────────────────
+  linux-abi-validation:
+    name: Linux ABI (${{ matrix.name }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu-22.04
+            image: ubuntu:22.04
+            install_cmd: apt-get update && apt-get install -y libc6 libgcc-s1 ca-certificates file
+          - name: rockylinux-9
+            image: rockylinux:9
+            install_cmd: dnf install -y glibc libgcc file ca-certificates
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-x86_64-unknown-linux-gnu
+          path: abi-artifacts
+
+      - name: Validate in ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          mkdir -p abi-artifacts/unpacked
+          tar xzf abi-artifacts/styrene-*.tar.gz -C abi-artifacts/unpacked --strip-components=1
+          docker run --rm \
+            -v "$PWD/abi-artifacts/unpacked:/work:ro" \
+            "${{ matrix.image }}" \
+            /bin/sh -lc '
+              set -e
+              ${{ matrix.install_cmd }}
+              /work/styrened --version || /work/styrened --help | head -1
+            '
+
+  # ── Release ──────────────────────────────────────────────────
+  release:
+    name: Create release
+    needs: [build, build-extended, linux-abi-validation]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: macos-archives
-          path: release
+          path: artifacts
+          pattern: build-*
+          merge-multiple: true
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: linux-archives
-          path: release
-
-      - name: Generate combined checksums
+      - name: Aggregate checksums
         run: |
-          cd release
-          sha256sum *.tar.gz > SHA256SUMS.txt
+          cd artifacts
+          cat *.sha256 > checksums.sha256
+          cat checksums.sha256
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Generate release manifest
+        run: |
+          python3 scripts/release_manifest.py generate \
+            --tag "${RELEASE_TAG}" \
+            --checksums artifacts/checksums.sha256 \
+            --output artifacts/release-manifest.json \
+            --repo "${{ github.repository }}" \
+            --commit "${{ github.sha }}"
+          cat artifacts/release-manifest.json
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign release artifacts
+        run: |
+          cd artifacts
+          for archive in styrene-*.tar.gz; do
+            cosign sign-blob --yes "$archive" \
+              --output-signature "${archive}.sig" \
+              --output-certificate "${archive}.pem"
+          done
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          IS_NIGHTLY=false
+          IS_RC=false
+          PRERELEASE_FLAG=""
+          DRAFT_FLAG=""
+          if echo "${RELEASE_TAG}" | grep -q "\-nightly\."; then
+            IS_NIGHTLY=true
+            PRERELEASE_FLAG="--prerelease"
+            DRAFT_FLAG="--draft"
+          elif echo "${RELEASE_TAG}" | grep -q "\-rc\."; then
+            IS_RC=true
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          ASSET_FILES=(artifacts/styrene-*.tar.gz artifacts/styrene-*.tar.gz.sha256)
+          ASSET_FILES+=(artifacts/styrene-*.tar.gz.sig artifacts/styrene-*.tar.gz.pem)
+          ASSET_FILES+=(artifacts/checksums.sha256 artifacts/release-manifest.json)
+
+          if gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release delete "${RELEASE_TAG}" --repo "${{ github.repository }}" --yes || true
+            sleep 3
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            --repo "${{ github.repository }}" \
+            --title "${RELEASE_TAG}" \
+            --generate-notes \
+            $PRERELEASE_FLAG $DRAFT_FLAG \
+            "${ASSET_FILES[@]}"
+
+      - name: Attest build provenance
+        if: ${{ !contains(env.RELEASE_TAG, '-nightly.') }}
+        uses: actions/attest-build-provenance@v2
         with:
-          generate_release_notes: true
-          files: |
-            release/*.tar.gz
-            release/SHA256SUMS.txt
+          subject-path: artifacts/styrene-*.tar.gz
+
+      - name: Trigger Homebrew formula update
+        if: ${{ !contains(env.RELEASE_TAG, '-nightly.') }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN || github.token }}
+        run: |
+          gh workflow run homebrew.yml \
+            --repo "${{ github.repository }}" \
+            -f tag_name="${RELEASE_TAG}"
+
+  # ── OCI images (stable only) ─────────────────────────────────
+  oci-images:
+    name: OCI images
+    needs: release
+    if: ${{ !contains(inputs.tag_name || github.ref_name, '-nightly.') && !contains(inputs.tag_name || github.ref_name, '-rc.') }}
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: oci
+            description: "styrened daemon"
+          - image: oci-i2p
+            description: "styrened with I2P proxy"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name || github.ref }}
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v17
+
+      - name: Configure Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@v8
+
+      - name: Authenticate to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push ${{ matrix.image }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          nix run .#${{ matrix.image }}.copyToRegistry --accept-flake-config
+
+      - name: Tag as latest
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          IMAGE_NAME=$(nix eval --raw .#${{ matrix.image }}.imageName --accept-flake-config 2>/dev/null || echo "")
+          [ -z "$IMAGE_NAME" ] && exit 0
+          skopeo copy "docker://${IMAGE_NAME}:${VERSION}" "docker://${IMAGE_NAME}:latest"

@@ -1,0 +1,71 @@
+name: Update Homebrew formula
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag to update formula for (e.g. v0.2.0)'
+        required: true
+        type: string
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout styrene-rs (for release_manifest.py)
+        uses: actions/checkout@v4
+        with:
+          path: styrene-rs
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: styrene-lab/homebrew-tap
+          token: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+          path: homebrew-tap
+
+      - name: Get release info
+        id: release
+        run: |
+          TAG="${{ inputs.tag_name }}"
+          VERSION=${TAG#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Download release manifest
+        run: |
+          curl -fsSL "https://github.com/styrene-lab/styrene-rs/releases/download/${{ steps.release.outputs.tag }}/release-manifest.json" \
+            -o release-manifest.json
+          cat release-manifest.json
+
+      - name: Determine formula to update
+        id: formula
+        run: |
+          TAG="${{ steps.release.outputs.tag }}"
+          if echo "$TAG" | grep -q "\-rc\."; then
+            echo "formula=styrene-rc.rb" >> $GITHUB_OUTPUT
+          else
+            echo "formula=styrene.rb" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update formula
+        run: |
+          python3 styrene-rs/scripts/release_manifest.py update-homebrew \
+            --manifest release-manifest.json \
+            --formula "homebrew-tap/Formula/${{ steps.formula.outputs.formula }}"
+          echo "--- updated formula ---"
+          cat "homebrew-tap/Formula/${{ steps.formula.outputs.formula }}"
+
+      - name: Validate formula syntax
+        run: ruby -c "homebrew-tap/Formula/${{ steps.formula.outputs.formula }}"
+
+      - name: Commit and push to tap
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "Formula/${{ steps.formula.outputs.formula }}"
+          git diff --cached --quiet && echo "formula unchanged" && exit 0
+          git commit -m "chore(brew): update styrene to ${{ steps.release.outputs.version }}"
+          git push origin main
