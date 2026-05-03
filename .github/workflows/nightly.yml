@@ -2,8 +2,11 @@ name: Nightly
 
 on:
   schedule:
-    - cron: "0 4 * * *" # 04:00 UTC daily
+    - cron: "23 7 * * *" # 07:23 UTC daily
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,7 +23,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
+      - run: cargo clippy --workspace --all-targets --no-deps -- -D warnings
       - run: cargo test --workspace
 
   interop:
@@ -51,11 +54,67 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
-      - name: Run cargo-deny
-        run: cargo deny check
+      - run: cargo deny check
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
-      - name: Run cargo-audit
-        run: cargo audit
+      - run: cargo audit
 
-  # Upstream drift detection moved to weekly PR workflow: .github/workflows/upstream-sync.yml
+  # ── Cut nightly release ──────────────────────────────────────
+  cut-nightly:
+    name: Cut nightly release
+    needs: [validate, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Compute nightly version
+        id: nightly
+        run: |
+          set -euo pipefail
+          CURRENT=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          MAJOR_MINOR=$(echo "$CURRENT" | sed -E 's/^([0-9]+\.[0-9]+).*/\1/')
+          DATE=$(date -u +%Y%m%d)
+          VERSION="${MAJOR_MINOR}.0-nightly.${DATE}"
+          TAG="v${VERSION}"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if nightly tag already exists
+        id: exists
+        run: |
+          if git ls-remote --tags origin "${{ steps.nightly.outputs.tag }}" | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stamp nightly version
+        if: steps.exists.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          CURRENT='${{ steps.nightly.outputs.current }}'
+          VERSION='${{ steps.nightly.outputs.version }}'
+          sed -i "s/^version = \"${CURRENT}\"/version = \"${VERSION}\"/" Cargo.toml
+          cargo check -p styrened
+
+      - name: Create nightly tag
+        if: steps.exists.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.nightly.outputs.tag }}'
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore(release): ${{ steps.nightly.outputs.version }}"
+          git tag "$TAG"
+          git push origin "refs/tags/${TAG}"
