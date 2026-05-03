@@ -49,6 +49,7 @@ fn App() -> Element {
     let mut selected_peer = use_signal(|| None::<String>);
     let mut active_tab = use_signal(state::Tab::default);
     let mut path_table = use_signal(Vec::<state::PathEntry>::new);
+    let mut conversations = use_signal(Vec::<state::ConversationEntry>::new);
 
     // Bridge handle — shared with UI for RPC calls (send_chat, browse_page, etc.)
     let mut bridge: Signal<Option<Arc<Mutex<daemon_bridge::DaemonBridge>>>> = use_signal(|| None);
@@ -87,13 +88,15 @@ fn App() -> Element {
                                 &mut messages,
                                 &mut page_content,
                                 &mut path_table,
+                                &mut conversations,
                             )
                             .await;
                         }
                     });
 
-                    // Initial path table fetch
+                    // Initial data fetch
                     let _ = tx_init.send(daemon_bridge::DaemonCommand::RefreshPathTable);
+                    let _ = tx_init.send(daemon_bridge::DaemonCommand::LoadConversations);
 
                     // Process daemon events
                     while let Some(ev) = event_rx.recv().await {
@@ -182,27 +185,57 @@ fn App() -> Element {
                             local_hash: local_hash.clone(),
                             local_name: local_name.clone(),
                             on_select_peer: move |hash: String| {
-                                selected_peer.set(Some(hash));
+                                selected_peer.set(Some(hash.clone()));
+                                send_cmd(daemon_bridge::DaemonCommand::LoadMessages {
+                                    peer_hash: hash,
+                                });
                                 active_tab.set(state::Tab::Conversations);
                             },
                         }
                     },
 
                     state::Tab::Conversations => rsx! {
-                        // Sidebar — conversation list
+                        // Sidebar — active conversations only
                         div { class: "sidebar",
                             div { class: "sidebar-header", "Conversations" }
-                            for peer in peers.read().iter() {
+                            if conversations.read().is_empty() {
+                                div { class: "sidebar-empty",
+                                    "No conversations yet. Select a peer from the Network tab to start one."
+                                }
+                            }
+                            for convo in conversations.read().iter() {
                                 {
-                                    let hash = peer.hash.clone();
+                                    let hash = convo.peer_hash.clone();
                                     let is_selected = selected_peer.read().as_deref() == Some(&hash);
-                                    let name = peer.name.clone().unwrap_or_else(|| hash[..8.min(hash.len())].to_string());
+                                    let name = convo.peer_name.clone()
+                                        .unwrap_or_else(|| hash[..8.min(hash.len())].to_string());
+                                    let preview = convo.last_message.clone()
+                                        .map(|m| if m.len() > 40 { format!("{}...", &m[..40]) } else { m })
+                                        .unwrap_or_default();
+                                    let time = convo.last_timestamp.map(format_timestamp).unwrap_or_default();
+                                    let unread = convo.unread_count;
+                                    let load_hash = hash.clone();
                                     rsx! {
                                         div {
-                                            class: if is_selected { "peer-item selected" } else { "peer-item" },
-                                            onclick: move |_| selected_peer.set(Some(hash.clone())),
-                                            span { class: "peer-icon", "●" }
-                                            span { class: "peer-name", "{name}" }
+                                            class: if is_selected { "convo-item selected" } else { "convo-item" },
+                                            onclick: move |_| {
+                                                selected_peer.set(Some(hash.clone()));
+                                                send_cmd(daemon_bridge::DaemonCommand::LoadMessages {
+                                                    peer_hash: load_hash.clone(),
+                                                });
+                                            },
+                                            div { class: "convo-row",
+                                                span { class: "convo-name", "{name}" }
+                                                if !time.is_empty() {
+                                                    span { class: "convo-time", "{time}" }
+                                                }
+                                            }
+                                            div { class: "convo-row",
+                                                span { class: "convo-preview", "{preview}" }
+                                                if unread > 0 {
+                                                    span { class: "convo-unread", "{unread}" }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -407,6 +440,7 @@ async fn handle_ui_command(
     messages: &mut Signal<Vec<state::ChatMessage>>,
     page_content: &mut Signal<Option<state::PageView>>,
     path_table: &mut Signal<Vec<state::PathEntry>>,
+    conversations: &mut Signal<Vec<state::ConversationEntry>>,
 ) {
     match cmd {
         daemon_bridge::DaemonCommand::SendChat { peer_hash, content } => {
@@ -475,6 +509,71 @@ async fn handle_ui_command(
                     );
                 }
                 Err(e) => eprintln!("[dx] path_table failed: {e}"),
+            }
+        }
+        daemon_bridge::DaemonCommand::LoadConversations => {
+            let mut br = bridge.lock().await;
+            match br.query_conversations().await {
+                Ok(convos) => {
+                    conversations.set(
+                        convos
+                            .into_iter()
+                            .filter_map(|c| {
+                                let peer_hash =
+                                    c.get("peer_hash").and_then(|v| v.as_str())?.to_string();
+                                let peer_name = c
+                                    .get("peer_name")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                                    .map(|s| s.to_string());
+                                let last_message = c
+                                    .get("last_message_content")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let last_timestamp =
+                                    c.get("last_message_timestamp").and_then(|v| v.as_i64());
+                                let unread_count =
+                                    c.get("unread_count").and_then(|v| v.as_u64()).unwrap_or(0)
+                                        as u32;
+                                let message_count =
+                                    c.get("message_count").and_then(|v| v.as_u64()).unwrap_or(0)
+                                        as u32;
+                                Some(state::ConversationEntry {
+                                    peer_hash,
+                                    peer_name,
+                                    last_message,
+                                    last_timestamp,
+                                    unread_count,
+                                    message_count,
+                                })
+                            })
+                            .collect(),
+                    );
+                }
+                Err(e) => tracing::warn!(target: "dx::chat", %e, "load conversations failed"),
+            }
+        }
+        daemon_bridge::DaemonCommand::LoadMessages { peer_hash } => {
+            let mut br = bridge.lock().await;
+            match br.query_messages(&peer_hash, 50).await {
+                Ok(msgs) => {
+                    // Replace messages for this peer (not append)
+                    let mut all = messages.read().clone();
+                    all.retain(|m| m.source != peer_hash && m.destination != peer_hash);
+                    for msg in msgs {
+                        all.push(state::ChatMessage {
+                            id: msg.id,
+                            source: msg.source_hash,
+                            destination: msg.destination_hash,
+                            content: msg.content,
+                            timestamp: msg.timestamp,
+                            is_outgoing: msg.is_outgoing,
+                        });
+                    }
+                    all.sort_by_key(|m| m.timestamp);
+                    messages.set(all);
+                }
+                Err(e) => tracing::warn!(target: "dx::chat", %e, "load messages failed"),
             }
         }
         _ => {}
