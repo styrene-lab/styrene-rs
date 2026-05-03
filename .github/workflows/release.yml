@@ -34,6 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Verify tag is on main/master
         run: |
           git fetch origin main master 2>/dev/null || true
@@ -41,12 +43,12 @@ jobs:
           for branch in main master; do
             if git rev-parse "origin/$branch" >/dev/null 2>&1; then
               if git merge-base --is-ancestor "$TAG_COMMIT" "origin/$branch"; then
-                echo "Tag is on $branch"
+                echo "Tag $TAG_COMMIT is on $branch"
                 exit 0
               fi
             fi
           done
-          echo "ERROR: Tag is not on main or master"
+          echo "ERROR: Tag $TAG_COMMIT is not on main or master"
           exit 1
 
   test:
