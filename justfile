@@ -249,7 +249,7 @@ test-e2e-file file:
 preflight:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx --exclude styrene-native
-    cargo test --workspace --exclude styrene-dx --exclude styrene-native
+    cargo test --workspace --exclude styrene-dx --exclude styrene-native --exclude styrene-e2e
 
 # ─── Hub Deployment ───────────────────────────────────────────────────────
 

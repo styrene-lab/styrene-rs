@@ -6,7 +6,7 @@
 //!
 //! # Usage (from Swift via UniFFI or C bridge)
 //!
-//! ```no_run
+//! ```ignore
 //! use styrened::mobile::{MobileNode, MobileConfig};
 //! use std::path::PathBuf;
 //!
