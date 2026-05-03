@@ -58,10 +58,12 @@ spec:
             periodSeconds: 30
           securityContext:
             runAsNonRoot: true
-            readOnlyRootFilesystem: true
+            runAsUser: 100
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
+      imagePullSecrets:
+        - name: ghcr-creds
       volumes:
         - name: config
           configMap:
