@@ -61,8 +61,9 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --no-deps -- -D warnings
-      - run: cargo test --workspace
+      # Exclude styrene-dx from CI lint/test — requires webkit2gtk (built separately)
+      - run: cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx -- -D warnings
+      - run: cargo test --workspace --exclude styrene-dx
 
   # ── Publish library crates ────────────────────────────────────
   publish:
@@ -102,7 +103,7 @@ jobs:
             zigbuild: true
             dx: true
           - target: x86_64-apple-darwin
-            os: macos-14
+            os: macos-13
             zigbuild: false
             dx: true
           - target: aarch64-apple-darwin
@@ -129,7 +130,7 @@ jobs:
 
       - name: Install cargo-zigbuild
         if: matrix.zigbuild
-        run: cargo install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
 
       - name: Install Linux system deps (webkit2gtk for styrene-dx)
         if: matrix.dx && runner.os == 'Linux'
@@ -271,7 +272,7 @@ jobs:
         uses: mlugg/setup-zig@v2
 
       - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
 
       - name: Build styrened + styrene-tui
         run: cargo zigbuild --release --target aarch64-unknown-linux-gnu -p styrened -p styrene-tui
@@ -344,7 +345,9 @@ jobs:
   # ── Release ──────────────────────────────────────────────────
   release:
     name: Create release
-    needs: [build, build-extended, linux-abi-validation]
+    needs: [build, linux-abi-validation]
+    # build-extended (linux arm64) runs in parallel but doesn't block release.
+    # Its artifacts are included if available.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
