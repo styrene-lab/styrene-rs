@@ -10,6 +10,7 @@ data:
   config.toml: |
     role = "hub"
     pages_dir = "/etc/styrene/pages"
+    identity_path = "/var/lib/styrene/identity"
 
     [[interfaces]]
     type = "tcp_server"

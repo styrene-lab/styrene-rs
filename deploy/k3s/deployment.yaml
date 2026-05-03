@@ -19,24 +19,34 @@ spec:
         app.kubernetes.io/name: styrene-hub
         app.kubernetes.io/component: hub
     spec:
+      initContainers:
+        - name: init-config
+          image: alpine:3.21
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /data/config && cp /cfg/config.toml /data/config/config.toml
+          volumeMounts:
+            - name: config
+              mountPath: /cfg
+              readOnly: true
+            - name: data
+              mountPath: /data
       containers:
         - name: styrened
           image: ghcr.io/styrene-lab/styrened-hub:latest
+          args: ["--transport", "0.0.0.0:4242", "--rpc", "0.0.0.0:4243"]
           ports:
             - name: transport
               containerPort: 4242
               protocol: TCP
           env:
             - name: STYRENE_CONFIG_DIR
-              value: /etc/styrene
+              value: /var/lib/styrene/config
             - name: STYRENE_DATA_DIR
               value: /var/lib/styrene
             - name: LXMF_DISPLAY_NAME
               value: "Styrene Community Hub"
           volumeMounts:
-            - name: config
-              mountPath: /etc/styrene
-              readOnly: true
             - name: data
               mountPath: /var/lib/styrene
           resources:
