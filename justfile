@@ -256,30 +256,66 @@ preflight:
 hub_image := "ghcr.io/styrene-lab/styrened-hub"
 hub_tag := `git rev-parse --short HEAD`
 
-# Build the community hub container image
+# Build hub image via podman (cross-compile in container — slow on ARM hosts)
 hub-build:
-    docker build -f deploy/Dockerfile.hub -t {{hub_image}}:{{hub_tag}} -t {{hub_image}}:latest .
+    podman build --platform linux/amd64 -f deploy/Dockerfile.hub -t {{hub_image}}:{{hub_tag}} -t {{hub_image}}:latest .
+
+# Build hub image fast: zigbuild locally, then package into minimal container
+hub-build-fast:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Cross-compiling for x86_64-linux via zigbuild..."
+    cargo zigbuild --release --target x86_64-unknown-linux-gnu -p styrened -p styrene
+    echo "Packaging into container image..."
+    cat > /tmp/Dockerfile.hub-fast << 'DOCKERFILE'
+    FROM alpine:3.21
+    RUN apk add --no-cache ca-certificates sqlite-libs \
+        && addgroup -S styrene && adduser -S -G styrene -h /var/lib/styrene styrene
+    COPY styrened /usr/local/bin/styrened
+    COPY styrene /usr/local/bin/styrene
+    COPY pages/ /etc/styrene/pages/
+    ENV STYRENE_CONFIG_DIR=/etc/styrene
+    ENV STYRENE_DATA_DIR=/var/lib/styrene
+    RUN mkdir -p /etc/styrene /var/lib/styrene /run/styrene \
+        && chown -R styrene:styrene /var/lib/styrene /run/styrene /etc/styrene/pages
+    USER styrene
+    EXPOSE 4242
+    ENTRYPOINT ["styrened"]
+    CMD ["--transport", "0.0.0.0:4242", "--rpc", "0.0.0.0:4243"]
+    DOCKERFILE
+    mkdir -p /tmp/hub-build-ctx
+    cp target/x86_64-unknown-linux-gnu/release/styrened /tmp/hub-build-ctx/
+    cp target/x86_64-unknown-linux-gnu/release/styrene /tmp/hub-build-ctx/
+    cp -r deploy/pages /tmp/hub-build-ctx/pages
+    podman build --platform linux/amd64 -f /tmp/Dockerfile.hub-fast -t {{hub_image}}:{{hub_tag}} -t {{hub_image}}:latest /tmp/hub-build-ctx
+    rm -rf /tmp/hub-build-ctx /tmp/Dockerfile.hub-fast
+    echo "Done: {{hub_image}}:latest"
 
 # Push hub image to container registry
-hub-push: hub-build
-    docker push {{hub_image}}:{{hub_tag}}
-    docker push {{hub_image}}:latest
+hub-push:
+    gh auth token | podman login ghcr.io -u styrene-lab --password-stdin
+    podman push {{hub_image}}:{{hub_tag}}
+    podman push {{hub_image}}:latest
+
+# Build and push hub in one step (fast path)
+hub-ship: hub-build-fast hub-push hub-deploy
 
 # Deploy hub to k3s cluster (applies all manifests)
 hub-deploy:
-    kubectl apply -k deploy/k3s/
+    KUBECONFIG=~/.kube/brutus.yaml kubectl apply -k deploy/k3s/
+    KUBECONFIG=~/.kube/brutus.yaml kubectl -n styrene rollout restart deployment/styrene-hub
 
 # Show hub status on the cluster
 hub-status:
-    kubectl -n styrene get pods,svc,pvc
+    KUBECONFIG=~/.kube/brutus.yaml kubectl -n styrene get pods,svc,pvc
 
 # Stream hub logs
 hub-logs:
-    kubectl -n styrene logs -f deployment/styrene-hub
+    KUBECONFIG=~/.kube/brutus.yaml kubectl -n styrene logs -f deployment/styrene-hub
 
 # Tear down hub deployment
 hub-destroy:
-    kubectl delete -k deploy/k3s/
+    KUBECONFIG=~/.kube/brutus.yaml kubectl delete -k deploy/k3s/
 
 # ─── Cleanup ───────────────────────────────────────────────────────────────
 
