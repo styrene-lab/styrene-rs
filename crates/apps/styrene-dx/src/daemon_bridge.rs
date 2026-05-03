@@ -29,6 +29,16 @@ pub struct PathTableEntry {
     pub interface: String,
 }
 
+/// Per-interface statistics.
+#[derive(Debug, Clone)]
+pub struct InterfaceStats {
+    pub name: String,
+    pub hash: String,
+    pub status: String,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+}
+
 /// Events pushed from the daemon to the UI.
 #[derive(Debug, Clone)]
 pub enum DaemonEvent {
@@ -59,6 +69,7 @@ pub enum DaemonCommand {
     MarkRead { peer_hash: String },
     BrowsePage { host: String, path: String },
     RefreshPathTable,
+    RefreshInterfaces,
     LoadConversations,
     LoadMessages { peer_hash: String },
 }
@@ -180,6 +191,39 @@ impl DaemonBridge {
                     hops,
                     next_hop: get("next_hop"),
                     interface: get("interface"),
+                })
+            })
+            .collect())
+    }
+
+    /// Query interface stats — per-interface name, status, TX/RX bytes, peers.
+    pub async fn interface_stats(&mut self) -> Result<Vec<InterfaceStats>, String> {
+        let frame = self.rpc(MessageType::QueryInterfaceStats, &HashMap::new()).await?;
+        let arr =
+            frame.payload.get("interfaces").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        Ok(arr
+            .iter()
+            .filter_map(|v| {
+                let m = v.as_map()?;
+                let get = |key: &str| -> String {
+                    m.iter()
+                        .find(|(k, _)| k.as_str() == Some(key))
+                        .and_then(|(_, v)| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                let get_u64 = |key: &str| -> u64 {
+                    m.iter()
+                        .find(|(k, _)| k.as_str() == Some(key))
+                        .and_then(|(_, v)| v.as_u64())
+                        .unwrap_or(0)
+                };
+                Some(InterfaceStats {
+                    name: get("name"),
+                    hash: get("hash"),
+                    status: get("status"),
+                    tx_bytes: get_u64("tx_bytes"),
+                    rx_bytes: get_u64("rx_bytes"),
                 })
             })
             .collect())
