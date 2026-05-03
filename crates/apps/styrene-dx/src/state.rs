@@ -288,6 +288,16 @@ pub struct PathEntry {
     pub interface: String,
 }
 
+/// Per-interface stats for the interface panel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InterfaceInfo {
+    pub name: String,
+    pub hash: String,
+    pub status: String,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+}
+
 /// An active link with telemetry.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinkInfo {

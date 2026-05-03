@@ -239,6 +239,18 @@ fn format_relative_time(ts: i64) -> String {
     }
 }
 
+fn format_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
 fn peer_key(peers: &[PeerEntry]) -> String {
     let mut parts: Vec<&str> = peers.iter().map(|p| p.hash.as_str()).collect();
     parts.sort();
@@ -277,6 +289,7 @@ pub fn NetworkGraph(
     on_select_peer: EventHandler<String>,
     on_browse_page: EventHandler<String>,
     links: Vec<crate::state::LinkInfo>,
+    interfaces: Vec<crate::state::InterfaceInfo>,
 ) -> Element {
     // Graph data — rebuilt when peer membership or path table changes
     let mut nodes = use_signal(Vec::<GraphNode>::new);
@@ -982,6 +995,40 @@ pub fn NetworkGraph(
                                         span { class: "link-name", "{name}" }
                                         span { class: "link-rtt", "{rtt}" }
                                         span { class: "link-status", style: "{status_color}", "{link.status}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Interfaces
+                if !interfaces.is_empty() {
+                    div {
+                        h3 { "Interfaces" }
+                        for iface in interfaces.iter() {
+                            {
+                                let status_color = match iface.status.as_str() {
+                                    "online" | "connected" | "" => "color: var(--green);",
+                                    _ => "color: var(--red);",
+                                };
+                                let tx = format_bytes(iface.tx_bytes);
+                                let rx = format_bytes(iface.rx_bytes);
+                                let name = if iface.name.is_empty() {
+                                    iface.hash[..8.min(iface.hash.len())].to_string()
+                                } else {
+                                    iface.name.clone()
+                                };
+                                rsx! {
+                                    div { class: "iface-item",
+                                        div { class: "iface-row",
+                                            span { class: "iface-status", style: "{status_color}", "●" }
+                                            span { class: "iface-name", "{name}" }
+                                        }
+                                        div { class: "iface-row",
+                                            span { class: "iface-traffic", "TX {tx}" }
+                                            span { class: "iface-traffic", "RX {rx}" }
+                                        }
                                     }
                                 }
                             }

@@ -51,6 +51,7 @@ fn App() -> Element {
     let mut path_table = use_signal(Vec::<state::PathEntry>::new);
     let mut conversations = use_signal(Vec::<state::ConversationEntry>::new);
     let mut links = use_signal(Vec::<state::LinkInfo>::new);
+    let mut interfaces = use_signal(Vec::<state::InterfaceInfo>::new);
 
     // Bridge handle — shared with UI for RPC calls (send_chat, browse_page, etc.)
     let mut bridge: Signal<Option<Arc<Mutex<daemon_bridge::DaemonBridge>>>> = use_signal(|| None);
@@ -90,6 +91,7 @@ fn App() -> Element {
                                 &mut page_content,
                                 &mut path_table,
                                 &mut conversations,
+                                &mut interfaces,
                             )
                             .await;
                         }
@@ -97,6 +99,7 @@ fn App() -> Element {
 
                     // Initial data fetch
                     let _ = tx_init.send(daemon_bridge::DaemonCommand::RefreshPathTable);
+                    let _ = tx_init.send(daemon_bridge::DaemonCommand::RefreshInterfaces);
                     let _ = tx_init.send(daemon_bridge::DaemonCommand::LoadConversations);
 
                     // Process daemon events
@@ -194,6 +197,7 @@ fn App() -> Element {
                                 active_tab.set(state::Tab::Conversations);
                             },
                             links: links.read().clone(),
+                            interfaces: interfaces.read().clone(),
                             on_browse_page: move |host_hash: String| {
                                 send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
                                     host: host_hash,
@@ -525,6 +529,7 @@ async fn handle_ui_command(
     page_content: &mut Signal<Option<state::PageView>>,
     path_table: &mut Signal<Vec<state::PathEntry>>,
     conversations: &mut Signal<Vec<state::ConversationEntry>>,
+    interfaces: &mut Signal<Vec<state::InterfaceInfo>>,
 ) {
     match cmd {
         daemon_bridge::DaemonCommand::SendChat { peer_hash, content } => {
@@ -594,6 +599,26 @@ async fn handle_ui_command(
                     );
                 }
                 Err(e) => eprintln!("[dx] path_table failed: {e}"),
+            }
+        }
+        daemon_bridge::DaemonCommand::RefreshInterfaces => {
+            let mut br = bridge.lock().await;
+            match br.interface_stats().await {
+                Ok(ifaces) => {
+                    interfaces.set(
+                        ifaces
+                            .into_iter()
+                            .map(|i| state::InterfaceInfo {
+                                name: i.name,
+                                hash: i.hash,
+                                status: i.status,
+                                tx_bytes: i.tx_bytes,
+                                rx_bytes: i.rx_bytes,
+                            })
+                            .collect(),
+                    );
+                }
+                Err(e) => tracing::warn!(target: "dx::iface", %e, "interface stats failed"),
             }
         }
         daemon_bridge::DaemonCommand::LoadConversations => {
