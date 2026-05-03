@@ -243,6 +243,14 @@ test-e2e-verbose:
 test-e2e-file file:
     cargo test -p styrene-e2e --test {{ file }}
 
+# ─── Release Preflight ────────────────────────────────────────────────────
+
+# Run the exact CI checks locally before tagging a release
+preflight:
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx --exclude styrene-native
+    cargo test --workspace --exclude styrene-dx --exclude styrene-native
+
 # ─── Hub Deployment ───────────────────────────────────────────────────────
 
 hub_image := "ghcr.io/styrene-lab/styrened-hub"
