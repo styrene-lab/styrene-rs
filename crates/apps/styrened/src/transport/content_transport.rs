@@ -83,10 +83,8 @@ impl ContentTransport for MeshContentTransport {
         content_id: ContentId,
         index: u32,
     ) -> Result<(), Self::Error> {
-        let payload = ChunkRequestPayload {
-            content_id: *content_id.as_bytes(),
-            chunk_index: index,
-        };
+        let payload =
+            ChunkRequestPayload { content_id: *content_id.as_bytes(), chunk_index: index };
 
         let payload_bytes = payload.encode().map_err(MeshContentError::Wire)?;
         let msg = StyreneMessage::new(StyreneMessageType::ChunkRequest, &payload_bytes);

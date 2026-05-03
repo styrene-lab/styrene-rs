@@ -7,8 +7,11 @@ fn home_dir() -> PathBuf {
     std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."))
 }
 
-/// Config directory: $STYRENE_CONFIG_DIR or ~/.config/styrene/
-/// Matches Python's styrened.paths.config_dir().
+/// Config directory: $STYRENE_CONFIG_DIR or platform-appropriate default.
+///
+/// - Linux/macOS: `$XDG_CONFIG_HOME/styrene/` or `~/.config/styrene/`
+/// - iOS/Android: Set `$STYRENE_CONFIG_DIR` to the app container path
+///   before calling any config functions.
 pub fn default_config_dir() -> PathBuf {
     if let Ok(d) = std::env::var("STYRENE_CONFIG_DIR") {
         return PathBuf::from(d);
@@ -19,8 +22,10 @@ pub fn default_config_dir() -> PathBuf {
     home_dir().join(".config").join("styrene")
 }
 
-/// Data directory: $STYRENE_DATA_DIR or ~/.local/share/styrene/
-/// Matches Python's styrened.paths.data_dir().
+/// Data directory: $STYRENE_DATA_DIR or platform-appropriate default.
+///
+/// - Linux/macOS: `$XDG_DATA_HOME/styrene/` or `~/.local/share/styrene/`
+/// - iOS/Android: Set `$STYRENE_DATA_DIR` to the app container path.
 pub fn default_data_dir() -> PathBuf {
     if let Ok(d) = std::env::var("STYRENE_DATA_DIR") {
         return PathBuf::from(d);
@@ -29,6 +34,59 @@ pub fn default_data_dir() -> PathBuf {
         return PathBuf::from(xdg).join("styrene");
     }
     home_dir().join(".local").join("share").join("styrene")
+}
+
+/// Platform paths for mobile embedding.
+///
+/// On iOS/Android, the host app sets these from the native container paths
+/// before booting the daemon. On desktop, these are derived from XDG/HOME.
+#[derive(Debug, Clone)]
+pub struct PlatformPaths {
+    pub config_dir: PathBuf,
+    pub data_dir: PathBuf,
+}
+
+impl PlatformPaths {
+    /// Create from explicit paths (mobile — host app provides container paths).
+    pub fn new(config_dir: PathBuf, data_dir: PathBuf) -> Self {
+        Self { config_dir, data_dir }
+    }
+
+    /// Create from platform defaults (desktop).
+    pub fn from_defaults() -> Self {
+        Self { config_dir: default_config_dir(), data_dir: default_data_dir() }
+    }
+
+    pub fn config_path(&self) -> PathBuf {
+        let toml = self.config_dir.join("config.toml");
+        if toml.exists() {
+            return toml;
+        }
+        let yaml = self.config_dir.join("config.yaml");
+        if yaml.exists() {
+            return yaml;
+        }
+        toml
+    }
+
+    pub fn db_path(&self) -> PathBuf {
+        self.data_dir.join("messages.db")
+    }
+
+    pub fn identity_path(&self) -> PathBuf {
+        self.config_dir.join("identity")
+    }
+
+    pub fn pages_dir(&self) -> PathBuf {
+        self.config_dir.join("pages")
+    }
+
+    /// Ensure directories exist.
+    pub fn ensure_dirs(&self) -> std::io::Result<()> {
+        fs::create_dir_all(&self.config_dir)?;
+        fs::create_dir_all(&self.data_dir)?;
+        Ok(())
+    }
 }
 
 /// Default config file path: ~/.config/styrene/config.toml

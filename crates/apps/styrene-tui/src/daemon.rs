@@ -61,8 +61,279 @@ pub enum TuiEvent {
         status: String,
         rtt_ms: Option<f64>,
     },
+    /// Result of a queued daemon command.
+    CommandResult { action: String, success: bool, detail: String },
+    /// Page content loaded from a host.
+    PageLoaded { host: String, path: String, source: String },
+    /// Page list from a host.
+    PageList { host: String, pages: Vec<String> },
+    /// Terminal output data from a remote session.
+    TerminalOutput { session_id: String, data: Vec<u8> },
+    /// Terminal session exited.
+    TerminalExited { session_id: String, exit_code: Option<i32> },
     /// Daemon disconnected or unreachable.
     Disconnected(String),
+}
+
+// ─── Daemon Command Queue ────────────────────────────────────────────────────
+//
+// The key handler is synchronous but daemon calls are async. Commands are queued
+// from the sync handler and executed by a background task that owns DaemonHandle.
+// Results come back as TuiEvents.
+
+#[derive(Debug)]
+pub enum DaemonCmd {
+    /// Send a chat message to a peer.
+    SendChat { peer_hash: String, content: String },
+    /// Announce this node to the mesh.
+    Announce,
+    /// Block a peer by identity hash.
+    BlockPeer { identity_hash: String },
+    /// Unblock a peer by identity hash.
+    UnblockPeer { identity_hash: String },
+    /// Query remote device status.
+    DeviceStatus { dest_hash: String },
+    /// Execute a command on a remote device.
+    Exec { dest_hash: String, command: String, args: Vec<String> },
+    /// Reboot a remote device.
+    RebootDevice { dest_hash: String, delay_secs: Option<u64> },
+    /// Push config profile to a remote device.
+    FleetApply { dest_hash: String, profile_hex: String },
+    /// Update local identity.
+    SetIdentity { display_name: String, icon: Option<String> },
+    /// Set auto-reply configuration.
+    SetAutoReply { mode: String, message: String },
+    /// Mark conversation as read.
+    MarkRead { peer_hash: String },
+    /// Browse a page from a host.
+    BrowsePage { host: String, path: String },
+    /// List pages served by a host.
+    ListPages { host: String },
+}
+
+/// Spawn the command executor task. Processes DaemonCmd messages and posts
+/// results back as TuiEvents via the event channel.
+pub fn spawn_command_executor(
+    handle: Arc<Mutex<DaemonHandle>>,
+    mut cmd_rx: mpsc::Receiver<DaemonCmd>,
+    event_tx: mpsc::Sender<TuiEvent>,
+) {
+    tokio::spawn(async move {
+        while let Some(cmd) = cmd_rx.recv().await {
+            let mut h = handle.lock().await;
+            match cmd {
+                DaemonCmd::SendChat { peer_hash, content } => {
+                    match h.send_chat(&peer_hash, &content, None).await {
+                        Ok(msg_id) => {
+                            let _ = event_tx
+                                .send(TuiEvent::CommandResult {
+                                    action: "send_chat".into(),
+                                    success: true,
+                                    detail: format!("sent: {}", &msg_id[..8.min(msg_id.len())]),
+                                })
+                                .await;
+                        }
+                        Err(e) => {
+                            let _ = event_tx
+                                .send(TuiEvent::CommandResult {
+                                    action: "send_chat".into(),
+                                    success: false,
+                                    detail: e,
+                                })
+                                .await;
+                        }
+                    }
+                }
+                DaemonCmd::Announce => {
+                    let result = h.announce().await;
+                    let _ = event_tx
+                        .send(TuiEvent::CommandResult {
+                            action: "announce".into(),
+                            success: result.is_ok(),
+                            detail: result.err().unwrap_or_else(|| "announced".into()),
+                        })
+                        .await;
+                }
+                DaemonCmd::BlockPeer { identity_hash } => {
+                    let result = h.block_peer(&identity_hash).await;
+                    let _ = event_tx
+                        .send(TuiEvent::CommandResult {
+                            action: "block_peer".into(),
+                            success: result.is_ok(),
+                            detail: result.err().unwrap_or_else(|| {
+                                format!("blocked {}", &identity_hash[..8.min(identity_hash.len())])
+                            }),
+                        })
+                        .await;
+                }
+                DaemonCmd::UnblockPeer { identity_hash } => {
+                    let result = h.unblock_peer(&identity_hash).await;
+                    let _ = event_tx
+                        .send(TuiEvent::CommandResult {
+                            action: "unblock_peer".into(),
+                            success: result.is_ok(),
+                            detail: result.err().unwrap_or_else(|| {
+                                format!(
+                                    "unblocked {}",
+                                    &identity_hash[..8.min(identity_hash.len())]
+                                )
+                            }),
+                        })
+                        .await;
+                }
+                DaemonCmd::DeviceStatus { dest_hash } => {
+                    match h.device_status(&dest_hash, Some(30)).await {
+                        Ok(payload) => {
+                            let detail = format_payload_summary(&payload);
+                            let _ = event_tx
+                                .send(TuiEvent::CommandResult {
+                                    action: "device_status".into(),
+                                    success: true,
+                                    detail,
+                                })
+                                .await;
+                        }
+                        Err(e) => {
+                            let _ = event_tx
+                                .send(TuiEvent::CommandResult {
+                                    action: "device_status".into(),
+                                    success: false,
+                                    detail: e,
+                                })
+                                .await;
+                        }
+                    }
+                }
+                DaemonCmd::Exec { dest_hash, command, args } => {
+                    match h.exec(&dest_hash, &command, &args, Some(60)).await {
+                        Ok(payload) => {
+                            let detail = format_payload_summary(&payload);
+                            let _ = event_tx
+                                .send(TuiEvent::CommandResult {
+                                    action: "exec".into(),
+                                    success: true,
+                                    detail,
+                                })
+                                .await;
+                        }
+                        Err(e) => {
+                            let _ = event_tx
+                                .send(TuiEvent::CommandResult {
+                                    action: "exec".into(),
+                                    success: false,
+                                    detail: e,
+                                })
+                                .await;
+                        }
+                    }
+                }
+                DaemonCmd::RebootDevice { dest_hash, delay_secs } => {
+                    let result = h.reboot_device(&dest_hash, delay_secs, Some(30)).await;
+                    let _ = event_tx
+                        .send(TuiEvent::CommandResult {
+                            action: "reboot_device".into(),
+                            success: result.is_ok(),
+                            detail: result.err().unwrap_or_else(|| "reboot accepted".into()),
+                        })
+                        .await;
+                }
+                DaemonCmd::FleetApply { dest_hash, profile_hex } => {
+                    match h.fleet_apply(&dest_hash, &profile_hex, true, Some(120)).await {
+                        Ok(payload) => {
+                            let detail = format_payload_summary(&payload);
+                            let _ = event_tx
+                                .send(TuiEvent::CommandResult {
+                                    action: "fleet_apply".into(),
+                                    success: true,
+                                    detail,
+                                })
+                                .await;
+                        }
+                        Err(e) => {
+                            let _ = event_tx
+                                .send(TuiEvent::CommandResult {
+                                    action: "fleet_apply".into(),
+                                    success: false,
+                                    detail: e,
+                                })
+                                .await;
+                        }
+                    }
+                }
+                DaemonCmd::SetIdentity { display_name, icon } => {
+                    let result = h.set_identity(&display_name, icon.as_deref()).await;
+                    let _ = event_tx
+                        .send(TuiEvent::CommandResult {
+                            action: "set_identity".into(),
+                            success: result.is_ok(),
+                            detail: result.err().unwrap_or_else(|| "identity updated".into()),
+                        })
+                        .await;
+                }
+                DaemonCmd::SetAutoReply { mode, message } => {
+                    let result = h.set_auto_reply(&mode, &message, None).await;
+                    let _ = event_tx
+                        .send(TuiEvent::CommandResult {
+                            action: "set_auto_reply".into(),
+                            success: result.is_ok(),
+                            detail: result.err().unwrap_or_else(|| "auto-reply updated".into()),
+                        })
+                        .await;
+                }
+                DaemonCmd::MarkRead { peer_hash } => {
+                    let _ = h.mark_read(&peer_hash).await;
+                }
+                DaemonCmd::BrowsePage { host, path } => match h.query_page(&host, &path).await {
+                    Ok((source, _host_hash)) => {
+                        let _ = event_tx
+                            .send(TuiEvent::PageLoaded { host: host.clone(), path, source })
+                            .await;
+                    }
+                    Err(e) => {
+                        let _ = event_tx
+                            .send(TuiEvent::CommandResult {
+                                action: "browse_page".into(),
+                                success: false,
+                                detail: e,
+                            })
+                            .await;
+                    }
+                },
+                DaemonCmd::ListPages { host } => match h.list_pages(&host).await {
+                    Ok(pages) => {
+                        let paths: Vec<String> = pages.into_iter().map(|(p, _)| p).collect();
+                        let _ = event_tx.send(TuiEvent::PageList { host, pages: paths }).await;
+                    }
+                    Err(e) => {
+                        let _ = event_tx
+                            .send(TuiEvent::CommandResult {
+                                action: "list_pages".into(),
+                                success: false,
+                                detail: e,
+                            })
+                            .await;
+                    }
+                },
+            }
+        }
+    });
+}
+
+/// Format a msgpack payload map into a human-readable summary.
+fn format_payload_summary(payload: &HashMap<String, MpValue>) -> String {
+    let mut parts = Vec::new();
+    for (key, val) in payload {
+        let val_str = match val {
+            MpValue::String(s) => s.as_str().unwrap_or("").to_string(),
+            MpValue::Integer(i) => format!("{}", i.as_i64().unwrap_or(0)),
+            MpValue::Boolean(b) => b.to_string(),
+            _ => format!("{val:?}"),
+        };
+        if !val_str.is_empty() && val_str.len() < 200 {
+            parts.push(format!("  {key}: {val_str}"));
+        }
+    }
+    if parts.is_empty() { "  (no data)".into() } else { parts.join("\n") }
 }
 
 // ─── Connection ───────────────────────────────────────────────────────────────
@@ -144,6 +415,258 @@ impl DaemonHandle {
             .await
             .map(|f| f.msg_type == MessageType::Pong)
             .unwrap_or(false)
+    }
+
+    // ── Chat Operations ─────────────────────────────────────────────────
+
+    /// Send a chat message to a peer.
+    pub async fn send_chat(
+        &mut self,
+        dest_hash: &str,
+        content: &str,
+        title: Option<&str>,
+    ) -> Result<String, String> {
+        let mut p = HashMap::new();
+        p.insert("peer_hash".into(), MpValue::from(dest_hash));
+        p.insert("content".into(), MpValue::from(content));
+        if let Some(t) = title {
+            p.insert("title".into(), MpValue::from(t));
+        }
+        let frame = self.rpc(MessageType::CmdSendChat, &p).await?;
+        Ok(mp_str(&frame.payload, "message_id"))
+    }
+
+    /// Mark all messages from a peer as read.
+    pub async fn mark_read(&mut self, peer_hash: &str) -> Result<(), String> {
+        let mut p = HashMap::new();
+        p.insert("peer_hash".into(), MpValue::from(peer_hash));
+        self.rpc(MessageType::CmdMarkRead, &p).await.map(|_| ())
+    }
+
+    /// Delete a message by ID.
+    pub async fn delete_message(&mut self, message_id: &str) -> Result<(), String> {
+        let mut p = HashMap::new();
+        p.insert("message_id".into(), MpValue::from(message_id));
+        self.rpc(MessageType::CmdDeleteMessage, &p).await.map(|_| ())
+    }
+
+    // ── Fleet Operations ────────────────────────────────────────────────
+
+    /// Query remote device status.
+    pub async fn device_status(
+        &mut self,
+        dest_hash: &str,
+        timeout_secs: Option<u64>,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("destination_hash".into(), MpValue::from(dest_hash));
+        if let Some(t) = timeout_secs {
+            p.insert("timeout".into(), MpValue::from(t));
+        }
+        let frame = self.rpc(MessageType::CmdDeviceStatus, &p).await?;
+        Ok(frame.payload)
+    }
+
+    /// Execute a command on a remote device.
+    pub async fn exec(
+        &mut self,
+        dest_hash: &str,
+        cmd: &str,
+        args: &[String],
+        timeout_secs: Option<u64>,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("destination_hash".into(), MpValue::from(dest_hash));
+        p.insert("command".into(), MpValue::from(cmd));
+        let args_vals: Vec<MpValue> = args.iter().map(|a| MpValue::from(a.as_str())).collect();
+        p.insert("args".into(), MpValue::Array(args_vals));
+        if let Some(t) = timeout_secs {
+            p.insert("timeout".into(), MpValue::from(t));
+        }
+        let frame = self.rpc(MessageType::CmdExec, &p).await?;
+        Ok(frame.payload)
+    }
+
+    /// Reboot a remote device.
+    pub async fn reboot_device(
+        &mut self,
+        dest_hash: &str,
+        delay_secs: Option<u64>,
+        timeout_secs: Option<u64>,
+    ) -> Result<(), String> {
+        let mut p = HashMap::new();
+        p.insert("destination_hash".into(), MpValue::from(dest_hash));
+        if let Some(d) = delay_secs {
+            p.insert("delay".into(), MpValue::from(d));
+        }
+        if let Some(t) = timeout_secs {
+            p.insert("timeout".into(), MpValue::from(t));
+        }
+        self.rpc(MessageType::CmdRebootDevice, &p).await.map(|_| ())
+    }
+
+    /// Push a signed profile to a remote node.
+    pub async fn fleet_apply(
+        &mut self,
+        dest_hash: &str,
+        profile_hex: &str,
+        verify: bool,
+        timeout_secs: Option<u64>,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("destination_hash".into(), MpValue::from(dest_hash));
+        p.insert("profile".into(), MpValue::from(profile_hex));
+        p.insert("verify".into(), MpValue::Boolean(verify));
+        if let Some(t) = timeout_secs {
+            p.insert("timeout".into(), MpValue::from(t));
+        }
+        let frame = self.rpc(MessageType::CmdFleetApply, &p).await?;
+        Ok(frame.payload)
+    }
+
+    // ── Identity & Settings ─────────────────────────────────────────────
+
+    /// Update local node identity (display name, icon).
+    pub async fn set_identity(
+        &mut self,
+        display_name: &str,
+        icon: Option<&str>,
+    ) -> Result<(), String> {
+        let mut p = HashMap::new();
+        p.insert("display_name".into(), MpValue::from(display_name));
+        if let Some(i) = icon {
+            p.insert("icon".into(), MpValue::from(i));
+        }
+        self.rpc(MessageType::CmdSetIdentity, &p).await.map(|_| ())
+    }
+
+    /// Send a mesh announce.
+    pub async fn announce(&mut self) -> Result<(), String> {
+        self.rpc(MessageType::CmdAnnounce, &HashMap::new()).await.map(|_| ())
+    }
+
+    /// Query daemon configuration.
+    pub async fn query_config(&mut self) -> Result<HashMap<String, MpValue>, String> {
+        let frame = self.rpc(MessageType::QueryConfig, &HashMap::new()).await?;
+        Ok(frame.payload)
+    }
+
+    /// Set auto-reply configuration.
+    pub async fn set_auto_reply(
+        &mut self,
+        mode: &str,
+        message: &str,
+        cooldown_secs: Option<u64>,
+    ) -> Result<(), String> {
+        let mut p = HashMap::new();
+        p.insert("mode".into(), MpValue::from(mode));
+        p.insert("message".into(), MpValue::from(message));
+        if let Some(c) = cooldown_secs {
+            p.insert("cooldown_secs".into(), MpValue::from(c));
+        }
+        self.rpc(MessageType::CmdSetAutoReply, &p).await.map(|_| ())
+    }
+
+    /// Block a peer by identity hash.
+    pub async fn block_peer(&mut self, identity_hash: &str) -> Result<(), String> {
+        let mut p = HashMap::new();
+        p.insert("identity_hash".into(), MpValue::from(identity_hash));
+        self.rpc(MessageType::CmdBlockPeer, &p).await.map(|_| ())
+    }
+
+    /// Unblock a peer by identity hash.
+    pub async fn unblock_peer(&mut self, identity_hash: &str) -> Result<(), String> {
+        let mut p = HashMap::new();
+        p.insert("identity_hash".into(), MpValue::from(identity_hash));
+        self.rpc(MessageType::CmdUnblockPeer, &p).await.map(|_| ())
+    }
+
+    /// Query the list of blocked peers.
+    pub async fn blocked_peers(&mut self) -> Result<Vec<String>, String> {
+        let frame = self.rpc(MessageType::QueryBlockedPeers, &HashMap::new()).await?;
+        let arr = frame
+            .payload
+            .get("blocked_peers")
+            .and_then(|v| v.as_array())
+            .unwrap_or(&Vec::new())
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        Ok(arr)
+    }
+
+    // ── Terminal Session ─────────────────────────────────────────────────
+
+    /// Open a remote terminal session.
+    pub async fn terminal_open(
+        &mut self,
+        dest_hash: &str,
+        rows: u16,
+        cols: u16,
+    ) -> Result<String, String> {
+        let mut p = HashMap::new();
+        p.insert("destination_hash".into(), MpValue::from(dest_hash));
+        p.insert("rows".into(), MpValue::from(rows as u64));
+        p.insert("cols".into(), MpValue::from(cols as u64));
+        let frame = self.rpc(MessageType::CmdTerminalOpen, &p).await?;
+        Ok(mp_str(&frame.payload, "session_id"))
+    }
+
+    /// Send input data to a terminal session.
+    pub async fn terminal_input(&mut self, session_id: &str, data: &[u8]) -> Result<(), String> {
+        let mut p = HashMap::new();
+        p.insert("session_id".into(), MpValue::from(session_id));
+        p.insert("data".into(), MpValue::Binary(data.to_vec()));
+        self.rpc(MessageType::CmdTerminalInput, &p).await.map(|_| ())
+    }
+
+    // ── Page Operations ──────────────────────────────────────────────────
+
+    /// Browse a Micron page from a host (or "local" for this node's pages).
+    pub async fn query_page(&mut self, host: &str, path: &str) -> Result<(String, String), String> {
+        let mut p = HashMap::new();
+        p.insert("host".into(), MpValue::from(host));
+        p.insert("path".into(), MpValue::from(path));
+        let frame = self.rpc(MessageType::QueryPage, &p).await?;
+        let source = mp_str(&frame.payload, "source");
+        let host_hash = mp_str(&frame.payload, "host_hash");
+        Ok((source, host_hash))
+    }
+
+    /// List pages served by a host.
+    pub async fn list_pages(&mut self, host: &str) -> Result<Vec<(String, String)>, String> {
+        let mut p = HashMap::new();
+        p.insert("host".into(), MpValue::from(host));
+        let frame = self.rpc(MessageType::CmdPageListSites, &p).await?;
+        let arr =
+            frame.payload.get("pages").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        let pages = arr
+            .iter()
+            .filter_map(|v| {
+                let m = v.as_map()?;
+                let path = m
+                    .iter()
+                    .find(|(k, _)| k.as_str() == Some("path"))
+                    .and_then(|(_, v)| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let host = m
+                    .iter()
+                    .find(|(k, _)| k.as_str() == Some("host_hash"))
+                    .and_then(|(_, v)| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Some((path, host))
+            })
+            .collect();
+        Ok(pages)
+    }
+
+    /// Close a terminal session.
+    pub async fn terminal_close(&mut self, session_id: &str) -> Result<(), String> {
+        let mut p = HashMap::new();
+        p.insert("session_id".into(), MpValue::from(session_id));
+        self.rpc(MessageType::CmdTerminalClose, &p).await.map(|_| ())
     }
 }
 
@@ -259,6 +782,23 @@ fn frame_to_tui_event(frame: Frame) -> Option<TuiEvent> {
             } else {
                 Some(TuiEvent::MessageStatus { id: msg.id, status: kind.to_string() })
             }
+        }
+        MessageType::EventTerminalOutput => {
+            let session_id = mp_str(&frame.payload, "session_id");
+            let data = frame.payload.get("data").and_then(|v| v.as_slice()).unwrap_or(&[]).to_vec();
+            if session_id.is_empty() {
+                return None;
+            }
+            Some(TuiEvent::TerminalOutput { session_id, data })
+        }
+        MessageType::EventTerminalExited => {
+            let session_id = mp_str(&frame.payload, "session_id");
+            let exit_code =
+                frame.payload.get("exit_code").and_then(|v| v.as_i64()).map(|v| v as i32);
+            if session_id.is_empty() {
+                return None;
+            }
+            Some(TuiEvent::TerminalExited { session_id, exit_code })
         }
         _ => None,
     }
@@ -490,6 +1030,54 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
             // trigger_flash removed — effects system handles visuals
         }
 
+        TuiEvent::CommandResult { action, success, detail } => {
+            let prefix = if success { "✓" } else { "✗" };
+            app.conversation.push_system(&format!("{prefix} {action}: {detail}"));
+
+            // Update command tab result if it was a fleet command
+            match action.as_str() {
+                "device_status" | "exec" | "reboot_device" | "fleet_apply" => {
+                    app.command_tab.is_executing = false;
+                    app.command_tab.result_text = format!("  {prefix} {detail}");
+                }
+                "send_chat" if !success => {
+                    // Update the last sent message status to failed
+                    app.conversation.update_last_sent_status(
+                        crate::tui::segments::DeliveryStatus::Failed(detail.clone()),
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        TuiEvent::PageLoaded { host: _, path, source } => {
+            // Store page content for the Pages tab to render
+            app.page_source = Some(source);
+            app.page_path = Some(path);
+        }
+
+        TuiEvent::PageList { host: _, pages } => {
+            app.page_index = pages;
+        }
+
+        TuiEvent::TerminalOutput { session_id, data } => {
+            if app.terminal_tab.session_id.as_deref() == Some(&session_id) {
+                app.terminal_tab.push_output(&data);
+            }
+        }
+
+        TuiEvent::TerminalExited { session_id, exit_code } => {
+            if app.terminal_tab.session_id.as_deref() == Some(&session_id) {
+                let msg = match exit_code {
+                    Some(code) => format!("Session exited with code {code}"),
+                    None => "Session exited".to_string(),
+                };
+                app.terminal_tab.scrollback.push(format!("--- {msg} ---"));
+                app.terminal_tab.status = crate::app::TerminalStatus::Disconnected;
+                app.terminal_tab.session_id = None;
+            }
+        }
+
         TuiEvent::Disconnected(reason) => {
             app.daemon_connected = false;
             app.rns_initialized = false;
@@ -543,6 +1131,9 @@ fn parse_status(p: &HashMap<String, MpValue>) -> Result<DaemonStatusInfo, String
     s.interface_count = p.get("interface_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     s.hub_status = p.get("hub_status").and_then(|v| v.as_str()).map(|s| s.to_string());
     s.propagation_enabled = mp_bool(p, "propagation_enabled");
+    s.propagation_count = p.get("propagation_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    s.propagation_size_bytes =
+        p.get("propagation_size_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
     s.transport_enabled = mp_bool(p, "transport_enabled");
     s.active_links = p.get("active_links").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     Ok(s)

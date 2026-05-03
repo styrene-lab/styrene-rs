@@ -42,6 +42,7 @@ pub(super) struct BootstrapContext {
     #[allow(dead_code)]
     pub(super) daemon_facade: Arc<DaemonFacade>,
     /// Unix socket IPC server — serves the Daemon trait to TUI and CLI clients.
+    #[cfg(feature = "ipc-server")]
     #[allow(dead_code)]
     pub(super) ipc_server: styrene_ipc_server::IpcServer,
 }
@@ -132,10 +133,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
             .await;
         let iface_manager = transport_instance.iface_manager();
         let (tcp_server, _bound_addr_rx) = TcpServer::new(addr.clone(), iface_manager.clone());
-        let server_iface = iface_manager
-            .lock()
-            .await
-            .spawn(tcp_server, TcpServer::spawn);
+        let server_iface = iface_manager.lock().await.spawn(tcp_server, TcpServer::spawn);
         eprintln!("[daemon] tcp_server enabled iface={} bind={}", server_iface, addr);
         if let Some(config) = daemon_config.as_ref() {
             for (host, port) in config.tcp_client_endpoints() {
@@ -272,10 +270,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
 
     // --- RBAC policy: config → DB overlay → normalize ---
     let rbac_policy = {
-        let mut policy = daemon_config
-            .as_ref()
-            .and_then(|c| c.rbac.clone())
-            .unwrap_or_default();
+        let mut policy = daemon_config.as_ref().and_then(|c| c.rbac.clone()).unwrap_or_default();
 
         // Overlay roster entries from SQLite (DB wins on conflict)
         {
@@ -380,9 +375,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     app_context.set_signer(Arc::new(identity.clone()));
     // Wire delivery destination hash into IdentityService so DaemonFacade can
     // return it in query_identity responses (needed for LXMF messaging).
-    app_context
-        .identity()
-        .set_delivery_destination_hash(local_delivery_hash.clone());
+    app_context.identity().set_delivery_destination_hash(local_delivery_hash.clone());
     eprintln!("[daemon] service architecture initialized (AppContext + DaemonFacade + signer)");
 
     // Enable propagation if node role is Hub
@@ -429,18 +422,12 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         )))
         .await;
     // Register tunnel protocol handler
-    app_context
-        .protocol()
-        .register(app_context.tunnel_arc())
-        .await;
+    app_context.protocol().register(app_context.tunnel_arc()).await;
 
     // Register I2P proxy protocol handler (when feature is enabled)
     #[cfg(feature = "i2p-proxy")]
     {
-        app_context
-            .protocol()
-            .register(app_context.i2p_proxy_arc())
-            .await;
+        app_context.protocol().register(app_context.i2p_proxy_arc()).await;
         eprintln!("[daemon] I2P proxy service registered");
     }
 
@@ -469,42 +456,61 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
             app_context.tunnel().set_backend(wg_backend.clone());
             eprintln!("[daemon] WireGuard backend wired into TunnelService");
         } else {
-            eprintln!("[daemon] WireGuard tools not available — tunnel state tracked without backend");
+            eprintln!(
+                "[daemon] WireGuard tools not available — tunnel state tracked without backend"
+            );
         }
     }
 
     eprintln!("[daemon] service workers started (inbound + announce + rpc-request + rpc-response + tunnel)");
 
-    // --- Unix socket IPC server ---
-    let ipc_config = styrene_ipc_server::IpcServerConfig {
-        socket_path: args.socket.clone().unwrap_or_else(styrene_ipc_server::default_socket_path),
-        event_capacity: 256,
-    };
-    let mut ipc_server = styrene_ipc_server::IpcServer::new(
-        daemon_facade.clone() as Arc<dyn styrene_ipc::traits::Daemon>,
-        ipc_config,
-    );
-    match ipc_server.start().await {
-        Ok(()) => {
-            eprintln!("[daemon] IPC server listening on {}", ipc_server.socket_path().display())
-        }
-        Err(e) => eprintln!("[daemon] IPC server failed to start: {e}"),
-    }
-
-    // Bridge daemon events → IPC server so clients receive pushed events.
-    {
-        let event_tx = ipc_server.event_sender();
-        let mut daemon_rx = app_context.events().subscribe_daemon_events();
-        tokio::spawn(async move {
-            loop {
-                match daemon_rx.recv().await {
-                    Ok(event) => { let _ = event_tx.send(event); }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
+    // --- Unix socket IPC server (desktop only) ---
+    #[cfg(feature = "ipc-server")]
+    let ipc_server = {
+        let ipc_config = styrene_ipc_server::IpcServerConfig {
+            socket_path: args
+                .socket
+                .clone()
+                .unwrap_or_else(styrene_ipc_server::default_socket_path),
+            event_capacity: 256,
+        };
+        let mut server = styrene_ipc_server::IpcServer::new(
+            daemon_facade.clone() as Arc<dyn styrene_ipc::traits::Daemon>,
+            ipc_config,
+        );
+        match server.start().await {
+            Ok(()) => {
+                eprintln!("[daemon] IPC server listening on {}", server.socket_path().display())
             }
-        });
-    }
+            Err(e) => eprintln!("[daemon] IPC server failed to start: {e}"),
+        }
 
-    BootstrapContext { rpc_addr, daemon, rpc_tls, app_context, daemon_facade, ipc_server }
+        // Bridge daemon events → IPC server so clients receive pushed events.
+        {
+            let event_tx = server.event_sender();
+            let mut daemon_rx = app_context.events().subscribe_daemon_events();
+            tokio::spawn(async move {
+                loop {
+                    match daemon_rx.recv().await {
+                        Ok(event) => {
+                            let _ = event_tx.send(event);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+        }
+        server
+    };
+
+    BootstrapContext {
+        rpc_addr,
+        daemon,
+        rpc_tls,
+        app_context,
+        daemon_facade,
+        #[cfg(feature = "ipc-server")]
+        ipc_server,
+    }
 }

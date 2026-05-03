@@ -155,10 +155,7 @@ pub fn resolve_with_source(key: &str) -> Result<ResolvedSecret, ResolveError> {
     }
 
     // 4. Not found.
-    Err(ResolveError::NotFound {
-        key: key.to_string(),
-        env_key,
-    })
+    Err(ResolveError::NotFound { key: key.to_string(), env_key })
 }
 
 /// Resolve a secret by key, with a fallback conventional env var.
@@ -202,10 +199,7 @@ pub fn resolve_or_env_with_source(
     }
 
     let env_key = to_env_key(key);
-    Err(ResolveError::NotFound {
-        key: key.to_string(),
-        env_key,
-    })
+    Err(ResolveError::NotFound { key: key.to_string(), env_key })
 }
 
 // ---------------------------------------------------------------------------
@@ -221,10 +215,8 @@ pub fn resolve_or_env_with_source(
 #[cfg(feature = "file-store")]
 fn find_project_store() -> Option<std::path::PathBuf> {
     let cwd = std::env::current_dir().ok()?;
-    let home = std::env::var("HOME")
-        .ok()
-        .filter(|h| !h.is_empty())
-        .map(std::path::PathBuf::from)?;
+    let home =
+        std::env::var("HOME").ok().filter(|h| !h.is_empty()).map(std::path::PathBuf::from)?;
 
     let mut dir = cwd.as_path();
     loop {
@@ -271,15 +263,11 @@ fn resolve_from_project_store(key: &str) -> Result<Option<ResolvedSecret>, Resol
 
     match open_store_best_effort(&path) {
         Some(Ok(s)) => match s.get(key) {
-            Ok(Some(val)) => Ok(Some(ResolvedSecret {
-                value: val,
-                source: SecretSource::ProjectStore(path),
-            })),
+            Ok(Some(val)) => {
+                Ok(Some(ResolvedSecret { value: val, source: SecretSource::ProjectStore(path) }))
+            }
             Ok(None) => Ok(None),
-            Err(e) => Err(ResolveError::Store {
-                key: key.to_string(),
-                source: e,
-            }),
+            Err(e) => Err(ResolveError::Store { key: key.to_string(), source: e }),
         },
         Some(Err(e)) => {
             // Warn and fall through — don't let a broken project store
@@ -312,15 +300,11 @@ fn resolve_from_user_store(key: &str) -> Result<Option<ResolvedSecret>, ResolveE
 
     match open_store_best_effort(&store_path) {
         Some(Ok(s)) => match s.get(key) {
-            Ok(Some(val)) => Ok(Some(ResolvedSecret {
-                value: val,
-                source: SecretSource::UserStore,
-            })),
+            Ok(Some(val)) => {
+                Ok(Some(ResolvedSecret { value: val, source: SecretSource::UserStore }))
+            }
             Ok(None) => Ok(None),
-            Err(e) => Err(ResolveError::Store {
-                key: key.to_string(),
-                source: e,
-            }),
+            Err(e) => Err(ResolveError::Store { key: key.to_string(), source: e }),
         },
         Some(Err(e)) => {
             if !is_quiet() {
@@ -392,14 +376,8 @@ mod tests {
 
     #[test]
     fn to_env_key_dots_and_dashes() {
-        assert_eq!(
-            to_env_key("forge.github.token"),
-            "STYRENE_SECRET_FORGE_GITHUB_TOKEN"
-        );
-        assert_eq!(
-            to_env_key("some-service.api-key"),
-            "STYRENE_SECRET_SOME_SERVICE_API_KEY"
-        );
+        assert_eq!(to_env_key("forge.github.token"), "STYRENE_SECRET_FORGE_GITHUB_TOKEN");
+        assert_eq!(to_env_key("some-service.api-key"), "STYRENE_SECRET_SOME_SERVICE_API_KEY");
     }
 
     #[test]
@@ -437,10 +415,7 @@ mod tests {
         std::env::set_var(fallback, "fallback-value");
         let resolved = resolve_or_env_with_source(key, fallback).unwrap();
         assert_eq!(resolved.value.expose_secret().as_slice(), b"fallback-value");
-        assert_eq!(
-            resolved.source,
-            SecretSource::FallbackEnvVar(fallback.to_string())
-        );
+        assert_eq!(resolved.source, SecretSource::FallbackEnvVar(fallback.to_string()));
 
         // Set primary env var — should take precedence.
         let env_key = to_env_key(key);
@@ -455,10 +430,7 @@ mod tests {
 
     #[test]
     fn secret_source_display() {
-        assert_eq!(
-            SecretSource::UserStore.to_string(),
-            "user store (~/.styrene/secrets.db)"
-        );
+        assert_eq!(SecretSource::UserStore.to_string(), "user store (~/.styrene/secrets.db)");
         assert_eq!(
             SecretSource::EnvVar("STYRENE_SECRET_FOO".into()).to_string(),
             "env var STYRENE_SECRET_FOO"

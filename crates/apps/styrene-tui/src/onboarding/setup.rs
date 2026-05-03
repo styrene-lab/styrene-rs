@@ -80,6 +80,7 @@ impl SetupResult {
         let config = styrened::config::DaemonConfig {
             interfaces: self.interfaces.clone(),
             role: self.node_role,
+            rbac: None,
         };
         let config_toml =
             toml::to_string_pretty(&config).map_err(|e| std::io::Error::other(e.to_string()))?;

@@ -189,27 +189,31 @@ pub fn spawn_inbound_worker_with_auto_reply(
                         if data.len() >= SIG_OFFSET {
                             let mut source_bytes = [0u8; 16];
                             let source_start = match payload_mode {
-                                InboundPayloadMode::FullWire => 16, // after dest
+                                InboundPayloadMode::FullWire => 16,           // after dest
                                 InboundPayloadMode::DestinationStripped => 0, // source is first
                             };
                             if data.len() > source_start + 16 {
-                                source_bytes.copy_from_slice(&data[source_start..source_start + 16]);
+                                source_bytes
+                                    .copy_from_slice(&data[source_start..source_start + 16]);
                                 // Compute the sender's delivery destination hash for identity lookup
                                 let sender_delivery_hash = {
-                                    let name = rns_core::destination::DestinationName::new("lxmf", "delivery");
-                                    rns_core::hash::AddressHash::new(
-                                        rns_core::hash::address_hash(
-                                            &[name.as_name_hash_slice(), &source_bytes].concat(),
-                                        ),
-                                    )
-                                };
-                                if let Some(sender_identity) = transport.resolve_identity(&sender_delivery_hash).await {
-                                    let verified = crate::inbound_delivery::verify_inbound_signature(
-                                        data,
-                                        payload_mode,
-                                        destination,
-                                        &sender_identity,
+                                    let name = rns_core::destination::DestinationName::new(
+                                        "lxmf", "delivery",
                                     );
+                                    rns_core::hash::AddressHash::new(rns_core::hash::address_hash(
+                                        &[name.as_name_hash_slice(), &source_bytes].concat(),
+                                    ))
+                                };
+                                if let Some(sender_identity) =
+                                    transport.resolve_identity(&sender_delivery_hash).await
+                                {
+                                    let verified =
+                                        crate::inbound_delivery::verify_inbound_signature(
+                                            data,
+                                            payload_mode,
+                                            destination,
+                                            &sender_identity,
+                                        );
                                     match verified {
                                         Some(true) => {} // signature valid
                                         Some(false) => {
@@ -254,47 +258,59 @@ pub fn spawn_inbound_worker_with_auto_reply(
                         // Skip auto-reply for:
                         // - Protocol messages (e.g., Fleet RPC with fields.protocol set)
                         // - Messages that are themselves auto-replies (title contains "[auto-reply]")
-                        let is_protocol_message = record
-                            .fields
-                            .as_ref()
-                            .and_then(|f| f.get("protocol"))
-                            .is_some();
+                        let is_protocol_message =
+                            record.fields.as_ref().and_then(|f| f.get("protocol")).is_some();
                         let is_auto_reply_message = record.title.contains("[auto-reply]");
-                        let should_auto_reply =
-                            !is_protocol_message && !is_auto_reply_message;
+                        let should_auto_reply = !is_protocol_message && !is_auto_reply_message;
 
                         if should_auto_reply {
-                        if let Some(ref ar) = auto_reply {
-                            if let Some(reply_text) = ar.should_reply(&record.source) {
-                                // Determine the sender's delivery hash for reply routing.
-                                // The record.source is the sender's identity hash; we need
-                                // their delivery destination hash for send_chat.
-                                // The inbound worker knows the delivery hash is what the
-                                // transport resolved — look it up from the source identity.
-                                let source_delivery_hash = {
-                                    let name = rns_core::destination::DestinationName::new("lxmf", "delivery");
-                                    let source_bytes: Result<[u8; 16], _> = hex::decode(&record.source)
-                                        .and_then(|b| b.try_into().map_err(|_| hex::FromHexError::InvalidStringLength));
-                                    source_bytes.ok().map(|id_bytes| {
-                                        let truncated = rns_core::hash::address_hash(
-                                            &[name.as_name_hash_slice(), &id_bytes].concat(),
+                            if let Some(ref ar) = auto_reply {
+                                if let Some(reply_text) = ar.should_reply(&record.source) {
+                                    // Determine the sender's delivery hash for reply routing.
+                                    // The record.source is the sender's identity hash; we need
+                                    // their delivery destination hash for send_chat.
+                                    // The inbound worker knows the delivery hash is what the
+                                    // transport resolved — look it up from the source identity.
+                                    let source_delivery_hash = {
+                                        let name = rns_core::destination::DestinationName::new(
+                                            "lxmf", "delivery",
                                         );
-                                        hex::encode(truncated)
-                                    })
-                                };
+                                        let source_bytes: Result<[u8; 16], _> =
+                                            hex::decode(&record.source).and_then(|b| {
+                                                b.try_into().map_err(|_| {
+                                                    hex::FromHexError::InvalidStringLength
+                                                })
+                                            });
+                                        source_bytes.ok().map(|id_bytes| {
+                                            let truncated = rns_core::hash::address_hash(
+                                                &[name.as_name_hash_slice(), &id_bytes].concat(),
+                                            );
+                                            hex::encode(truncated)
+                                        })
+                                    };
 
-                                if let Some(dest_hash) = source_delivery_hash {
-                                    let m = messaging.clone();
-                                    tokio::spawn(async move {
-                                        if let Err(e) = m.send_chat(&dest_hash, &reply_text, Some("[auto-reply]")).await {
-                                            eprintln!("[worker] auto-reply failed: {e}");
-                                        } else {
-                                            eprintln!("[worker] auto-reply sent to {}", dest_hash);
-                                        }
-                                    });
+                                    if let Some(dest_hash) = source_delivery_hash {
+                                        let m = messaging.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = m
+                                                .send_chat(
+                                                    &dest_hash,
+                                                    &reply_text,
+                                                    Some("[auto-reply]"),
+                                                )
+                                                .await
+                                            {
+                                                eprintln!("[worker] auto-reply failed: {e}");
+                                            } else {
+                                                eprintln!(
+                                                    "[worker] auto-reply sent to {}",
+                                                    dest_hash
+                                                );
+                                            }
+                                        });
+                                    }
                                 }
                             }
-                        }
                         } // close should_auto_reply
                     }
                 }

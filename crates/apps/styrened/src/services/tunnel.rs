@@ -13,7 +13,9 @@ use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use styrene_mesh::tunnel_payloads::{self, TunnelAccept, TunnelOffer, TunnelReject, TunnelTeardown};
+use styrene_mesh::tunnel_payloads::{
+    self, TunnelAccept, TunnelOffer, TunnelReject, TunnelTeardown,
+};
 use styrene_mesh::{StyreneMessage, StyreneMessageType};
 use styrene_services::protocol_registry::{HandleResult, InboundMessage, ProtocolHandler};
 
@@ -293,12 +295,7 @@ impl TunnelService {
 
     /// Get all active tunnel peer identities.
     pub fn active_peers(&self) -> Vec<String> {
-        self.active_tunnels
-            .lock()
-            .expect("lock")
-            .keys()
-            .cloned()
-            .collect()
+        self.active_tunnels.lock().expect("lock").keys().cloned().collect()
     }
 
     /// Tear down a tunnel to a peer (operator-initiated outbound teardown).
@@ -306,11 +303,7 @@ impl TunnelService {
     /// TUNNEL_TEARDOWN to the remote peer.
     pub async fn teardown_tunnel(&self, peer_identity: &str) -> Result<(), String> {
         // Remove from active tunnels
-        let removed = self
-            .active_tunnels
-            .lock()
-            .expect("lock")
-            .remove(peer_identity);
+        let removed = self.active_tunnels.lock().expect("lock").remove(peer_identity);
 
         if removed.is_none() {
             return Err(format!(
@@ -360,12 +353,7 @@ impl TunnelService {
         }
 
         let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash);
-        let endpoint = self
-            .local_endpoint
-            .lock()
-            .expect("lock")
-            .clone()
-            .unwrap_or_default();
+        let endpoint = self.local_endpoint.lock().expect("lock").clone().unwrap_or_default();
 
         let mut psk = [0u8; 32];
         rand_core::OsRng.fill_bytes(&mut psk);
@@ -384,16 +372,11 @@ impl TunnelService {
 
         self.pending_offers.lock().expect("lock").insert(
             nonce.clone(),
-            PendingOffer {
-                peer_identity: peer_identity.to_string(),
-                psk: psk_b64,
-                mtu: 1420,
-            },
+            PendingOffer { peer_identity: peer_identity.to_string(), psk: psk_b64, mtu: 1420 },
         );
 
         let payload = rmp_serde::to_vec(&offer).map_err(|e| format!("encode: {e}"))?;
-        self.send_tunnel_message(peer_identity, StyreneMessageType::TunnelOffer, &payload)
-            .await?;
+        self.send_tunnel_message(peer_identity, StyreneMessageType::TunnelOffer, &payload).await?;
 
         eprintln!(
             "[tunnel] sent TUNNEL_OFFER to {} nonce={}",
@@ -439,12 +422,7 @@ impl TunnelService {
         );
 
         let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash);
-        let endpoint = self
-            .local_endpoint
-            .lock()
-            .expect("lock")
-            .clone()
-            .unwrap_or_default();
+        let endpoint = self.local_endpoint.lock().expect("lock").clone().unwrap_or_default();
 
         let accept = TunnelAccept {
             wg_pubkey: self.local_wg_pubkey.clone(),
@@ -456,9 +434,8 @@ impl TunnelService {
         };
 
         if let Ok(payload) = rmp_serde::to_vec(&accept) {
-            let _ = self
-                .send_tunnel_message(source, StyreneMessageType::TunnelAccept, &payload)
-                .await;
+            let _ =
+                self.send_tunnel_message(source, StyreneMessageType::TunnelAccept, &payload).await;
         }
 
         // Store full peer state
@@ -470,10 +447,7 @@ impl TunnelService {
             mtu: offer.mtu,
             established_at: tunnel_payloads::now_ts(),
         };
-        self.active_tunnels
-            .lock()
-            .expect("lock")
-            .insert(source.to_string(), peer_state.clone());
+        self.active_tunnels.lock().expect("lock").insert(source.to_string(), peer_state.clone());
 
         // Configure WireGuard backend if available
         #[cfg(feature = "wireguard")]
@@ -481,20 +455,13 @@ impl TunnelService {
 
         self.emit_state(source, "established");
 
-        eprintln!(
-            "[tunnel] sent TUNNEL_ACCEPT to {}",
-            &source[..12.min(source.len())]
-        );
+        eprintln!("[tunnel] sent TUNNEL_ACCEPT to {}", &source[..12.min(source.len())]);
 
         HandleResult::Handled
     }
 
     async fn handle_accept(&self, source: &str, accept: TunnelAccept) -> HandleResult {
-        let pending = self
-            .pending_offers
-            .lock()
-            .expect("lock")
-            .remove(&accept.offer_nonce);
+        let pending = self.pending_offers.lock().expect("lock").remove(&accept.offer_nonce);
 
         let pending = match pending {
             Some(p) => p,
@@ -529,10 +496,7 @@ impl TunnelService {
             mtu: pending.mtu,
             established_at: tunnel_payloads::now_ts(),
         };
-        self.active_tunnels
-            .lock()
-            .expect("lock")
-            .insert(source.to_string(), peer_state.clone());
+        self.active_tunnels.lock().expect("lock").insert(source.to_string(), peer_state.clone());
 
         // Configure WireGuard backend if available
         #[cfg(feature = "wireguard")]
@@ -556,10 +520,7 @@ impl TunnelService {
 
         self.emit_state(source, "torn_down");
 
-        eprintln!(
-            "[tunnel] received TUNNEL_TEARDOWN from {}",
-            &source[..12.min(source.len())]
-        );
+        eprintln!("[tunnel] received TUNNEL_TEARDOWN from {}", &source[..12.min(source.len())]);
 
         HandleResult::Handled
     }
@@ -694,10 +655,7 @@ impl ProtocolHandler for TunnelService {
                             &source[..12.min(source.len())],
                             reject.reason
                         );
-                        self.pending_offers
-                            .lock()
-                            .expect("lock")
-                            .remove(&reject.offer_nonce);
+                        self.pending_offers.lock().expect("lock").remove(&reject.offer_nonce);
                         self.emit_state(source, "rejected");
                         HandleResult::Handled
                     }

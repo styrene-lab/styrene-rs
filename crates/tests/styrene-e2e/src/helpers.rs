@@ -20,17 +20,11 @@ pub async fn with_timeout<F, T>(f: F) -> T
 where
     F: std::future::Future<Output = T>,
 {
-    tokio::time::timeout(E2E_TIMEOUT, f)
-        .await
-        .expect("e2e test timed out after 30s")
+    tokio::time::timeout(E2E_TIMEOUT, f).await.expect("e2e test timed out after 30s")
 }
 
 /// Poll until the transport can resolve a peer's identity from announces.
-pub async fn await_identity_resolved(
-    ctx: &AppContext,
-    dest_hash: &AddressHash,
-    timeout: Duration,
-) {
+pub async fn await_identity_resolved(ctx: &AppContext, dest_hash: &AddressHash, timeout: Duration) {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         if ctx.transport().resolve_identity(dest_hash).await.is_some() {
@@ -47,31 +41,21 @@ pub async fn await_identity_resolved(
 }
 
 /// Poll until a path is available for a destination.
-pub async fn await_path(
-    ctx: &AppContext,
-    dest_hash: &AddressHash,
-    timeout: Duration,
-) {
+pub async fn await_path(ctx: &AppContext, dest_hash: &AddressHash, timeout: Duration) {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         if ctx.transport().query_path(dest_hash).await.is_some() {
             return;
         }
         if tokio::time::Instant::now() >= deadline {
-            panic!(
-                "timed out waiting for path to {}",
-                hex::encode(dest_hash.as_slice())
-            );
+            panic!("timed out waiting for path to {}", hex::encode(dest_hash.as_slice()));
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
 }
 
 /// Poll until an inbound message appears in the node's store.
-pub async fn await_inbound_message(
-    ctx: &AppContext,
-    timeout: Duration,
-) -> MessageRecord {
+pub async fn await_inbound_message(ctx: &AppContext, timeout: Duration) -> MessageRecord {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         {
@@ -100,10 +84,8 @@ pub async fn await_inbound_count(
         {
             let store = ctx.store().lock().expect("lock store");
             if let Ok(messages) = store.list_messages(500, None) {
-                let inbound: Vec<_> = messages
-                    .into_iter()
-                    .filter(|m| m.direction == "in")
-                    .collect();
+                let inbound: Vec<_> =
+                    messages.into_iter().filter(|m| m.direction == "in").collect();
                 if inbound.len() >= count {
                     return inbound;
                 }
@@ -115,10 +97,7 @@ pub async fn await_inbound_count(
                 .list_messages(500, None)
                 .map(|msgs| msgs.iter().filter(|m| m.direction == "in").count())
                 .unwrap_or(0);
-            panic!(
-                "timed out waiting for {} inbound messages (got {})",
-                count, actual
-            );
+            panic!("timed out waiting for {} inbound messages (got {})", count, actual);
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
@@ -142,14 +121,8 @@ pub async fn await_message_count(
         }
         if tokio::time::Instant::now() >= deadline {
             let store = ctx.store().lock().expect("lock store");
-            let actual = store
-                .list_messages(500, None)
-                .map(|msgs| msgs.len())
-                .unwrap_or(0);
-            panic!(
-                "timed out waiting for {} total messages (got {})",
-                count, actual
-            );
+            let actual = store.list_messages(500, None).map(|msgs| msgs.len()).unwrap_or(0);
+            panic!("timed out waiting for {} total messages (got {})", count, actual);
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
@@ -160,10 +133,8 @@ pub async fn two_connected_nodes(
     server_name: &str,
     client_name: &str,
 ) -> (crate::node::TestNode, crate::node::TestNode) {
-    let server = crate::node::TestNodeBuilder::new(server_name)
-        .tcp_server("127.0.0.1:0")
-        .build()
-        .await;
+    let server =
+        crate::node::TestNodeBuilder::new(server_name).tcp_server("127.0.0.1:0").build().await;
 
     let client = crate::node::TestNodeBuilder::new(client_name)
         .tcp_client(server.listen_addr.expect("listen addr"))
@@ -175,18 +146,10 @@ pub async fn two_connected_nodes(
     server.announce().await;
     client.announce().await;
 
-    await_identity_resolved(
-        &server.app_context,
-        &client.delivery_addr,
-        Duration::from_secs(10),
-    )
-    .await;
-    await_identity_resolved(
-        &client.app_context,
-        &server.delivery_addr,
-        Duration::from_secs(10),
-    )
-    .await;
+    await_identity_resolved(&server.app_context, &client.delivery_addr, Duration::from_secs(10))
+        .await;
+    await_identity_resolved(&client.app_context, &server.delivery_addr, Duration::from_secs(10))
+        .await;
 
     (server, client)
 }

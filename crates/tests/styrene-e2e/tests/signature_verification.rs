@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use styrene_e2e::helpers::{
-    with_timeout, await_inbound_count, await_inbound_message, two_connected_nodes,
+    await_inbound_count, await_inbound_message, two_connected_nodes, with_timeout,
 };
 
 #[tokio::test]
@@ -17,17 +17,11 @@ async fn legitimate_signed_message_delivers() {
 
         // Normal send_chat produces a signed LXMF message.
         // With signature verification wired in, this should still deliver.
-        alice
-            .send_chat(&bob.delivery_hash, "signed message")
-            .await
-            .expect("send");
+        alice.send_chat(&bob.delivery_hash, "signed message").await.expect("send");
 
         let received = await_inbound_message(&bob.app_context, Duration::from_secs(15)).await;
         assert_eq!(received.content, "signed message");
-        assert_eq!(
-            received.source, alice.identity_hash,
-            "source attribution should match sender"
-        );
+        assert_eq!(received.source, alice.identity_hash, "source attribution should match sender");
     })
     .await;
 }

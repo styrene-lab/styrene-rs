@@ -1,2 +1,33 @@
 [build]
 target-dir = "target"
+
+# ── Android NDK Cross-Compilation ──────────────────────────────────────────
+#
+# These targets use cargo-ndk (install: cargo install cargo-ndk).
+# cargo-ndk auto-detects NDK from $ANDROID_NDK_HOME or Android SDK.
+#
+# Usage: cargo ndk -t arm64-v8a build -p styrene-mobile-ffi --release
+#
+# If not using cargo-ndk, set linkers manually by uncommenting below
+# and pointing to your NDK toolchain:
+#
+# [target.aarch64-linux-android]
+# linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android24-clang"
+#
+# [target.armv7-linux-androideabi]
+# linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi24-clang"
+#
+# [target.x86_64-linux-android]
+# linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/x86_64-linux-android24-clang"
+
+# ── iOS Cross-Compilation ─────────────────────────────────────────────────
+#
+# Requires Xcode with iOS SDK installed.
+# Usage: cargo build --target aarch64-apple-ios --release
+# No special linker config needed — Xcode provides the toolchain.
+
+# ── rusqlite bundled SQLite ────────────────────────────────────────────────
+#
+# rusqlite's libsqlite3-sys compiles SQLite from source using the cc crate.
+# For Android cross-compilation, cargo-ndk sets CC/AR/RANLIB automatically.
+# For manual NDK builds, ensure CC_aarch64_linux_android points to NDK clang.

@@ -15,10 +15,7 @@ pub enum MqttError {
     Serialization(#[from] serde_json::Error),
 
     #[error("deserialization failed on topic `{topic}`: {source}")]
-    Deserialization {
-        topic: String,
-        source: serde_json::Error,
-    },
+    Deserialization { topic: String, source: serde_json::Error },
 
     #[error("broker error: {0}")]
     Broker(String),

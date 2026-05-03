@@ -32,12 +32,7 @@ fn propagation_encrypt_decrypt_roundtrip() {
 
     // Pack for propagation (encrypts for receiver's identity)
     let (envelope_bytes, transient_id) = wire
-        .pack_propagation_with_options_and_rng(
-            receiver.as_identity(),
-            2000.0,
-            None,
-            OsRng,
-        )
+        .pack_propagation_with_options_and_rng(receiver.as_identity(), 2000.0, None, OsRng)
         .expect("pack propagation");
 
     assert!(!envelope_bytes.is_empty());
@@ -78,20 +73,14 @@ fn propagation_encrypt_decrypt_roundtrip() {
     assert_eq!(unpacked.source, sender_hash);
 
     // Verify signature
-    assert!(
-        unpacked.verify(sender.as_identity()).expect("verify"),
-        "signature should be valid"
-    );
+    assert!(unpacked.verify(sender.as_identity()).expect("verify"), "signature should be valid");
 
     // Verify content
     assert_eq!(
         unpacked.payload.content.as_ref().map(|b| b.as_ref()),
         Some(b"propagation test content".as_slice())
     );
-    assert_eq!(
-        unpacked.payload.title.as_ref().map(|b| b.as_ref()),
-        Some(b"Prop Title".as_slice())
-    );
+    assert_eq!(unpacked.payload.title.as_ref().map(|b| b.as_ref()), Some(b"Prop Title".as_slice()));
 }
 
 #[test]
@@ -141,21 +130,13 @@ fn stamp_embedded_in_payload_survives_roundtrip() {
     let decoded = lxmf::Payload::from_msgpack(&encoded).expect("decode");
 
     assert_eq!(decoded.stamp.as_ref().map(|b| b.as_ref()), Some(stamp_data.as_slice()));
-    assert_eq!(
-        decoded.content.as_ref().map(|b| b.as_ref()),
-        Some(b"stamped content".as_slice())
-    );
+    assert_eq!(decoded.content.as_ref().map(|b| b.as_ref()), Some(b"stamped content".as_slice()));
 }
 
 #[test]
 fn payload_without_stamp_has_4_elements() {
-    let payload = lxmf::Payload::new(
-        1000.0,
-        Some(b"no stamp".to_vec()),
-        Some(b"title".to_vec()),
-        None,
-        None,
-    );
+    let payload =
+        lxmf::Payload::new(1000.0, Some(b"no stamp".to_vec()), Some(b"title".to_vec()), None, None);
 
     let encoded = payload.to_msgpack().expect("encode");
     let decoded_value: rmpv::Value = rmp_serde::from_slice(&encoded).expect("decode");
@@ -212,9 +193,7 @@ fn paper_message_encrypt_decrypt_roundtrip() {
     wire.sign(&sender).expect("sign");
 
     // Pack as paper message (encrypted for receiver)
-    let paper_bytes = wire
-        .pack_paper_with_rng(receiver.as_identity(), OsRng)
-        .expect("pack paper");
+    let paper_bytes = wire.pack_paper_with_rng(receiver.as_identity(), OsRng).expect("pack paper");
 
     // Paper format: destination(16) || encrypted(ephemeral_pub + fernet_token)
     assert!(paper_bytes.len() > 16 + 32);
@@ -222,8 +201,8 @@ fn paper_message_encrypt_decrypt_roundtrip() {
 
     // Decrypt
     let encrypted = &paper_bytes[16..];
-    let decrypted = lxmf::message::decrypt_for_identity(&receiver, encrypted, OsRng)
-        .expect("decrypt paper");
+    let decrypted =
+        lxmf::message::decrypt_for_identity(&receiver, encrypted, OsRng).expect("decrypt paper");
 
     // Reconstruct full wire
     let mut full_wire = Vec::with_capacity(16 + decrypted.len());
@@ -249,20 +228,12 @@ fn paper_uri_encode_decode_roundtrip() {
     let mut receiver_hash = [0u8; 16];
     receiver_hash.copy_from_slice(receiver.address_hash().as_slice());
 
-    let payload = lxmf::Payload::new(
-        1000.0,
-        Some(b"QR code message".to_vec()),
-        None,
-        None,
-        None,
-    );
+    let payload = lxmf::Payload::new(1000.0, Some(b"QR code message".to_vec()), None, None, None);
     let mut wire = lxmf::WireMessage::new(receiver_hash, sender_hash, payload);
     wire.sign(&sender).expect("sign");
 
     // Encode as lxm:// URI
-    let uri = wire
-        .pack_paper_uri_with_rng(receiver.as_identity(), OsRng)
-        .expect("pack paper uri");
+    let uri = wire.pack_paper_uri_with_rng(receiver.as_identity(), OsRng).expect("pack paper uri");
 
     assert!(uri.starts_with("lxm://"), "URI should start with lxm://");
     assert!(uri.len() > 20, "URI should have substantial content");
@@ -342,13 +313,7 @@ fn full_wire_and_stripped_produce_same_message_id() {
     let mut receiver_hash = [0u8; 16];
     receiver_hash.copy_from_slice(receiver.address_hash().as_slice());
 
-    let payload = lxmf::Payload::new(
-        1000.0,
-        Some(b"id test".to_vec()),
-        None,
-        None,
-        None,
-    );
+    let payload = lxmf::Payload::new(1000.0, Some(b"id test".to_vec()), None, None, None);
     let mut wire = lxmf::WireMessage::new(receiver_hash, sender_hash, payload);
     wire.sign(&sender).expect("sign");
     let full_bytes = wire.pack().expect("pack");

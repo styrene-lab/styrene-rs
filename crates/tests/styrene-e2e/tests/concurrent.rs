@@ -4,9 +4,7 @@
 //! rapid-fire messages, and concurrent link establishment.
 
 use std::time::Duration;
-use styrene_e2e::helpers::{
-    with_timeout, await_inbound_count, two_connected_nodes,
-};
+use styrene_e2e::helpers::{await_inbound_count, two_connected_nodes, with_timeout};
 
 #[tokio::test]
 async fn bidirectional_simultaneous_send() {
@@ -17,21 +15,17 @@ async fn bidirectional_simultaneous_send() {
         let alice_send = {
             let delivery = bob.delivery_hash.clone();
             let ctx = alice.app_context.clone();
-            tokio::spawn(async move {
-                ctx.messaging()
-                    .send_chat(&delivery, "from-alice", None)
-                    .await
-            })
+            tokio::spawn(
+                async move { ctx.messaging().send_chat(&delivery, "from-alice", None).await },
+            )
         };
 
         let bob_send = {
             let delivery = alice.delivery_hash.clone();
             let ctx = bob.app_context.clone();
-            tokio::spawn(async move {
-                ctx.messaging()
-                    .send_chat(&delivery, "from-bob", None)
-                    .await
-            })
+            tokio::spawn(
+                async move { ctx.messaging().send_chat(&delivery, "from-bob", None).await },
+            )
         };
 
         // Both sends should succeed
@@ -39,20 +33,10 @@ async fn bidirectional_simultaneous_send() {
         bob_send.await.expect("join bob").expect("bob send");
 
         // Both should receive the other's message
-        let alice_inbox = await_inbound_count(
-            &alice.app_context,
-            1,
-            Duration::from_secs(15),
-        )
-        .await;
+        let alice_inbox = await_inbound_count(&alice.app_context, 1, Duration::from_secs(15)).await;
         assert_eq!(alice_inbox[0].content, "from-bob");
 
-        let bob_inbox = await_inbound_count(
-            &bob.app_context,
-            1,
-            Duration::from_secs(15),
-        )
-        .await;
+        let bob_inbox = await_inbound_count(&bob.app_context, 1, Duration::from_secs(15)).await;
         assert_eq!(bob_inbox[0].content, "from-alice");
     })
     .await;
@@ -77,12 +61,7 @@ async fn rapid_fire_messages_all_delivered() {
         }
 
         // All 5 messages should arrive at Bob with correct content
-        let received = await_inbound_count(
-            &bob.app_context,
-            count,
-            Duration::from_secs(5),
-        )
-        .await;
+        let received = await_inbound_count(&bob.app_context, count, Duration::from_secs(5)).await;
 
         let contents: Vec<&str> = received.iter().map(|m| m.content.as_str()).collect();
         for i in 0..count {
@@ -101,12 +80,8 @@ async fn rapid_fire_messages_all_delivered() {
         }
 
         // All message IDs should be unique (content-hash based)
-        let unique: std::collections::HashSet<&str> =
-            sent_ids.iter().map(|s| s.as_str()).collect();
-        assert_eq!(
-            unique.len(), count,
-            "all message IDs should be unique"
-        );
+        let unique: std::collections::HashSet<&str> = sent_ids.iter().map(|s| s.as_str()).collect();
+        assert_eq!(unique.len(), count, "all message IDs should be unique");
 
         // Sender's store should have all outbound records
         let store = alice.app_context.store().lock().expect("lock");

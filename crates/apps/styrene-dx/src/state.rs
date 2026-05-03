@@ -215,10 +215,14 @@ impl GraphNode {
             GraphNodeType::Hub { .. } => {
                 let d = format!(
                     "M{},{} L{},{} L{},{} L{},{} Z",
-                    cx, cy - r,       // top
-                    cx + r, cy,       // right
-                    cx, cy + r,       // bottom
-                    cx - r, cy,       // left
+                    cx,
+                    cy - r, // top
+                    cx + r,
+                    cy, // right
+                    cx,
+                    cy + r, // bottom
+                    cx - r,
+                    cy, // left
                 );
                 Some(d)
             }
@@ -245,10 +249,14 @@ impl GraphNode {
                 let half = r * 0.85;
                 let d = format!(
                     "M{},{} L{},{} L{},{} L{},{} Z",
-                    cx - half, cy - half,
-                    cx + half, cy - half,
-                    cx + half, cy + half,
-                    cx - half, cy + half,
+                    cx - half,
+                    cy - half,
+                    cx + half,
+                    cy - half,
+                    cx + half,
+                    cy + half,
+                    cx - half,
+                    cy + half,
                 );
                 Some(d)
             }
@@ -313,24 +321,15 @@ pub fn parse_announce_name(raw: &str) -> ParsedAnnounceName {
     // Format: {"name": "hostname-riftagent", "services": [...]}
     if trimmed.starts_with('{') {
         let name = extract_json_name(trimmed);
-        return ParsedAnnounceName {
-            display_name: name,
-            ..Default::default()
-        };
+        return ParsedAnnounceName { display_name: name, ..Default::default() };
     }
 
     // Check for Styrene prefix
     if !trimmed.starts_with("styrene:") {
         // Truncate plain names to something reasonable
-        let display = if trimmed.len() > 32 {
-            format!("{}...", &trimmed[..32])
-        } else {
-            trimmed.to_string()
-        };
-        return ParsedAnnounceName {
-            display_name: display,
-            ..Default::default()
-        };
+        let display =
+            if trimmed.len() > 32 { format!("{}...", &trimmed[..32]) } else { trimmed.to_string() };
+        return ParsedAnnounceName { display_name: display, ..Default::default() };
     }
 
     // Split on ':'  — styrene:NAME:VERSION:CAPS:...:PLATFORM|N
@@ -343,18 +342,12 @@ pub fn parse_announce_name(raw: &str) -> ParsedAnnounceName {
         .unwrap_or("Styrene Node")
         .to_string();
 
-    let version = parts
-        .get(2)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let version = parts.get(2).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
 
     let capabilities: Vec<String> = parts
         .get(3)
         .map(|s| {
-            s.split(',')
-                .map(|c| c.trim().to_ascii_lowercase())
-                .filter(|c| !c.is_empty())
-                .collect()
+            s.split(',').map(|c| c.trim().to_ascii_lowercase()).filter(|c| !c.is_empty()).collect()
         })
         .unwrap_or_default();
 
@@ -366,13 +359,7 @@ pub fn parse_announce_name(raw: &str) -> ParsedAnnounceName {
         PeerRole::Styrene
     };
 
-    ParsedAnnounceName {
-        display_name,
-        is_styrene: true,
-        version,
-        capabilities,
-        role,
-    }
+    ParsedAnnounceName { display_name, is_styrene: true, version, capabilities, role }
 }
 
 /// Extract the "name" field from a JSON service descriptor.

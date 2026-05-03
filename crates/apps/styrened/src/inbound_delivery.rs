@@ -1,6 +1,6 @@
 use crate::storage::messages::MessageRecord;
-pub use lxmf::inbound_decode::InboundPayloadMode;
 use lxmf::inbound_decode::decode_inbound_message;
+pub use lxmf::inbound_decode::InboundPayloadMode;
 use lxmf::WireMessage;
 
 use crate::lxmf_bridge::rmpv_to_json;

@@ -39,9 +39,9 @@
 //! - **`styrene-mesh`** (this crate) — Wire protocol envelope
 //! - [`styrene`](https://crates.io/crates/styrene) — Meta-crate re-exporting all
 
-pub mod wire;
-pub mod tunnel_payloads;
 pub mod i2p;
+pub mod tunnel_payloads;
+pub mod wire;
 
 #[cfg(feature = "pqc")]
 pub mod pqc;

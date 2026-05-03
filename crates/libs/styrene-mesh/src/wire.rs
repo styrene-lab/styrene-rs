@@ -85,6 +85,8 @@ pub enum StyreneMessageType {
     PropagationFetch = 0x47,
     /// Client acknowledges receipt of messages (hub deletes them).
     PropagationDelete = 0x48,
+    /// Client requests a Micron page from a remote node.
+    PageRequest = 0x49,
 
     // RPC Responses (0x60-0x7F)
     ExecResult = 0x60,
@@ -96,6 +98,7 @@ pub enum StyreneMessageType {
     PropagationIngestResult = 0x66,
     PropagationFetchResult = 0x67,
     PropagationDeleteResult = 0x68,
+    PageResponse = 0x69,
 
     // Hub Services — I2P Proxy (0x84-0x88)
     /// Client requests HTTP fetch through hub's i2pd router.
@@ -200,6 +203,7 @@ impl StyreneMessageType {
             0x46 => Ok(Self::PropagationIngest),
             0x47 => Ok(Self::PropagationFetch),
             0x48 => Ok(Self::PropagationDelete),
+            0x49 => Ok(Self::PageRequest),
             0x60 => Ok(Self::ExecResult),
             0x61 => Ok(Self::RebootResult),
             0x62 => Ok(Self::ConfigUpdateResult),
@@ -209,6 +213,7 @@ impl StyreneMessageType {
             0x66 => Ok(Self::PropagationIngestResult),
             0x67 => Ok(Self::PropagationFetchResult),
             0x68 => Ok(Self::PropagationDeleteResult),
+            0x69 => Ok(Self::PageResponse),
             0x84 => Ok(Self::I2pProxyRequest),
             0x85 => Ok(Self::I2pProxyResponse),
             0x86 => Ok(Self::I2pProxyData),
@@ -271,15 +276,13 @@ impl ResourceAvailablePayload {
     /// Encode to CBOR bytes for embedding in a `StyreneMessage` payload.
     pub fn encode(&self) -> Result<Vec<u8>, WireError> {
         let mut buf = Vec::new();
-        ciborium::into_writer(self, &mut buf)
-            .map_err(|e| WireError::CborEncode(e.to_string()))?;
+        ciborium::into_writer(self, &mut buf).map_err(|e| WireError::CborEncode(e.to_string()))?;
         Ok(buf)
     }
 
     /// Decode from CBOR bytes.
     pub fn decode(data: &[u8]) -> Result<Self, WireError> {
-        ciborium::from_reader(data)
-            .map_err(|e| WireError::CborDecode(e.to_string()))
+        ciborium::from_reader(data).map_err(|e| WireError::CborDecode(e.to_string()))
     }
 }
 
@@ -296,15 +299,13 @@ impl ChunkRequestPayload {
     /// Encode to CBOR bytes for embedding in a `StyreneMessage` payload.
     pub fn encode(&self) -> Result<Vec<u8>, WireError> {
         let mut buf = Vec::new();
-        ciborium::into_writer(self, &mut buf)
-            .map_err(|e| WireError::CborEncode(e.to_string()))?;
+        ciborium::into_writer(self, &mut buf).map_err(|e| WireError::CborEncode(e.to_string()))?;
         Ok(buf)
     }
 
     /// Decode from CBOR bytes.
     pub fn decode(data: &[u8]) -> Result<Self, WireError> {
-        ciborium::from_reader(data)
-            .map_err(|e| WireError::CborDecode(e.to_string()))
+        ciborium::from_reader(data).map_err(|e| WireError::CborDecode(e.to_string()))
     }
 }
 
@@ -324,15 +325,13 @@ impl ChunkResponsePayload {
     /// Encode to CBOR bytes for embedding in a `StyreneMessage` payload.
     pub fn encode(&self) -> Result<Vec<u8>, WireError> {
         let mut buf = Vec::new();
-        ciborium::into_writer(self, &mut buf)
-            .map_err(|e| WireError::CborEncode(e.to_string()))?;
+        ciborium::into_writer(self, &mut buf).map_err(|e| WireError::CborEncode(e.to_string()))?;
         Ok(buf)
     }
 
     /// Decode from CBOR bytes.
     pub fn decode(data: &[u8]) -> Result<Self, WireError> {
-        ciborium::from_reader(data)
-            .map_err(|e| WireError::CborDecode(e.to_string()))
+        ciborium::from_reader(data).map_err(|e| WireError::CborDecode(e.to_string()))
     }
 }
 
@@ -386,6 +385,25 @@ pub struct PropagationStatusPayload {
     pub success: bool,
     pub error: Option<String>,
     pub count: Option<usize>,
+}
+
+// ── Page Payloads (0x49, 0x69) ──────────────────────────────────────────────
+
+/// Payload for `PageRequest` (0x49): client requests a Micron page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageRequestPayload {
+    /// Request path (e.g. "/", "/status", "/guide/intro").
+    pub path: String,
+}
+
+/// Payload for `PageResponse` (0x69): node returns page content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageResponsePayload {
+    pub success: bool,
+    /// Micron source text (empty on error).
+    pub source: String,
+    /// Error message if success is false.
+    pub error: Option<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -24,7 +24,7 @@ mod inner {
     use tokio_serial::SerialPortBuilderExt;
     use tokio_util::sync::CancellationToken;
 
-    use super::super::kiss::{KissDecoder, kiss_encode};
+    use super::super::kiss::{kiss_encode, KissDecoder};
     use super::super::stream_iface::{run_hdlc_rx_loop, run_hdlc_tx_loop};
     use crate::transport::iface::{Interface, InterfaceContext};
 

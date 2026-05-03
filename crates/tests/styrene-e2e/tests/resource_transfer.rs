@@ -3,10 +3,10 @@
 //! Diagnoses why large messages (> LINK_PACKET_MDU) don't complete
 //! between two TestNodes. Monitors resource events at the transport layer.
 
-use std::time::Duration;
-use styrene_e2e::helpers::{with_timeout, await_identity_resolved, SETTLE};
-use styrene_e2e::node::TestNodeBuilder;
 use rns_core::transport::resource::ResourceEventKind;
+use std::time::Duration;
+use styrene_e2e::helpers::{await_identity_resolved, with_timeout, SETTLE};
+use styrene_e2e::node::TestNodeBuilder;
 
 #[tokio::test]
 async fn resource_events_fire_on_large_payload() {

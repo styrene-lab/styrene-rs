@@ -34,18 +34,14 @@ pub struct MockStore {
 impl MockStore {
     /// Create a mock store pre-loaded with the given key-value pairs.
     pub fn new(entries: &[(&str, &str)]) -> Self {
-        let entries = entries
-            .iter()
-            .map(|(k, v)| ((*k).to_string(), v.as_bytes().to_vec()))
-            .collect();
+        let entries =
+            entries.iter().map(|(k, v)| ((*k).to_string(), v.as_bytes().to_vec())).collect();
         Self { entries }
     }
 
     /// Look up a secret by key.
     pub fn get(&self, key: &str) -> Option<SecretValue> {
-        self.entries
-            .get(key)
-            .map(|v| SecretBox::new(Box::new(v.clone())))
+        self.entries.get(key).map(|v| SecretBox::new(Box::new(v.clone())))
     }
 
     /// List all keys in the mock store.

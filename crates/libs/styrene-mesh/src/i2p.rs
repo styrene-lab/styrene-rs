@@ -146,11 +146,7 @@ mod tests {
 
     #[test]
     fn error_roundtrip() {
-        let err = I2pProxyError {
-            seq: 0,
-            code: 502,
-            message: "i2pd proxy unreachable".into(),
-        };
+        let err = I2pProxyError { seq: 0, code: 502, message: "i2pd proxy unreachable".into() };
         let decoded: I2pProxyError = cbor_roundtrip(&err);
         assert_eq!(decoded.code, 502);
     }

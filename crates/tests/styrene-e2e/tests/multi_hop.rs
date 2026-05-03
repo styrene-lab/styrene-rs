@@ -14,7 +14,7 @@
 
 use std::time::Duration;
 use styrene_e2e::helpers::{
-    with_timeout, await_identity_resolved, await_inbound_count, await_inbound_message, SETTLE,
+    await_identity_resolved, await_inbound_count, await_inbound_message, with_timeout, SETTLE,
 };
 use styrene_e2e::node::TestNodeBuilder;
 
@@ -36,17 +36,10 @@ async fn message_from_spoke_to_hub() {
         hub.announce().await;
         spoke_a.announce().await;
 
-        await_identity_resolved(
-            &spoke_a.app_context,
-            &hub.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&spoke_a.app_context, &hub.delivery_addr, Duration::from_secs(10))
+            .await;
 
-        spoke_a
-            .send_chat(&hub.delivery_hash, "direct to hub")
-            .await
-            .expect("send");
+        spoke_a.send_chat(&hub.delivery_hash, "direct to hub").await.expect("send");
 
         let msg = await_inbound_message(&hub.app_context, Duration::from_secs(15)).await;
         assert_eq!(msg.content, "direct to hub");
@@ -79,27 +72,13 @@ async fn two_spokes_message_hub_concurrently() {
         spoke_a.announce().await;
         spoke_c.announce().await;
 
-        await_identity_resolved(
-            &spoke_a.app_context,
-            &hub.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
-        await_identity_resolved(
-            &spoke_c.app_context,
-            &hub.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&spoke_a.app_context, &hub.delivery_addr, Duration::from_secs(10))
+            .await;
+        await_identity_resolved(&spoke_c.app_context, &hub.delivery_addr, Duration::from_secs(10))
+            .await;
 
-        spoke_a
-            .send_chat(&hub.delivery_hash, "from-spoke-a")
-            .await
-            .expect("a sends");
-        spoke_c
-            .send_chat(&hub.delivery_hash, "from-spoke-c")
-            .await
-            .expect("c sends");
+        spoke_a.send_chat(&hub.delivery_hash, "from-spoke-a").await.expect("a sends");
+        spoke_c.send_chat(&hub.delivery_hash, "from-spoke-c").await.expect("c sends");
 
         let msgs = await_inbound_count(&hub.app_context, 2, Duration::from_secs(15)).await;
         let sources: Vec<&str> = msgs.iter().map(|m| m.source.as_str()).collect();
@@ -133,25 +112,13 @@ async fn hub_replies_to_both_spokes() {
         spoke_a.announce().await;
         spoke_c.announce().await;
 
-        await_identity_resolved(
-            &hub.app_context,
-            &spoke_a.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
-        await_identity_resolved(
-            &hub.app_context,
-            &spoke_c.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&hub.app_context, &spoke_a.delivery_addr, Duration::from_secs(10))
+            .await;
+        await_identity_resolved(&hub.app_context, &spoke_c.delivery_addr, Duration::from_secs(10))
+            .await;
 
-        hub.send_chat(&spoke_a.delivery_hash, "reply-to-a")
-            .await
-            .expect("hub→a");
-        hub.send_chat(&spoke_c.delivery_hash, "reply-to-c")
-            .await
-            .expect("hub→c");
+        hub.send_chat(&spoke_a.delivery_hash, "reply-to-a").await.expect("hub→a");
+        hub.send_chat(&spoke_c.delivery_hash, "reply-to-c").await.expect("hub→c");
 
         let msg_a = await_inbound_message(&spoke_a.app_context, Duration::from_secs(15)).await;
         assert_eq!(msg_a.content, "reply-to-a");
@@ -185,18 +152,10 @@ async fn hub_discovers_both_spokes() {
         spoke_a.announce().await;
         spoke_c.announce().await;
 
-        await_identity_resolved(
-            &hub.app_context,
-            &spoke_a.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
-        await_identity_resolved(
-            &hub.app_context,
-            &spoke_c.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&hub.app_context, &spoke_a.delivery_addr, Duration::from_secs(10))
+            .await;
+        await_identity_resolved(&hub.app_context, &spoke_c.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Hub has both peers — can route between them
         let hub_nodes = hub.app_context.node_store().list(None).unwrap_or_default();

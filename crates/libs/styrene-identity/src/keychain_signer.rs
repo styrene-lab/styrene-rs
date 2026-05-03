@@ -36,20 +36,14 @@ pub struct KeychainSigner {
 
 impl Default for KeychainSigner {
     fn default() -> Self {
-        Self {
-            service: SERVICE.into(),
-            account: ACCOUNT.into(),
-        }
+        Self { service: SERVICE.into(), account: ACCOUNT.into() }
     }
 }
 
 impl KeychainSigner {
     /// Create a signer with custom service/account identifiers.
     pub fn new(service: impl Into<String>, account: impl Into<String>) -> Self {
-        Self {
-            service: service.into(),
-            account: account.into(),
-        }
+        Self { service: service.into(), account: account.into() }
     }
 
     /// Check if a biometric-protected identity exists in the Keychain.
@@ -59,7 +53,8 @@ impl KeychainSigner {
     /// items return `errSecInteractionNotAllowed` (-25308) or `errSecAuthFailed`
     /// (-25293) before prompting, which we interpret as "exists".
     pub fn exists(&self) -> bool {
-        match generic_password(PasswordOptions::new_generic_password(&self.service, &self.account)) {
+        match generic_password(PasswordOptions::new_generic_password(&self.service, &self.account))
+        {
             Ok(_) => true,
             Err(e) => {
                 let code = e.code();
@@ -88,7 +83,9 @@ impl KeychainSigner {
         // Store with biometric protection
         let mut opts = PasswordOptions::new_generic_password(&self.service, &self.account);
         opts.set_access_control_options(
-            AccessControlOptions::BIOMETRY_CURRENT_SET | AccessControlOptions::OR | AccessControlOptions::DEVICE_PASSCODE,
+            AccessControlOptions::BIOMETRY_CURRENT_SET
+                | AccessControlOptions::OR
+                | AccessControlOptions::DEVICE_PASSCODE,
         );
 
         set_generic_password_options(&*secret, opts)
@@ -121,24 +118,26 @@ impl IdentitySigner for KeychainSigner {
 
     async fn root_secret(&self) -> Result<RootSecret, SignerError> {
         // This triggers the biometric prompt on macOS/iOS
-        let data = generic_password(
-            PasswordOptions::new_generic_password(&self.service, &self.account),
-        )
-        .map_err(|e| {
-            let code = e.code();
-            if code == -25293 || code == -128 {
-                // User cancelled biometric prompt
-                SignerError::AuthRequired("Biometric authentication cancelled".into())
-            } else if code == -25308 {
-                // Interaction not allowed (e.g. device locked, no UI context)
-                SignerError::AuthRequired("Biometric authentication required but not available in this context".into())
-            } else if code == -25300 {
-                // Item not found
-                SignerError::KeyNotFound("No identity in Keychain".into())
-            } else {
-                SignerError::DecryptionFailed(format!("Keychain read failed: {e}"))
-            }
-        })?;
+        let data =
+            generic_password(PasswordOptions::new_generic_password(&self.service, &self.account))
+                .map_err(|e| {
+                let code = e.code();
+                if code == -25293 || code == -128 {
+                    // User cancelled biometric prompt
+                    SignerError::AuthRequired("Biometric authentication cancelled".into())
+                } else if code == -25308 {
+                    // Interaction not allowed (e.g. device locked, no UI context)
+                    SignerError::AuthRequired(
+                        "Biometric authentication required but not available in this context"
+                            .into(),
+                    )
+                } else if code == -25300 {
+                    // Item not found
+                    SignerError::KeyNotFound("No identity in Keychain".into())
+                } else {
+                    SignerError::DecryptionFailed(format!("Keychain read failed: {e}"))
+                }
+            })?;
 
         if data.len() != 32 {
             return Err(SignerError::DecryptionFailed(format!(

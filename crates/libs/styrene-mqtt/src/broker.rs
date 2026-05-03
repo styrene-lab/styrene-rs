@@ -76,10 +76,7 @@ pub struct EmbeddedBrokerBuilder {
 
 impl EmbeddedBrokerBuilder {
     pub fn new(config: EmbeddedBrokerConfig) -> Self {
-        Self {
-            config,
-            link_ids: Vec::new(),
-        }
+        Self { config, link_ids: Vec::new() }
     }
 
     /// Register a client ID for an in-process link.

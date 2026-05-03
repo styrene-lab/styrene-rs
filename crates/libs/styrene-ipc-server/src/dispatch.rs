@@ -66,9 +66,7 @@ pub async fn dispatch(
         | MessageType::CmdPageRemoveSite
         | MessageType::CmdPageCrawlSite
         | MessageType::CmdPageRegenerate
-        | MessageType::CmdPageDisconnect => {
-            Err("page management not yet implemented".into())
-        }
+        | MessageType::CmdPageDisconnect => Err("page management not yet implemented".into()),
         MessageType::CmdTerminalOpen => dispatch_terminal_open(daemon, &payload).await,
         MessageType::CmdTerminalInput => dispatch_terminal_input(daemon, &payload).await,
         MessageType::CmdTerminalClose => dispatch_terminal_close(daemon, &payload).await,
@@ -167,7 +165,10 @@ async fn dispatch_query_status(daemon: &Arc<dyn Daemon>) -> Result<Payload, Stri
     }
     p.insert("propagation_enabled".into(), rmpv::Value::from(info.propagation_enabled));
     p.insert("propagation_count".into(), rmpv::Value::from(info.propagation_count as i64));
-    p.insert("propagation_size_bytes".into(), rmpv::Value::from(info.propagation_size_bytes as i64));
+    p.insert(
+        "propagation_size_bytes".into(),
+        rmpv::Value::from(info.propagation_size_bytes as i64),
+    );
     p.insert("transport_enabled".into(), rmpv::Value::from(info.transport_enabled));
     p.insert("active_links".into(), rmpv::Value::from(info.active_links));
     ok_payload(p)
@@ -850,16 +851,10 @@ async fn dispatch_query_path_table(daemon: &Arc<dyn Daemon>) -> Result<Payload, 
                 m.push((rmpv::Value::from("hops"), rmpv::Value::from(hops as i64)));
             }
             if let Some(ref next_hop) = info.next_hop {
-                m.push((
-                    rmpv::Value::from("next_hop"),
-                    rmpv::Value::from(next_hop.as_str()),
-                ));
+                m.push((rmpv::Value::from("next_hop"), rmpv::Value::from(next_hop.as_str())));
             }
             if let Some(ref iface) = info.interface {
-                m.push((
-                    rmpv::Value::from("interface"),
-                    rmpv::Value::from(iface.as_str()),
-                ));
+                m.push((rmpv::Value::from("interface"), rmpv::Value::from(iface.as_str())));
             }
             rmpv::Value::Map(m)
         })
@@ -876,26 +871,11 @@ async fn dispatch_query_interface_stats(daemon: &Arc<dyn Daemon>) -> Result<Payl
         .iter()
         .map(|iface| {
             let mut m = Vec::new();
-            m.push((
-                rmpv::Value::from("name"),
-                rmpv::Value::from(iface.name.as_str()),
-            ));
-            m.push((
-                rmpv::Value::from("hash"),
-                rmpv::Value::from(iface.hash.as_str()),
-            ));
-            m.push((
-                rmpv::Value::from("status"),
-                rmpv::Value::from(iface.status.as_str()),
-            ));
-            m.push((
-                rmpv::Value::from("tx_bytes"),
-                rmpv::Value::from(iface.tx_bytes as i64),
-            ));
-            m.push((
-                rmpv::Value::from("rx_bytes"),
-                rmpv::Value::from(iface.rx_bytes as i64),
-            ));
+            m.push((rmpv::Value::from("name"), rmpv::Value::from(iface.name.as_str())));
+            m.push((rmpv::Value::from("hash"), rmpv::Value::from(iface.hash.as_str())));
+            m.push((rmpv::Value::from("status"), rmpv::Value::from(iface.status.as_str())));
+            m.push((rmpv::Value::from("tx_bytes"), rmpv::Value::from(iface.tx_bytes as i64)));
+            m.push((rmpv::Value::from("rx_bytes"), rmpv::Value::from(iface.rx_bytes as i64)));
             rmpv::Value::Map(m)
         })
         .collect();
@@ -1049,13 +1029,8 @@ async fn dispatch_fleet_apply(
     if profile_bytes.len() > 4 * 1024 * 1024 {
         return Err("decoded profile exceeds 4 MB limit".into());
     }
-    let verify = payload
-        .get("verify")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    let timeout = payload
-        .get("timeout")
-        .and_then(|v| v.as_u64());
+    let verify = payload.get("verify").and_then(|v| v.as_bool()).unwrap_or(true);
+    let timeout = payload.get("timeout").and_then(|v| v.as_u64());
 
     let result = daemon
         .fleet_apply(dest, profile_bytes, verify, timeout)
@@ -1116,10 +1091,7 @@ async fn dispatch_fleet_revoke(
 ) -> Result<Payload, String> {
     let identity_hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
     let identity_hash = validate_hash(identity_hash)?;
-    let ok = daemon
-        .fleet_revoke(identity_hash)
-        .await
-        .map_err(|e| e.to_string())?;
+    let ok = daemon.fleet_revoke(identity_hash).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("success".into(), rmpv::Value::Boolean(ok));
     ok_payload(p)
@@ -1135,17 +1107,11 @@ async fn dispatch_query_page(
     let path = val_str(payload, "path").unwrap_or("/");
     let timeout = payload.get("timeout").and_then(|v| v.as_u64());
 
-    let page = daemon
-        .browse_page(host, path, timeout)
-        .await
-        .map_err(|e| e.to_string())?;
+    let page = daemon.browse_page(host, path, timeout).await.map_err(|e| e.to_string())?;
 
     let mut p = Payload::new();
     p.insert("source".into(), rmpv::Value::from(page.source.as_str()));
-    p.insert(
-        "host_hash".into(),
-        rmpv::Value::from(page.host_hash.as_str()),
-    );
+    p.insert("host_hash".into(), rmpv::Value::from(page.host_hash.as_str()));
     p.insert("fetched_at".into(), rmpv::Value::from(page.fetched_at));
     ok_payload(p)
 }
@@ -1157,23 +1123,14 @@ async fn dispatch_list_pages(
     let host = val_str(payload, "host").unwrap_or("local");
     let timeout = payload.get("timeout").and_then(|v| v.as_u64());
 
-    let pages = daemon
-        .list_pages(host, timeout)
-        .await
-        .map_err(|e| e.to_string())?;
+    let pages = daemon.list_pages(host, timeout).await.map_err(|e| e.to_string())?;
 
     let arr: Vec<rmpv::Value> = pages
         .into_iter()
         .map(|page| {
             let mut m = Vec::new();
-            m.push((
-                rmpv::Value::from("path"),
-                rmpv::Value::from(page.path.as_str()),
-            ));
-            m.push((
-                rmpv::Value::from("host_hash"),
-                rmpv::Value::from(page.host_hash.as_str()),
-            ));
+            m.push((rmpv::Value::from("path"), rmpv::Value::from(page.path.as_str())));
+            m.push((rmpv::Value::from("host_hash"), rmpv::Value::from(page.host_hash.as_str())));
             rmpv::Value::Map(m)
         })
         .collect();
@@ -1198,10 +1155,7 @@ async fn dispatch_terminal_open(
     request.rows = _rows;
     request.cols = _cols;
 
-    let session_id = daemon
-        .terminal_open(request)
-        .await
-        .map_err(|e| e.to_string())?;
+    let session_id = daemon.terminal_open(request).await.map_err(|e| e.to_string())?;
 
     let mut p = Payload::new();
     p.insert("session_id".into(), rmpv::Value::from(session_id.as_str()));
@@ -1213,15 +1167,9 @@ async fn dispatch_terminal_input(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let session_id = val_str(payload, "session_id").ok_or("missing session_id")?;
-    let data = payload
-        .get("data")
-        .and_then(|v| v.as_slice())
-        .unwrap_or(&[]);
+    let data = payload.get("data").and_then(|v| v.as_slice()).unwrap_or(&[]);
 
-    daemon
-        .terminal_input(session_id, data)
-        .await
-        .map_err(|e| e.to_string())?;
+    daemon.terminal_input(session_id, data).await.map_err(|e| e.to_string())?;
 
     ok_payload(Payload::new())
 }
@@ -1234,10 +1182,7 @@ async fn dispatch_terminal_resize(
     let rows = payload.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u16;
     let cols = payload.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
 
-    daemon
-        .terminal_resize(session_id, rows, cols)
-        .await
-        .map_err(|e| e.to_string())?;
+    daemon.terminal_resize(session_id, rows, cols).await.map_err(|e| e.to_string())?;
 
     ok_payload(Payload::new())
 }
@@ -1248,10 +1193,7 @@ async fn dispatch_terminal_close(
 ) -> Result<Payload, String> {
     let session_id = val_str(payload, "session_id").ok_or("missing session_id")?;
 
-    daemon
-        .terminal_close(session_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    daemon.terminal_close(session_id).await.map_err(|e| e.to_string())?;
 
     ok_payload(Payload::new())
 }

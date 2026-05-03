@@ -9,8 +9,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::envelope::{
-    Envelope, Message, Metadata, decode_payload, decode_user_properties, encode_payload,
-    encode_user_properties,
+    decode_payload, decode_user_properties, encode_payload, encode_user_properties, Envelope,
+    Message, Metadata,
 };
 use crate::error::{MqttError, Result};
 use crate::qos::QosOverride;
@@ -30,14 +30,9 @@ pub enum ConnectionTarget {
     /// Connect via an in-process rumqttd link (Tier 1).
     /// Requires the `embedded-broker` feature.
     #[cfg(feature = "embedded-broker")]
-    InProcess {
-        link: crate::broker::BrokerLink,
-    },
+    InProcess { link: crate::broker::BrokerLink },
     /// Connect to a remote MQTT 5.0 broker via TCP.
-    Remote {
-        host: String,
-        port: u16,
-    },
+    Remote { host: String, port: u16 },
 }
 
 /// Configuration for creating a [`Client`].
@@ -118,11 +113,7 @@ impl Client {
             }
         };
 
-        Ok(Self {
-            identity: config.identity,
-            inner,
-            raw_subscribers,
-        })
+        Ok(Self { identity: config.identity, inner, raw_subscribers })
     }
 
     /// Publish a typed event.
@@ -142,8 +133,7 @@ impl Client {
             .event_type(event_type)
             .build_publish()?;
 
-        self.publish_inner(&topic, event_type, payload, qos_override, false)
-            .await
+        self.publish_inner(&topic, event_type, payload, qos_override, false).await
     }
 
     /// Publish to an explicit topic address (for relay/proxy scenarios).
@@ -154,8 +144,7 @@ impl Client {
         qos_override: QosOverride,
     ) -> Result<()> {
         let topic = address.to_topic_string();
-        self.publish_inner(&topic, &address.event_type, payload, qos_override, false)
-            .await
+        self.publish_inner(&topic, &address.event_type, payload, qos_override, false).await
     }
 
     /// Publish a retained message (late-join state snapshot).
@@ -171,14 +160,8 @@ impl Client {
             .event_type(event_type)
             .build_publish()?;
 
-        self.publish_inner(
-            &topic,
-            event_type,
-            payload,
-            QosOverride::Force(QoS::AtLeastOnce),
-            true,
-        )
-        .await
+        self.publish_inner(&topic, event_type, payload, QosOverride::Force(QoS::AtLeastOnce), true)
+            .await
     }
 
     /// Subscribe to a topic filter and return a typed stream.
@@ -196,10 +179,7 @@ impl Client {
 
         {
             let mut guard = self.raw_subscribers.lock().await;
-            guard.push(FilteredSubscriber {
-                filter: filter.to_string(),
-                tx: raw_tx,
-            });
+            guard.push(FilteredSubscriber { filter: filter.to_string(), tx: raw_tx });
         }
 
         tokio::spawn(async move {
@@ -255,10 +235,7 @@ impl Client {
         let (tx, rx) = mpsc::channel::<RawMessage>(256);
         {
             let mut guard = self.raw_subscribers.lock().await;
-            guard.push(FilteredSubscriber {
-                filter: filter.to_string(),
-                tx,
-            });
+            guard.push(FilteredSubscriber { filter: filter.to_string(), tx });
         }
         Ok(rx)
     }
@@ -327,10 +304,7 @@ impl Client {
             }
         });
 
-        ClientInner::InProcess {
-            link_tx,
-            _recv_task: recv_task,
-        }
+        ClientInner::InProcess { link_tx, _recv_task: recv_task }
     }
 
     async fn connect_remote(
@@ -393,10 +367,7 @@ impl Client {
             }
         });
 
-        Ok(ClientInner::Remote {
-            mqtt,
-            _event_loop: loop_handle,
-        })
+        Ok(ClientInner::Remote { mqtt, _event_loop: loop_handle })
     }
 
     // ── Internal helpers ────────────────────────────────────────────────
@@ -435,10 +406,8 @@ impl Client {
                     Bytes::from(bytes),
                     retain,
                 );
-                let properties = PublishProperties {
-                    user_properties: user_props,
-                    ..Default::default()
-                };
+                let properties =
+                    PublishProperties { user_properties: user_props, ..Default::default() };
 
                 let mut tx = link_tx.lock().await;
                 tx.send(Packet::Publish(publish, Some(properties)))
@@ -465,8 +434,7 @@ impl Client {
             #[cfg(feature = "embedded-broker")]
             ClientInner::InProcess { link_tx, .. } => {
                 let mut tx = link_tx.lock().await;
-                tx.subscribe(filter)
-                    .map_err(|e| MqttError::Subscribe(e.to_string()))?;
+                tx.subscribe(filter).map_err(|e| MqttError::Subscribe(e.to_string()))?;
                 Ok(())
             }
             ClientInner::Remote { mqtt, .. } => {

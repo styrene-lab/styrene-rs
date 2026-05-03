@@ -47,13 +47,8 @@ impl ForgeError {
             403 => Self::Forbidden(body),
             404 => Self::NotFound(body),
             422 => Self::Validation(body),
-            429 => Self::RateLimited {
-                reset_at: "unknown".into(),
-            },
-            _ => Self::Api {
-                status,
-                message: body,
-            },
+            429 => Self::RateLimited { reset_at: "unknown".into() },
+            _ => Self::Api { status, message: body },
         }
     }
 }
@@ -205,13 +200,25 @@ pub trait ForgeClient: Send + Sync {
     fn kind(&self) -> ForgeKind;
     fn endpoint(&self) -> &ForgeEndpoint;
 
-    async fn list_issues(&self, org: &str, repo: &str, opts: &ListOpts)
-        -> ForgeResult<Vec<ForgeIssue>>;
+    async fn list_issues(
+        &self,
+        org: &str,
+        repo: &str,
+        opts: &ListOpts,
+    ) -> ForgeResult<Vec<ForgeIssue>>;
     async fn get_issue(&self, org: &str, repo: &str, number: u64) -> ForgeResult<ForgeIssue>;
-    async fn create_issue(&self, org: &str, repo: &str, issue: &CreateIssue)
-        -> ForgeResult<ForgeIssue>;
+    async fn create_issue(
+        &self,
+        org: &str,
+        repo: &str,
+        issue: &CreateIssue,
+    ) -> ForgeResult<ForgeIssue>;
     async fn update_issue(
-        &self, org: &str, repo: &str, number: u64, update: &UpdateIssue,
+        &self,
+        org: &str,
+        repo: &str,
+        number: u64,
+        update: &UpdateIssue,
     ) -> ForgeResult<ForgeIssue>;
 
     async fn list_labels(&self, org: &str, repo: &str) -> ForgeResult<Vec<ForgeLabel>>;
@@ -221,7 +228,10 @@ pub trait ForgeClient: Send + Sync {
     async fn create_repo(&self, org: &str, repo: &CreateRepo) -> ForgeResult<ForgeRepo>;
 
     async fn create_webhook(
-        &self, org: &str, repo: &str, hook: &CreateWebhook,
+        &self,
+        org: &str,
+        repo: &str,
+        hook: &CreateWebhook,
     ) -> ForgeResult<ForgeWebhook>;
 }
 
@@ -274,7 +284,10 @@ mod tests {
         assert!(matches!(ForgeError::from_status(404, "x".into()), ForgeError::NotFound(_)));
         assert!(matches!(ForgeError::from_status(422, "x".into()), ForgeError::Validation(_)));
         assert!(matches!(ForgeError::from_status(429, "x".into()), ForgeError::RateLimited { .. }));
-        assert!(matches!(ForgeError::from_status(500, "x".into()), ForgeError::Api { status: 500, .. }));
+        assert!(matches!(
+            ForgeError::from_status(500, "x".into()),
+            ForgeError::Api { status: 500, .. }
+        ));
     }
 
     #[test]

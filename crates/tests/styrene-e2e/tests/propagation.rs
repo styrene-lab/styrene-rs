@@ -5,21 +5,16 @@
 //! later retrieval. Covers the full lifecycle: store → fetch → delete,
 //! deduplication, expiry, and the inbound worker routing decision.
 
-use std::time::Duration;
-use styrene_e2e::helpers::{
-    with_timeout, await_identity_resolved, await_inbound_count, SETTLE,
-};
-use styrene_e2e::node::TestNodeBuilder;
 use rns_core::identity::PrivateIdentity;
+use std::time::Duration;
+use styrene_e2e::helpers::{await_identity_resolved, await_inbound_count, with_timeout, SETTLE};
+use styrene_e2e::node::TestNodeBuilder;
 
 #[tokio::test]
 async fn hub_stores_message_for_offline_destination() {
     with_timeout(async {
         // Hub with propagation enabled
-        let hub = TestNodeBuilder::new("hub")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let hub = TestNodeBuilder::new("hub").tcp_server("127.0.0.1:0").build().await;
         hub.app_context.propagation().set_enabled(true);
 
         // Alice connects to hub
@@ -32,20 +27,13 @@ async fn hub_stores_message_for_offline_destination() {
         alice.announce().await;
         hub.announce().await;
 
-        await_identity_resolved(
-            &alice.app_context,
-            &hub.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &hub.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Charlie is offline — we just generate his identity to get a delivery hash.
         // We create a full node to derive the delivery hash, but Charlie is NOT
         // connected to the hub.
-        let charlie = TestNodeBuilder::new("charlie")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let charlie = TestNodeBuilder::new("charlie").tcp_server("127.0.0.1:0").build().await;
 
         // Alice sends to Charlie's delivery hash. The message arrives at the hub
         // (because it's broadcast on the link), and the hub's inbound worker
@@ -71,11 +59,7 @@ async fn hub_stores_message_for_offline_destination() {
         assert!(stored, "message should be stored (new)");
 
         // Verify stats
-        let (count, size) = hub
-            .app_context
-            .propagation()
-            .stats()
-            .expect("stats");
+        let (count, size) = hub.app_context.propagation().stats().expect("stats");
         assert_eq!(count, 1, "hub should have 1 propagation message");
         assert!(size > 0, "stored size should be positive");
 
@@ -102,10 +86,7 @@ async fn hub_stores_message_for_offline_destination() {
 #[tokio::test]
 async fn hub_deduplicates_identical_messages() {
     with_timeout(async {
-        let hub = TestNodeBuilder::new("hub-dedup")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let hub = TestNodeBuilder::new("hub-dedup").tcp_server("127.0.0.1:0").build().await;
         hub.app_context.propagation().set_enabled(true);
 
         let dest = "aabbccddaabbccddaabbccddaabbccdd";
@@ -147,10 +128,7 @@ async fn hub_deduplicates_identical_messages() {
 #[tokio::test]
 async fn hub_fetch_and_delete_lifecycle() {
     with_timeout(async {
-        let hub = TestNodeBuilder::new("hub-lifecycle")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let hub = TestNodeBuilder::new("hub-lifecycle").tcp_server("127.0.0.1:0").build().await;
         hub.app_context.propagation().set_enabled(true);
 
         let dest = "1111111111111111111111111111111";
@@ -173,29 +151,16 @@ async fn hub_fetch_and_delete_lifecycle() {
         assert_eq!(count, 3);
 
         // Fetch all for destination
-        let messages = hub
-            .app_context
-            .propagation()
-            .fetch_for_destination(dest)
-            .expect("fetch");
+        let messages = hub.app_context.propagation().fetch_for_destination(dest).expect("fetch");
         assert_eq!(messages.len(), 3);
 
         // Delete the first two (simulating successful delivery)
-        let delivered_ids: Vec<String> = messages[..2]
-            .iter()
-            .map(|(id, _)| id.clone())
-            .collect();
-        hub.app_context
-            .propagation()
-            .delete_delivered(&delivered_ids)
-            .expect("delete delivered");
+        let delivered_ids: Vec<String> = messages[..2].iter().map(|(id, _)| id.clone()).collect();
+        hub.app_context.propagation().delete_delivered(&delivered_ids).expect("delete delivered");
 
         // One message remains
-        let remaining = hub
-            .app_context
-            .propagation()
-            .fetch_for_destination(dest)
-            .expect("fetch remaining");
+        let remaining =
+            hub.app_context.propagation().fetch_for_destination(dest).expect("fetch remaining");
         assert_eq!(remaining.len(), 1);
 
         let (count, _) = hub.app_context.propagation().stats().expect("stats");
@@ -207,10 +172,7 @@ async fn hub_fetch_and_delete_lifecycle() {
 #[tokio::test]
 async fn hub_expiry_removes_stale_messages() {
     with_timeout(async {
-        let hub = TestNodeBuilder::new("hub-expiry")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let hub = TestNodeBuilder::new("hub-expiry").tcp_server("127.0.0.1:0").build().await;
         hub.app_context.propagation().set_enabled(true);
 
         // Set very short expiry so messages expire immediately
@@ -226,22 +188,15 @@ async fn hub_expiry_removes_stale_messages() {
         assert_eq!(count, 1);
 
         // Expire — with 0s expiry, message should be immediately stale
-        let expired = hub
-            .app_context
-            .propagation()
-            .expire_old()
-            .expect("expire");
+        let expired = hub.app_context.propagation().expire_old().expect("expire");
         assert_eq!(expired, 1, "one message should have expired");
 
         let (count, _) = hub.app_context.propagation().stats().expect("stats after");
         assert_eq!(count, 0, "no messages should remain after expiry");
 
         // Fetch should also be empty
-        let fetched = hub
-            .app_context
-            .propagation()
-            .fetch_for_destination(dest)
-            .expect("fetch after expiry");
+        let fetched =
+            hub.app_context.propagation().fetch_for_destination(dest).expect("fetch after expiry");
         assert!(fetched.is_empty());
     })
     .await;
@@ -250,10 +205,7 @@ async fn hub_expiry_removes_stale_messages() {
 #[tokio::test]
 async fn propagation_disabled_does_not_store() {
     with_timeout(async {
-        let hub = TestNodeBuilder::new("hub-disabled")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let hub = TestNodeBuilder::new("hub-disabled").tcp_server("127.0.0.1:0").build().await;
         // Propagation NOT enabled (default)
         assert!(!hub.app_context.propagation().is_enabled());
 
@@ -279,10 +231,7 @@ async fn hub_inbound_worker_routes_nonlocal_to_propagation() {
         // non-local destination, it goes to propagation instead of
         // local delivery.
 
-        let hub = TestNodeBuilder::new("hub-route")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let hub = TestNodeBuilder::new("hub-route").tcp_server("127.0.0.1:0").build().await;
         hub.app_context.propagation().set_enabled(true);
 
         let alice = TestNodeBuilder::new("alice-route")
@@ -294,19 +243,12 @@ async fn hub_inbound_worker_routes_nonlocal_to_propagation() {
         alice.announce().await;
         hub.announce().await;
 
-        await_identity_resolved(
-            &alice.app_context,
-            &hub.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &hub.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Alice sends to the HUB's own delivery hash — this IS local,
         // so it should be delivered normally, NOT stored in propagation.
-        alice
-            .send_chat(&hub.delivery_hash, "local-delivery")
-            .await
-            .expect("send to hub");
+        alice.send_chat(&hub.delivery_hash, "local-delivery").await.expect("send to hub");
 
         await_inbound_count(&hub.app_context, 1, Duration::from_secs(15)).await;
 
@@ -321,10 +263,7 @@ async fn hub_inbound_worker_routes_nonlocal_to_propagation() {
 
         // Propagation store should be empty — the message was local
         let (count, _) = hub.app_context.propagation().stats().expect("stats");
-        assert_eq!(
-            count, 0,
-            "local messages should NOT go to propagation store"
-        );
+        assert_eq!(count, 0, "local messages should NOT go to propagation store");
     })
     .await;
 }
@@ -332,10 +271,7 @@ async fn hub_inbound_worker_routes_nonlocal_to_propagation() {
 #[tokio::test]
 async fn multiple_destinations_stored_independently() {
     with_timeout(async {
-        let hub = TestNodeBuilder::new("hub-multi-dest")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let hub = TestNodeBuilder::new("hub-multi-dest").tcp_server("127.0.0.1:0").build().await;
         hub.app_context.propagation().set_enabled(true);
 
         let dest_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -359,27 +295,16 @@ async fn multiple_destinations_stored_independently() {
         assert_eq!(count, 3, "total 3 messages stored");
 
         // Fetch per destination
-        let a_msgs = hub
-            .app_context
-            .propagation()
-            .fetch_for_destination(dest_a)
-            .expect("fetch a");
+        let a_msgs = hub.app_context.propagation().fetch_for_destination(dest_a).expect("fetch a");
         assert_eq!(a_msgs.len(), 2);
 
-        let b_msgs = hub
-            .app_context
-            .propagation()
-            .fetch_for_destination(dest_b)
-            .expect("fetch b");
+        let b_msgs = hub.app_context.propagation().fetch_for_destination(dest_b).expect("fetch b");
         assert_eq!(b_msgs.len(), 1);
         assert_eq!(b_msgs[0].1, b"for-b-1");
 
         // Delete dest_a's messages — dest_b should be unaffected
         let a_ids: Vec<String> = a_msgs.iter().map(|(id, _)| id.clone()).collect();
-        hub.app_context
-            .propagation()
-            .delete_delivered(&a_ids)
-            .expect("delete a");
+        hub.app_context.propagation().delete_delivered(&a_ids).expect("delete a");
 
         let (count, _) = hub.app_context.propagation().stats().expect("stats after");
         assert_eq!(count, 1, "only dest_b's message should remain");

@@ -3,16 +3,13 @@
 //! After TCP connection, nodes announce themselves and discover each other.
 
 use std::time::Duration;
-use styrene_e2e::helpers::{with_timeout, await_identity_resolved, SETTLE};
+use styrene_e2e::helpers::{await_identity_resolved, with_timeout, SETTLE};
 use styrene_e2e::node::TestNodeBuilder;
 
 #[tokio::test]
 async fn mutual_announce_exchange() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice").tcp_server("127.0.0.1:0").build().await;
 
         let bob = TestNodeBuilder::new("bob")
             .tcp_client(alice.listen_addr.expect("listen addr"))
@@ -27,19 +24,11 @@ async fn mutual_announce_exchange() {
         bob.announce().await;
 
         // Wait for each to resolve the other's delivery destination identity
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
-        await_identity_resolved(
-            &bob.app_context,
-            &alice.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&bob.app_context, &alice.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Verify identities resolved correctly
         let bob_identity = alice
@@ -74,10 +63,7 @@ async fn mutual_announce_exchange() {
 #[tokio::test]
 async fn announce_populates_node_store() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-ns")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-ns").tcp_server("127.0.0.1:0").build().await;
 
         let bob = TestNodeBuilder::new("bob-ns")
             .tcp_client(alice.listen_addr.expect("listen addr"))
@@ -89,23 +75,12 @@ async fn announce_populates_node_store() {
         bob.announce().await;
 
         // Wait for alice to resolve bob's identity (proves announce arrived)
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Check that the node store has bob registered
-        let nodes = alice
-            .app_context
-            .node_store()
-            .list(None)
-            .expect("list nodes");
-        assert!(
-            !nodes.is_empty(),
-            "node store should contain at least one peer after announce"
-        );
+        let nodes = alice.app_context.node_store().list(None).expect("list nodes");
+        assert!(!nodes.is_empty(), "node store should contain at least one peer after announce");
     })
     .await;
 }

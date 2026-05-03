@@ -5,7 +5,7 @@
 //! on the mesh can execute arbitrary commands — an RCE vector.
 
 use std::time::Duration;
-use styrene_e2e::helpers::{with_timeout, two_connected_nodes, await_inbound_count};
+use styrene_e2e::helpers::{await_inbound_count, two_connected_nodes, with_timeout};
 
 #[tokio::test]
 async fn exec_from_unknown_peer_is_denied() {
@@ -15,11 +15,8 @@ async fn exec_from_unknown_peer_is_denied() {
         // Bob's auth service has alice as default Peer role.
         // Peer role should NOT have Exec capability.
         // Alice sends an exec RPC to Bob — Bob should deny it.
-        let result = alice
-            .app_context
-            .fleet()
-            .exec(&bob.delivery_hash, "whoami", &[], Some(10))
-            .await;
+        let result =
+            alice.app_context.fleet().exec(&bob.delivery_hash, "whoami", &[], Some(10)).await;
 
         // The exec should either:
         // a) Return an error (RPC response with error payload), or
@@ -43,7 +40,10 @@ async fn exec_from_unknown_peer_is_denied() {
                 let msg = e.to_string();
                 // Timeout or explicit denial are both acceptable
                 assert!(
-                    msg.contains("timeout") || msg.contains("denied") || msg.contains("unauthorized") || msg.contains("failed"),
+                    msg.contains("timeout")
+                        || msg.contains("denied")
+                        || msg.contains("unauthorized")
+                        || msg.contains("failed"),
                     "expected auth denial or timeout, got: {}",
                     msg
                 );
@@ -59,11 +59,7 @@ async fn status_from_any_peer_is_allowed() {
         let (alice, bob) = two_connected_nodes("alice-status-auth", "bob-status-auth").await;
 
         // StatusRequest should be allowed from any peer (read-only)
-        let result = alice
-            .app_context
-            .fleet()
-            .device_status(&bob.delivery_hash, Some(10))
-            .await;
+        let result = alice.app_context.fleet().device_status(&bob.delivery_hash, Some(10)).await;
 
         // Status should succeed regardless of auth level
         assert!(
@@ -73,10 +69,7 @@ async fn status_from_any_peer_is_allowed() {
         );
 
         let status = result.expect("status");
-        assert!(
-            status.daemon_version.is_some(),
-            "status should include version"
-        );
+        assert!(status.daemon_version.is_some(), "status should include version");
     })
     .await;
 }
@@ -89,10 +82,7 @@ async fn rbac_identity_hash_matches_wire_source() {
         // Alice sends a chat to Bob — we want to verify that the source_hash
         // in Bob's inbound message matches alice.identity_hash, which is the
         // same value used by AuthService for role lookups.
-        alice
-            .send_chat(&bob.delivery_hash, "hash-check")
-            .await
-            .expect("send");
+        alice.send_chat(&bob.delivery_hash, "hash-check").await.expect("send");
 
         let msgs = await_inbound_count(&bob.app_context, 1, Duration::from_secs(15)).await;
 
@@ -107,16 +97,14 @@ async fn rbac_identity_hash_matches_wire_source() {
         );
 
         // And the identity_hash is what we'd pass to policy.grant()
-        use styrene_rbac::{RosterEntry, Role, Capability};
+        use styrene_rbac::{Capability, Role, RosterEntry};
         let entry = RosterEntry::new(&alice.identity_hash, Role::Admin);
         bob.app_context
             .policy()
             .grant(entry, bob.app_context.store())
             .expect("grant should succeed");
         assert!(
-            bob.app_context
-                .policy()
-                .has_capability(&msgs[0].source, Capability::RPC_EXEC),
+            bob.app_context.policy().has_capability(&msgs[0].source, Capability::RPC_EXEC),
             "RBAC check using wire source_hash should match role set via identity_hash"
         );
     })
@@ -130,7 +118,7 @@ async fn operator_grant_enables_exec_over_mesh() {
 
         // Grant alice Admin role on bob's policy service BEFORE the exec call
         // (RPC_EXEC requires Admin in the new RBAC model)
-        use styrene_rbac::{RosterEntry, Role};
+        use styrene_rbac::{Role, RosterEntry};
         let entry = RosterEntry::new(&alice.identity_hash, Role::Admin);
         bob.app_context
             .policy()

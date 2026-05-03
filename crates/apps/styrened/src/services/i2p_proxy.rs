@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use styrene_mesh::i2p::{
-    I2pProxyData, I2pProxyError, I2pProxyRequest, I2pProxyResponse,
-    I2PD_RESPONSE_TIMEOUT_SECS, MAX_CONCURRENT_REQUESTS, MAX_REQUEST_BODY, RATE_LIMIT_PER_MINUTE,
+    I2pProxyData, I2pProxyError, I2pProxyRequest, I2pProxyResponse, I2PD_RESPONSE_TIMEOUT_SECS,
+    MAX_CONCURRENT_REQUESTS, MAX_REQUEST_BODY, RATE_LIMIT_PER_MINUTE,
 };
 use styrene_mesh::{StyreneMessage, StyreneMessageType};
 use styrene_services::protocol_registry::{HandleResult, InboundMessage, ProtocolHandler};
@@ -254,11 +254,7 @@ impl I2pProxyService {
                 request.seq,
                 request_id,
                 413,
-                &format!(
-                    "Response too large: {} bytes (max {})",
-                    body.len(),
-                    MAX_RESPONSE_BODY
-                ),
+                &format!("Response too large: {} bytes (max {})", body.len(), MAX_RESPONSE_BODY),
             )];
         }
 
@@ -312,11 +308,7 @@ impl I2pProxyService {
         code: u16,
         message: &str,
     ) -> StyreneMessage {
-        let err = I2pProxyError {
-            seq,
-            code,
-            message: message.to_string(),
-        };
+        let err = I2pProxyError { seq, code, message: message.to_string() };
         let mut buf = Vec::new();
         ciborium::into_writer(&err, &mut buf).unwrap();
         StyreneMessage::with_request_id(StyreneMessageType::I2pProxyError, request_id, &buf)
@@ -451,8 +443,12 @@ impl ProtocolHandler for I2pProxyService {
 
                 // Rate limit check
                 if !self.check_rate_limit(source) {
-                    eprintln!("[i2p-proxy] rate limit exceeded for {}", &source[..12.min(source.len())]);
-                    let err_msg = self.make_error_msg(0, message.request_id, 429, "Rate limit exceeded");
+                    eprintln!(
+                        "[i2p-proxy] rate limit exceeded for {}",
+                        &source[..12.min(source.len())]
+                    );
+                    let err_msg =
+                        self.make_error_msg(0, message.request_id, 429, "Rate limit exceeded");
                     if let Err(e) = self.send_i2p_message(source, &err_msg).await {
                         eprintln!("[i2p-proxy] failed to send rate limit error: {e}");
                     }
@@ -461,7 +457,12 @@ impl ProtocolHandler for I2pProxyService {
 
                 // Concurrency check
                 if !self.check_concurrency(source) {
-                    let err_msg = self.make_error_msg(0, message.request_id, 429, "Too many concurrent requests");
+                    let err_msg = self.make_error_msg(
+                        0,
+                        message.request_id,
+                        429,
+                        "Too many concurrent requests",
+                    );
                     if let Err(e) = self.send_i2p_message(source, &err_msg).await {
                         eprintln!("[i2p-proxy] failed to send concurrency error: {e}");
                     }
@@ -500,10 +501,7 @@ impl ProtocolHandler for I2pProxyService {
             StyreneMessageType::I2pProxyClose => {
                 // Client is aborting a request — nothing to clean up on the hub
                 // since we process requests synchronously per message.
-                eprintln!(
-                    "[i2p-proxy] close from {}",
-                    &source[..12.min(source.len())]
-                );
+                eprintln!("[i2p-proxy] close from {}", &source[..12.min(source.len())]);
                 HandleResult::Handled
             }
 

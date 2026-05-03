@@ -4,8 +4,8 @@
 //! remote node processes and applies, returns result.
 
 use std::time::Duration;
-use styrene_e2e::helpers::{with_timeout, two_connected_nodes};
-use styrene_rbac::{RosterEntry, Role};
+use styrene_e2e::helpers::{two_connected_nodes, with_timeout};
+use styrene_rbac::{Role, RosterEntry};
 
 #[tokio::test]
 async fn fleet_apply_profile_roundtrip() {
@@ -64,10 +64,7 @@ async fn fleet_apply_denied_without_admin_role() {
             .await;
 
         let apply_result = result.expect("RPC should complete, returning denial response");
-        assert!(
-            !apply_result.success,
-            "apply without Admin role should not succeed"
-        );
+        assert!(!apply_result.success, "apply without Admin role should not succeed");
         assert!(
             apply_result.stderr.contains("permission denied")
                 || apply_result.stderr.contains("denied"),
@@ -97,11 +94,7 @@ async fn fleet_apply_oversized_profile_rejected_locally() {
 
         assert!(result.is_err(), "oversized profile should be rejected locally");
         let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("too large"),
-            "error should mention size limit, got: {}",
-            err
-        );
+        assert!(err.contains("too large"), "error should mention size limit, got: {}", err);
     })
     .await;
 }

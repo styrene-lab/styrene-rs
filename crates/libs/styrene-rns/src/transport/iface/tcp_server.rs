@@ -27,10 +27,7 @@ impl TcpServer {
         iface_manager: Arc<tokio::sync::Mutex<InterfaceManager>>,
     ) -> (Self, watch::Receiver<Option<SocketAddr>>) {
         let (bound_addr_tx, bound_addr_rx) = watch::channel(None);
-        (
-            Self { addr: addr.into(), iface_manager, bound_addr_tx },
-            bound_addr_rx,
-        )
+        (Self { addr: addr.into(), iface_manager, bound_addr_tx }, bound_addr_rx)
     }
 
     /// Spawn the TCP server. Accepted client connections inherit the server's

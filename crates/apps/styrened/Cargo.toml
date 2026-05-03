@@ -14,7 +14,7 @@ name = "styrened"
 rns_core = { package = "styrene-rns", path = "../../libs/styrene-rns", version = "0.1.0", features = ["transport"] }
 lxmf = { package = "styrene-lxmf", path = "../../libs/styrene-lxmf", version = "0.1.0", default-features = false, features = ["std"] }
 styrene-ipc = { path = "../../libs/styrene-ipc", version = "0.1.0" }
-styrene-ipc-server = { path = "../../libs/styrene-ipc-server", version = "0.1.0" }
+styrene-ipc-server = { path = "../../libs/styrene-ipc-server", version = "0.1.0", optional = true }
 styrene-services = { path = "../../libs/styrene-services", version = "0.1.0" }
 styrene-mesh = { workspace = true }
 styrene-tunnel = { path = "../../libs/styrene-tunnel", version = "0.1.0", features = ["wireguard"], optional = true }
@@ -46,12 +46,27 @@ rustls-pemfile = { workspace = true }
 x25519-dalek = { workspace = true }
 x509-parser = { workspace = true }
 zeroize.workspace = true
+styrene-identity = { path = "../../libs/styrene-identity", optional = true }
 dirs = "6.0.0"
+portable-pty = { version = "0.9", optional = true }
+log = { workspace = true }
 
 [features]
-default = []
+default = ["terminal", "ipc-server"]
+## Local PTY terminal sessions (desktop only — requires OS pseudo-terminal support)
+terminal = ["dep:portable-pty"]
+## Unix socket IPC server for local TUI/CLI clients
+ipc-server = ["dep:styrene-ipc-server"]
+## WireGuard tunnel support
 wireguard = ["dep:styrene-tunnel"]
+## I2P HTTP proxy support
 i2p-proxy = ["dep:reqwest"]
+## Keychain-backed identity for mobile (iOS/macOS biometric)
+mobile-keychain = ["dep:styrene-identity", "styrene-identity/keychain", "styrene-identity/signing"]
+## File-based identity for mobile (Android/fallback)
+mobile-identity = ["dep:styrene-identity", "styrene-identity/file-signer"]
+## Bundle SQLite for cross-compilation (Android/iOS — no system libsqlite3)
+bundled-sqlite = ["rusqlite/bundled"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

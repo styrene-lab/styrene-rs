@@ -40,17 +40,13 @@ impl AmcpResponse {
 
     pub fn parse(raw: &str) -> Result<Self> {
         let mut lines = raw.lines();
-        let status_line = lines.next().ok_or_else(|| {
-            AmcpError::Protocol("empty response".to_owned())
-        })?;
+        let status_line =
+            lines.next().ok_or_else(|| AmcpError::Protocol("empty response".to_owned()))?;
 
-        let code: u16 = status_line
-            .split_whitespace()
-            .next()
-            .and_then(|s| s.parse().ok())
-            .ok_or_else(|| {
-                AmcpError::Protocol(format!("invalid status line: {status_line}"))
-            })?;
+        let code: u16 =
+            status_line.split_whitespace().next().and_then(|s| s.parse().ok()).ok_or_else(
+                || AmcpError::Protocol(format!("invalid status line: {status_line}")),
+            )?;
 
         let body: String = lines.collect::<Vec<_>>().join("\n");
 
@@ -59,10 +55,7 @@ impl AmcpResponse {
         if resp.is_success() {
             Ok(resp)
         } else {
-            Err(AmcpError::Server {
-                code,
-                message: resp.body,
-            })
+            Err(AmcpError::Server { code, message: resp.body })
         }
     }
 }

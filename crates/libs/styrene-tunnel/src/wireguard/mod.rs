@@ -107,9 +107,10 @@ impl WireGuardBackend {
             drop(stdin);
         }
 
-        let output = child.wait_with_output().await.map_err(|e| {
-            TunnelError::Backend(format!("wg set: {e}"))
-        })?;
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| TunnelError::Backend(format!("wg set: {e}")))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(TunnelError::Backend(format!("wg set: {stderr}")));
@@ -155,9 +156,7 @@ impl TunnelBackend for WireGuardBackend {
 
     async fn establish(&self, params: TunnelParams) -> Result<TunnelId, TunnelError> {
         if !self.is_available().await {
-            return Err(TunnelError::Backend(
-                "wg tool not found — install wireguard-tools".into(),
-            ));
+            return Err(TunnelError::Backend("wg tool not found — install wireguard-tools".into()));
         }
 
         self.ensure_interface().await?;
@@ -209,9 +208,10 @@ impl TunnelBackend for WireGuardBackend {
             drop(stdin);
         }
 
-        let output = child.wait_with_output().await.map_err(|e| {
-            TunnelError::Backend(format!("wg set peer: {e}"))
-        })?;
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| TunnelError::Backend(format!("wg set peer: {e}")))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(TunnelError::Backend(format!("wg set peer: {stderr}")));
@@ -237,15 +237,9 @@ impl TunnelBackend for WireGuardBackend {
             last_rekey: None,
         };
 
-        self.tunnels
-            .lock()
-            .expect("lock")
-            .insert(tunnel_id.clone(), info);
+        self.tunnels.lock().expect("lock").insert(tunnel_id.clone(), info);
 
-        eprintln!(
-            "[wireguard] peer added: {}",
-            &tunnel_id[..12.min(tunnel_id.len())]
-        );
+        eprintln!("[wireguard] peer added: {}", &tunnel_id[..12.min(tunnel_id.len())]);
         Ok(tunnel_id)
     }
 
@@ -262,13 +256,7 @@ impl TunnelBackend for WireGuardBackend {
             .ok_or_else(|| TunnelError::Backend("no peer pubkey stored".into()))?;
 
         let status = Command::new("wg")
-            .args([
-                "set",
-                &self.interface_name,
-                "peer",
-                &pubkey,
-                "remove",
-            ])
+            .args(["set", &self.interface_name, "peer", &pubkey, "remove"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
@@ -279,10 +267,7 @@ impl TunnelBackend for WireGuardBackend {
             eprintln!("[wireguard] peer removal may have failed for {tunnel_id}");
         }
 
-        eprintln!(
-            "[wireguard] peer removed: {}",
-            &tunnel_id[..12.min(tunnel_id.len())]
-        );
+        eprintln!("[wireguard] peer removed: {}", &tunnel_id[..12.min(tunnel_id.len())]);
         Ok(())
     }
 
@@ -302,14 +287,7 @@ impl TunnelBackend for WireGuardBackend {
         let psk_b64 = B64.encode(new_psk);
 
         let mut child = Command::new("wg")
-            .args([
-                "set",
-                &self.interface_name,
-                "peer",
-                &pubkey,
-                "preshared-key",
-                "/dev/stdin",
-            ])
+            .args(["set", &self.interface_name, "peer", &pubkey, "preshared-key", "/dev/stdin"])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -322,9 +300,10 @@ impl TunnelBackend for WireGuardBackend {
             drop(stdin);
         }
 
-        let output = child.wait_with_output().await.map_err(|e| {
-            TunnelError::Backend(format!("wg rekey: {e}"))
-        })?;
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| TunnelError::Backend(format!("wg rekey: {e}")))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(TunnelError::Backend(format!("wg rekey: {stderr}")));
@@ -339,10 +318,7 @@ impl TunnelBackend for WireGuardBackend {
             info.last_rekey = Some(now);
         }
 
-        eprintln!(
-            "[wireguard] rekeyed: {}",
-            &tunnel_id[..12.min(tunnel_id.len())]
-        );
+        eprintln!("[wireguard] rekeyed: {}", &tunnel_id[..12.min(tunnel_id.len())]);
         Ok(())
     }
 
@@ -357,10 +333,8 @@ impl TunnelBackend for WireGuardBackend {
 
         // Query live stats from wg show dump
         if let Some(ref pubkey) = info.peer_wg_pubkey {
-            if let Ok(output) = Command::new("wg")
-                .args(["show", &self.interface_name, "dump"])
-                .output()
-                .await
+            if let Ok(output) =
+                Command::new("wg").args(["show", &self.interface_name, "dump"]).output().await
             {
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -393,12 +367,6 @@ impl TunnelBackend for WireGuardBackend {
     }
 
     async fn list_tunnels(&self) -> Result<Vec<TunnelInfo>, TunnelError> {
-        Ok(self
-            .tunnels
-            .lock()
-            .expect("lock")
-            .values()
-            .cloned()
-            .collect())
+        Ok(self.tunnels.lock().expect("lock").values().cloned().collect())
     }
 }

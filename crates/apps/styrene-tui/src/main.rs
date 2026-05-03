@@ -173,6 +173,8 @@ async fn run(
             app.daemon_connected = true;
             app.conversation.push_system("⬡ daemon connected");
             let handle = Arc::new(Mutex::new(handle));
+
+            // Forward daemon events to TUI event channel
             let tx_clone = daemon_tx.clone();
             tokio::spawn(async move {
                 while let Some(ev) = event_rx.recv().await {
@@ -181,6 +183,13 @@ async fn run(
                     }
                 }
             });
+
+            // Command queue: key handlers queue commands, executor dispatches async
+            let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<daemon::DaemonCmd>(64);
+            app.cmd_tx = Some(cmd_tx);
+            daemon::spawn_command_executor(handle.clone(), cmd_rx, daemon_tx.clone());
+
+            // Periodic poll task (status + devices every 10s)
             daemon::spawn_poll_task(handle, daemon_tx, 10);
         }
         Err(e) => {
@@ -282,9 +291,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.sidebar_selection = app.sidebar_selection.saturating_sub(1);
         }
         (KeyCode::Enter, _) if app.focus == Focus::Sidebar => {
-            // Select peer from sidebar
-            if let Some(peer) = app.peers.get(app.sidebar_selection) {
-                let hash = peer.hash.clone();
+            // Select peer from sidebar — use filtered items to handle search
+            let items = app.sidebar_items();
+            if let Some((hash, _, _)) = items.get(app.sidebar_selection) {
+                let hash = hash.clone();
                 match app.workspace {
                     Workspace::Peers => {
                         app.selected_peer = Some(hash);
@@ -303,6 +313,80 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 }
             }
         }
+        // Execute selected command in Commands tab
+        (KeyCode::Enter, _)
+            if app.focus == Focus::Main
+                && app.workspace == Workspace::Peers
+                && app.peer_tab == app::PeerTab::Commands =>
+        {
+            if let Some(peer_hash) = app.selected_peer.clone() {
+                let action = app::CommandAction::ALL[app.command_tab.selected];
+                app.command_tab.is_executing = true;
+                app.command_tab.result_text = format!(
+                    "  Executing {} on {}...",
+                    action.title(),
+                    &peer_hash[..8.min(peer_hash.len())]
+                );
+
+                use daemon::DaemonCmd;
+                match action {
+                    app::CommandAction::QueryStatus => {
+                        app.send_daemon_cmd(DaemonCmd::DeviceStatus { dest_hash: peer_hash });
+                    }
+                    app::CommandAction::RemoteExec => {
+                        // TODO: prompt for command input. For now, run `uptime`.
+                        app.send_daemon_cmd(DaemonCmd::Exec {
+                            dest_hash: peer_hash,
+                            command: "uptime".into(),
+                            args: vec![],
+                        });
+                    }
+                    app::CommandAction::Reboot => {
+                        app.send_daemon_cmd(DaemonCmd::RebootDevice {
+                            dest_hash: peer_hash,
+                            delay_secs: Some(5),
+                        });
+                    }
+                    app::CommandAction::ConfigPush => {
+                        app.command_tab.is_executing = false;
+                        app.command_tab.result_text =
+                            "  Config push requires a profile file. Use CLI: styrene fleet apply"
+                                .into();
+                    }
+                }
+            }
+        }
+
+        // Browse pages in Pages tab
+        (KeyCode::Enter, _)
+            if app.focus == Focus::Main
+                && app.workspace == Workspace::Peers
+                && app.peer_tab == app::PeerTab::Pages =>
+        {
+            if let Some(peer_hash) = app.selected_peer.clone() {
+                if app.page_source.is_none() && app.page_index.is_empty() {
+                    // First press: load page index (use "local" for own pages, peer hash for remote)
+                    app.send_daemon_cmd(daemon::DaemonCmd::BrowsePage {
+                        host: peer_hash,
+                        path: "/".into(),
+                    });
+                    app.conversation.push_system("⬡ loading page from peer...");
+                }
+            }
+        }
+
+        // Open terminal session in Terminal tab
+        (KeyCode::Enter, _)
+            if app.focus == Focus::Main
+                && app.workspace == Workspace::Peers
+                && app.peer_tab == app::PeerTab::Terminal
+                && app.terminal_tab.session_id.is_none() =>
+        {
+            app.terminal_tab.status = app::TerminalStatus::Error(
+                "Terminal sessions require daemon connection. Feature in progress.".into(),
+            );
+        }
+
         (KeyCode::Char('g'), _) if app.focus == Focus::Sidebar => {
             app.sidebar_selection = 0;
         }
@@ -316,13 +400,18 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
         // Focus cycling
         (KeyCode::Esc, _) => {
-            match app.focus {
-                Focus::Main => app.focus = Focus::Sidebar,
-                Focus::Input => app.focus = Focus::Sidebar,
-                Focus::Sidebar => {
-                    // Deselect
-                    app.selected_peer = None;
-                    app.selected_conversation = None;
+            // Close settings panel first if open
+            if app.settings_open {
+                app.settings_open = false;
+            } else {
+                match app.focus {
+                    Focus::Main => app.focus = Focus::Sidebar,
+                    Focus::Input => app.focus = Focus::Sidebar,
+                    Focus::Sidebar => {
+                        // Deselect
+                        app.selected_peer = None;
+                        app.selected_conversation = None;
+                    }
                 }
             }
         }
@@ -339,10 +428,19 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         (KeyCode::PageUp, _) => app.active_conversation_mut().scroll_up(20),
         (KeyCode::PageDown, _) => app.active_conversation_mut().scroll_down(20),
         (KeyCode::Char('j') | KeyCode::Down, _) if app.focus == Focus::Main => {
-            app.active_conversation_mut().scroll_down(3);
+            if app.workspace == Workspace::Peers && app.peer_tab == app::PeerTab::Commands {
+                let max = app::CommandAction::ALL.len().saturating_sub(1);
+                app.command_tab.selected = (app.command_tab.selected + 1).min(max);
+            } else {
+                app.active_conversation_mut().scroll_down(3);
+            }
         }
         (KeyCode::Char('k') | KeyCode::Up, _) if app.focus == Focus::Main => {
-            app.active_conversation_mut().scroll_up(3);
+            if app.workspace == Workspace::Peers && app.peer_tab == app::PeerTab::Commands {
+                app.command_tab.selected = app.command_tab.selected.saturating_sub(1);
+            } else {
+                app.active_conversation_mut().scroll_up(3);
+            }
         }
 
         // Peer tab navigation
@@ -435,8 +533,9 @@ fn execute_command(app: &mut App, input: &str) -> bool {
             if arg.is_empty() {
                 app.conversation.push_system("usage: :connect <addr>");
             } else {
-                app.conversation
-                    .push_system(&format!("⬡ connect to {arg} — not yet wired (daemon reconnect TODO)"));
+                app.conversation.push_system(&format!(
+                    "⬡ connect to {arg} — not yet wired (daemon reconnect TODO)"
+                ));
             }
         }
 
@@ -456,10 +555,77 @@ fn execute_command(app: &mut App, input: &str) -> bool {
             }
         }
 
+        "settings" => {
+            app.settings_open = !app.settings_open;
+            if app.settings_open {
+                app.conversation.push_system("⬡ settings panel opened (Esc to close)");
+            }
+        }
+
+        "announce" => {
+            if app.daemon_connected {
+                app.send_daemon_cmd(daemon::DaemonCmd::Announce);
+                app.conversation.push_system("⬡ mesh announce queued");
+            } else {
+                app.conversation.push_system("⬡ not connected — cannot announce");
+            }
+        }
+
+        "block" => {
+            if arg.is_empty() {
+                app.conversation.push_system("usage: :block <identity_hash>");
+            } else {
+                app.send_daemon_cmd(daemon::DaemonCmd::BlockPeer {
+                    identity_hash: arg.to_string(),
+                });
+                app.conversation
+                    .push_system(&format!("⬡ blocking peer: {}...", &arg[..12.min(arg.len())]));
+            }
+        }
+
+        "unblock" => {
+            if arg.is_empty() {
+                app.conversation.push_system("usage: :unblock <identity_hash>");
+            } else {
+                app.send_daemon_cmd(daemon::DaemonCmd::UnblockPeer {
+                    identity_hash: arg.to_string(),
+                });
+                app.conversation
+                    .push_system(&format!("⬡ unblocking peer: {}...", &arg[..12.min(arg.len())]));
+            }
+        }
+
+        "alias" => {
+            let mut alias_parts = arg.splitn(2, ' ');
+            let peer = alias_parts.next().unwrap_or("");
+            let name = alias_parts.next().unwrap_or("").trim();
+            if peer.is_empty() || name.is_empty() {
+                app.conversation.push_system("usage: :alias <peer_hash> <display_name>");
+            } else {
+                // Update local peer record
+                if let Some(p) = app.peers.iter_mut().find(|p| p.hash.starts_with(peer)) {
+                    p.name = Some(name.to_string());
+                    app.conversation.push_system(&format!(
+                        "⬡ alias set: {} → {}",
+                        &peer[..8.min(peer.len())],
+                        name
+                    ));
+                } else {
+                    app.conversation
+                        .push_system(&format!("⬡ peer not found: {}", &peer[..12.min(peer.len())]));
+                }
+            }
+        }
+
         "help" => {
             app.conversation.push_system(
                 "⬡ commands:\n\n  \
                  :q, :quit        exit\n  \
+                 :settings        toggle settings panel\n  \
+                 :announce        broadcast mesh announce\n  \
+                 :block <hash>    block a peer\n  \
+                 :unblock <hash>  unblock a peer\n  \
+                 :alias <h> <n>   set peer display name\n  \
                  :connect <addr>  connect to daemon\n  \
                  :disconnect      disconnect from daemon\n  \
                  :help            show this message",
@@ -467,8 +633,7 @@ fn execute_command(app: &mut App, input: &str) -> bool {
         }
 
         other => {
-            app.conversation
-                .push_system(&format!("unknown command: {other}"));
+            app.conversation.push_system(&format!("unknown command: {other}"));
         }
     }
 

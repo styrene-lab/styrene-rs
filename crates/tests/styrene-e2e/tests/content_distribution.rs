@@ -36,10 +36,7 @@ impl ContentTransport for ChannelTransport {
         &mut self,
         announce: &ResourceAvailableAnnounce,
     ) -> Result<(), Self::Error> {
-        self.tx
-            .send(ContentEvent::Announce(*announce))
-            .await
-            .map_err(|_| ChannelError)
+        self.tx.send(ContentEvent::Announce(*announce)).await.map_err(|_| ChannelError)
     }
 
     async fn send_chunk_request(
@@ -49,11 +46,7 @@ impl ContentTransport for ChannelTransport {
         index: u32,
     ) -> Result<(), Self::Error> {
         self.tx
-            .send(ContentEvent::ChunkRequest {
-                from: *from,
-                content_id,
-                index,
-            })
+            .send(ContentEvent::ChunkRequest { from: *from, content_id, index })
             .await
             .map_err(|_| ChannelError)
     }
@@ -66,11 +59,7 @@ impl ContentTransport for ChannelTransport {
         data: &[u8],
     ) -> Result<(), Self::Error> {
         self.tx
-            .send(ContentEvent::ChunkResponse {
-                content_id,
-                index,
-                data: data.to_vec(),
-            })
+            .send(ContentEvent::ChunkResponse { content_id, index, data: data.to_vec() })
             .await
             .map_err(|_| ChannelError)
     }
@@ -83,10 +72,7 @@ impl ContentTransport for ChannelTransport {
 fn make_channel_pair() -> (ChannelTransport, ChannelTransport) {
     let (tx_a, rx_b) = tokio::sync::mpsc::channel(64);
     let (tx_b, rx_a) = tokio::sync::mpsc::channel(64);
-    (
-        ChannelTransport { tx: tx_a, rx: rx_a },
-        ChannelTransport { tx: tx_b, rx: rx_b },
-    )
+    (ChannelTransport { tx: tx_a, rx: rx_a }, ChannelTransport { tx: tx_b, rx: rx_b })
 }
 
 fn test_content() -> Vec<u8> {
@@ -126,10 +112,7 @@ async fn seed_store(content: &[u8], manifest: &StyreneManifest) -> RamChunkStore
     for i in 0..manifest.chunk_count {
         let start = i as usize * chunk_size;
         let end = (start + chunk_size).min(content.len());
-        store
-            .write_chunk(manifest.content_id, i, &content[start..end])
-            .await
-            .expect("write chunk");
+        store.write_chunk(manifest.content_id, i, &content[start..end]).await.expect("write chunk");
     }
     store
 }
@@ -161,16 +144,9 @@ async fn publish_and_download_via_channel_transport() {
             out.copy_from_slice(&h.as_bytes()[..16]);
             out
         };
-        let announce = ResourceAvailableAnnounce::new(
-            manifest.content_id,
-            manifest_hash,
-            held,
-            publisher_id,
-        );
-        publisher_transport
-            .broadcast_announce(&announce)
-            .await
-            .expect("announce");
+        let announce =
+            ResourceAvailableAnnounce::new(manifest.content_id, manifest_hash, held, publisher_id);
+        publisher_transport.broadcast_announce(&announce).await.expect("announce");
 
         // Downloader: ContentDistributor that will download chunks.
         // download() drains pending events (including the announce) before
@@ -182,9 +158,8 @@ async fn publish_and_download_via_channel_transport() {
         );
 
         let manifest_for_dl = manifest.clone();
-        let download_handle = tokio::spawn(async move {
-            downloader.download(&manifest_for_dl).await
-        });
+        let download_handle =
+            tokio::spawn(async move { downloader.download(&manifest_for_dl).await });
 
         // Publisher: manually serve chunk requests from the channel
         let serve_handle = tokio::spawn(async move {
@@ -211,11 +186,7 @@ async fn publish_and_download_via_channel_transport() {
 
         assert_eq!(downloaded.len(), content.len(), "content length mismatch");
         assert_eq!(downloaded, content, "content bytes mismatch");
-        assert_eq!(
-            ContentId::from_bytes(&downloaded),
-            manifest.content_id,
-            "content ID mismatch"
-        );
+        assert_eq!(ContentId::from_bytes(&downloaded), manifest.content_id, "content ID mismatch");
 
         serve_handle.abort();
     })

@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use tokio::net::UnixStream;
 use tokio::sync::{mpsc, Mutex};
+use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, info_span, warn, Instrument};
-use tokio::time::{Duration, timeout};
 
 use rmpv::Value as MpValue;
 use styrene_ipc::types::{DaemonStatusInfo, DeviceInfo, IdentityInfo, MessageInfo};
@@ -88,12 +88,10 @@ impl DaemonBridge {
         if lock_ms > 100 {
             warn!(target: "dx::rpc", ?msg_type, lock_ms, "slow lock acquisition");
         }
-        wire::write_frame_async(&mut *stream, msg_type, &req_id, payload)
-            .await
-            .map_err(|e| {
-                error!(target: "dx::rpc", ?msg_type, %e, "write failed");
-                format!("write: {e}")
-            })?;
+        wire::write_frame_async(&mut *stream, msg_type, &req_id, payload).await.map_err(|e| {
+            error!(target: "dx::rpc", ?msg_type, %e, "write failed");
+            format!("write: {e}")
+        })?;
         let result = timeout(Duration::from_secs(5), wire::read_frame_async(&mut *stream))
             .await
             .map_err(|_| {
@@ -129,29 +127,36 @@ impl DaemonBridge {
     /// Dump the entire path table — all known routes with hop count and relay info.
     pub async fn path_table(&mut self) -> Result<Vec<PathTableEntry>, String> {
         let frame = self.rpc(MessageType::QueryPathTable, &HashMap::new()).await?;
-        let arr = frame.payload.get("paths")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        Ok(arr.iter().filter_map(|v| {
-            let m = v.as_map()?;
-            let get = |key: &str| -> String {
-                m.iter().find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, v)| v.as_str())
-                    .unwrap_or("").to_string()
-            };
-            let hops = m.iter().find(|(k, _)| k.as_str() == Some("hops"))
-                .and_then(|(_, v)| v.as_u64())
-                .unwrap_or(0) as u8;
-            let dest = get("destination_hash");
-            if dest.is_empty() { return None; }
-            Some(PathTableEntry {
-                destination_hash: dest,
-                hops,
-                next_hop: get("next_hop"),
-                interface: get("interface"),
+        let arr =
+            frame.payload.get("paths").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        Ok(arr
+            .iter()
+            .filter_map(|v| {
+                let m = v.as_map()?;
+                let get = |key: &str| -> String {
+                    m.iter()
+                        .find(|(k, _)| k.as_str() == Some(key))
+                        .and_then(|(_, v)| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                let hops = m
+                    .iter()
+                    .find(|(k, _)| k.as_str() == Some("hops"))
+                    .and_then(|(_, v)| v.as_u64())
+                    .unwrap_or(0) as u8;
+                let dest = get("destination_hash");
+                if dest.is_empty() {
+                    return None;
+                }
+                Some(PathTableEntry {
+                    destination_hash: dest,
+                    hops,
+                    next_hop: get("next_hop"),
+                    interface: get("interface"),
+                })
             })
-        }).collect())
+            .collect())
     }
 
     pub async fn send_chat(&mut self, peer_hash: &str, content: &str) -> Result<String, String> {
@@ -183,7 +188,12 @@ impl DaemonBridge {
         Ok(frame.payload)
     }
 
-    pub async fn exec(&mut self, dest: &str, command: &str, args: &[String]) -> Result<HashMap<String, MpValue>, String> {
+    pub async fn exec(
+        &mut self,
+        dest: &str,
+        command: &str,
+        args: &[String],
+    ) -> Result<HashMap<String, MpValue>, String> {
         let mut p = HashMap::new();
         p.insert("destination_hash".into(), MpValue::from(dest));
         p.insert("command".into(), MpValue::from(command));
@@ -202,7 +212,11 @@ impl DaemonBridge {
         self.rpc(MessageType::CmdRebootDevice, &p).await.map(|_| ())
     }
 
-    pub async fn fleet_apply(&mut self, dest: &str, profile_hex: &str) -> Result<HashMap<String, MpValue>, String> {
+    pub async fn fleet_apply(
+        &mut self,
+        dest: &str,
+        profile_hex: &str,
+    ) -> Result<HashMap<String, MpValue>, String> {
         let mut p = HashMap::new();
         p.insert("destination_hash".into(), MpValue::from(dest));
         p.insert("profile".into(), MpValue::from(profile_hex));
@@ -217,50 +231,70 @@ impl DaemonBridge {
         let mut p = HashMap::new();
         p.insert("include_unread".into(), MpValue::Boolean(true));
         let frame = self.rpc(MessageType::QueryConversations, &p).await?;
-        let arr = frame.payload.get("conversations")
+        let arr = frame
+            .payload
+            .get("conversations")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        Ok(arr.into_iter().filter_map(|v| {
-            let m = v.as_map()?;
-            let mut map = HashMap::new();
-            for (k, v) in m {
-                if let Some(key) = k.as_str() {
-                    map.insert(key.to_string(), v.clone());
+        Ok(arr
+            .into_iter()
+            .filter_map(|v| {
+                let m = v.as_map()?;
+                let mut map = HashMap::new();
+                for (k, v) in m {
+                    if let Some(key) = k.as_str() {
+                        map.insert(key.to_string(), v.clone());
+                    }
                 }
-            }
-            Some(map)
-        }).collect())
+                Some(map)
+            })
+            .collect())
     }
 
-    pub async fn query_messages(&mut self, peer_hash: &str, limit: u32) -> Result<Vec<MessageInfo>, String> {
+    pub async fn query_messages(
+        &mut self,
+        peer_hash: &str,
+        limit: u32,
+    ) -> Result<Vec<MessageInfo>, String> {
         let mut p = HashMap::new();
         p.insert("peer_hash".into(), MpValue::from(peer_hash));
         p.insert("limit".into(), MpValue::from(limit as u64));
         let frame = self.rpc(MessageType::QueryMessages, &p).await?;
-        let arr = frame.payload.get("messages")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        Ok(arr.iter().filter_map(|v| {
-            let m = v.as_map()?;
-            let get = |key: &str| -> String {
-                m.iter().find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, v)| v.as_str())
-                    .unwrap_or("").to_string()
-            };
-            let mut msg = MessageInfo::default();
-            msg.id = get("id");
-            msg.source_hash = get("source_hash");
-            msg.destination_hash = get("destination_hash");
-            msg.content = get("content");
-            msg.timestamp = m.iter().find(|(k, _)| k.as_str() == Some("timestamp"))
-                .and_then(|(_, v)| v.as_i64()).unwrap_or(0);
-            msg.is_outgoing = m.iter().find(|(k, _)| k.as_str() == Some("is_outgoing"))
-                .and_then(|(_, v)| v.as_bool()).unwrap_or(false);
-            if msg.id.is_empty() { return None; }
-            Some(msg)
-        }).collect())
+        let arr =
+            frame.payload.get("messages").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        Ok(arr
+            .iter()
+            .filter_map(|v| {
+                let m = v.as_map()?;
+                let get = |key: &str| -> String {
+                    m.iter()
+                        .find(|(k, _)| k.as_str() == Some(key))
+                        .and_then(|(_, v)| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                let mut msg = MessageInfo::default();
+                msg.id = get("id");
+                msg.source_hash = get("source_hash");
+                msg.destination_hash = get("destination_hash");
+                msg.content = get("content");
+                msg.timestamp = m
+                    .iter()
+                    .find(|(k, _)| k.as_str() == Some("timestamp"))
+                    .and_then(|(_, v)| v.as_i64())
+                    .unwrap_or(0);
+                msg.is_outgoing = m
+                    .iter()
+                    .find(|(k, _)| k.as_str() == Some("is_outgoing"))
+                    .and_then(|(_, v)| v.as_bool())
+                    .unwrap_or(false);
+                if msg.id.is_empty() {
+                    return None;
+                }
+                Some(msg)
+            })
+            .collect())
     }
 
     pub async fn block_peer(&mut self, hash: &str) -> Result<(), String> {
@@ -309,7 +343,12 @@ impl DaemonBridge {
 
     // ── Terminal ────────────────────────────────────────────────────
 
-    pub async fn terminal_open(&mut self, dest: &str, rows: u16, cols: u16) -> Result<String, String> {
+    pub async fn terminal_open(
+        &mut self,
+        dest: &str,
+        rows: u16,
+        cols: u16,
+    ) -> Result<String, String> {
         let mut p = HashMap::new();
         p.insert("destination_hash".into(), MpValue::from(dest));
         p.insert("rows".into(), MpValue::from(rows as u64));
@@ -349,14 +388,17 @@ impl DaemonBridge {
 /// Connect to the daemon — tries IPC socket first, falls back to embedded.
 ///
 /// Returns (bridge, event_receiver, connection_mode).
-pub async fn connect() -> Result<(Arc<Mutex<DaemonBridge>>, mpsc::Receiver<DaemonEvent>, ConnectionMode), String> {
+pub async fn connect(
+) -> Result<(Arc<Mutex<DaemonBridge>>, mpsc::Receiver<DaemonEvent>, ConnectionMode), String> {
     let socket_path = styrene_ipc_server::default_socket_path();
     info!(target: "dx::bridge", path = %socket_path.display(), "checking for external daemon");
     if socket_path.exists() {
         info!(target: "dx::bridge", "socket exists, attempting IPC connect");
         match connect_ipc(&socket_path).await {
             Ok(result) => return Ok(result),
-            Err(e) => warn!(target: "dx::bridge", %e, "IPC connect failed, falling back to embedded"),
+            Err(e) => {
+                warn!(target: "dx::bridge", %e, "IPC connect failed, falling back to embedded")
+            }
         }
     } else {
         info!(target: "dx::bridge", "no external daemon, booting embedded");
@@ -367,15 +409,10 @@ pub async fn connect() -> Result<(Arc<Mutex<DaemonBridge>>, mpsc::Receiver<Daemo
 async fn connect_ipc(
     socket_path: &std::path::Path,
 ) -> Result<(Arc<Mutex<DaemonBridge>>, mpsc::Receiver<DaemonEvent>, ConnectionMode), String> {
-    let stream = UnixStream::connect(socket_path)
-        .await
-        .map_err(|e| format!("connect: {e}"))?;
+    let stream = UnixStream::connect(socket_path).await.map_err(|e| format!("connect: {e}"))?;
 
     let stream = Arc::new(Mutex::new(stream));
-    let mut bridge = DaemonBridge {
-        stream: stream.clone(),
-        next_id: 0,
-    };
+    let mut bridge = DaemonBridge { stream: stream.clone(), next_id: 0 };
 
     if !bridge.ping().await {
         return Err("daemon not responsive".into());
@@ -411,7 +448,8 @@ async fn connect_ipc(
     Ok((bridge, rx, ConnectionMode::Ipc))
 }
 
-async fn connect_embedded() -> Result<(Arc<Mutex<DaemonBridge>>, mpsc::Receiver<DaemonEvent>, ConnectionMode), String> {
+async fn connect_embedded(
+) -> Result<(Arc<Mutex<DaemonBridge>>, mpsc::Receiver<DaemonEvent>, ConnectionMode), String> {
     let sock = std::env::temp_dir().join(format!("styrene-dx-{}.sock", std::process::id()));
 
     // Boot daemon in-process — same capabilities as standalone styrened.
@@ -434,16 +472,12 @@ async fn connect_embedded() -> Result<(Arc<Mutex<DaemonBridge>>, mpsc::Receiver<
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     info!(target: "dx::bridge", path = %sock.display(), "connecting to embedded socket");
-    let stream = UnixStream::connect(&sock)
-        .await
-        .map_err(|e| format!("connect to embedded: {e}"))?;
+    let stream =
+        UnixStream::connect(&sock).await.map_err(|e| format!("connect to embedded: {e}"))?;
     info!(target: "dx::bridge", "connected to embedded daemon");
 
     let stream = Arc::new(Mutex::new(stream));
-    let mut bridge = DaemonBridge {
-        stream: stream.clone(),
-        next_id: 0,
-    };
+    let mut bridge = DaemonBridge { stream: stream.clone(), next_id: 0 };
 
     info!(target: "dx::bridge", "subscribing to events");
     bridge.subscribe_all().await.map_err(|e| format!("subscribe: {e}"))?;
@@ -521,39 +555,42 @@ async fn event_reader(stream: Arc<Mutex<UnixStream>>, tx: mpsc::Sender<DaemonEve
 }
 
 fn spawn_poller(bridge: Arc<Mutex<DaemonBridge>>, tx: mpsc::Sender<DaemonEvent>) {
-    tokio::spawn(async move {
-        info!(target: "dx::poller", "poller started");
+    tokio::spawn(
+        async move {
+            info!(target: "dx::poller", "poller started");
 
-        loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            loop {
+                tokio::time::sleep(Duration::from_secs(10)).await;
 
-            let start = std::time::Instant::now();
-            debug!(target: "dx::poller", "tick: acquiring bridge lock");
-            let mut b = bridge.lock().await;
-            let lock_ms = start.elapsed().as_millis();
-            debug!(target: "dx::poller", lock_ms, "bridge lock acquired");
+                let start = std::time::Instant::now();
+                debug!(target: "dx::poller", "tick: acquiring bridge lock");
+                let mut b = bridge.lock().await;
+                let lock_ms = start.elapsed().as_millis();
+                debug!(target: "dx::poller", lock_ms, "bridge lock acquired");
 
-            if let Ok(status) = b.status().await {
-                let _ = tx.send(DaemonEvent::Status(status)).await;
-            }
-            if let Ok(devices) = b.devices().await {
-                debug!(target: "dx::poller", count = devices.len(), "polled devices");
-                for dev in devices {
-                    let _ = tx.send(DaemonEvent::PeerDiscovered(dev)).await;
+                if let Ok(status) = b.status().await {
+                    let _ = tx.send(DaemonEvent::Status(status)).await;
                 }
-            }
-            match b.path_table().await {
-                Ok(paths) => {
-                    info!(target: "dx::poller", count = paths.len(), "polled path table");
-                    let _ = tx.send(DaemonEvent::PathTable(paths)).await;
+                if let Ok(devices) = b.devices().await {
+                    debug!(target: "dx::poller", count = devices.len(), "polled devices");
+                    for dev in devices {
+                        let _ = tx.send(DaemonEvent::PeerDiscovered(dev)).await;
+                    }
                 }
-                Err(e) => warn!(target: "dx::poller", %e, "path table poll failed"),
-            }
+                match b.path_table().await {
+                    Ok(paths) => {
+                        info!(target: "dx::poller", count = paths.len(), "polled path table");
+                        let _ = tx.send(DaemonEvent::PathTable(paths)).await;
+                    }
+                    Err(e) => warn!(target: "dx::poller", %e, "path table poll failed"),
+                }
 
-            let elapsed_ms = start.elapsed().as_millis();
-            debug!(target: "dx::poller", elapsed_ms, "tick complete");
+                let elapsed_ms = start.elapsed().as_millis();
+                debug!(target: "dx::poller", elapsed_ms, "tick complete");
+            }
         }
-    }.instrument(info_span!("poller")));
+        .instrument(info_span!("poller")),
+    );
 }
 
 fn frame_to_event(frame: Frame) -> Option<DaemonEvent> {
@@ -568,10 +605,7 @@ fn frame_to_event(frame: Frame) -> Option<DaemonEvent> {
             if kind == "new" || kind.is_empty() {
                 Some(DaemonEvent::MessageReceived(msg))
             } else {
-                Some(DaemonEvent::MessageStatusChanged {
-                    id: msg.id,
-                    status: kind.to_string(),
-                })
+                Some(DaemonEvent::MessageStatusChanged { id: msg.id, status: kind.to_string() })
             }
         }
         MessageType::EventLink => {
@@ -635,7 +669,8 @@ fn parse_devices(p: &HashMap<String, MpValue>) -> Result<Vec<DeviceInfo>, String
             dev.name = get("name");
             dev.status = get("status");
             dev.device_type = get("device_type");
-            dev.is_styrene_node = m.iter()
+            dev.is_styrene_node = m
+                .iter()
                 .find(|(k, _)| k.as_str() == Some("is_styrene_node"))
                 .and_then(|(_, v)| v.as_bool())
                 .unwrap_or(false);
@@ -651,13 +686,17 @@ fn parse_device_event(p: &HashMap<String, MpValue>) -> Option<DeviceInfo> {
     dev.status = mp_str(p, "status");
     dev.device_type = mp_str(p, "device_type");
     dev.is_styrene_node = p.get("is_styrene_node").and_then(|v| v.as_bool()).unwrap_or(false);
-    if dev.destination_hash.is_empty() { return None; }
+    if dev.destination_hash.is_empty() {
+        return None;
+    }
     Some(dev)
 }
 
 fn parse_message_event(p: &HashMap<String, MpValue>) -> Option<MessageInfo> {
     let id = mp_str(p, "id");
-    if id.is_empty() { return None; }
+    if id.is_empty() {
+        return None;
+    }
     let mut msg = MessageInfo::default();
     msg.id = id;
     msg.source_hash = mp_str(p, "source_hash");

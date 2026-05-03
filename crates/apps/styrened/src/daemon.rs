@@ -71,9 +71,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         let default = crate::config::default_config_path();
         default.exists().then_some(default)
     });
-    let daemon_config = config_path
-        .as_ref()
-        .and_then(|p| DaemonConfig::from_path(p).ok());
+    let daemon_config = config_path.as_ref().and_then(|p| DaemonConfig::from_path(p).ok());
 
     let node_role = daemon_config.as_ref().map(|c| c.role).unwrap_or_default();
     eprintln!("[styrene] node role: {}", node_role);
@@ -121,10 +119,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
             .await;
         let (dest_hash_hex, delivery_addr) = {
             let dest = destination.lock().await;
-            (
-                hex::encode(dest.desc.address_hash.as_slice()),
-                dest.desc.address_hash,
-            )
+            (hex::encode(dest.desc.address_hash.as_slice()), dest.desc.address_hash)
         };
         delivery_hash = dest_hash_hex;
 
@@ -137,9 +132,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
             rns_core::hash::AddressHash::new(id_hash_bytes),
             delivery_addr,
             destination.clone(),
-            display_name
-                .as_ref()
-                .and_then(|n| encode_delivery_display_name_app_data(n)),
+            display_name.as_ref().and_then(|n| encode_delivery_display_name_app_data(n)),
         )
         .await;
 
@@ -161,18 +154,13 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
 
     // Node store
     let node_store_path = db_path.with_file_name("nodes.db");
-    let node_store = Arc::new(
-        styrene_services::node_store::NodeStore::open(
-            node_store_path.to_str().unwrap_or("nodes.db"),
-        )?,
-    );
+    let node_store = Arc::new(styrene_services::node_store::NodeStore::open(
+        node_store_path.to_str().unwrap_or("nodes.db"),
+    )?);
 
     // --- RBAC policy: config → DB overlay → normalize ---
     let rbac_policy = {
-        let mut policy = daemon_config
-            .as_ref()
-            .and_then(|c| c.rbac.clone())
-            .unwrap_or_default();
+        let mut policy = daemon_config.as_ref().and_then(|c| c.rbac.clone()).unwrap_or_default();
 
         // Overlay roster entries from SQLite (DB wins on conflict)
         {
@@ -210,11 +198,20 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
             policy.clear_hub_entries();
             for entry in hub_entries {
                 if entry.is_expired(now) {
-                    eprintln!("[styrene] rbac: dropping expired hub entry for {}", entry.entry.identity_hash);
+                    eprintln!(
+                        "[styrene] rbac: dropping expired hub entry for {}",
+                        entry.entry.identity_hash
+                    );
                 } else if !trusted.iter().any(|h| h.matches(&entry)) {
-                    eprintln!("[styrene] rbac: dropping hub entry for {} — hub not trusted", entry.entry.identity_hash);
+                    eprintln!(
+                        "[styrene] rbac: dropping hub entry for {} — hub not trusted",
+                        entry.entry.identity_hash
+                    );
                 } else if !entry.verify() {
-                    eprintln!("[styrene] rbac: dropping hub entry for {} — invalid signature", entry.entry.identity_hash);
+                    eprintln!(
+                        "[styrene] rbac: dropping hub entry for {} — invalid signature",
+                        entry.entry.identity_hash
+                    );
                 } else {
                     policy.add_hub_entry(entry);
                 }
@@ -222,7 +219,9 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
             if total > 0 {
                 eprintln!(
                     "[styrene] rbac: {}/{} hub-signed entries verified ({} trusted hubs)",
-                    policy.hub_entries().len(), total, trusted.len(),
+                    policy.hub_entries().len(),
+                    total,
+                    trusted.len(),
                 );
             }
         }
@@ -252,9 +251,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
 
     // Wire signer + delivery hash
     app_context.set_signer(Arc::new(identity.clone()));
-    app_context
-        .identity()
-        .set_delivery_destination_hash(Some(delivery_hash.clone()));
+    app_context.identity().set_delivery_destination_hash(Some(delivery_hash.clone()));
 
     if let Some(config_path) = config_path.as_ref() {
         if let Err(e) = app_context.config().load(config_path) {
@@ -268,10 +265,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     }
 
     // --- DaemonFacade ---
-    let daemon_facade = Arc::new(DaemonFacade::new(
-        app_context.clone(),
-        identity_hash.clone(),
-    ));
+    let daemon_facade = Arc::new(DaemonFacade::new(app_context.clone(), identity_hash.clone()));
 
     // --- Workers ---
     let local_delivery_hash = if delivery_hash.is_empty() { None } else { Some(delivery_hash) };
@@ -290,10 +284,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         app_context.discovery_arc(),
         app_context.events_arc(),
     );
-    crate::workers::link::spawn_link_worker(
-        app_context.transport_arc(),
-        app_context.events_arc(),
-    );
+    crate::workers::link::spawn_link_worker(app_context.transport_arc(), app_context.events_arc());
 
     // RPC handlers
     app_context
@@ -318,9 +309,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     // --- IPC Server (desktop only) ---
     #[cfg(feature = "ipc-server")]
     let ipc_server = {
-        let socket_path = cfg
-            .socket
-            .unwrap_or_else(styrene_ipc_server::default_socket_path);
+        let socket_path = cfg.socket.unwrap_or_else(styrene_ipc_server::default_socket_path);
         let ipc_config = styrene_ipc_server::IpcServerConfig {
             socket_path: socket_path.clone(),
             event_capacity: 256,
@@ -338,7 +327,9 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
             tokio::spawn(async move {
                 loop {
                     match daemon_rx.recv().await {
-                        Ok(event) => { let _ = event_tx.send(event); }
+                        Ok(event) => {
+                            let _ = event_tx.send(event);
+                        }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }

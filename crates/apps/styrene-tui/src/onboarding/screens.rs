@@ -35,10 +35,7 @@ pub fn draw(state: &WizardState, f: &mut Frame, theme: &dyn Theme) {
     let dots_y = area.y + TOP_PAD;
     if dots_y < area.height {
         let dots_area = Rect { x, y: dots_y, width: max_w, height: 1 };
-        f.render_widget(
-            Paragraph::new(progress).alignment(Alignment::Center),
-            dots_area,
-        );
+        f.render_widget(Paragraph::new(progress).alignment(Alignment::Center), dots_area);
     }
 
     // Body — starts below the progress dots with a gap
@@ -61,10 +58,7 @@ pub fn draw(state: &WizardState, f: &mut Frame, theme: &dyn Theme) {
     let nav_y = area.height.saturating_sub(1);
     if nav_y > body_y {
         let nav_area = Rect { x, y: nav_y, width: max_w, height: 1 };
-        f.render_widget(
-            Paragraph::new(nav).alignment(Alignment::Center),
-            nav_area,
-        );
+        f.render_widget(Paragraph::new(nav).alignment(Alignment::Center), nav_area);
     }
 }
 
@@ -74,14 +68,8 @@ fn draw_welcome(state: &WizardState, f: &mut Frame, area: Rect, theme: &dyn Them
     let mut lines: Vec<Line> = Vec::new();
 
     // Compact sigil
-    lines.push(Line::from(Span::styled(
-        "    /\\ /\\",
-        theme.style_accent(),
-    )));
-    lines.push(Line::from(Span::styled(
-        "   | X | X |    S T Y R E N E",
-        theme.style_accent(),
-    )));
+    lines.push(Line::from(Span::styled("    /\\ /\\", theme.style_accent())));
+    lines.push(Line::from(Span::styled("   | X | X |    S T Y R E N E", theme.style_accent())));
     lines.push(Line::from(Span::styled(
         "    \\/ \\/     mesh communications",
         theme.style_accent(),

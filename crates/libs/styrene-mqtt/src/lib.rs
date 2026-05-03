@@ -40,7 +40,7 @@ pub mod broker;
 pub use client::{Client, ClientConfig, ConnectionTarget, ServiceIdentity};
 pub use envelope::{Envelope, Message, Metadata};
 pub use error::{MqttError, Result};
-pub use qos::{QosOverride, qos_for_event};
+pub use qos::{qos_for_event, QosOverride};
 pub use stream::{RawMessage, Subscription};
 pub use topic::{TopicAddress, TopicBuilder};
 

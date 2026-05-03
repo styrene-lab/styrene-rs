@@ -51,19 +51,19 @@ fn App() -> Element {
     let mut path_table = use_signal(Vec::<state::PathEntry>::new);
 
     // Bridge handle — shared with UI for RPC calls (send_chat, browse_page, etc.)
-    let mut bridge: Signal<Option<Arc<Mutex<daemon_bridge::DaemonBridge>>>> =
-        use_signal(|| None);
+    let mut bridge: Signal<Option<Arc<Mutex<daemon_bridge::DaemonBridge>>>> = use_signal(|| None);
 
     // Page browsing state
     let mut page_content = use_signal(|| None::<state::PageView>);
 
     // Command channel — UI sends commands, spawned task processes them
-    let mut cmd_tx: Signal<Option<tokio::sync::mpsc::UnboundedSender<daemon_bridge::DaemonCommand>>> =
-        use_signal(|| None);
+    let mut cmd_tx: Signal<
+        Option<tokio::sync::mpsc::UnboundedSender<daemon_bridge::DaemonCommand>>,
+    > = use_signal(|| None);
 
     // Boot daemon connection + process events
-    let _daemon_task = use_coroutine(
-        move |_rx: UnboundedReceiver<daemon_bridge::DaemonCommand>| async move {
+    let _daemon_task =
+        use_coroutine(move |_rx: UnboundedReceiver<daemon_bridge::DaemonCommand>| async move {
             match daemon_bridge::connect().await {
                 Ok((br, mut event_rx, mode)) => {
                     connection_mode.set(match mode {
@@ -81,8 +81,14 @@ fn App() -> Element {
                     let cmd_bridge = br.clone();
                     spawn(async move {
                         while let Some(cmd) = cmd_rx.recv().await {
-                            handle_ui_command(cmd, &cmd_bridge, &mut messages, &mut page_content, &mut path_table)
-                                .await;
+                            handle_ui_command(
+                                cmd,
+                                &cmd_bridge,
+                                &mut messages,
+                                &mut page_content,
+                                &mut path_table,
+                            )
+                            .await;
                         }
                     });
 
@@ -107,8 +113,7 @@ fn App() -> Element {
                     connection_mode.set(format!("failed: {e}"));
                 }
             }
-        },
-    );
+        });
 
     let id_display = identity
         .read()
@@ -120,15 +125,8 @@ fn App() -> Element {
         })
         .unwrap_or_else(|| "loading...".into());
 
-    let local_hash = identity
-        .read()
-        .as_ref()
-        .map(|id| id.hash.clone())
-        .unwrap_or_default();
-    let local_name = identity
-        .read()
-        .as_ref()
-        .and_then(|id| id.display_name.clone());
+    let local_hash = identity.read().as_ref().map(|id| id.hash.clone()).unwrap_or_default();
+    let local_name = identity.read().as_ref().and_then(|id| id.display_name.clone());
 
     // Chat input state
     let mut chat_input = use_signal(String::new);
@@ -356,11 +354,8 @@ fn handle_daemon_event(
                 } else {
                     state::PeerRole::Rns
                 };
-                let display = if parsed.display_name.is_empty() {
-                    None
-                } else {
-                    Some(parsed.display_name)
-                };
+                let display =
+                    if parsed.display_name.is_empty() { None } else { Some(parsed.display_name) };
                 p.push(state::PeerEntry {
                     hash: dev.destination_hash,
                     name: display,
@@ -383,14 +378,20 @@ fn handle_daemon_event(
         }
         daemon_bridge::DaemonEvent::PathTable(entries) => {
             let multi_hop = entries.iter().filter(|e| e.next_hop != e.destination_hash).count();
-            let unique_ifaces: std::collections::HashSet<&str> = entries.iter().map(|e| e.interface.as_str()).collect();
+            let unique_ifaces: std::collections::HashSet<&str> =
+                entries.iter().map(|e| e.interface.as_str()).collect();
             tracing::info!(target: "dx::graph", total = entries.len(), multi_hop, interfaces = unique_ifaces.len(), "path table updated");
-            path_table.set(entries.into_iter().map(|e| state::PathEntry {
-                destination_hash: e.destination_hash,
-                hops: e.hops,
-                next_hop: e.next_hop,
-                interface: e.interface,
-            }).collect());
+            path_table.set(
+                entries
+                    .into_iter()
+                    .map(|e| state::PathEntry {
+                        destination_hash: e.destination_hash,
+                        hops: e.hops,
+                        next_hop: e.next_hop,
+                        interface: e.interface,
+                    })
+                    .collect(),
+            );
         }
         daemon_bridge::DaemonEvent::Disconnected(reason) => {
             connected.set(false);
@@ -461,12 +462,17 @@ async fn handle_ui_command(
             let mut br = bridge.lock().await;
             match br.path_table().await {
                 Ok(entries) => {
-                    path_table.set(entries.into_iter().map(|e| state::PathEntry {
-                        destination_hash: e.destination_hash,
-                        hops: e.hops,
-                        next_hop: e.next_hop,
-                        interface: e.interface,
-                    }).collect());
+                    path_table.set(
+                        entries
+                            .into_iter()
+                            .map(|e| state::PathEntry {
+                                destination_hash: e.destination_hash,
+                                hops: e.hops,
+                                next_hop: e.next_hop,
+                                interface: e.interface,
+                            })
+                            .collect(),
+                    );
                 }
                 Err(e) => eprintln!("[dx] path_table failed: {e}"),
             }

@@ -105,9 +105,7 @@ impl TestNodeBuilder {
     /// Build the test node, starting transport and workers.
     pub async fn build(self) -> TestNode {
         // 1. Identity
-        let identity = self
-            .identity
-            .unwrap_or_else(|| PrivateIdentity::new_from_name(&self.name));
+        let identity = self.identity.unwrap_or_else(|| PrivateIdentity::new_from_name(&self.name));
         let identity_hash = hex::encode(identity.address_hash().as_slice());
 
         // 2. Transport identity bridge
@@ -134,25 +132,16 @@ impl TestNodeBuilder {
         // 5. TCP clients
         for addr in &self.tcp_client_addrs {
             let endpoint = addr.to_string();
-            iface_manager
-                .lock()
-                .await
-                .spawn(TcpClient::new(endpoint), TcpClient::spawn);
+            iface_manager.lock().await.spawn(TcpClient::new(endpoint), TcpClient::spawn);
         }
 
         // 6. LXMF delivery destination
         let destination = transport_instance
-            .add_destination(
-                transport_identity.clone(),
-                DestinationName::new("lxmf", "delivery"),
-            )
+            .add_destination(transport_identity.clone(), DestinationName::new("lxmf", "delivery"))
             .await;
         let (delivery_hash, delivery_addr) = {
             let dest = destination.lock().await;
-            (
-                hex::encode(dest.desc.address_hash.as_slice()),
-                dest.desc.address_hash,
-            )
+            (hex::encode(dest.desc.address_hash.as_slice()), dest.desc.address_hash)
         };
 
         // 7. Wait for actual bound port if we started a server
@@ -175,8 +164,7 @@ impl TestNodeBuilder {
         let mut id_hash_bytes = [0u8; 16];
         id_hash_bytes.copy_from_slice(identity.address_hash().as_slice());
 
-        let announce_app_data =
-            encode_delivery_display_name_app_data(&self.name);
+        let announce_app_data = encode_delivery_display_name_app_data(&self.name);
 
         let adapter = TokioTransportAdapter::new(
             transport.clone(),
@@ -188,20 +176,14 @@ impl TestNodeBuilder {
         .await;
 
         // 9. AppContext with in-memory stores
-        let store = Arc::new(Mutex::new(
-            MessagesStore::in_memory().expect("in-memory message store"),
-        ));
-        let app_context = Arc::new(AppContext::new(
-            Arc::new(adapter),
-            identity_hash.clone(),
-            store,
-        ));
+        let store =
+            Arc::new(Mutex::new(MessagesStore::in_memory().expect("in-memory message store")));
+        let app_context =
+            Arc::new(AppContext::new(Arc::new(adapter), identity_hash.clone(), store));
 
         // 10. Wire signer + delivery hash into IdentityService
         app_context.set_signer(Arc::new(identity.clone()));
-        app_context
-            .identity()
-            .set_delivery_destination_hash(Some(delivery_hash.clone()));
+        app_context.identity().set_delivery_destination_hash(Some(delivery_hash.clone()));
 
         // 11. Spawn workers (with auto-reply support from AppContext's own service)
         styrened::workers::inbound::spawn_inbound_worker_with_auto_reply(
@@ -226,28 +208,32 @@ impl TestNodeBuilder {
         // Register RPC handlers for protocol dispatch
         app_context
             .protocol()
-            .register(Arc::new(
-                styrened::workers::rpc_response::RpcResponseHandler::new(
-                    app_context.fleet_arc(),
-                ),
-            ))
+            .register(Arc::new(styrened::workers::rpc_response::RpcResponseHandler::new(
+                app_context.fleet_arc(),
+            )))
             .await;
         app_context
             .protocol()
-            .register(Arc::new(
-                styrened::workers::rpc_request::RpcRequestHandler::new(
-                    app_context.transport_arc(),
-                    Arc::new(identity.clone()),
-                    app_context.policy_arc(),
-                ),
-            ))
+            .register(Arc::new(styrened::workers::rpc_request::RpcRequestHandler::new(
+                app_context.transport_arc(),
+                Arc::new(identity.clone()),
+                app_context.policy_arc(),
+            )))
+            .await;
+
+        // Register page request handler (all nodes can serve pages)
+        app_context
+            .protocol()
+            .register(Arc::new(styrened::workers::page_handler::PageRequestHandler::new(
+                app_context.transport_arc(),
+                Arc::new(identity.clone()),
+                app_context.pages_arc(),
+            )))
             .await;
 
         // Wire propagation hub if configured
         if let Some(hub_hash) = &self.propagation_hub {
-            app_context
-                .messaging()
-                .set_propagation_hub(hub_hash.clone(), app_context.fleet_arc());
+            app_context.messaging().set_propagation_hub(hub_hash.clone(), app_context.fleet_arc());
         }
 
         // Register propagation handler if enabled
@@ -292,9 +278,6 @@ impl TestNode {
         peer_delivery_hash: &str,
         content: &str,
     ) -> Result<String, std::io::Error> {
-        self.app_context
-            .messaging()
-            .send_chat(peer_delivery_hash, content, None)
-            .await
+        self.app_context.messaging().send_chat(peer_delivery_hash, content, None).await
     }
 }

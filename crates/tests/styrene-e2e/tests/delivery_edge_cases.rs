@@ -1,23 +1,18 @@
 //! Delivery edge cases — retry, error propagation, and failure handling.
 
 use std::time::Duration;
-use styrene_e2e::helpers::{
-    with_timeout, await_inbound_message, two_connected_nodes, SETTLE,
-};
+use styrene_e2e::helpers::{await_inbound_message, two_connected_nodes, with_timeout, SETTLE};
 use styrene_e2e::node::TestNodeBuilder;
-use styrene_rbac::{RosterEntry, Role};
-use styrened::daemon_facade::DaemonFacade;
 use styrene_ipc::traits::*;
+use styrene_rbac::{Role, RosterEntry};
+use styrened::daemon_facade::DaemonFacade;
 
 // ── Message Retry ──────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn failed_message_has_failed_receipt_status() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-retry")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-retry").tcp_server("127.0.0.1:0").build().await;
 
         // Send to unknown peer — will fail after 12s identity resolution timeout
         let fake_hash = "deadbeefdeadbeefdeadbeefdeadbeef";
@@ -30,10 +25,7 @@ async fn failed_message_has_failed_receipt_status() {
             .iter()
             .filter(|m| {
                 m.direction == "out"
-                    && m.receipt_status
-                        .as_deref()
-                        .map(|s| s.contains("failed"))
-                        .unwrap_or(false)
+                    && m.receipt_status.as_deref().map(|s| s.contains("failed")).unwrap_or(false)
             })
             .collect();
 
@@ -66,10 +58,7 @@ async fn retry_inbound_message_rejected() {
         // Try to retry an inbound message — should be rejected
         let facade = DaemonFacade::new(bob.app_context.clone(), bob.identity_hash.clone());
         let result = facade.retry_message(&msg_id).await;
-        assert!(
-            result.is_err(),
-            "retrying an inbound message should be rejected"
-        );
+        assert!(result.is_err(), "retrying an inbound message should be rejected");
     })
     .await;
 }
@@ -88,23 +77,12 @@ async fn fleet_exec_nonexistent_command() {
         let result = alice
             .app_context
             .fleet()
-            .exec(
-                &bob.delivery_hash,
-                "this_command_definitely_does_not_exist_xyz",
-                &[],
-                Some(20),
-            )
+            .exec(&bob.delivery_hash, "this_command_definitely_does_not_exist_xyz", &[], Some(20))
             .await;
 
         let exec_result = result.expect("RPC should succeed even if command fails");
-        assert_ne!(
-            exec_result.exit_code, 0,
-            "nonexistent command should have non-zero exit code"
-        );
-        assert!(
-            !exec_result.stderr.is_empty(),
-            "stderr should contain error message, got empty"
-        );
+        assert_ne!(exec_result.exit_code, 0, "nonexistent command should have non-zero exit code");
+        assert!(!exec_result.stderr.is_empty(), "stderr should contain error message, got empty");
     })
     .await;
 }
@@ -118,17 +96,11 @@ async fn fleet_exec_failing_command() {
         bob.app_context.policy().grant(entry, bob.app_context.store()).expect("grant");
 
         // Execute `false` — exits with code 1
-        let result = alice
-            .app_context
-            .fleet()
-            .exec(&bob.delivery_hash, "false", &[], Some(10))
-            .await;
+        let result =
+            alice.app_context.fleet().exec(&bob.delivery_hash, "false", &[], Some(10)).await;
 
         let exec_result = result.expect("RPC should succeed");
-        assert_ne!(
-            exec_result.exit_code, 0,
-            "`false` should exit with non-zero"
-        );
+        assert_ne!(exec_result.exit_code, 0, "`false` should exit with non-zero");
     })
     .await;
 }

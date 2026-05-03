@@ -207,7 +207,8 @@ mod tests {
             ciborium::into_writer(&payload, &mut buf).expect("encode");
             buf
         };
-        let decoded: PqcInitiatePayload = ciborium::from_reader(encoded.as_slice()).expect("decode");
+        let decoded: PqcInitiatePayload =
+            ciborium::from_reader(encoded.as_slice()).expect("decode");
         assert_eq!(decoded.version, 1);
         assert_eq!(decoded.session_id.len(), 16);
         assert_eq!(decoded.x25519_public.len(), 32);
@@ -294,7 +295,8 @@ mod tests {
             ciborium::into_writer(&payload, &mut buf).expect("encode");
             buf
         };
-        let decoded: PqcCapabilityPayload = ciborium::from_reader(encoded.as_slice()).expect("decode");
+        let decoded: PqcCapabilityPayload =
+            ciborium::from_reader(encoded.as_slice()).expect("decode");
         assert_eq!(decoded.tunnel_capabilities, capability_flags::TUNNEL_EITHER);
         assert_eq!(decoded.tunnel_port, Some(4500));
     }
@@ -313,7 +315,8 @@ mod tests {
             ciborium::into_writer(&payload, &mut buf).expect("encode");
             buf
         };
-        let decoded: PqcCapabilityAckPayload = ciborium::from_reader(encoded.as_slice()).expect("decode");
+        let decoded: PqcCapabilityAckPayload =
+            ciborium::from_reader(encoded.as_slice()).expect("decode");
         assert_eq!(decoded.selected_tunnel, capability_flags::TUNNEL_STRONGSWAN);
     }
 

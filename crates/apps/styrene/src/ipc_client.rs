@@ -41,11 +41,9 @@ impl DaemonClient {
             .unwrap_or_else(|| default_socket_path().to_string_lossy().to_string());
 
         if path_str.starts_with("tcp://") {
-            return Err(
-                "TCP IPC mode has been removed for security reasons. \
+            return Err("TCP IPC mode has been removed for security reasons. \
                  Use a Unix socket (default) or SSH tunnel for remote access."
-                    .into(),
-            );
+                .into());
         }
 
         let path = PathBuf::from(&path_str);
@@ -291,16 +289,12 @@ impl DaemonClient {
         timeout_secs: u64,
     ) -> Result<HashMap<String, MpValue>, String> {
         use base64::Engine;
-        let profile_b64 =
-            base64::engine::general_purpose::STANDARD.encode(profile_bytes);
+        let profile_b64 = base64::engine::general_purpose::STANDARD.encode(profile_bytes);
         let mut p = HashMap::new();
         p.insert("destination_hash".into(), MpValue::String(dest.into()));
         p.insert("profile".into(), MpValue::String(profile_b64.into()));
         p.insert("verify".into(), MpValue::Boolean(verify));
-        p.insert(
-            "timeout".into(),
-            MpValue::Integer(rmpv::Integer::from(timeout_secs)),
-        );
+        p.insert("timeout".into(), MpValue::Integer(rmpv::Integer::from(timeout_secs)));
         self.with_timeout(timeout_secs);
         let frame = self.rpc(MessageType::CmdFleetApply, &p).await?;
         Ok(frame.payload)

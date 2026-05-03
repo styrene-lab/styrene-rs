@@ -4,7 +4,7 @@
 //! compatibility, edge cases, and backwards compatibility across the
 //! entire HKDF derivation tree.
 
-use ed25519_dalek::{Signer, Verifier, SigningKey};
+use ed25519_dalek::{Signer, SigningKey, Verifier};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
@@ -37,8 +37,11 @@ fn pinned_vectors_all_flat_purposes() {
 
     // Pin all current vectors (generated from this run, frozen forever after)
     let vectors: Vec<(KeyPurpose, &str)> = vec![
-        (KeyPurpose::Signing,        &signing_hex),
-        (KeyPurpose::RnsEncryption,  "aefdbd63fb6746c2edb73bba3bcb34f61909077f65fe033c9372b55f6ace0c0c"),
+        (KeyPurpose::Signing, &signing_hex),
+        (
+            KeyPurpose::RnsEncryption,
+            "aefdbd63fb6746c2edb73bba3bcb34f61909077f65fe033c9372b55f6ace0c0c",
+        ),
         // New purposes — pin them now
     ];
 
@@ -48,10 +51,8 @@ fn pinned_vectors_all_flat_purposes() {
     }
 
     // Verify ALL purposes produce non-zero, distinct keys
-    let all_keys: Vec<(KeyPurpose, [u8; 32])> = KeyPurpose::all()
-        .iter()
-        .map(|p| (*p, d.derive(*p)))
-        .collect();
+    let all_keys: Vec<(KeyPurpose, [u8; 32])> =
+        KeyPurpose::all().iter().map(|p| (*p, d.derive(*p))).collect();
 
     for (purpose, key) in &all_keys {
         assert_ne!(key, &[0u8; 32], "{:?} produced zero key", purpose);
@@ -177,10 +178,7 @@ fn parameterized_ed25519_keys_are_valid() {
         let sk = SigningKey::from_bytes(seed);
         let vk = sk.verifying_key();
         let sig = sk.sign(message);
-        assert!(
-            vk.verify(message, &sig).is_ok(),
-            "parameterized key {i}: sign/verify failed"
-        );
+        assert!(vk.verify(message, &sig).is_ok(), "parameterized key {i}: sign/verify failed");
     }
 
     // I2P service: both signing and encryption must be valid
@@ -200,11 +198,7 @@ fn parameterized_ed25519_keys_are_valid() {
 fn x25519_keys_are_valid_dh() {
     let d = KeyDeriver::new(&TEST_ROOT);
 
-    let x25519_purposes = [
-        KeyPurpose::RnsEncryption,
-        KeyPurpose::Age,
-        KeyPurpose::I2pEncryption,
-    ];
+    let x25519_purposes = [KeyPurpose::RnsEncryption, KeyPurpose::Age, KeyPurpose::I2pEncryption];
 
     for purpose in &x25519_purposes {
         let secret_bytes = d.derive(*purpose);
@@ -302,7 +296,7 @@ fn tor_onion_address_deterministic() {
     // .onion v3: base32(pubkey(32) + checksum(2) + version(1))
     // checksum = SHA3-256(".onion checksum" + pubkey + version)[:2]
     // version = 0x03
-    use sha3::{Sha3_256, Digest as Sha3Digest};
+    use sha3::{Digest as Sha3Digest, Sha3_256};
     let mut hasher = Sha3_256::new();
     hasher.update(b".onion checksum");
     hasher.update(&pubkey);
@@ -368,10 +362,7 @@ fn same_label_different_families_different_keys() {
     let keys = [ssh, agent, i2p_sign, i2p_enc, onion];
     for i in 0..keys.len() {
         for j in (i + 1)..keys.len() {
-            assert_ne!(
-                keys[i], keys[j],
-                "family collision: keys {i} and {j} with label '{label}'"
-            );
+            assert_ne!(keys[i], keys[j], "family collision: keys {i} and {j} with label '{label}'");
         }
     }
 
@@ -412,14 +403,8 @@ fn single_bit_root_difference_propagates() {
         da.derive_ssh_user_key("github").unwrap(),
         db.derive_ssh_user_key("github").unwrap(),
     );
-    assert_ne!(
-        da.derive_agent_key("omegon").unwrap(),
-        db.derive_agent_key("omegon").unwrap(),
-    );
-    assert_ne!(
-        da.derive_i2p_service("forge").unwrap(),
-        db.derive_i2p_service("forge").unwrap(),
-    );
+    assert_ne!(da.derive_agent_key("omegon").unwrap(), db.derive_agent_key("omegon").unwrap(),);
+    assert_ne!(da.derive_i2p_service("forge").unwrap(), db.derive_i2p_service("forge").unwrap(),);
     assert_ne!(
         da.derive_onion_service("forge").unwrap(),
         db.derive_onion_service("forge").unwrap(),
@@ -596,17 +581,15 @@ fn convenience_methods_match_purposes() {
 /// Tests the entire path from passphrase to cryptographic operation.
 #[test]
 fn file_signer_full_lifecycle() {
-    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+    use styrene_identity::file_signer::{ClosurePassphraseProvider, FileSigner};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test-identity.key");
     let passphrase = b"test-passphrase-lifecycle";
 
     let pp = passphrase.to_vec();
-    let signer = FileSigner::new(
-        &path,
-        Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))),
-    );
+    let signer =
+        FileSigner::new(&path, Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))));
 
     // Generate
     signer.generate(passphrase).unwrap();
@@ -636,17 +619,15 @@ fn file_signer_full_lifecycle() {
 /// Wrong passphrase must not produce the same keys (must fail or produce garbage).
 #[test]
 fn wrong_passphrase_produces_different_result() {
-    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+    use styrene_identity::file_signer::{ClosurePassphraseProvider, FileSigner};
     use styrene_identity::signer::SignerError;
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test-identity.key");
 
     let pp = b"correct".to_vec();
-    let signer = FileSigner::new(
-        &path,
-        Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))),
-    );
+    let signer =
+        FileSigner::new(&path, Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))));
     signer.generate(b"correct").unwrap();
 
     // Load with wrong passphrase — must fail (ChaCha20Poly1305 auth tag check)
@@ -662,16 +643,14 @@ fn wrong_passphrase_produces_different_result() {
 /// Identity file must be exactly 97 bytes (STID format).
 #[test]
 fn identity_file_size_is_exact() {
-    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider, FILE_LEN};
+    use styrene_identity::file_signer::{ClosurePassphraseProvider, FileSigner, FILE_LEN};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test-identity.key");
 
     let pp = b"test".to_vec();
-    let signer = FileSigner::new(
-        &path,
-        Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))),
-    );
+    let signer =
+        FileSigner::new(&path, Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))));
     signer.generate(b"test").unwrap();
 
     let file_data = std::fs::read(&path).unwrap();
@@ -685,16 +664,14 @@ fn identity_file_size_is_exact() {
 /// Truncated identity file must fail to load.
 #[test]
 fn truncated_file_fails_to_load() {
-    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+    use styrene_identity::file_signer::{ClosurePassphraseProvider, FileSigner};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test-identity.key");
 
     let pp = b"test".to_vec();
-    let signer = FileSigner::new(
-        &path,
-        Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))),
-    );
+    let signer =
+        FileSigner::new(&path, Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))));
     signer.generate(b"test").unwrap();
 
     // Truncate the file
@@ -708,16 +685,14 @@ fn truncated_file_fails_to_load() {
 /// Corrupted ciphertext must fail authentication.
 #[test]
 fn corrupted_ciphertext_fails() {
-    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+    use styrene_identity::file_signer::{ClosurePassphraseProvider, FileSigner};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test-identity.key");
 
     let pp = b"test".to_vec();
-    let signer = FileSigner::new(
-        &path,
-        Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))),
-    );
+    let signer =
+        FileSigner::new(&path, Box::new(ClosurePassphraseProvider::new(move || Ok(pp.clone()))));
     signer.generate(b"test").unwrap();
 
     // Flip a byte in the ciphertext region (after header + salt + nonce = 5 + 32 + 12 = 49)
@@ -737,27 +712,23 @@ fn corrupted_ciphertext_fails() {
 /// produce the same root secret and therefore the same derived keys.
 #[test]
 fn two_signers_same_file_same_keys() {
-    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+    use styrene_identity::file_signer::{ClosurePassphraseProvider, FileSigner};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test-identity.key");
     let passphrase = b"test";
 
     let pp1 = passphrase.to_vec();
-    let signer1 = FileSigner::new(
-        &path,
-        Box::new(ClosurePassphraseProvider::new(move || Ok(pp1.clone()))),
-    );
+    let signer1 =
+        FileSigner::new(&path, Box::new(ClosurePassphraseProvider::new(move || Ok(pp1.clone()))));
     signer1.generate(passphrase).unwrap();
 
     let root1 = signer1.load(passphrase).unwrap();
     let d1 = KeyDeriver::new(root1.as_bytes());
 
     let pp2 = passphrase.to_vec();
-    let signer2 = FileSigner::new(
-        &path,
-        Box::new(ClosurePassphraseProvider::new(move || Ok(pp2.clone()))),
-    );
+    let signer2 =
+        FileSigner::new(&path, Box::new(ClosurePassphraseProvider::new(move || Ok(pp2.clone()))));
     let root2 = signer2.load(passphrase).unwrap();
     let d2 = KeyDeriver::new(root2.as_bytes());
 
@@ -782,10 +753,7 @@ fn two_signers_same_file_same_keys() {
 fn no_linear_relationship_between_derived_keys() {
     let d = KeyDeriver::new(&TEST_ROOT);
 
-    let keys: Vec<[u8; 32]> = KeyPurpose::all()
-        .iter()
-        .map(|p| d.derive(*p))
-        .collect();
+    let keys: Vec<[u8; 32]> = KeyPurpose::all().iter().map(|p| d.derive(*p)).collect();
 
     // For every pair (A, B), compute A ⊕ B.
     // No two different pairs should produce the same XOR
@@ -927,11 +895,7 @@ fn sign_with_seed_roundtrip_all_purposes() {
         // Verify using the verifying key
         let vk = ed25519_verifying_key(&seed);
         let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
-        assert!(
-            vk.verify(message, &sig).is_ok(),
-            "{:?}: sign_with_seed roundtrip failed",
-            purpose
-        );
+        assert!(vk.verify(message, &sig).is_ok(), "{:?}: sign_with_seed roundtrip failed", purpose);
 
         // Verify wrong data fails
         let wrong_sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
@@ -978,29 +942,41 @@ fn generate_reference_vectors_json() {
         let seed_hex = hex::encode(&seed);
 
         let mut entry = serde_json::Map::new();
-        entry.insert("info".into(), serde_json::Value::String(
-            String::from_utf8_lossy(purpose.info()).to_string()
-        ));
+        entry.insert(
+            "info".into(),
+            serde_json::Value::String(String::from_utf8_lossy(purpose.info()).to_string()),
+        );
         entry.insert("seed_hex".into(), serde_json::Value::String(seed_hex.clone()));
 
         // Add pubkey for Ed25519 purposes
-        if matches!(purpose,
-            KeyPurpose::Signing | KeyPurpose::SshHost | KeyPurpose::Yggdrasil |
-            KeyPurpose::I2pSigning | KeyPurpose::Tor
+        if matches!(
+            purpose,
+            KeyPurpose::Signing
+                | KeyPurpose::SshHost
+                | KeyPurpose::Yggdrasil
+                | KeyPurpose::I2pSigning
+                | KeyPurpose::Tor
         ) {
             let vk = ed25519_verifying_key(&seed);
-            entry.insert("ed25519_pubkey_hex".into(),
-                serde_json::Value::String(hex::encode(vk.as_bytes())));
+            entry.insert(
+                "ed25519_pubkey_hex".into(),
+                serde_json::Value::String(hex::encode(vk.as_bytes())),
+            );
         }
 
         // Add pubkey for X25519 purposes
-        if matches!(purpose,
-            KeyPurpose::RnsEncryption | KeyPurpose::Age |
-            KeyPurpose::I2pEncryption | KeyPurpose::WireGuard
+        if matches!(
+            purpose,
+            KeyPurpose::RnsEncryption
+                | KeyPurpose::Age
+                | KeyPurpose::I2pEncryption
+                | KeyPurpose::WireGuard
         ) {
             let pk = x25519_public_key(&seed);
-            entry.insert("x25519_pubkey_hex".into(),
-                serde_json::Value::String(hex::encode(pk.as_bytes())));
+            entry.insert(
+                "x25519_pubkey_hex".into(),
+                serde_json::Value::String(hex::encode(pk.as_bytes())),
+            );
         }
 
         flat.insert(format!("{:?}", purpose), serde_json::Value::Object(entry));
@@ -1015,19 +991,20 @@ fn generate_reference_vectors_json() {
     // Parameterized
     let mut parameterized = serde_json::Map::new();
     let ssh_gh = d.derive_ssh_user_key("github").unwrap();
-    parameterized.insert("ssh_user/github".into(),
-        serde_json::Value::String(hex::encode(&ssh_gh)));
+    parameterized.insert("ssh_user/github".into(), serde_json::Value::String(hex::encode(&ssh_gh)));
     let agent = d.derive_agent_key("omegon-primary").unwrap();
-    parameterized.insert("agent/omegon-primary".into(),
-        serde_json::Value::String(hex::encode(&agent)));
+    parameterized
+        .insert("agent/omegon-primary".into(), serde_json::Value::String(hex::encode(&agent)));
     let (i2p_s, i2p_e) = d.derive_i2p_service("forge").unwrap();
-    parameterized.insert("i2p_service/forge/signing".into(),
-        serde_json::Value::String(hex::encode(&i2p_s)));
-    parameterized.insert("i2p_service/forge/encryption".into(),
-        serde_json::Value::String(hex::encode(&i2p_e)));
+    parameterized
+        .insert("i2p_service/forge/signing".into(), serde_json::Value::String(hex::encode(&i2p_s)));
+    parameterized.insert(
+        "i2p_service/forge/encryption".into(),
+        serde_json::Value::String(hex::encode(&i2p_e)),
+    );
     let onion = d.derive_onion_service("forge").unwrap();
-    parameterized.insert("onion_service/forge".into(),
-        serde_json::Value::String(hex::encode(&onion)));
+    parameterized
+        .insert("onion_service/forge".into(), serde_json::Value::String(hex::encode(&onion)));
 
     let vectors = serde_json::json!({
         "root_secret_hex": hex::encode(&TEST_ROOT),
@@ -1083,20 +1060,15 @@ fn concurrent_derivation_is_deterministic() {
     }
 
     // Collect results
-    let mut results: Vec<(usize, [u8; 32])> = handles
-        .into_iter()
-        .map(|h| h.join().unwrap())
-        .collect();
+    let mut results: Vec<(usize, [u8; 32])> =
+        handles.into_iter().map(|h| h.join().unwrap()).collect();
     results.sort_by_key(|(idx, _)| *idx);
 
     // Verify against single-threaded derivation
     let d = KeyDeriver::new(&TEST_ROOT);
     for (idx, key) in &results {
         let expected = d.derive(KeyPurpose::all()[*idx]);
-        assert_eq!(
-            key, &expected,
-            "concurrent derivation mismatch for purpose index {idx}"
-        );
+        assert_eq!(key, &expected, "concurrent derivation mismatch for purpose index {idx}");
     }
 }
 
@@ -1122,9 +1094,6 @@ fn no_identity_hash_collisions_in_sample() {
         let digest = Sha256::digest(vk.as_bytes());
         let hash = hex::encode(&digest[..16]);
 
-        assert!(
-            hashes.insert(hash),
-            "identity hash collision at root index {i}"
-        );
+        assert!(hashes.insert(hash), "identity hash collision at root index {i}");
     }
 }
