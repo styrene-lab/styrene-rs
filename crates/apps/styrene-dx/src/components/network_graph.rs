@@ -243,6 +243,7 @@ pub fn NetworkGraph(
     local_hash: String,
     local_name: Option<String>,
     on_select_peer: EventHandler<String>,
+    on_browse_page: EventHandler<String>,
 ) -> Element {
     // Graph data — rebuilt when peer membership or path table changes
     let mut nodes = use_signal(Vec::<GraphNode>::new);
@@ -763,7 +764,7 @@ pub fn NetworkGraph(
 
                         // Action buttons based on node type
                         div { class: "detail-actions",
-                            if !matches!(detail.node_type, GraphNodeType::Local) {
+                            if !matches!(detail.node_type, GraphNodeType::Local | GraphNodeType::Interface { .. }) {
                                 {
                                     let peer_hash = detail.id.clone();
                                     rsx! {
@@ -773,6 +774,20 @@ pub fn NetworkGraph(
                                                 on_select_peer.call(peer_hash.clone());
                                             },
                                             "Message"
+                                        }
+                                    }
+                                }
+                            }
+                            if matches!(detail.node_type, GraphNodeType::PageHost { .. } | GraphNodeType::Hub { .. }) {
+                                {
+                                    let host_hash = detail.id.clone();
+                                    rsx! {
+                                        button {
+                                            class: "action-btn",
+                                            onclick: move |_| {
+                                                on_browse_page.call(host_hash.clone());
+                                            },
+                                            "Browse Pages"
                                         }
                                     }
                                 }

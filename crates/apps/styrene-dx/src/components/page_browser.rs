@@ -15,6 +15,7 @@ enum MicronElement {
     Link { text: String, target: String },
     Separator,
     Preformatted { text: String },
+    Spacer,
 }
 
 /// Parse Micron markup into renderable elements.
@@ -25,6 +26,7 @@ fn parse_micron(source: &str) -> Vec<MicronElement> {
         let trimmed = line.trim();
 
         if trimmed.is_empty() {
+            elements.push(MicronElement::Spacer);
             continue;
         }
 
@@ -127,6 +129,17 @@ fn parse_micron_link(line: &str) -> Option<MicronElement> {
 #[component]
 pub fn PageBrowser(page: Option<PageView>, on_navigate: EventHandler<String>) -> Element {
     let mut url_input = use_signal(|| String::from("/"));
+    let mut last_page_url = use_signal(String::new);
+
+    // Sync URL bar when page changes from external navigation
+    if let Some(ref pv) = page {
+        let current_url =
+            if pv.host.is_empty() { pv.path.clone() } else { format!("{}:{}", pv.host, pv.path) };
+        if *last_page_url.read() != current_url {
+            url_input.set(current_url.clone());
+            last_page_url.set(current_url);
+        }
+    }
 
     rsx! {
         div { class: "page-browser",
@@ -212,6 +225,9 @@ pub fn PageBrowser(page: Option<PageView>, on_navigate: EventHandler<String>) ->
                                         MicronElement::Preformatted { text } => {
                                             rsx! { pre { class: "micron-pre", "{text}" } }
                                         }
+                                        MicronElement::Spacer => {
+                                            rsx! { div { class: "micron-spacer" } }
+                                        }
                                     }}
                                 }
                             }
@@ -221,7 +237,14 @@ pub fn PageBrowser(page: Option<PageView>, on_navigate: EventHandler<String>) ->
                         div { class: "page-empty",
                             h3 { "Page Browser" }
                             p { "Enter a page address above or click a Page Host node in the Network view." }
-                            p { class: "page-hint", "Try \"/\" to browse local pages." }
+                            button {
+                                class: "action-btn primary",
+                                style: "margin-top: 12px;",
+                                onclick: move |_| {
+                                    on_navigate.call("/".to_string());
+                                },
+                                "Browse Local Pages"
+                            }
                         }
                     },
                 }

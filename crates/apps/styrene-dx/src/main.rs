@@ -191,6 +191,13 @@ fn App() -> Element {
                                 });
                                 active_tab.set(state::Tab::Conversations);
                             },
+                            on_browse_page: move |host_hash: String| {
+                                send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
+                                    host: host_hash,
+                                    path: "/".into(),
+                                });
+                                active_tab.set(state::Tab::Pages);
+                            },
                         }
                     },
 
