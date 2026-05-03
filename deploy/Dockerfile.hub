@@ -37,8 +37,11 @@ COPY --from=build /build/target/release/styrene /usr/local/bin/styrene
 ENV STYRENE_CONFIG_DIR=/etc/styrene
 ENV STYRENE_DATA_DIR=/var/lib/styrene
 
+# Default hub pages (Micron markup)
+COPY deploy/pages/ /etc/styrene/pages/
+
 RUN mkdir -p /etc/styrene /var/lib/styrene /run/styrene \
-    && chown -R styrene:styrene /var/lib/styrene /run/styrene
+    && chown -R styrene:styrene /var/lib/styrene /run/styrene /etc/styrene/pages
 
 USER styrene
 
