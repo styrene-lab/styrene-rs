@@ -290,6 +290,7 @@ pub fn NetworkGraph(
     on_browse_page: EventHandler<String>,
     links: Vec<crate::state::LinkInfo>,
     interfaces: Vec<crate::state::InterfaceInfo>,
+    announce_log: Vec<crate::state::AnnounceEvent>,
 ) -> Element {
     // Graph data — rebuilt when peer membership or path table changes
     let mut nodes = use_signal(Vec::<GraphNode>::new);
@@ -1028,6 +1029,35 @@ pub fn NetworkGraph(
                                         div { class: "iface-row",
                                             span { class: "iface-traffic", "TX {tx}" }
                                             span { class: "iface-traffic", "RX {rx}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Announce Stream (most recent 20)
+                if !announce_log.is_empty() {
+                    div {
+                        h3 { "Recent Announces ({announce_log.len()})" }
+                        div { class: "announce-stream",
+                            for event in announce_log.iter().rev().take(20) {
+                                {
+                                    let name = event.peer_name.clone()
+                                        .unwrap_or_else(|| event.peer_hash[..8.min(event.peer_hash.len())].to_string());
+                                    let time = format_relative_time(event.timestamp);
+                                    let role_icon = match &event.node_role {
+                                        crate::state::PeerRole::Hub => "◇",
+                                        crate::state::PeerRole::PageHost => "☰",
+                                        crate::state::PeerRole::Styrene => "●",
+                                        crate::state::PeerRole::Rns => "○",
+                                    };
+                                    rsx! {
+                                        div { class: "announce-item",
+                                            span { class: "announce-icon", "{role_icon}" }
+                                            span { class: "announce-name", "{name}" }
+                                            span { class: "announce-time", "{time}" }
                                         }
                                     }
                                 }
