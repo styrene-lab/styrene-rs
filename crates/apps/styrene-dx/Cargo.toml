@@ -14,15 +14,28 @@ path = "src/main.rs"
 
 [dependencies]
 # Dioxus core + platform renderers
-dioxus = { version = "0.7", features = ["desktop", "web"] }
+dioxus = { version = "0.7", features = ["desktop"] }
 
-# Protocol crates (no transport — pure data types)
+# Daemon integration (hybrid: IPC socket or embedded)
+styrened = { path = "../styrened" }
+styrene-ipc = { path = "../../libs/styrene-ipc" }
+styrene-ipc-server = { path = "../../libs/styrene-ipc-server" }
+styrene-micron = { path = "../../libs/styrene-micron" }
+
+# Protocol crates
 styrene-rns = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
 
 # Utilities
 hex.workspace = true
 log.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+rmpv = { workspace = true, features = ["with-serde"] }
 rand_core = { workspace = true, features = ["getrandom"] }
+futures-util = "0.3"
 
 [lints]
 workspace = true

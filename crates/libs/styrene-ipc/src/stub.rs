@@ -142,6 +142,10 @@ impl DaemonStatus for StubDaemon {
         Err(IpcError::not_implemented("query_path_info"))
     }
 
+    async fn query_path_table(&self) -> Result<Vec<PathInfo>, IpcError> {
+        Err(IpcError::not_implemented("query_path_table"))
+    }
+
     async fn query_auto_reply(&self) -> Result<AutoReplyConfig, IpcError> {
         Err(IpcError::not_implemented("query_auto_reply"))
     }

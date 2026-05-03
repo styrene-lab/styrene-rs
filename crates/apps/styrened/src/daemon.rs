@@ -40,6 +40,7 @@ pub struct DaemonConfig2 {
 pub struct DaemonHandle {
     pub app_context: Arc<AppContext>,
     pub daemon_facade: Arc<DaemonFacade>,
+    #[cfg(feature = "ipc-server")]
     _ipc_server: styrene_ipc_server::IpcServer,
     _cancel: CancellationToken,
 }
@@ -314,39 +315,39 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
 
     eprintln!("[styrene] workers started");
 
-    // --- IPC Server ---
-    let socket_path = cfg
-        .socket
-        .unwrap_or_else(styrene_ipc_server::default_socket_path);
-    let ipc_config = styrene_ipc_server::IpcServerConfig {
-        socket_path: socket_path.clone(),
-        event_capacity: 256,
-    };
-    let mut ipc_server = styrene_ipc_server::IpcServer::new(
-        daemon_facade.clone() as Arc<dyn styrene_ipc::traits::Daemon>,
-        ipc_config,
-    );
-    ipc_server.start().await?;
+    // --- IPC Server (desktop only) ---
+    #[cfg(feature = "ipc-server")]
+    let ipc_server = {
+        let socket_path = cfg
+            .socket
+            .unwrap_or_else(styrene_ipc_server::default_socket_path);
+        let ipc_config = styrene_ipc_server::IpcServerConfig {
+            socket_path: socket_path.clone(),
+            event_capacity: 256,
+        };
+        let mut server = styrene_ipc_server::IpcServer::new(
+            daemon_facade.clone() as Arc<dyn styrene_ipc::traits::Daemon>,
+            ipc_config,
+        );
+        server.start().await?;
 
-    // Bridge daemon events → IPC server event channel.
-    // The EventService emits DaemonEvent on its own broadcast sender.
-    // The IpcServer has a separate broadcast sender for pushing to clients.
-    // Without this bridge, IPC clients receive no pushed events.
-    {
-        let event_tx = ipc_server.event_sender();
-        let mut daemon_rx = app_context.events().subscribe_daemon_events();
-        tokio::spawn(async move {
-            loop {
-                match daemon_rx.recv().await {
-                    Ok(event) => { let _ = event_tx.send(event); }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        // Bridge daemon events → IPC server event channel
+        {
+            let event_tx = server.event_sender();
+            let mut daemon_rx = app_context.events().subscribe_daemon_events();
+            tokio::spawn(async move {
+                loop {
+                    match daemon_rx.recv().await {
+                        Ok(event) => { let _ = event_tx.send(event); }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
                 }
-            }
-        });
-    }
-
-    eprintln!("[styrene] IPC server listening on {}", socket_path.display());
+            });
+        }
+        eprintln!("[styrene] IPC server listening on {}", socket_path.display());
+        server
+    };
 
     // Initial announce
     app_context.transport().announce(None).await;
@@ -355,6 +356,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     Ok(DaemonHandle {
         app_context,
         daemon_facade,
+        #[cfg(feature = "ipc-server")]
         _ipc_server: ipc_server,
         _cancel: cancel,
     })

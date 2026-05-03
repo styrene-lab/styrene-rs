@@ -200,6 +200,10 @@ impl MeshTransport for TokioTransportAdapter {
         self.transport.path_info(dest).await
     }
 
+    async fn path_table(&self) -> Vec<(AddressHash, u8, AddressHash, AddressHash)> {
+        self.transport.path_table_entries().await
+    }
+
     fn identity_hash(&self) -> AddressHash {
         self.identity_addr
     }

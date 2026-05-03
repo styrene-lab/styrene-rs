@@ -42,6 +42,8 @@ pub async fn dispatch(
         MessageType::CmdSetContact => dispatch_set_contact(daemon, &payload).await,
         MessageType::CmdRemoveContact => dispatch_remove_contact(daemon, &payload).await,
         MessageType::QueryPathInfo => dispatch_query_path_info(daemon, &payload).await,
+        MessageType::QueryPathTable => dispatch_query_path_table(daemon).await,
+        MessageType::QueryInterfaceStats => dispatch_query_interface_stats(daemon).await,
         MessageType::CmdRemoteInbox => dispatch_remote_inbox(daemon, &payload).await,
         MessageType::CmdRemoteMessages => dispatch_remote_messages(daemon, &payload).await,
         MessageType::CmdSelfUpdate => dispatch_self_update(daemon, &payload).await,
@@ -56,25 +58,21 @@ pub async fn dispatch(
             // Attachment queries — not yet implemented
             Err("attachment storage not yet implemented".into())
         }
-        MessageType::QueryPage
-        | MessageType::QueryPageServerStatus
-        | MessageType::CmdPageListSites
+        MessageType::QueryPage => dispatch_query_page(daemon, &payload).await,
+        MessageType::CmdPageListSites => dispatch_list_pages(daemon, &payload).await,
+        MessageType::QueryPageServerStatus
         | MessageType::CmdPageGetCached
         | MessageType::CmdPageSaveSite
         | MessageType::CmdPageRemoveSite
         | MessageType::CmdPageCrawlSite
         | MessageType::CmdPageRegenerate
         | MessageType::CmdPageDisconnect => {
-            // Page browser — delegated to Python TUI's page browser service
-            Err("page browser not available in Rust daemon".into())
+            Err("page management not yet implemented".into())
         }
-        MessageType::CmdTerminalOpen
-        | MessageType::CmdTerminalInput
-        | MessageType::CmdTerminalResize
-        | MessageType::CmdTerminalClose => {
-            // Remote terminal — P3, not yet implemented
-            Err("remote terminal not yet implemented".into())
-        }
+        MessageType::CmdTerminalOpen => dispatch_terminal_open(daemon, &payload).await,
+        MessageType::CmdTerminalInput => dispatch_terminal_input(daemon, &payload).await,
+        MessageType::CmdTerminalClose => dispatch_terminal_close(daemon, &payload).await,
+        MessageType::CmdTerminalResize => dispatch_terminal_resize(daemon, &payload).await,
         MessageType::CmdDatalinkEstablish
         | MessageType::CmdDatalinkTeardown
         | MessageType::CmdDatalinkQuery
@@ -168,6 +166,8 @@ async fn dispatch_query_status(daemon: &Arc<dyn Daemon>) -> Result<Payload, Stri
         p.insert("hub_status".into(), rmpv::Value::from(hs.as_str()));
     }
     p.insert("propagation_enabled".into(), rmpv::Value::from(info.propagation_enabled));
+    p.insert("propagation_count".into(), rmpv::Value::from(info.propagation_count as i64));
+    p.insert("propagation_size_bytes".into(), rmpv::Value::from(info.propagation_size_bytes as i64));
     p.insert("transport_enabled".into(), rmpv::Value::from(info.transport_enabled));
     p.insert("active_links".into(), rmpv::Value::from(info.active_links));
     ok_payload(p)
@@ -836,6 +836,74 @@ async fn dispatch_query_path_info(
     ok_payload(p)
 }
 
+async fn dispatch_query_path_table(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
+    let entries = daemon.query_path_table().await.map_err(|e| e.to_string())?;
+    let paths: Vec<rmpv::Value> = entries
+        .iter()
+        .map(|info| {
+            let mut m = Vec::new();
+            m.push((
+                rmpv::Value::from("destination_hash"),
+                rmpv::Value::from(info.destination_hash.as_str()),
+            ));
+            if let Some(hops) = info.hops {
+                m.push((rmpv::Value::from("hops"), rmpv::Value::from(hops as i64)));
+            }
+            if let Some(ref next_hop) = info.next_hop {
+                m.push((
+                    rmpv::Value::from("next_hop"),
+                    rmpv::Value::from(next_hop.as_str()),
+                ));
+            }
+            if let Some(ref iface) = info.interface {
+                m.push((
+                    rmpv::Value::from("interface"),
+                    rmpv::Value::from(iface.as_str()),
+                ));
+            }
+            rmpv::Value::Map(m)
+        })
+        .collect();
+    let mut p = Payload::new();
+    p.insert("paths".into(), rmpv::Value::Array(paths));
+    p.insert("count".into(), rmpv::Value::from(entries.len() as i64));
+    ok_payload(p)
+}
+
+async fn dispatch_query_interface_stats(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
+    let interfaces = daemon.list_interfaces().await.map_err(|e| e.to_string())?;
+    let ifaces: Vec<rmpv::Value> = interfaces
+        .iter()
+        .map(|iface| {
+            let mut m = Vec::new();
+            m.push((
+                rmpv::Value::from("name"),
+                rmpv::Value::from(iface.name.as_str()),
+            ));
+            m.push((
+                rmpv::Value::from("hash"),
+                rmpv::Value::from(iface.hash.as_str()),
+            ));
+            m.push((
+                rmpv::Value::from("status"),
+                rmpv::Value::from(iface.status.as_str()),
+            ));
+            m.push((
+                rmpv::Value::from("tx_bytes"),
+                rmpv::Value::from(iface.tx_bytes as i64),
+            ));
+            m.push((
+                rmpv::Value::from("rx_bytes"),
+                rmpv::Value::from(iface.rx_bytes as i64),
+            ));
+            rmpv::Value::Map(m)
+        })
+        .collect();
+    let mut p = Payload::new();
+    p.insert("interfaces".into(), rmpv::Value::Array(ifaces));
+    ok_payload(p)
+}
+
 // ── Remote Fleet Queries ─────────────────────────────────────────────────────
 
 async fn dispatch_remote_inbox(
@@ -1055,4 +1123,135 @@ async fn dispatch_fleet_revoke(
     let mut p = Payload::new();
     p.insert("success".into(), rmpv::Value::Boolean(ok));
     ok_payload(p)
+}
+
+// ── Page Operations ────────────────────────────────────────────────────
+
+async fn dispatch_query_page(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let host = val_str(payload, "host").unwrap_or("local");
+    let path = val_str(payload, "path").unwrap_or("/");
+    let timeout = payload.get("timeout").and_then(|v| v.as_u64());
+
+    let page = daemon
+        .browse_page(host, path, timeout)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut p = Payload::new();
+    p.insert("source".into(), rmpv::Value::from(page.source.as_str()));
+    p.insert(
+        "host_hash".into(),
+        rmpv::Value::from(page.host_hash.as_str()),
+    );
+    p.insert("fetched_at".into(), rmpv::Value::from(page.fetched_at));
+    ok_payload(p)
+}
+
+async fn dispatch_list_pages(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let host = val_str(payload, "host").unwrap_or("local");
+    let timeout = payload.get("timeout").and_then(|v| v.as_u64());
+
+    let pages = daemon
+        .list_pages(host, timeout)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let arr: Vec<rmpv::Value> = pages
+        .into_iter()
+        .map(|page| {
+            let mut m = Vec::new();
+            m.push((
+                rmpv::Value::from("path"),
+                rmpv::Value::from(page.path.as_str()),
+            ));
+            m.push((
+                rmpv::Value::from("host_hash"),
+                rmpv::Value::from(page.host_hash.as_str()),
+            ));
+            rmpv::Value::Map(m)
+        })
+        .collect();
+
+    let mut p = Payload::new();
+    p.insert("pages".into(), rmpv::Value::Array(arr));
+    ok_payload(p)
+}
+
+// ── Terminal Operations ────────────────────────────────────────────────
+
+async fn dispatch_terminal_open(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let _dest = val_str(payload, "destination_hash").unwrap_or("local");
+    let _rows = payload.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u16;
+    let _cols = payload.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
+
+    let mut request = styrene_ipc::types::TerminalOpenRequest::default();
+    request.destination = _dest.to_string();
+    request.rows = _rows;
+    request.cols = _cols;
+
+    let session_id = daemon
+        .terminal_open(request)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut p = Payload::new();
+    p.insert("session_id".into(), rmpv::Value::from(session_id.as_str()));
+    ok_payload(p)
+}
+
+async fn dispatch_terminal_input(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let session_id = val_str(payload, "session_id").ok_or("missing session_id")?;
+    let data = payload
+        .get("data")
+        .and_then(|v| v.as_slice())
+        .unwrap_or(&[]);
+
+    daemon
+        .terminal_input(session_id, data)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    ok_payload(Payload::new())
+}
+
+async fn dispatch_terminal_resize(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let session_id = val_str(payload, "session_id").ok_or("missing session_id")?;
+    let rows = payload.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u16;
+    let cols = payload.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
+
+    daemon
+        .terminal_resize(session_id, rows, cols)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    ok_payload(Payload::new())
+}
+
+async fn dispatch_terminal_close(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let session_id = val_str(payload, "session_id").ok_or("missing session_id")?;
+
+    daemon
+        .terminal_close(session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    ok_payload(Payload::new())
 }

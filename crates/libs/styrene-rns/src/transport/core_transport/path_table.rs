@@ -42,6 +42,11 @@ impl PathTable {
         self.map.get(destination)
     }
 
+    /// Iterate over all path table entries.
+    pub fn entries(&self) -> impl Iterator<Item = (&AddressHash, &PathEntry)> {
+        self.map.iter()
+    }
+
     pub fn next_hop_full(&self, destination: &AddressHash) -> Option<(AddressHash, AddressHash)> {
         self.map.get(destination).map(|entry| (entry.received_from, entry.iface))
     }

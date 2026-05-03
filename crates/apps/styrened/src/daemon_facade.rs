@@ -332,6 +332,10 @@ impl DaemonStatus for DaemonFacade {
         info.device_count = self.ctx.discovery().peer_count() as u32;
         info.interface_count = status.interface_count() as u32;
         info.propagation_enabled = status.propagation_enabled();
+        if let Ok((count, size)) = self.ctx.propagation().stats() {
+            info.propagation_count = count as u32;
+            info.propagation_size_bytes = size;
+        }
         info.transport_enabled = self.ctx.transport().is_connected();
         Ok(info)
     }
@@ -373,6 +377,22 @@ impl DaemonStatus for DaemonFacade {
                 d.last_announce = Some(a.timestamp);
                 d.announce_count = a.seen_count as u32;
                 d
+            })
+            .collect())
+    }
+
+    async fn query_path_table(&self) -> Result<Vec<PathInfo>, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        let entries = self.ctx.transport().path_table().await;
+        Ok(entries
+            .into_iter()
+            .map(|(dest, hops, received_from, iface)| {
+                let mut info = PathInfo::default();
+                info.destination_hash = hex::encode(dest.as_slice());
+                info.hops = Some(hops as u32);
+                info.next_hop = Some(hex::encode(received_from.as_slice()));
+                info.interface = Some(hex::encode(iface.as_slice()));
+                info
             })
             .collect())
     }
@@ -617,29 +637,77 @@ impl DaemonFleet for DaemonFacade {
         self.ctx.fleet().remote_messages(dest, peer_hash, limit, timeout).await.map_err(internal)
     }
 
-    async fn terminal_open(&self, _request: TerminalOpenRequest) -> Result<SessionId, IpcError> {
+    async fn terminal_open(&self, request: TerminalOpenRequest) -> Result<SessionId, IpcError> {
         self.require(Capability::RPC_EXEC)?;
-        Err(Self::not_implemented("terminal_open"))
+        #[cfg(feature = "terminal")]
+        {
+            self.ctx
+                .terminal()
+                .open(request.shell.as_deref(), request.rows, request.cols)
+                .map_err(|e| IpcError::Internal { message: e })
+        }
+        #[cfg(not(feature = "terminal"))]
+        {
+            let _ = request;
+            Err(IpcError::Internal { message: "terminal not available on this platform".into() })
+        }
     }
 
-    async fn terminal_input(&self, _session_id: &str, _data: &[u8]) -> Result<bool, IpcError> {
+    async fn terminal_input(&self, session_id: &str, data: &[u8]) -> Result<bool, IpcError> {
         self.require(Capability::RPC_EXEC)?;
-        Err(Self::not_implemented("terminal_input"))
+        #[cfg(feature = "terminal")]
+        {
+            self.ctx
+                .terminal()
+                .input(session_id, data)
+                .await
+                .map(|_| true)
+                .map_err(|e| IpcError::Internal { message: e })
+        }
+        #[cfg(not(feature = "terminal"))]
+        {
+            let _ = (session_id, data);
+            Err(IpcError::Internal { message: "terminal not available on this platform".into() })
+        }
     }
 
     async fn terminal_resize(
         &self,
-        _session_id: &str,
-        _rows: u16,
-        _cols: u16,
+        session_id: &str,
+        rows: u16,
+        cols: u16,
     ) -> Result<bool, IpcError> {
         self.require(Capability::RPC_EXEC)?;
-        Err(Self::not_implemented("terminal_resize"))
+        #[cfg(feature = "terminal")]
+        {
+            self.ctx
+                .terminal()
+                .resize(session_id, rows, cols)
+                .map(|_| true)
+                .map_err(|e| IpcError::Internal { message: e })
+        }
+        #[cfg(not(feature = "terminal"))]
+        {
+            let _ = (session_id, rows, cols);
+            Err(IpcError::Internal { message: "terminal not available on this platform".into() })
+        }
     }
 
-    async fn terminal_close(&self, _session_id: &str) -> Result<bool, IpcError> {
+    async fn terminal_close(&self, session_id: &str) -> Result<bool, IpcError> {
         self.require(Capability::RPC_EXEC)?;
-        Err(Self::not_implemented("terminal_close"))
+        #[cfg(feature = "terminal")]
+        {
+            self.ctx
+                .terminal()
+                .close(session_id)
+                .map(|_| true)
+                .map_err(|e| IpcError::Internal { message: e })
+        }
+        #[cfg(not(feature = "terminal"))]
+        {
+            let _ = session_id;
+            Err(IpcError::Internal { message: "terminal not available on this platform".into() })
+        }
     }
 
     async fn fleet_apply(
@@ -857,8 +925,23 @@ impl DaemonPages for DaemonFacade {
             return Ok(page);
         }
 
-        // Remote page browsing — requires RNS link request (future work)
-        Err(IpcError::not_implemented("remote page browsing"))
+        // Remote page browsing — fetch via FleetService mesh RPC
+        let source = self
+            .ctx
+            .fleet()
+            .page_fetch(host, path, _timeout)
+            .await
+            .map_err(internal)?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let mut page = PageContent::default();
+        page.source = source;
+        page.host_hash = host.to_string();
+        page.fetched_at = now;
+        Ok(page)
     }
 
     async fn list_pages(

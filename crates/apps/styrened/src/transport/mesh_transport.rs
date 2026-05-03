@@ -130,6 +130,11 @@ pub trait MeshTransport: Send + Sync {
     /// Returns `None` if no path is known for the destination.
     async fn query_path(&self, dest: &AddressHash) -> Option<(u8, AddressHash)>;
 
+    /// Dump the entire path table: (destination, hops, received_from, interface).
+    async fn path_table(&self) -> Vec<(AddressHash, u8, AddressHash, AddressHash)> {
+        Vec::new()
+    }
+
     /// Our identity address hash.
     fn identity_hash(&self) -> AddressHash;
 
