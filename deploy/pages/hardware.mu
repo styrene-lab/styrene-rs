@@ -17,11 +17,13 @@ are available.
 Any device with a network connection.
 This is how most users connect to the community hub.
 
-    # Config
-    [[interfaces]]
-    type = "tcp_client"
-    host = "rns.styrene.io"
-    port = 4242
+`=
+# Config
+[[interfaces]]
+type = "tcp_client"
+host = "rns.styrene.io"
+port = 4242
+`=
 
 -
 
@@ -69,8 +71,10 @@ Styrene Edge provides NixOS configurations for
 mesh nodes. Write an image, plug it in, it joins
 the mesh on first boot.
 
-    # Generate edge image (requires nex)
-    nex edge build --profile mesh-node --target rpi4
+`=
+# Generate edge image (requires nex)
+nex edge build --profile mesh-node --target rpi4
+`=
 
 -
 

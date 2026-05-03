@@ -1,11 +1,9 @@
-`c`F58aStyrene Community Hub`f
+`F58aStyrene Community Hub`f
 rns.styrene.io
-`a
 
 -
 
-`c`F999Mesh comms for real hardware`f
-`a
+`F999Mesh comms for real hardware`f
 
 `F888Encrypted messaging, cryptographic identity, device provisioning
 over Reticulum. TCP, wireless mesh, LoRa radio.
@@ -36,38 +34,41 @@ It joins the mesh on first boot.
 
 >>Install styrene-rs
 
-    # Install via Homebrew
-    brew tap styrene-lab/tap
-    brew install styrene
+`=
+brew tap styrene-lab/tap
+brew install styrene
 
-    # Or download from GitHub Releases
-    # https://github.com/styrene-lab/styrene-rs/releases
+# Or download from GitHub Releases
+# https://github.com/styrene-lab/styrene-rs/releases
+`=
 
 >>Connect to the Community Hub
 
-    # Create config directory
-    mkdir -p ~/.config/styrene
+`=
+mkdir -p ~/.config/styrene
 
-    # Add hub connection
-    cat > ~/.config/styrene/config.toml << 'EOF'
-    [[interfaces]]
-    type = "tcp_client"
-    enabled = true
-    host = "rns.styrene.io"
-    port = 4242
-    name = "styrene-community-hub"
-    EOF
+cat > ~/.config/styrene/config.toml << 'EOF'
+[[interfaces]]
+type = "tcp_client"
+enabled = true
+host = "rns.styrene.io"
+port = 4242
+name = "styrene-community-hub"
+EOF
+`=
 
 >>Launch
 
-    # Start the daemon
-    styrened
+`=
+# Start the daemon
+styrened
 
-    # Launch the desktop app
-    styrene-dx
+# Launch the desktop app
+styrene-dx
 
-    # Or use the terminal UI
-    styrene-tui
+# Or use the terminal UI
+styrene-tui
+`=
 
 -
 
@@ -118,5 +119,5 @@ Reddit -- r/styrenelab
 
 -
 
-`F666`cStyrene Lab -- tools for sovereign infrastructure
+`F666Styrene Lab -- tools for sovereign infrastructure
 (c) 2026 Black Meridian LLC`f
