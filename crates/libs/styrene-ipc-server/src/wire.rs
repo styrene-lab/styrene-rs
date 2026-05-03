@@ -129,11 +129,13 @@ pub enum MessageType {
     CmdDatalinkMeta = 0x65,
     CmdDatalinkInfo = 0x66,
 
-    // Boundary logging / adapters (0x70-0x7F)
+    // Topology / boundary / adapters (0x70-0x7F)
     CmdBoundarySnapshot = 0x70,
     CmdProvisionAdapter = 0x71,
     GetAdapterState = 0x72,
     GetActivityHistory = 0x73,
+    QueryPathTable = 0x74,
+    QueryInterfaceStats = 0x75,
 
     // Tunnel queries (0x90-0x9F)
     QueryTunnels = 0x90,
@@ -232,6 +234,8 @@ impl MessageType {
             0x71 => Ok(Self::CmdProvisionAdapter),
             0x72 => Ok(Self::GetAdapterState),
             0x73 => Ok(Self::GetActivityHistory),
+            0x74 => Ok(Self::QueryPathTable),
+            0x75 => Ok(Self::QueryInterfaceStats),
             0x90 => Ok(Self::QueryTunnels),
             0x91 => Ok(Self::QueryTunnelStatus),
             0x92 => Ok(Self::CmdTunnelTeardown),

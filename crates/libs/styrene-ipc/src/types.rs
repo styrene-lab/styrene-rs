@@ -56,6 +56,8 @@ pub struct DaemonStatusInfo {
     pub interface_count: u32,
     pub hub_status: Option<String>,
     pub propagation_enabled: bool,
+    pub propagation_count: u32,
+    pub propagation_size_bytes: u64,
     pub transport_enabled: bool,
     pub active_links: u32,
 }
@@ -281,6 +283,7 @@ pub struct PageContent {
 #[non_exhaustive]
 pub struct InterfaceDetail {
     pub name: String,
+    pub hash: String,
     pub kind: String,
     pub enabled: bool,
     pub status: String,

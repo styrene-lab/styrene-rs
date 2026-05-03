@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: styrene-hub-config
+  namespace: styrene
+  labels:
+    app.kubernetes.io/name: styrene-hub
+    app.kubernetes.io/component: hub
+data:
+  config.toml: |
+    role = "hub"
+
+    [[interfaces]]
+    type = "tcp_server"
+    enabled = true
+    host = "0.0.0.0"
+    port = 4242
+    name = "community-transport"
+
+    [rbac]
+    default_role = "peer"
+
+  # Client config for nodes connecting to this hub.
+  # Copy to ~/.config/styrene/config.toml on the client machine.
+  client.toml: |
+    [[interfaces]]
+    type = "tcp_client"
+    enabled = true
+    host = "rns.styrene.io"
+    port = 4242
+    name = "styrene-community-hub"

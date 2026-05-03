@@ -151,6 +151,18 @@ impl Transport {
         handler.path_table.get(dest).map(|e| (e.hops, e.iface))
     }
 
+    /// Dump the entire path table as (destination, hops, received_from, interface) tuples.
+    pub async fn path_table_entries(
+        &self,
+    ) -> Vec<(AddressHash, u8, AddressHash, AddressHash)> {
+        let handler = self.handler.lock().await;
+        handler
+            .path_table
+            .entries()
+            .map(|(dest, entry)| (*dest, entry.hops, entry.received_from, entry.iface))
+            .collect()
+    }
+
     pub fn iface_manager(&self) -> Arc<Mutex<InterfaceManager>> {
         self.iface_manager.clone()
     }

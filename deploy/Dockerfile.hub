@@ -1,0 +1,47 @@
+# Production hub image for styrened.
+#
+# Build context: workspace root (styrene-rs/)
+#   docker build -f deploy/Dockerfile.hub -t ghcr.io/styrene-lab/styrened-hub:latest .
+#
+# Multi-stage: static musl build → minimal Alpine runtime.
+
+# --- Stage 1: Build ---
+FROM rust:1.86-alpine AS build
+
+RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static sqlite-dev pkgconfig
+
+WORKDIR /build
+
+# Copy workspace manifests first for layer caching
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates/ crates/
+
+# Build daemon + CLI with static OpenSSL
+RUN OPENSSL_STATIC=1 cargo build \
+    --release \
+    --package styrened \
+    --package styrene \
+    && strip target/release/styrened \
+    && strip target/release/styrene
+
+# --- Stage 2: Runtime ---
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates sqlite-libs \
+    && addgroup -S styrene \
+    && adduser -S -G styrene -h /var/lib/styrene styrene
+
+COPY --from=build /build/target/release/styrened /usr/local/bin/styrened
+COPY --from=build /build/target/release/styrene /usr/local/bin/styrene
+
+ENV STYRENE_CONFIG_DIR=/etc/styrene
+ENV STYRENE_DATA_DIR=/var/lib/styrene
+
+RUN mkdir -p /etc/styrene /var/lib/styrene /run/styrene \
+    && chown -R styrene:styrene /var/lib/styrene /run/styrene
+
+USER styrene
+
+EXPOSE 4242
+
+ENTRYPOINT ["styrened"]

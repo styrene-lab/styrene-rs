@@ -18,6 +18,9 @@ pub trait DaemonStatus: Send + Sync {
     /// Query path information for a destination hash.
     async fn query_path_info(&self, dest_hash: &str) -> Result<PathInfo, IpcError>;
 
+    /// Dump the entire path table: all known routes with hop count and relay info.
+    async fn query_path_table(&self) -> Result<Vec<PathInfo>, IpcError>;
+
     /// Query the current auto-reply configuration.
     async fn query_auto_reply(&self) -> Result<AutoReplyConfig, IpcError>;
 
