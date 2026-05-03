@@ -63,8 +63,8 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      # Exclude styrene-dx (requires webkit2gtk) and allow warnings from upstream RNS code
-      - run: cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx -- -W clippy::unwrap_used
+      # Exclude styrene-dx (requires webkit2gtk). Workspace lints define error levels.
+      - run: cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx
       - run: cargo test --workspace --exclude styrene-dx
 
   # ── Publish library crates ────────────────────────────────────

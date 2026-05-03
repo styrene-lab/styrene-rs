@@ -36,6 +36,9 @@ impl DaemonStatus for TestDaemon {
     async fn query_path_info(&self, _dest: &str) -> Result<PathInfo, IpcError> {
         Ok(PathInfo::default())
     }
+    async fn query_path_table(&self) -> Result<Vec<PathInfo>, IpcError> {
+        Ok(Vec::new())
+    }
     async fn query_auto_reply(&self) -> Result<AutoReplyConfig, IpcError> {
         Ok(AutoReplyConfig::default())
     }
