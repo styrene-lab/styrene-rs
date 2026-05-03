@@ -915,6 +915,48 @@ body {
     flex-shrink: 0;
 }
 
+/* ── Path table ─────────────────────────────────────────────── */
+.path-table {
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.path-item {
+    padding: 3px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.path-item:last-child {
+    border-bottom: none;
+}
+
+.path-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+.path-dest {
+    font-size: 11px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.path-hops {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--accent);
+    flex-shrink: 0;
+}
+
+.path-relay {
+    font-size: 10px;
+    color: var(--text-dim);
+}
+
 /* ── Announce stream ────────────────────────────────────────── */
 .announce-stream {
     max-height: 200px;
