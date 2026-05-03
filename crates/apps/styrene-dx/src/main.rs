@@ -50,6 +50,7 @@ fn App() -> Element {
     let mut active_tab = use_signal(state::Tab::default);
     let mut path_table = use_signal(Vec::<state::PathEntry>::new);
     let mut conversations = use_signal(Vec::<state::ConversationEntry>::new);
+    let mut links = use_signal(Vec::<state::LinkInfo>::new);
 
     // Bridge handle — shared with UI for RPC calls (send_chat, browse_page, etc.)
     let mut bridge: Signal<Option<Arc<Mutex<daemon_bridge::DaemonBridge>>>> = use_signal(|| None);
@@ -109,6 +110,7 @@ fn App() -> Element {
                             &mut connected,
                             &mut connection_mode,
                             &mut path_table,
+                            &mut links,
                         );
                     }
                 }
@@ -191,6 +193,7 @@ fn App() -> Element {
                                 });
                                 active_tab.set(state::Tab::Conversations);
                             },
+                            links: links.read().clone(),
                             on_browse_page: move |host_hash: String| {
                                 send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
                                     host: host_hash,
@@ -410,6 +413,7 @@ fn handle_daemon_event(
     connected: &mut Signal<bool>,
     connection_mode: &mut Signal<String>,
     path_table: &mut Signal<Vec<state::PathEntry>>,
+    links: &mut Signal<Vec<state::LinkInfo>>,
 ) {
     match ev {
         daemon_bridge::DaemonEvent::Identity(info) => {
@@ -453,6 +457,8 @@ fn handle_daemon_event(
                     node_role: role,
                     capabilities: parsed.capabilities,
                     version: parsed.version,
+                    last_announce: dev.last_announce,
+                    announce_count: dev.announce_count,
                 });
             }
         }
@@ -489,6 +495,20 @@ fn handle_daemon_event(
                     })
                     .collect(),
             );
+        }
+        daemon_bridge::DaemonEvent::LinkUpdate { peer_hash, status: link_status, rtt_ms } => {
+            let mut l = links.write();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            if let Some(existing) = l.iter_mut().find(|li| li.peer_hash == peer_hash) {
+                existing.status = link_status;
+                existing.rtt_ms = rtt_ms;
+                existing.timestamp = now;
+            } else {
+                l.push(state::LinkInfo { peer_hash, status: link_status, rtt_ms, timestamp: now });
+            }
         }
         daemon_bridge::DaemonEvent::Disconnected(reason) => {
             connected.set(false);

@@ -703,6 +703,15 @@ fn parse_devices(p: &HashMap<String, MpValue>) -> Result<Vec<DeviceInfo>, String
                 .find(|(k, _)| k.as_str() == Some("is_styrene_node"))
                 .and_then(|(_, v)| v.as_bool())
                 .unwrap_or(false);
+            dev.last_announce = m
+                .iter()
+                .find(|(k, _)| k.as_str() == Some("last_announce"))
+                .and_then(|(_, v)| v.as_i64());
+            dev.announce_count = m
+                .iter()
+                .find(|(k, _)| k.as_str() == Some("announce_count"))
+                .and_then(|(_, v)| v.as_u64())
+                .unwrap_or(0) as u32;
             Some(dev)
         })
         .collect())

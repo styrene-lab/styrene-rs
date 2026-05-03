@@ -207,6 +207,38 @@ enum Interaction {
     DraggingNode { idx: usize, last_x: f64, last_y: f64 },
 }
 
+fn format_uptime(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+    } else {
+        format!("{}d {}h", secs / 86400, (secs % 86400) / 3600)
+    }
+}
+
+fn format_relative_time(ts: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let diff = now - ts;
+    if diff < 0 {
+        return "just now".into();
+    }
+    if diff < 60 {
+        format!("{diff}s ago")
+    } else if diff < 3600 {
+        format!("{}m ago", diff / 60)
+    } else if diff < 86400 {
+        format!("{}h ago", diff / 3600)
+    } else {
+        format!("{}d ago", diff / 86400)
+    }
+}
+
 fn peer_key(peers: &[PeerEntry]) -> String {
     let mut parts: Vec<&str> = peers.iter().map(|p| p.hash.as_str()).collect();
     parts.sort();
@@ -244,6 +276,7 @@ pub fn NetworkGraph(
     local_name: Option<String>,
     on_select_peer: EventHandler<String>,
     on_browse_page: EventHandler<String>,
+    links: Vec<crate::state::LinkInfo>,
 ) -> Element {
     // Graph data — rebuilt when peer membership or path table changes
     let mut nodes = use_signal(Vec::<GraphNode>::new);
@@ -749,11 +782,47 @@ pub fn NetworkGraph(
 
                 // Selected node detail
                 if let Some(ref detail) = selected_detail {
+                    {
+                        // Look up peer metadata for the selected node
+                        let peer_meta = peers.iter().find(|p| p.hash == detail.id);
+                        let link_meta = links.iter().find(|l| l.peer_hash == detail.id);
+                        let last_seen = peer_meta
+                            .and_then(|p| p.last_announce)
+                            .map(format_relative_time)
+                            .unwrap_or_default();
+                        let announces = peer_meta.map(|p| p.announce_count).unwrap_or(0);
+                        let rtt = link_meta
+                            .and_then(|l| l.rtt_ms)
+                            .map(|r| format!("{r:.0}ms"))
+                            .unwrap_or_default();
+
+                        rsx! {
                     div { class: "node-detail",
                         h3 { "Selected Node" }
                         div { class: "detail-name", "{detail.label}" }
                         div { class: "detail-hash", "{detail.id}" }
                         div { class: "detail-type", "{detail.type_label()}" }
+
+                        // Metadata
+                        if !last_seen.is_empty() {
+                            div { class: "detail-meta",
+                                span { class: "detail-meta-label", "Last seen" }
+                                span { class: "detail-meta-value", "{last_seen}" }
+                            }
+                        }
+                        if announces > 0 {
+                            div { class: "detail-meta",
+                                span { class: "detail-meta-label", "Announces" }
+                                span { class: "detail-meta-value", "{announces}" }
+                            }
+                        }
+                        if !rtt.is_empty() {
+                            div { class: "detail-meta",
+                                span { class: "detail-meta-label", "RTT" }
+                                span { class: "detail-meta-value", style: "color: var(--green);", "{rtt}" }
+                            }
+                        }
+
                         if !detail.capabilities.is_empty() {
                             div { class: "detail-caps",
                                 for cap in detail.capabilities.iter() {
@@ -794,6 +863,8 @@ pub fn NetworkGraph(
                             }
                         }
                     }
+                        } // rsx!
+                    } // peer_meta block
                 }
 
                 // Visibility filter
@@ -868,6 +939,52 @@ pub fn NetworkGraph(
                         span { class: "graph-stat-value",
                             style: if status.transport_active { "color: var(--green);" } else { "color: var(--text-dim);" },
                             if status.transport_active { "Active" } else { "Inactive" }
+                        }
+                    }
+                    if status.propagation_enabled {
+                        div { class: "graph-stat",
+                            span { class: "graph-stat-label", "Propagation" }
+                            span { class: "graph-stat-value", style: "color: var(--green);", "Enabled" }
+                        }
+                    }
+                    if status.uptime > 0 {
+                        div { class: "graph-stat",
+                            span { class: "graph-stat-label", "Uptime" }
+                            span { class: "graph-stat-value", {format_uptime(status.uptime)} }
+                        }
+                    }
+                    if !status.version.is_empty() {
+                        div { class: "graph-stat",
+                            span { class: "graph-stat-label", "Version" }
+                            span { class: "graph-stat-value", "{status.version}" }
+                        }
+                    }
+                }
+
+                // Active Links
+                if !links.is_empty() {
+                    div {
+                        h3 { "Active Links" }
+                        for link in links.iter() {
+                            {
+                                let rtt = link.rtt_ms.map(|r| format!("{r:.0}ms")).unwrap_or_else(|| "—".into());
+                                let name = peers.iter()
+                                    .find(|p| p.hash == link.peer_hash)
+                                    .and_then(|p| p.name.clone())
+                                    .unwrap_or_else(|| link.peer_hash[..8.min(link.peer_hash.len())].to_string());
+                                let status_color = match link.status.as_str() {
+                                    "active" => "color: var(--green);",
+                                    "closed" => "color: var(--red);",
+                                    _ => "color: var(--text-muted);",
+                                };
+                                rsx! {
+                                    div { class: "link-item",
+                                        span { class: "link-name", "{name}" }
+                                        span { class: "link-rtt", "{rtt}" }
+                                        span { class: "link-status", style: "{status_color}", "{link.status}" }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
