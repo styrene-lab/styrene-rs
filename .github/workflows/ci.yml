@@ -61,6 +61,61 @@ jobs:
       - name: Run interop tests
         run: cargo test --package styrene-rns --features interop-tests,transport
 
+  # Verify all feature profiles compile (mobile, desktop, FFI)
+  feature-matrix:
+    name: Feature Matrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: "desktop (default)"
+            features: ""
+          - name: "mobile (minimal)"
+            features: "--no-default-features"
+          - name: "mobile-identity"
+            features: "--no-default-features --features mobile-identity"
+          - name: "terminal only"
+            features: "--no-default-features --features terminal"
+          - name: "ipc-server only"
+            features: "--no-default-features --features ipc-server"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: "Check: ${{ matrix.name }}"
+        run: cargo check -p styrened ${{ matrix.features }}
+
+  # macOS-only: verify keychain feature compiles (requires security-framework)
+  feature-keychain:
+    name: Feature Matrix (keychain)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: "Check: mobile-keychain"
+        run: cargo check -p styrened --no-default-features --features mobile-keychain
+
+  # UniFFI bridge compilation
+  ffi-bridge:
+    name: FFI Bridge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p styrene-mobile-ffi
+
+  # E2E integration tests
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p styrene-e2e
+
   lipstyk:
     name: lipstyk
     uses: styrene-lab/lipstyk/.github/workflows/lipstyk.yml@main

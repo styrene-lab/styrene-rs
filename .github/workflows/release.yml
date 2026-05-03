@@ -2,11 +2,11 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['[0-9]*']
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Tag to release (e.g. v0.2.0). Must already exist on origin.'
+        description: 'Tag to release (e.g. 0.2.0). Must already exist on origin.'
         required: true
         type: string
 
@@ -224,7 +224,7 @@ jobs:
 
       - name: Create archive
         run: |
-          VERSION=${RELEASE_TAG#v}
+          VERSION="${RELEASE_TAG}"
           ARCHIVE="styrene-${VERSION}-${{ matrix.target }}.tar.gz"
           STAGING="styrene-${VERSION}-${{ matrix.target }}"
           mkdir -p "$STAGING"
@@ -285,7 +285,7 @@ jobs:
 
       - name: Create archive
         run: |
-          VERSION=${RELEASE_TAG#v}
+          VERSION="${RELEASE_TAG}"
           ARCHIVE="styrene-${VERSION}-aarch64-unknown-linux-gnu.tar.gz"
           STAGING="styrene-${VERSION}-aarch64-unknown-linux-gnu"
           mkdir -p "$STAGING"
@@ -470,12 +470,12 @@ jobs:
 
       - name: Build and push ${{ matrix.image }}
         run: |
-          VERSION="${RELEASE_TAG#v}"
+          VERSION="${RELEASE_TAG}"
           nix run .#${{ matrix.image }}.copyToRegistry --accept-flake-config
 
       - name: Tag as latest
         run: |
-          VERSION="${RELEASE_TAG#v}"
+          VERSION="${RELEASE_TAG}"
           IMAGE_NAME=$(nix eval --raw .#${{ matrix.image }}.imageName --accept-flake-config 2>/dev/null || echo "")
           [ -z "$IMAGE_NAME" ] && exit 0
           skopeo copy "docker://${IMAGE_NAME}:${VERSION}" "docker://${IMAGE_NAME}:latest"

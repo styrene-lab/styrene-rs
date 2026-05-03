@@ -9,24 +9,24 @@ class Styrene < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/styrene-lab/styrene-rs/releases/download/v#{version}/styrene-#{version}-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/styrene-lab/styrene-rs/releases/download/#{version}/styrene-#{version}-aarch64-apple-darwin.tar.gz"
       sha256 "PLACEHOLDER"
     end
 
     on_intel do
-      url "https://github.com/styrene-lab/styrene-rs/releases/download/v#{version}/styrene-#{version}-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/styrene-lab/styrene-rs/releases/download/#{version}/styrene-#{version}-x86_64-apple-darwin.tar.gz"
       sha256 "PLACEHOLDER"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/styrene-lab/styrene-rs/releases/download/v#{version}/styrene-#{version}-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/styrene-lab/styrene-rs/releases/download/#{version}/styrene-#{version}-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "PLACEHOLDER"
     end
 
     on_intel do
-      url "https://github.com/styrene-lab/styrene-rs/releases/download/v#{version}/styrene-#{version}-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/styrene-lab/styrene-rs/releases/download/#{version}/styrene-#{version}-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "PLACEHOLDER"
     end
   end

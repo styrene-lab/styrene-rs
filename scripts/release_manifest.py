@@ -79,7 +79,7 @@ def build_manifest(
     repo: str,
     commit: str,
 ) -> dict[str, Any]:
-    version = tag.removeprefix("v")
+    version = tag.removeprefix("v")  # support both "v0.2.0" and "0.2.0" tags
     channel = infer_channel(tag)
     assets = parse_checksums(checksums_path)
     release_base = f"https://github.com/{repo}/releases/download/{tag}"
