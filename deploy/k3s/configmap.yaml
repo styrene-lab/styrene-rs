@@ -9,6 +9,7 @@ metadata:
 data:
   config.toml: |
     role = "hub"
+    pages_dir = "/etc/styrene/pages"
 
     [[interfaces]]
     type = "tcp_server"
