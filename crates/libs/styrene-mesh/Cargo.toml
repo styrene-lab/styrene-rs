@@ -25,6 +25,7 @@ tempfile.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 ciborium = "0.2"
+rmpv.workspace = true
 
 [features]
 default = ["std"]
