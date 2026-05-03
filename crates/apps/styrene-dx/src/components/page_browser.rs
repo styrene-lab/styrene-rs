@@ -253,10 +253,17 @@ fn render_line_inline(line: &Line, host: &str, on_navigate: EventHandler<String>
                 }
                 InlineNode::Link { label, url, .. } => {
                     let display = label.as_deref().unwrap_or(url).to_string();
-                    let nav_url = if url.starts_with('/') && !host.is_empty() {
-                        format!("{host}:{url}")
+                    // Micron URLs: "HASH:/path" for remote, ":/path" for local
+                    let clean_url = url.strip_prefix(':').unwrap_or(url);
+                    let nav_url = if clean_url.starts_with('/') && !host.is_empty() {
+                        // Local-relative path on a remote host — prepend host
+                        format!("{host}:{clean_url}")
+                    } else if clean_url.starts_with('/') {
+                        // Local path
+                        clean_url.to_string()
                     } else {
-                        url.clone()
+                        // Remote: "HASH:/path" — pass through as-is
+                        clean_url.to_string()
                     };
                     rsx! {
                         a {

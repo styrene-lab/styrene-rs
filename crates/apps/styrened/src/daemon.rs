@@ -117,6 +117,15 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         let destination = transport_instance
             .add_destination(transport_identity.clone(), DestinationName::new("lxmf", "delivery"))
             .await;
+
+        // NomadNet page hosting destination — allows us to receive announces
+        // from NomadNet-compatible page hosts and browse their pages.
+        let _nomadnet_dest = transport_instance
+            .add_destination(
+                transport_identity.clone(),
+                DestinationName::new("nomadnetwork", "node"),
+            )
+            .await;
         let (dest_hash_hex, delivery_addr) = {
             let dest = destination.lock().await;
             (hex::encode(dest.desc.address_hash.as_slice()), dest.desc.address_hash)

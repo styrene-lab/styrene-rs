@@ -371,11 +371,17 @@ impl DaemonStatus for DaemonFacade {
             .map(|a| {
                 let mut d = DeviceInfo::default();
                 d.destination_hash = a.peer.clone();
-                d.identity_hash = a.peer;
+                d.identity_hash = a.peer.clone();
                 d.name = a.name.unwrap_or_default();
-                d.device_type = "unknown".into();
+                // Get device_type from NodeStore (set by announce worker aspect classification)
+                d.device_type = self
+                    .ctx
+                    .discovery()
+                    .peer(&a.peer)
+                    .and_then(|n| n.device_type)
+                    .unwrap_or_else(|| "unknown".to_string());
                 d.status = "announced".into();
-                d.is_styrene_node = !a.capabilities.is_empty();
+                d.is_styrene_node = !a.capabilities.is_empty() || d.device_type == "page_host";
                 d.last_announce = Some(a.timestamp);
                 d.announce_count = a.seen_count as u32;
                 d

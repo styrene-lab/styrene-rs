@@ -1,4 +1,4 @@
-`F58a`cStyrene Architecture`f
+`F58aStyrene Architecture`f
 
 `[< Back to Index`:/page/index.mu]
 
@@ -31,13 +31,15 @@ requests, tunnel negotiation.
 
 >Crate Map
 
-    styrene-rns     RNS protocol core
-    styrene-lxmf    LXMF messaging
-    styrene-mesh    Styrene wire protocol
-    styrene-ipc     IPC type definitions
-    styrened        Daemon + RPC server
-    styrene-dx      Desktop app (Dioxus)
-    styrene-tui     Terminal UI (Ratatui)
+`=
+styrene-rns     RNS protocol core
+styrene-lxmf    LXMF messaging
+styrene-mesh    Styrene wire protocol
+styrene-ipc     IPC type definitions
+styrened        Daemon + RPC server
+styrene-dx      Desktop app (Dioxus)
+styrene-tui     Terminal UI (Ratatui)
+`=
 
 -
 
