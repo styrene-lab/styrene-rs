@@ -868,6 +868,53 @@ body {
     font-size: 11px;
 }
 
+/* ── Node detail metadata ───────────────────────────────────── */
+.detail-meta {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+}
+
+.detail-meta-label {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.detail-meta-value {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text);
+}
+
+/* ── Active links ──────────────────────────────────────────── */
+.link-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 12px;
+}
+
+.link-name {
+    flex: 1;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.link-rtt {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--green);
+    flex-shrink: 0;
+}
+
+.link-status {
+    font-size: 10px;
+    flex-shrink: 0;
+}
+
 .graph-tooltip .tt-caps {
     margin-top: 2px;
     font-size: 10px;

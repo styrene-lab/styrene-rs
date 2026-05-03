@@ -31,6 +31,10 @@ pub struct PeerEntry {
     pub capabilities: Vec<String>,
     /// Version string if announced (e.g. "0.13.43").
     pub version: Option<String>,
+    /// Timestamp of last announce (Unix epoch seconds).
+    pub last_announce: Option<i64>,
+    /// Number of announces seen from this peer.
+    pub announce_count: u32,
 }
 
 /// What kind of node a peer is, derived from its announce data.
@@ -282,6 +286,15 @@ pub struct PathEntry {
     pub hops: u8,
     pub next_hop: String,
     pub interface: String,
+}
+
+/// An active link with telemetry.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LinkInfo {
+    pub peer_hash: String,
+    pub status: String,
+    pub rtt_ms: Option<f64>,
+    pub timestamp: i64,
 }
 
 /// A conversation summary for the sidebar.
