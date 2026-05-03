@@ -1,150 +1,103 @@
 //! Page browser — NomadNet-compatible Micron page viewer.
 //!
-//! Renders Micron markup fetched from local or remote nodes.
-//! Supports: headings, paragraphs, links, and basic formatting.
+//! Uses `styrene_micron::parse()` for spec-compliant parsing,
+//! then renders the document model to Dioxus RSX.
 
 use dioxus::prelude::*;
+use styrene_micron::{Alignment, Block, ChildBlock, InlineNode, Line};
 
 use crate::state::PageView;
 
-/// A parsed Micron element for rendering.
-#[derive(Clone, Debug)]
-enum MicronElement {
-    Heading { level: u8, text: String },
-    Paragraph { text: String },
-    Link { text: String, target: String },
-    Separator,
-    Preformatted { text: String },
-    Spacer,
-}
+// ── Rendering helpers ─────────────────────────────────────────────────────
 
-/// Parse Micron markup into renderable elements.
-fn parse_micron(source: &str) -> Vec<MicronElement> {
-    let mut elements = Vec::new();
-
-    for line in source.lines() {
-        let trimmed = line.trim();
-
-        if trimmed.is_empty() {
-            elements.push(MicronElement::Spacer);
-            continue;
-        }
-
-        // Heading: lines starting with > (more > = deeper heading)
-        if trimmed.starts_with('>') {
-            let level = trimmed.chars().take_while(|c| *c == '>').count() as u8;
-            let text = trimmed[level as usize..].trim().to_string();
-            // Strip Micron color codes like `F444` from the text
-            let text = strip_micron_codes(&text);
-            if !text.is_empty() {
-                elements.push(MicronElement::Heading { level, text });
-            }
-            continue;
-        }
-
-        // Separator: lines that are all dashes or equals
-        if trimmed.len() >= 3
-            && (trimmed.chars().all(|c| c == '-') || trimmed.chars().all(|c| c == '='))
-        {
-            elements.push(MicronElement::Separator);
-            continue;
-        }
-
-        // Links: `[display text]`target`
-        if trimmed.contains('`') && trimmed.contains('[') {
-            if let Some(link) = parse_micron_link(trimmed) {
-                elements.push(link);
-                continue;
-            }
-        }
-
-        // Preformatted: lines starting with a space
-        if line.starts_with("    ") || line.starts_with('\t') {
-            elements.push(MicronElement::Preformatted { text: line.to_string() });
-            continue;
-        }
-
-        // Regular paragraph text — strip color codes
-        let text = strip_micron_codes(trimmed);
-        if !text.is_empty() {
-            elements.push(MicronElement::Paragraph { text });
-        }
+/// Convert a 3-char hex color (Micron spec) to a CSS color string.
+fn micron_color(hex3: &str) -> String {
+    if hex3.len() == 3 {
+        let chars: Vec<char> = hex3.chars().collect();
+        format!("#{0}{0}{1}{1}{2}{2}", chars[0], chars[1], chars[2])
+    } else {
+        format!("#{hex3}")
     }
-
-    elements
 }
 
-/// Strip Micron inline formatting codes like `Faaa`, `faaa`, `B444`, etc.
-fn strip_micron_codes(s: &str) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '`' {
-            // Check if this is a formatting code: `X...`
-            // Format codes are: F (foreground), f (reset fg), B (background), b (reset bg),
-            // and various single-char codes
-            if let Some(&next) = chars.peek() {
-                if "FfBb!".contains(next) {
-                    // Skip until next backtick or end
-                    chars.next(); // consume the code letter
-                                  // Consume hex digits or content until space/end
-                    while let Some(&c) = chars.peek() {
-                        if c == '`' || c == ' ' {
-                            break;
-                        }
-                        chars.next();
-                    }
-                    continue;
-                }
-            }
-            // Not a format code, keep the backtick
-            result.push(ch);
-        } else {
-            result.push(ch);
-        }
+/// CSS class for alignment.
+fn align_class(a: &Alignment) -> &'static str {
+    match a {
+        Alignment::Center => "micron-center",
+        Alignment::Right => "micron-right",
+        _ => "",
     }
-
-    result.trim().to_string()
 }
 
-/// Parse a Micron link: `[Display Text]`/path/to/page`
-fn parse_micron_link(line: &str) -> Option<MicronElement> {
-    let open = line.find('[')?;
-    let close = line[open..].find(']')? + open;
-    let text = line[open + 1..close].to_string();
-
-    // Look for the target in backticks after the bracket
-    let after = &line[close + 1..];
-    let target_start = after.find('`')?;
-    let rest = &after[target_start + 1..];
-    let target_end = rest.find('`').unwrap_or(rest.len());
-    let target = rest[..target_end].to_string();
-
-    let text = strip_micron_codes(&text);
-
-    Some(MicronElement::Link { text, target })
-}
+// ── Component ─────────────────────────────────────────────────────────────
 
 #[component]
 pub fn PageBrowser(page: Option<PageView>, on_navigate: EventHandler<String>) -> Element {
     let mut url_input = use_signal(|| String::from("/"));
     let mut last_page_url = use_signal(String::new);
+    let mut history = use_signal(Vec::<String>::new);
+    let mut history_pos = use_signal(|| 0_usize);
 
-    // Sync URL bar when page changes from external navigation
     if let Some(ref pv) = page {
         let current_url =
             if pv.host.is_empty() { pv.path.clone() } else { format!("{}:{}", pv.host, pv.path) };
         if *last_page_url.read() != current_url {
             url_input.set(current_url.clone());
+            let pos = *history_pos.read();
+            let mut h = history.write();
+            h.truncate(pos);
+            h.push(current_url.clone());
+            drop(h);
+            history_pos.set(pos + 1);
             last_page_url.set(current_url);
         }
     }
 
+    let can_back = *history_pos.read() > 1;
+    let can_forward = *history_pos.read() < history.read().len();
+    let is_loading = page.as_ref().map(|p| p.loading).unwrap_or(false);
+
     rsx! {
         div { class: "page-browser",
-            // URL bar
-            div { class: "page-url-bar",
+            div { class: "page-nav-bar",
+                button {
+                    class: "page-nav-btn",
+                    disabled: !can_back,
+                    onclick: move |_| {
+                        let pos = *history_pos.read();
+                        if pos > 1 {
+                            history_pos.set(pos - 1);
+                            let url = history.read()[pos - 2].clone();
+                            url_input.set(url.clone());
+                            on_navigate.call(url);
+                        }
+                    },
+                    "<"
+                }
+                button {
+                    class: "page-nav-btn",
+                    disabled: !can_forward,
+                    onclick: move |_| {
+                        let pos = *history_pos.read();
+                        let len = history.read().len();
+                        if pos < len {
+                            history_pos.set(pos + 1);
+                            let url = history.read()[pos].clone();
+                            url_input.set(url.clone());
+                            on_navigate.call(url);
+                        }
+                    },
+                    ">"
+                }
+                button {
+                    class: "page-nav-btn",
+                    disabled: is_loading,
+                    onclick: move |_| {
+                        let url = url_input.read().clone();
+                        if !url.trim().is_empty() { on_navigate.call(url); }
+                    },
+                    if is_loading { "..." } else { "Reload" }
+                }
                 input {
                     class: "page-url-input",
                     r#type: "text",
@@ -154,9 +107,7 @@ pub fn PageBrowser(page: Option<PageView>, on_navigate: EventHandler<String>) ->
                     onkeypress: move |evt: KeyboardEvent| {
                         if evt.key() == Key::Enter {
                             let url = url_input.read().clone();
-                            if !url.trim().is_empty() {
-                                on_navigate.call(url);
-                            }
+                            if !url.trim().is_empty() { on_navigate.call(url); }
                         }
                     },
                 }
@@ -164,15 +115,12 @@ pub fn PageBrowser(page: Option<PageView>, on_navigate: EventHandler<String>) ->
                     class: "page-go-btn",
                     onclick: move |_| {
                         let url = url_input.read().clone();
-                        if !url.trim().is_empty() {
-                            on_navigate.call(url);
-                        }
+                        if !url.trim().is_empty() { on_navigate.call(url); }
                     },
                     "Go"
                 }
             }
 
-            // Page content
             div { class: "page-content",
                 match page {
                     Some(ref pv) if pv.loading => rsx! {
@@ -182,53 +130,28 @@ pub fn PageBrowser(page: Option<PageView>, on_navigate: EventHandler<String>) ->
                         div { class: "page-error",
                             h3 { "Page Error" }
                             p { "{pv.error.as_deref().unwrap_or(\"Unknown error\")}" }
-                            p { class: "page-error-path",
-                                "{pv.host}:{pv.path}"
-                            }
+                            p { class: "page-error-path", "{pv.host}:{pv.path}" }
                         }
                     },
                     Some(ref pv) if pv.content.is_some() => {
-                        let elements = parse_micron(pv.content.as_deref().unwrap_or(""));
-                        let host = pv.host.clone();
-                        rsx! {
-                            div { class: "micron-page",
-                                for elem in elements.iter() {
-                                    {match elem {
-                                        MicronElement::Heading { level, text } => {
-                                            let class = format!("micron-h{}", level.min(&3));
-                                            rsx! { div { class: "{class}", "{text}" } }
-                                        }
-                                        MicronElement::Paragraph { text } => {
-                                            rsx! { p { class: "micron-p", "{text}" } }
-                                        }
-                                        MicronElement::Link { text, target } => {
-                                            let nav_url = if target.starts_with('/') && !host.is_empty() {
-                                                format!("{host}:{target}")
-                                            } else {
-                                                target.clone()
-                                            };
-                                            rsx! {
-                                                a {
-                                                    class: "micron-link",
-                                                    href: "#",
-                                                    onclick: move |evt: MouseEvent| {
-                                                        evt.prevent_default();
-                                                        on_navigate.call(nav_url.clone());
-                                                    },
-                                                    "{text}"
-                                                }
-                                            }
-                                        }
-                                        MicronElement::Separator => {
-                                            rsx! { hr { class: "micron-hr" } }
-                                        }
-                                        MicronElement::Preformatted { text } => {
-                                            rsx! { pre { class: "micron-pre", "{text}" } }
-                                        }
-                                        MicronElement::Spacer => {
-                                            rsx! { div { class: "micron-spacer" } }
-                                        }
-                                    }}
+                        let source = pv.content.as_deref().unwrap_or("");
+                        if source.trim().is_empty() {
+                            let host_display = if pv.host.is_empty() { "local".to_string() } else { pv.host[..12.min(pv.host.len())].to_string() };
+                            rsx! {
+                                div { class: "page-empty",
+                                    h3 { "No Content" }
+                                    p { "The node at {host_display} returned an empty page for {pv.path}" }
+                                    p { class: "page-hint", "The host may not have pages configured, or the path doesn't exist." }
+                                }
+                            }
+                        } else {
+                            let doc = styrene_micron::parse(source);
+                            let host = pv.host.clone();
+                            rsx! {
+                                div { class: "micron-page",
+                                    for block in doc.blocks.iter() {
+                                        {render_block(block, &host, on_navigate)}
+                                    }
                                 }
                             }
                         }
@@ -240,9 +163,7 @@ pub fn PageBrowser(page: Option<PageView>, on_navigate: EventHandler<String>) ->
                             button {
                                 class: "action-btn primary",
                                 style: "margin-top: 12px;",
-                                onclick: move |_| {
-                                    on_navigate.call("/".to_string());
-                                },
+                                onclick: move |_| { on_navigate.call("/".to_string()); },
                                 "Browse Local Pages"
                             }
                         }
@@ -251,4 +172,128 @@ pub fn PageBrowser(page: Option<PageView>, on_navigate: EventHandler<String>) ->
             }
         }
     }
+}
+
+/// Render a top-level Block to RSX.
+fn render_block(block: &Block, host: &str, on_navigate: EventHandler<String>) -> Element {
+    match block {
+        Block::Section { level, heading, children } => {
+            let class = format!("micron-h{}", (*level).min(3));
+            rsx! {
+                div { class: "micron-section",
+                    if let Some(h) = heading {
+                        div { class: "{class}", {render_line_inline(h, host, on_navigate)} }
+                    }
+                    div { class: "micron-section-body",
+                        for child in children.iter() {
+                            {render_child_block(child, host, on_navigate)}
+                        }
+                    }
+                }
+            }
+        }
+        Block::Line(line) => render_line(line, host, on_navigate),
+        Block::EmptyLine => rsx! { div { class: "micron-spacer" } },
+        Block::Divider { .. } => rsx! { hr { class: "micron-hr" } },
+        Block::Literal { content } => rsx! { pre { class: "micron-pre", "{content}" } },
+        Block::Directive { .. } => rsx! {}, // hidden
+    }
+}
+
+/// Render a ChildBlock (inside a Section).
+fn render_child_block(
+    block: &ChildBlock,
+    host: &str,
+    on_navigate: EventHandler<String>,
+) -> Element {
+    match block {
+        ChildBlock::Section { level, heading, children } => {
+            let class = format!("micron-h{}", (*level).min(3));
+            rsx! {
+                div { class: "micron-section",
+                    if let Some(h) = heading {
+                        div { class: "{class}", {render_line_inline(h, host, on_navigate)} }
+                    }
+                    div { class: "micron-section-body",
+                        for child in children.iter() {
+                            {render_child_block(child, host, on_navigate)}
+                        }
+                    }
+                }
+            }
+        }
+        ChildBlock::Line(line) => render_line(line, host, on_navigate),
+        ChildBlock::EmptyLine => rsx! { div { class: "micron-spacer" } },
+        ChildBlock::Divider { .. } => rsx! { hr { class: "micron-hr" } },
+        ChildBlock::Literal { content } => rsx! { pre { class: "micron-pre", "{content}" } },
+    }
+}
+
+/// Render a Line as a paragraph with inline nodes.
+fn render_line(line: &Line, host: &str, on_navigate: EventHandler<String>) -> Element {
+    let align = align_class(&line.alignment);
+    let class = if align.is_empty() { "micron-p".to_string() } else { format!("micron-p {align}") };
+    rsx! {
+        p { class: "{class}", {render_line_inline(line, host, on_navigate)} }
+    }
+}
+
+/// Render inline nodes of a Line.
+fn render_line_inline(line: &Line, host: &str, on_navigate: EventHandler<String>) -> Element {
+    rsx! {
+        for node in line.nodes.iter() {
+            {match node {
+                InlineNode::Text { style, text } => {
+                    let css = build_inline_css(style);
+                    if css.is_empty() {
+                        rsx! { span { "{text}" } }
+                    } else {
+                        rsx! { span { style: "{css}", "{text}" } }
+                    }
+                }
+                InlineNode::Link { label, url, .. } => {
+                    let display = label.as_deref().unwrap_or(url).to_string();
+                    let nav_url = if url.starts_with('/') && !host.is_empty() {
+                        format!("{host}:{url}")
+                    } else {
+                        url.clone()
+                    };
+                    rsx! {
+                        a {
+                            class: "micron-link",
+                            href: "#",
+                            onclick: move |evt: MouseEvent| {
+                                evt.prevent_default();
+                                on_navigate.call(nav_url.clone());
+                            },
+                            "{display}"
+                        }
+                    }
+                }
+                InlineNode::Newline => rsx! { br {} },
+                InlineNode::Field { .. } => rsx! { span { class: "micron-field", "[field]" } },
+            }}
+        }
+    }
+}
+
+/// Build CSS string from a StyleSet.
+fn build_inline_css(style: &styrene_micron::StyleSet) -> String {
+    let mut css = String::new();
+    if style.has_bold() {
+        css.push_str("font-weight:700;");
+    }
+    if style.has_italic() {
+        css.push_str("font-style:italic;");
+    }
+    if style.has_underline() {
+        css.push_str("text-decoration:underline;");
+    }
+    if let Some(fg) = style.fg_color() {
+        css.push_str(&format!("color:{};", micron_color(fg)));
+    }
+    if let Some(bg) = style.bg_color() {
+        css.push_str(&format!("background:{};", micron_color(bg)));
+    }
+    css
 }

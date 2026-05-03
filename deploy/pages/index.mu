@@ -1,9 +1,11 @@
-`F58a`cStyrene Community Hub`f
-`crns.styrene.io`f
+`c`F58aStyrene Community Hub`f
+rns.styrene.io
+`a
 
 -
 
-`F999`cMesh comms for real hardware`f
+`c`F999Mesh comms for real hardware`f
+`a
 
 `F888Encrypted messaging, cryptographic identity, device provisioning
 over Reticulum. TCP, wireless mesh, LoRa radio.
@@ -71,20 +73,20 @@ It joins the mesh on first boot.
 
 >Components
 
-`F5af>>styrened`f
+>>`F5afstyrened`f
 The mesh daemon. Runs in background, manages transport
 interfaces, routes messages, serves pages.
 
-`F5af>>styrene-dx`f
+>>`F5afstyrene-dx`f
 Desktop app (Dioxus). Network graph, conversations,
 page browser. Connects to styrened via IPC or boots
 one in-process.
 
-`F5af>>styrene-tui`f
+>>`F5afstyrene-tui`f
 Terminal UI (Ratatui). Full operator interface for
 mesh status, messaging, fleet management.
 
-`F5af>>styrene-rs`f
+>>`F5afstyrene-rs`f
 Rust implementation of the RNS/LXMF protocol stack.
 Wire-compatible with Python Reticulum.
 

@@ -272,7 +272,18 @@ fn App() -> Element {
                                                         class: if msg.is_outgoing { "message sent" } else { "message received" },
                                                         div { class: "message-content", "{msg.content}" }
                                                         div { class: "message-meta",
-                                                            {format_timestamp(msg.timestamp)}
+                                                            span { {format_timestamp(msg.timestamp)} }
+                                                            if msg.is_outgoing {
+                                                                span { class: "message-status",
+                                                                    {match msg.status.as_str() {
+                                                                        "delivered" => " ✓✓",
+                                                                        "read" => " ✓✓",
+                                                                        "failed" => " ✗",
+                                                                        "pending" | "" => " ✓",
+                                                                        _ => "",
+                                                                    }}
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -295,6 +306,7 @@ fn App() -> Element {
                                                                         peer_hash: ph2.clone(),
                                                                         content,
                                                                     });
+                                                                    send_cmd(daemon_bridge::DaemonCommand::LoadConversations);
                                                                     chat_input.set(String::new());
                                                                 }
                                                             }
@@ -313,6 +325,7 @@ fn App() -> Element {
                                                                     peer_hash: ph3.clone(),
                                                                     content,
                                                                 });
+                                                                send_cmd(daemon_bridge::DaemonCommand::LoadConversations);
                                                                 chat_input.set(String::new());
                                                             }
                                                         }
@@ -332,6 +345,43 @@ fn App() -> Element {
                     },
 
                     state::Tab::Pages => rsx! {
+                        // Page host sidebar
+                        div { class: "sidebar",
+                            div { class: "sidebar-header", "Page Hosts" }
+                            div {
+                                class: "peer-item",
+                                onclick: move |_| {
+                                    send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
+                                        host: String::new(),
+                                        path: "/".into(),
+                                    });
+                                },
+                                span { class: "peer-icon", style: "color: var(--accent);", "●" }
+                                span { class: "peer-name", "Local Node" }
+                            }
+                            for peer in peers.read().iter().filter(|p|
+                                p.node_role == state::PeerRole::PageHost || p.node_role == state::PeerRole::Hub
+                            ) {
+                                {
+                                    let hash = peer.hash.clone();
+                                    let name = peer.name.clone().unwrap_or_else(|| hash[..8.min(hash.len())].to_string());
+                                    rsx! {
+                                        div {
+                                            class: "peer-item",
+                                            onclick: move |_| {
+                                                send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
+                                                    host: hash.clone(),
+                                                    path: "/".into(),
+                                                });
+                                            },
+                                            span { class: "peer-icon", style: "color: var(--green);", "●" }
+                                            span { class: "peer-name", "{name}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         components::PageBrowser {
                             page: page_content.read().clone(),
                             on_navigate: move |url: String| {
@@ -414,7 +464,14 @@ fn handle_daemon_event(
                 content: msg.content,
                 timestamp: msg.timestamp,
                 is_outgoing: msg.is_outgoing,
+                status: msg.status,
             });
+        }
+        daemon_bridge::DaemonEvent::MessageStatusChanged { id, status: new_status } => {
+            let mut msgs = messages.write();
+            if let Some(msg) = msgs.iter_mut().find(|m| m.id == id) {
+                msg.status = new_status;
+            }
         }
         daemon_bridge::DaemonEvent::PathTable(entries) => {
             let multi_hop = entries.iter().filter(|e| e.next_hop != e.destination_hash).count();
@@ -464,6 +521,7 @@ async fn handle_ui_command(
                             .map(|d| d.as_secs() as i64)
                             .unwrap_or(0),
                         is_outgoing: true,
+                        status: "pending".into(),
                     });
                 }
                 Err(e) => eprintln!("[dx] send_chat failed: {e}"),
@@ -575,6 +633,7 @@ async fn handle_ui_command(
                             content: msg.content,
                             timestamp: msg.timestamp,
                             is_outgoing: msg.is_outgoing,
+                            status: msg.status,
                         });
                     }
                     all.sort_by_key(|m| m.timestamp);
