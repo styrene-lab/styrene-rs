@@ -201,6 +201,7 @@ fn App() -> Element {
                             links: links.read().clone(),
                             interfaces: interfaces.read().clone(),
                             announce_log: announce_log.read().clone(),
+                            path_entries: path_table.read().clone(),
                             on_browse_page: move |host_hash: String| {
                                 send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
                                     host: host_hash,

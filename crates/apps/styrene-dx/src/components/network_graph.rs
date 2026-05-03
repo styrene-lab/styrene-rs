@@ -291,6 +291,7 @@ pub fn NetworkGraph(
     links: Vec<crate::state::LinkInfo>,
     interfaces: Vec<crate::state::InterfaceInfo>,
     announce_log: Vec<crate::state::AnnounceEvent>,
+    path_entries: Vec<crate::state::PathEntry>,
 ) -> Element {
     // Graph data — rebuilt when peer membership or path table changes
     let mut nodes = use_signal(Vec::<GraphNode>::new);
@@ -1058,6 +1059,43 @@ pub fn NetworkGraph(
                                             span { class: "announce-icon", "{role_icon}" }
                                             span { class: "announce-name", "{name}" }
                                             span { class: "announce-time", "{time}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Path Table
+                if !path_entries.is_empty() {
+                    div {
+                        h3 { "Routes ({path_entries.len()})" }
+                        div { class: "path-table",
+                            for entry in path_entries.iter() {
+                                {
+                                    let dest_name = peers.iter()
+                                        .find(|p| p.hash == entry.destination_hash)
+                                        .and_then(|p| p.name.clone())
+                                        .unwrap_or_else(|| entry.destination_hash[..8.min(entry.destination_hash.len())].to_string());
+                                    let relay = if entry.next_hop == entry.destination_hash {
+                                        "direct".to_string()
+                                    } else {
+                                        peers.iter()
+                                            .find(|p| p.hash == entry.next_hop)
+                                            .and_then(|p| p.name.clone())
+                                            .unwrap_or_else(|| entry.next_hop[..8.min(entry.next_hop.len())].to_string())
+                                    };
+                                    let hops = entry.hops;
+                                    rsx! {
+                                        div { class: "path-item",
+                                            div { class: "path-row",
+                                                span { class: "path-dest", "{dest_name}" }
+                                                span { class: "path-hops", "{hops}h" }
+                                            }
+                                            div { class: "path-row",
+                                                span { class: "path-relay", "via {relay}" }
+                                            }
                                         }
                                     }
                                 }
