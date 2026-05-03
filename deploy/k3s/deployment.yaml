@@ -21,10 +21,10 @@ spec:
     spec:
       initContainers:
         - name: init-config
-          image: alpine:3.21
+          image: ghcr.io/styrene-lab/styrened-hub:latest
           command: ["/bin/sh", "-c"]
           args:
-            - mkdir -p /data/config && cp /cfg/config.toml /data/config/config.toml
+            - mkdir -p /data/config/pages && cp /cfg/config.toml /data/config/config.toml && cp /etc/styrene/pages/*.mu /data/config/pages/ 2>/dev/null || true
           volumeMounts:
             - name: config
               mountPath: /cfg
