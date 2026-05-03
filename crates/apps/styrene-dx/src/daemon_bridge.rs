@@ -59,6 +59,8 @@ pub enum DaemonCommand {
     MarkRead { peer_hash: String },
     BrowsePage { host: String, path: String },
     RefreshPathTable,
+    LoadConversations,
+    LoadMessages { peer_hash: String },
 }
 
 /// Handle to the daemon connection. Owns the IPC stream or embedded daemon.

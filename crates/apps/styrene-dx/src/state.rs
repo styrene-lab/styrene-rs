@@ -284,6 +284,17 @@ pub struct PathEntry {
     pub interface: String,
 }
 
+/// A conversation summary for the sidebar.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConversationEntry {
+    pub peer_hash: String,
+    pub peer_name: Option<String>,
+    pub last_message: Option<String>,
+    pub last_timestamp: Option<i64>,
+    pub unread_count: u32,
+    pub message_count: u32,
+}
+
 /// A chat message.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChatMessage {
