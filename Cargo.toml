@@ -112,6 +112,11 @@ futures-core = "0.3"
 pin-project-lite = "0.2"
 styrene-mqtt = { version = "0.1.0", path = "crates/libs/styrene-mqtt" }
 
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"
+
 [profile.dev.package.styrene-rns]
 opt-level = 2
 
