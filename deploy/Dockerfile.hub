@@ -48,3 +48,4 @@ USER styrene
 EXPOSE 4242
 
 ENTRYPOINT ["styrened"]
+CMD ["--transport", "0.0.0.0:4242", "--rpc", "0.0.0.0:4243"]
