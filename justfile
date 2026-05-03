@@ -260,35 +260,35 @@ hub_tag := `git rev-parse --short HEAD`
 hub-build:
     podman build --platform linux/amd64 -f deploy/Dockerfile.hub -t {{hub_image}}:{{hub_tag}} -t {{hub_image}}:latest .
 
-# Build hub image fast: zigbuild locally, then package into minimal container
+# Build hub image fast: static musl binary via zigbuild, alpine runtime
 hub-build-fast:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "Cross-compiling for x86_64-linux via zigbuild..."
-    cargo zigbuild --release --target x86_64-unknown-linux-gnu -p styrened -p styrene
-    echo "Packaging into container image..."
-    cat > /tmp/Dockerfile.hub-fast << 'DOCKERFILE'
+    echo "Cross-compiling static musl binary for x86_64-linux..."
+    rustup target add x86_64-unknown-linux-musl 2>/dev/null || true
+    cargo zigbuild --release --target x86_64-unknown-linux-musl -p styrened -p styrene
+    echo "Packaging into alpine container..."
+    CTX=$(mktemp -d)
+    cp target/x86_64-unknown-linux-musl/release/styrened "$CTX/"
+    cp target/x86_64-unknown-linux-musl/release/styrene "$CTX/"
+    cp -r deploy/pages "$CTX/pages"
+    cat > "$CTX/Dockerfile" << 'DOCKERFILE'
     FROM alpine:3.21
-    RUN apk add --no-cache ca-certificates sqlite-libs \
-        && addgroup -S styrene && adduser -S -G styrene -h /var/lib/styrene styrene
+    RUN addgroup -S styrene && adduser -S -G styrene -h /var/lib/styrene styrene
     COPY styrened /usr/local/bin/styrened
     COPY styrene /usr/local/bin/styrene
     COPY pages/ /etc/styrene/pages/
     ENV STYRENE_CONFIG_DIR=/etc/styrene
     ENV STYRENE_DATA_DIR=/var/lib/styrene
-    RUN mkdir -p /etc/styrene /var/lib/styrene /run/styrene \
+    RUN mkdir -p /var/lib/styrene /run/styrene \
         && chown -R styrene:styrene /var/lib/styrene /run/styrene /etc/styrene/pages
     USER styrene
     EXPOSE 4242
     ENTRYPOINT ["styrened"]
     CMD ["--transport", "0.0.0.0:4242", "--rpc", "0.0.0.0:4243"]
     DOCKERFILE
-    mkdir -p /tmp/hub-build-ctx
-    cp target/x86_64-unknown-linux-gnu/release/styrened /tmp/hub-build-ctx/
-    cp target/x86_64-unknown-linux-gnu/release/styrene /tmp/hub-build-ctx/
-    cp -r deploy/pages /tmp/hub-build-ctx/pages
-    podman build --platform linux/amd64 -f /tmp/Dockerfile.hub-fast -t {{hub_image}}:{{hub_tag}} -t {{hub_image}}:latest /tmp/hub-build-ctx
-    rm -rf /tmp/hub-build-ctx /tmp/Dockerfile.hub-fast
+    podman build --platform linux/amd64 -t {{hub_image}}:{{hub_tag}} -t {{hub_image}}:latest "$CTX"
+    rm -rf "$CTX"
     echo "Done: {{hub_image}}:latest"
 
 # Push hub image to container registry
