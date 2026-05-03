@@ -125,9 +125,7 @@ impl TopicBuilder {
             .as_deref()
             .ok_or_else(|| MqttError::InvalidTopic("event_type required for publish".into()))?;
 
-        Ok(format!(
-            "{PREFIX}/{operator_id}/{service}/{instance_id}/{EVENTS_SEGMENT}/{event_type}"
-        ))
+        Ok(format!("{PREFIX}/{operator_id}/{service}/{instance_id}/{EVENTS_SEGMENT}/{event_type}"))
     }
 
     /// Build a subscription filter. Unset fields become MQTT wildcards.
@@ -201,19 +199,14 @@ mod tests {
 
     #[test]
     fn builder_subscribe_partial() {
-        let filter = TopicBuilder::new()
-            .operator("op1")
-            .service("omegon")
-            .build_subscribe();
+        let filter = TopicBuilder::new().operator("op1").service("omegon").build_subscribe();
         assert_eq!(filter, "styrene/op1/omegon/+/events/#");
     }
 
     #[test]
     fn builder_subscribe_specific_event() {
-        let filter = TopicBuilder::new()
-            .operator("op1")
-            .event_type("turn.started")
-            .build_subscribe();
+        let filter =
+            TopicBuilder::new().operator("op1").event_type("turn.started").build_subscribe();
         assert_eq!(filter, "styrene/op1/+/+/events/turn.started");
     }
 }

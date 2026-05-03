@@ -331,9 +331,8 @@ impl CachedFernet {
 
         let tag_start_index = token_data.len() - HMAC_OUT_SIZE;
 
-        let iv: [u8; IV_KEY_SIZE] = token_data[..IV_KEY_SIZE]
-            .try_into()
-            .map_err(|_| RnsError::InvalidArgument)?;
+        let iv: [u8; IV_KEY_SIZE] =
+            token_data[..IV_KEY_SIZE].try_into().map_err(|_| RnsError::InvalidArgument)?;
 
         let ciphertext = &token_data[IV_KEY_SIZE..tag_start_index];
 

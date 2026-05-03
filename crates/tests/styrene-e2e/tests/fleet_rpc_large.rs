@@ -4,8 +4,8 @@
 //! resource transfer on the return path) deliver complete results.
 
 use std::time::Duration;
-use styrene_e2e::helpers::{with_timeout, two_connected_nodes};
-use styrene_rbac::{RosterEntry, Role};
+use styrene_e2e::helpers::{two_connected_nodes, with_timeout};
+use styrene_rbac::{Role, RosterEntry};
 
 #[tokio::test]
 async fn exec_with_large_stdout() {
@@ -37,14 +37,8 @@ async fn exec_with_large_stdout() {
             "stdout should be >500 bytes (resource transfer), got {} bytes",
             exec_result.stdout.len()
         );
-        assert!(
-            exec_result.stdout.contains("line_1"),
-            "stdout should contain first line"
-        );
-        assert!(
-            exec_result.stdout.contains("line_200"),
-            "stdout should contain last line"
-        );
+        assert!(exec_result.stdout.contains("line_1"), "stdout should contain first line");
+        assert!(exec_result.stdout.contains("line_200"), "stdout should contain last line");
     })
     .await;
 }
@@ -78,10 +72,7 @@ async fn status_works_after_large_exec() {
             .await
             .expect("status after large exec should succeed");
 
-        assert!(
-            status.daemon_version.is_some(),
-            "status should include version"
-        );
+        assert!(status.daemon_version.is_some(), "status should include version");
     })
     .await;
 }

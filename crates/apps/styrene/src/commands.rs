@@ -271,17 +271,11 @@ pub(crate) async fn tunnel_status(socket: Option<&Path>, peer: &str) -> anyhow::
     Ok(())
 }
 
-pub(crate) async fn tunnel_establish(
-    socket: Option<&Path>,
-    peer: &str,
-) -> anyhow::Result<()> {
+pub(crate) async fn tunnel_establish(socket: Option<&Path>, peer: &str) -> anyhow::Result<()> {
     tunnel_offer(socket, peer).await
 }
 
-pub(crate) async fn tunnel_offer(
-    socket: Option<&Path>,
-    peer: &str,
-) -> anyhow::Result<()> {
+pub(crate) async fn tunnel_offer(socket: Option<&Path>, peer: &str) -> anyhow::Result<()> {
     let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
 
     let peer_short = truncate(peer, 12);
@@ -304,10 +298,7 @@ pub(crate) async fn tunnel_offer(
     Ok(())
 }
 
-pub(crate) async fn tunnel_teardown(
-    socket: Option<&Path>,
-    peer: &str,
-) -> anyhow::Result<()> {
+pub(crate) async fn tunnel_teardown(socket: Option<&Path>, peer: &str) -> anyhow::Result<()> {
     let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
 
     let peer_short = truncate(peer, 12);
@@ -448,8 +439,8 @@ pub(crate) async fn fleet_apply(
     let timeout = timeout.min(3600).max(10);
 
     // Read and validate profile
-    let profile_bytes = std::fs::read(profile_path)
-        .map_err(|e| anyhow::anyhow!("failed to read profile: {e}"))?;
+    let profile_bytes =
+        std::fs::read(profile_path).map_err(|e| anyhow::anyhow!("failed to read profile: {e}"))?;
 
     // Quick TOML validation
     let profile_str = std::str::from_utf8(&profile_bytes)
@@ -508,10 +499,7 @@ pub(crate) async fn fleet_apply(
     if success {
         eprintln!("  {} profile applied successfully", style("✓").green().bold());
     } else {
-        eprintln!(
-            "  {} profile apply failed (exit code {exit_code})",
-            style("✗").red().bold()
-        );
+        eprintln!("  {} profile apply failed (exit code {exit_code})", style("✗").red().bold());
     }
 
     Ok(())
@@ -545,19 +533,13 @@ pub(crate) async fn fleet_grant(
     Ok(())
 }
 
-pub(crate) async fn fleet_revoke(
-    socket: Option<&Path>,
-    node: &str,
-) -> anyhow::Result<()> {
+pub(crate) async fn fleet_revoke(socket: Option<&Path>, node: &str) -> anyhow::Result<()> {
     let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
 
     let node_short = truncate(node, 12);
     eprintln!("  {} revoking role from {node_short}…", style("→").cyan());
 
-    let result = client
-        .fleet_revoke(node)
-        .await
-        .map_err(anyhow::Error::msg)?;
+    let result = client.fleet_revoke(node).await.map_err(anyhow::Error::msg)?;
 
     let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
 

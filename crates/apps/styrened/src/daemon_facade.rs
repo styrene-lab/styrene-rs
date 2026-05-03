@@ -344,7 +344,9 @@ impl DaemonStatus for DaemonFacade {
         self.require(Capability::RPC_STATUS)?;
         let mut snapshot = ConfigSnapshot::default();
         let config_svc = self.ctx.config();
-        snapshot.values.insert("role".into(), serde_json::json!(config_svc.node_role().to_string()));
+        snapshot
+            .values
+            .insert("role".into(), serde_json::json!(config_svc.node_role().to_string()));
         if let Some(path) = config_svc.config_path() {
             snapshot
                 .values
@@ -466,9 +468,7 @@ impl DaemonStatus for DaemonFacade {
         if self.caller_identity.starts_with(identity_hash)
             || identity_hash.starts_with(&self.caller_identity)
         {
-            return Err(IpcError::invalid_request(
-                "cannot block the daemon's own identity",
-            ));
+            return Err(IpcError::invalid_request("cannot block the daemon's own identity"));
         }
         self.ctx
             .policy()
@@ -718,11 +718,7 @@ impl DaemonFleet for DaemonFacade {
         timeout: Option<u64>,
     ) -> Result<ConfigApplyResult, IpcError> {
         self.require(Capability::RPC_CONFIG_UPDATE)?;
-        self.ctx
-            .fleet()
-            .apply(dest, &profile_bytes, verify, timeout)
-            .await
-            .map_err(internal)
+        self.ctx.fleet().apply(dest, &profile_bytes, verify, timeout).await.map_err(internal)
     }
 
     async fn fleet_grant(
@@ -753,10 +749,7 @@ impl DaemonFleet for DaemonFacade {
         for cap in &grants {
             if !self.ctx.policy().has_capability(&self.caller_identity, cap) {
                 return Err(IpcError::Unavailable {
-                    reason: format!(
-                        "cannot grant capability {} (caller does not hold it)",
-                        cap,
-                    ),
+                    reason: format!("cannot grant capability {} (caller does not hold it)", cap,),
                 });
             }
         }
@@ -926,12 +919,7 @@ impl DaemonPages for DaemonFacade {
         }
 
         // Remote page browsing — fetch via FleetService mesh RPC
-        let source = self
-            .ctx
-            .fleet()
-            .page_fetch(host, path, _timeout)
-            .await
-            .map_err(internal)?;
+        let source = self.ctx.fleet().page_fetch(host, path, _timeout).await.map_err(internal)?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1077,8 +1065,8 @@ mod tests {
 
     #[tokio::test]
     async fn blocked_caller_gets_denied() {
-        use styrene_rbac::RbacPolicy;
         use crate::services::PolicyService;
+        use styrene_rbac::RbacPolicy;
 
         let mut policy = RbacPolicy::default();
         policy.block("deadbeef"); // block prefix

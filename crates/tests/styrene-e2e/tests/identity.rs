@@ -3,8 +3,8 @@
 //! No network. Validates that identity creation works correctly
 //! and that the transport identity bridge preserves key material.
 
-use rns_core::identity::PrivateIdentity;
 use rand_core::OsRng;
+use rns_core::identity::PrivateIdentity;
 
 #[test]
 fn deterministic_identity_from_name() {
@@ -68,8 +68,7 @@ fn private_key_bytes_roundtrip() {
     let bytes = original.to_private_key_bytes();
     assert_eq!(bytes.len(), 64, "private key bytes must be 64 bytes (32 enc + 32 sign)");
 
-    let restored = PrivateIdentity::from_private_key_bytes(&bytes)
-        .expect("roundtrip from bytes");
+    let restored = PrivateIdentity::from_private_key_bytes(&bytes).expect("roundtrip from bytes");
     assert_eq!(
         original.address_hash().as_slice(),
         restored.address_hash().as_slice(),

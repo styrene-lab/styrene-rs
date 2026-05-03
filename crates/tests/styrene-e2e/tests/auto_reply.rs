@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use styrene_e2e::helpers::{
-    with_timeout, await_identity_resolved, await_inbound_count, two_connected_nodes, SETTLE,
+    await_identity_resolved, await_inbound_count, two_connected_nodes, with_timeout, SETTLE,
 };
 use styrene_e2e::node::TestNodeBuilder;
 
@@ -17,40 +17,27 @@ async fn auto_reply_sends_response_to_sender() {
         let (alice, bob) = two_connected_nodes("alice-ar", "bob-ar").await;
 
         // Enable auto-reply on Bob with 0s cooldown for testing
-        bob.app_context.auto_reply().set_config(
-            styrened::services::auto_reply::AutoReplyConfig {
-                mode: styrened::services::AutoReplyMode::All,
-                message: "I'm currently away from the mesh.".to_string(),
-                cooldown: Duration::from_secs(0),
-            },
-        );
+        bob.app_context.auto_reply().set_config(styrened::services::auto_reply::AutoReplyConfig {
+            mode: styrened::services::AutoReplyMode::All,
+            message: "I'm currently away from the mesh.".to_string(),
+            cooldown: Duration::from_secs(0),
+        });
 
         // Alice sends to Bob
-        alice
-            .send_chat(&bob.delivery_hash, "hey bob, you there?")
-            .await
-            .expect("send");
+        alice.send_chat(&bob.delivery_hash, "hey bob, you there?").await.expect("send");
 
         // Bob should receive Alice's message
         await_inbound_count(&bob.app_context, 1, Duration::from_secs(15)).await;
 
         // Alice should receive the auto-reply from Bob
-        let auto_replies = await_inbound_count(
-            &alice.app_context,
-            1,
-            Duration::from_secs(15),
-        )
-        .await;
+        let auto_replies =
+            await_inbound_count(&alice.app_context, 1, Duration::from_secs(15)).await;
 
         assert_eq!(
-            auto_replies[0].content,
-            "I'm currently away from the mesh.",
+            auto_replies[0].content, "I'm currently away from the mesh.",
             "auto-reply content should match configured message"
         );
-        assert_eq!(
-            auto_replies[0].source, bob.identity_hash,
-            "auto-reply should come from bob"
-        );
+        assert_eq!(auto_replies[0].source, bob.identity_hash, "auto-reply should come from bob");
     })
     .await;
 }
@@ -61,27 +48,19 @@ async fn auto_reply_respects_cooldown() {
         let (alice, bob) = two_connected_nodes("alice-cd", "bob-cd").await;
 
         // Enable auto-reply with a long cooldown
-        bob.app_context.auto_reply().set_config(
-            styrened::services::auto_reply::AutoReplyConfig {
-                mode: styrened::services::AutoReplyMode::All,
-                message: "Away".to_string(),
-                cooldown: Duration::from_secs(3600), // 1 hour
-            },
-        );
+        bob.app_context.auto_reply().set_config(styrened::services::auto_reply::AutoReplyConfig {
+            mode: styrened::services::AutoReplyMode::All,
+            message: "Away".to_string(),
+            cooldown: Duration::from_secs(3600), // 1 hour
+        });
 
         // Alice sends first message — should trigger auto-reply
-        alice
-            .send_chat(&bob.delivery_hash, "first")
-            .await
-            .expect("send first");
+        alice.send_chat(&bob.delivery_hash, "first").await.expect("send first");
         await_inbound_count(&bob.app_context, 1, Duration::from_secs(15)).await;
         await_inbound_count(&alice.app_context, 1, Duration::from_secs(15)).await;
 
         // Alice sends second message — should NOT trigger auto-reply (cooldown)
-        alice
-            .send_chat(&bob.delivery_hash, "second")
-            .await
-            .expect("send second");
+        alice.send_chat(&bob.delivery_hash, "second").await.expect("send second");
         await_inbound_count(&bob.app_context, 2, Duration::from_secs(15)).await;
 
         // Wait a bit for any potential auto-reply
@@ -108,10 +87,7 @@ async fn auto_reply_disabled_sends_nothing() {
         // Auto-reply disabled (default)
         assert!(!bob.app_context.auto_reply().is_enabled());
 
-        alice
-            .send_chat(&bob.delivery_hash, "hello")
-            .await
-            .expect("send");
+        alice.send_chat(&bob.delivery_hash, "hello").await.expect("send");
         await_inbound_count(&bob.app_context, 1, Duration::from_secs(15)).await;
 
         // Wait and verify alice gets no auto-reply
@@ -120,10 +96,7 @@ async fn auto_reply_disabled_sends_nothing() {
         let store = alice.app_context.store().lock().expect("lock");
         let messages = store.list_messages(100, None).expect("list");
         let inbound: Vec<_> = messages.iter().filter(|m| m.direction == "in").collect();
-        assert!(
-            inbound.is_empty(),
-            "disabled auto-reply should send nothing"
-        );
+        assert!(inbound.is_empty(), "disabled auto-reply should send nothing");
     })
     .await;
 }
@@ -143,10 +116,7 @@ async fn auto_reply_does_not_loop_between_two_nodes() {
         bob.app_context.auto_reply().set_config(ar_config);
 
         // Alice sends the triggering message
-        alice
-            .send_chat(&bob.delivery_hash, "trigger")
-            .await
-            .expect("send trigger");
+        alice.send_chat(&bob.delivery_hash, "trigger").await.expect("send trigger");
 
         // Bob receives trigger → auto-replies → Alice receives auto-reply
         await_inbound_count(&bob.app_context, 1, Duration::from_secs(15)).await;
@@ -203,10 +173,7 @@ async fn auto_reply_independent_cooldown_per_peer() {
     with_timeout(async {
         // Bob has auto-reply enabled. Alice and Charlie both message him.
         // Both should get replies (independent cooldowns).
-        let bob = TestNodeBuilder::new("bob-multi")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let bob = TestNodeBuilder::new("bob-multi").tcp_server("127.0.0.1:0").build().await;
 
         let alice = TestNodeBuilder::new("alice-multi")
             .tcp_client(bob.listen_addr.expect("addr"))
@@ -223,48 +190,24 @@ async fn auto_reply_independent_cooldown_per_peer() {
         bob.announce().await;
         charlie.announce().await;
 
-        await_identity_resolved(
-            &bob.app_context,
-            &alice.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
-        await_identity_resolved(
-            &bob.app_context,
-            &charlie.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
-        await_identity_resolved(
-            &charlie.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&bob.app_context, &alice.delivery_addr, Duration::from_secs(10))
+            .await;
+        await_identity_resolved(&bob.app_context, &charlie.delivery_addr, Duration::from_secs(10))
+            .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
+        await_identity_resolved(&charlie.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
-        bob.app_context.auto_reply().set_config(
-            styrened::services::auto_reply::AutoReplyConfig {
-                mode: styrened::services::AutoReplyMode::All,
-                message: "Away from keyboard".to_string(),
-                cooldown: Duration::from_secs(3600),
-            },
-        );
+        bob.app_context.auto_reply().set_config(styrened::services::auto_reply::AutoReplyConfig {
+            mode: styrened::services::AutoReplyMode::All,
+            message: "Away from keyboard".to_string(),
+            cooldown: Duration::from_secs(3600),
+        });
 
         // Alice and Charlie both message Bob
-        alice
-            .send_chat(&bob.delivery_hash, "hi from alice")
-            .await
-            .expect("alice sends");
-        charlie
-            .send_chat(&bob.delivery_hash, "hi from charlie")
-            .await
-            .expect("charlie sends");
+        alice.send_chat(&bob.delivery_hash, "hi from alice").await.expect("alice sends");
+        charlie.send_chat(&bob.delivery_hash, "hi from charlie").await.expect("charlie sends");
 
         // Bob should receive both
         await_inbound_count(&bob.app_context, 2, Duration::from_secs(15)).await;

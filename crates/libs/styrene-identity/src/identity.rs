@@ -136,9 +136,8 @@ impl PublicIdentity {
     /// Construct from a hex-encoded pubkey string.
     pub fn from_hex(hex_str: &str) -> Result<Self, String> {
         let bytes = hex::decode(hex_str).map_err(|e| format!("invalid hex: {e}"))?;
-        let pubkey: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| "pubkey must be exactly 32 bytes".to_string())?;
+        let pubkey: [u8; 32] =
+            bytes.try_into().map_err(|_| "pubkey must be exactly 32 bytes".to_string())?;
         Ok(Self::from_pubkey(pubkey))
     }
 

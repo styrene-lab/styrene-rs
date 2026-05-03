@@ -10,8 +10,8 @@ use std::time::Duration;
 use tokio::net::UnixStream;
 
 use styrene_e2e::helpers::with_timeout;
-use styrened::daemon::{DaemonConfig2, start};
 use styrene_ipc_server::wire::{self, MessageType, REQUEST_ID_SIZE};
+use styrened::daemon::{start, DaemonConfig2};
 
 fn random_request_id() -> [u8; REQUEST_ID_SIZE] {
     let mut id = [0u8; 16];
@@ -30,9 +30,7 @@ async fn request(
 ) -> wire::Frame {
     let request_id = random_request_id();
     let (mut read, mut write) = stream.split();
-    wire::write_frame_async(&mut write, msg_type, &request_id, payload)
-        .await
-        .expect("write frame");
+    wire::write_frame_async(&mut write, msg_type, &request_id, payload).await.expect("write frame");
     let frame = wire::read_frame_async(&mut read).await.expect("read frame");
     assert_eq!(frame.request_id, request_id);
     frame
@@ -73,32 +71,20 @@ async fn daemon_start_and_query_via_ipc() {
             Some(true),
             "transport should be initialized"
         );
-        let version = frame
-            .payload
-            .get("daemon_version")
-            .and_then(|v| v.as_str());
+        let version = frame.payload.get("daemon_version").and_then(|v| v.as_str());
         assert!(version.is_some(), "should have daemon version");
 
         // Query identity
         let frame = request(&mut stream, MessageType::QueryIdentity, &empty_payload()).await;
         assert_eq!(frame.msg_type, MessageType::Result);
-        let identity_hash = frame
-            .payload
-            .get("identity_hash")
-            .and_then(|v| v.as_str())
-            .expect("identity_hash");
+        let identity_hash =
+            frame.payload.get("identity_hash").and_then(|v| v.as_str()).expect("identity_hash");
         assert_eq!(identity_hash.len(), 32, "identity hash should be 32 hex chars");
 
         // Verify it matches the handle's app_context
         assert_eq!(
             identity_hash,
-            hex::encode(
-                handle
-                    .app_context
-                    .identity()
-                    .transport_identity_hash()
-                    .as_slice()
-            )
+            hex::encode(handle.app_context.identity().transport_identity_hash().as_slice())
         );
 
         // Clean shutdown
@@ -131,14 +117,9 @@ async fn daemon_ipc_events_bridge_works() {
         // Subscribe to devices via IPC wire protocol
         let req_id = random_request_id();
         let (mut read, mut write) = stream.split();
-        wire::write_frame_async(
-            &mut write,
-            MessageType::SubDevices,
-            &req_id,
-            &empty_payload(),
-        )
-        .await
-        .expect("write subscribe");
+        wire::write_frame_async(&mut write, MessageType::SubDevices, &req_id, &empty_payload())
+            .await
+            .expect("write subscribe");
         let frame = wire::read_frame_async(&mut read).await.expect("read response");
         assert_eq!(frame.msg_type, MessageType::Result);
         drop((read, write));
@@ -149,11 +130,8 @@ async fn daemon_ipc_events_bridge_works() {
         // Read the pushed event from the IPC socket
         tokio::time::sleep(Duration::from_millis(200)).await;
         let (mut read, _write) = stream.into_split();
-        let event_result = tokio::time::timeout(
-            Duration::from_secs(3),
-            wire::read_frame_async(&mut read),
-        )
-        .await;
+        let event_result =
+            tokio::time::timeout(Duration::from_secs(3), wire::read_frame_async(&mut read)).await;
 
         match event_result {
             Ok(Ok(frame)) => {
@@ -199,11 +177,7 @@ async fn daemon_announce_via_ipc() {
 
         // Announce via IPC
         let frame = request(&mut stream, MessageType::CmdAnnounce, &empty_payload()).await;
-        assert_eq!(
-            frame.msg_type,
-            MessageType::Result,
-            "announce via daemon IPC should succeed"
-        );
+        assert_eq!(frame.msg_type, MessageType::Result, "announce via daemon IPC should succeed");
     })
     .await;
 }

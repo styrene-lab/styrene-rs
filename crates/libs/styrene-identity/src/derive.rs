@@ -76,7 +76,6 @@ const HKDF_SALT_ONION_SERVICE: &[u8] = b"styrene-identity-onion-service-v1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyPurpose {
     // ── The Identity ──
-
     /// THE identity signing key (Ed25519).
     /// Used for: mesh signing, git commits, personal attribution.
     /// Identity hash = SHA-256(pubkey) truncated to 16 bytes.
@@ -84,7 +83,6 @@ pub enum KeyPurpose {
     Signing,
 
     // ── Encryption (different curves) ──
-
     /// RNS X25519 encryption key.
     RnsEncryption,
     /// age X25519 encryption key.
@@ -93,12 +91,10 @@ pub enum KeyPurpose {
     WireGuard,
 
     // ── Device ──
-
     /// SSH host Ed25519 key (identifies the machine, not the person).
     SshHost,
 
     // ── Overlay transports ──
-
     /// Yggdrasil Ed25519 key (IPv6 overlay network identity).
     Yggdrasil,
     /// I2P destination Ed25519 signing key.
@@ -112,7 +108,6 @@ pub enum KeyPurpose {
     // These derive the SAME bytes as their canonical counterparts.
     // Kept for backwards compatibility with existing code that
     // references the old purpose names.
-
     /// Legacy alias for `Signing`. Derives identical bytes.
     #[deprecated(note = "use KeyPurpose::Signing — RnsSigning and GitSigning are now unified")]
     RnsSigning,
@@ -271,7 +266,10 @@ impl KeyDeriver {
 
     /// Derive a per-service I2P destination key pair via two-level HKDF.
     /// Returns (signing_seed, encryption_secret) — both 32 bytes.
-    pub fn derive_i2p_service(&self, service_name: &str) -> Result<([u8; 32], [u8; 32]), DeriveError> {
+    pub fn derive_i2p_service(
+        &self,
+        service_name: &str,
+    ) -> Result<([u8; 32], [u8; 32]), DeriveError> {
         if service_name.is_empty() {
             return Err(DeriveError::EmptyLabel);
         }
@@ -310,16 +308,13 @@ impl KeyDeriver {
         }
 
         let mut master = [0u8; 32];
-        self.expander()
-            .expand(master_info, &mut master)
-            .expect("HKDF expand should not fail");
+        self.expander().expand(master_info, &mut master).expect("HKDF expand should not fail");
 
         let hk2 = Hkdf::<Sha256>::new(Some(level2_salt), &master);
         master.zeroize();
 
         let mut okm = [0u8; 32];
-        hk2.expand(label.as_bytes(), &mut okm)
-            .expect("HKDF expand should not fail");
+        hk2.expand(label.as_bytes(), &mut okm).expect("HKDF expand should not fail");
         Ok(okm)
     }
 }

@@ -21,25 +21,29 @@ pub mod i2p_proxy;
 pub mod identity;
 pub mod messaging;
 pub mod pages;
-pub mod propagation;
 pub mod policy;
+pub mod propagation;
 pub mod protocol;
 pub mod status;
+#[cfg(feature = "terminal")]
+pub mod terminal;
 pub mod tunnel;
 
 // Re-exports for convenience
 pub use auto_reply::{AutoReplyConfig, AutoReplyMode, AutoReplyService};
-pub use policy::PolicyService;
 pub use config::ConfigService;
 pub use discovery::DiscoveryService;
 pub use events::EventService;
 pub use fleet::FleetService;
+#[cfg(feature = "i2p-proxy")]
+pub use i2p_proxy::I2pProxyService;
 pub use identity::IdentityService;
 pub use messaging::MessagingService;
 pub use pages::PageService;
+pub use policy::PolicyService;
 pub use propagation::PropagationService;
 pub use protocol::ProtocolService;
 pub use status::{InterfaceRecord, PropagationState, StatusService};
-#[cfg(feature = "i2p-proxy")]
-pub use i2p_proxy::I2pProxyService;
+#[cfg(feature = "terminal")]
+pub use terminal::TerminalService;
 pub use tunnel::TunnelService;

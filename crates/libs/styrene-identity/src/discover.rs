@@ -25,7 +25,8 @@ impl DiscoveredIdentity {
     /// Hash-only identities provide attribution but cannot sign — no key material
     /// is available on disk.
     pub fn is_hash_only(&self) -> bool {
-        self.tier == SignerTier::CredentialManager && self.label.starts_with("env:STYRENE_IDENTITY_HASH")
+        self.tier == SignerTier::CredentialManager
+            && self.label.starts_with("env:STYRENE_IDENTITY_HASH")
     }
 }
 
@@ -95,10 +96,7 @@ pub fn discover() -> Option<DiscoveredIdentity> {
 ///
 /// Prefers `$HOME` for testability, falls back to `dirs::home_dir` pattern.
 fn home_dir() -> Option<PathBuf> {
-    std::env::var("HOME")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
+    std::env::var("HOME").ok().map(PathBuf::from).filter(|p| p.is_absolute())
 }
 
 #[cfg(test)]
@@ -187,10 +185,7 @@ mod tests {
 
             let result = discover().expect("should find hash-only identity");
             assert!(result.is_hash_only(), "should be hash-only");
-            assert_eq!(
-                result.label,
-                "env:STYRENE_IDENTITY_HASH=abcdef1234567890abcdef1234567890"
-            );
+            assert_eq!(result.label, "env:STYRENE_IDENTITY_HASH=abcdef1234567890abcdef1234567890");
         });
     }
 

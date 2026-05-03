@@ -198,10 +198,8 @@ impl MessagingService {
                             }
                             Err(hub_err) => {
                                 let status = format!("failed: hub delivery: {hub_err}");
-                                let _ = store
-                                    .lock()
-                                    .unwrap()
-                                    .update_receipt_status(&msg_id, &status);
+                                let _ =
+                                    store.lock().unwrap().update_receipt_status(&msg_id, &status);
                             }
                         }
                     } else {

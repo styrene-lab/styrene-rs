@@ -12,7 +12,9 @@ pub fn qos_for_event(event_type: &str) -> QoS {
         "message.delta" | "thinking.delta" | "tool.updated" => QoS::AtMostOnce,
 
         // Lifecycle — exactly-once semantics required
-        "session.reset" | "agent.completed" | "decomposition.started"
+        "session.reset"
+        | "agent.completed"
+        | "decomposition.started"
         | "decomposition.completed" => QoS::ExactlyOnce,
 
         // Everything else — at least once

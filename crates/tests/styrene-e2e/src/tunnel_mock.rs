@@ -40,11 +40,7 @@ impl MockTunnelBackend {
     }
 
     pub fn last_psk(&self) -> Option<[u8; 32]> {
-        self.establish_log
-            .lock()
-            .expect("lock")
-            .last()
-            .map(|p| p.psk)
+        self.establish_log.lock().expect("lock").last().map(|p| p.psk)
     }
 }
 
@@ -94,10 +90,7 @@ impl TunnelBackend for MockTunnelBackend {
         if !self.tunnels.lock().expect("lock").contains_key(tunnel_id) {
             return Err(TunnelError::Crypto("tunnel not found".into()));
         }
-        self.rekey_log
-            .lock()
-            .expect("lock")
-            .push((tunnel_id.to_string(), *new_psk));
+        self.rekey_log.lock().expect("lock").push((tunnel_id.to_string(), *new_psk));
         Ok(())
     }
 
@@ -111,12 +104,6 @@ impl TunnelBackend for MockTunnelBackend {
     }
 
     async fn list_tunnels(&self) -> Result<Vec<TunnelInfo>, TunnelError> {
-        Ok(self
-            .tunnels
-            .lock()
-            .expect("lock")
-            .values()
-            .cloned()
-            .collect())
+        Ok(self.tunnels.lock().expect("lock").values().cloned().collect())
     }
 }

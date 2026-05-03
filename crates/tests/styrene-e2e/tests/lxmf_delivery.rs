@@ -6,8 +6,8 @@
 
 use std::time::Duration;
 use styrene_e2e::helpers::{
-    with_timeout, await_identity_resolved, await_inbound_message,
-    await_inbound_count, two_connected_nodes, SETTLE,
+    await_identity_resolved, await_inbound_count, await_inbound_message, two_connected_nodes,
+    with_timeout, SETTLE,
 };
 use styrene_e2e::node::TestNodeBuilder;
 
@@ -16,10 +16,7 @@ async fn send_chat_delivers_with_correct_attribution() {
     with_timeout(async {
         let (alice, bob) = two_connected_nodes("alice", "bob").await;
 
-        let msg_id = alice
-            .send_chat(&bob.delivery_hash, "hello bob")
-            .await
-            .expect("send_chat");
+        let msg_id = alice.send_chat(&bob.delivery_hash, "hello bob").await.expect("send_chat");
 
         assert!(!msg_id.is_empty(), "message ID should be non-empty");
 
@@ -37,10 +34,7 @@ async fn send_chat_delivers_with_correct_attribution() {
 
         // Destination — should be bob's transport identity hash
         // (the inbound decoder extracts the destination from the wire)
-        assert!(
-            !received.destination.is_empty(),
-            "destination should be populated"
-        );
+        assert!(!received.destination.is_empty(), "destination should be populated");
 
         // Sender's store — outbound record with receipt status
         {
@@ -53,10 +47,7 @@ async fn send_chat_delivers_with_correct_attribution() {
                 assert_eq!(msg.content, "hello bob");
                 assert_eq!(msg.destination, bob.delivery_hash);
                 assert!(
-                    msg.receipt_status
-                        .as_deref()
-                        .map(|s| s.starts_with("sent"))
-                        .unwrap_or(false),
+                    msg.receipt_status.as_deref().map(|s| s.starts_with("sent")).unwrap_or(false),
                     "outbound should have 'sent' receipt, got {:?}",
                     msg.receipt_status
                 );
@@ -74,10 +65,7 @@ async fn delivery_preserves_message_content_with_special_characters() {
         // Unicode, emoji, newlines, long content
         let special_content = "Héllo wörld! 🌍\nLine two\ttab\n日本語テスト\n\nEmpty line above";
 
-        alice
-            .send_chat(&bob.delivery_hash, special_content)
-            .await
-            .expect("send special");
+        alice.send_chat(&bob.delivery_hash, special_content).await.expect("send special");
 
         let received = await_inbound_message(&bob.app_context, Duration::from_secs(15)).await;
         assert_eq!(
@@ -91,10 +79,7 @@ async fn delivery_preserves_message_content_with_special_characters() {
 #[tokio::test]
 async fn delivery_to_unannounced_peer_fails_gracefully() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-nopeer")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-nopeer").tcp_server("127.0.0.1:0").build().await;
 
         // Send to a destination nobody has announced.
         // The delivery pipeline should poll resolve_identity for 12s,
@@ -107,7 +92,9 @@ async fn delivery_to_unannounced_peer_fails_gracefully() {
             Err(e) => {
                 let msg = format!("{}", e);
                 assert!(
-                    msg.contains("not announced") || msg.contains("not resolved") || msg.contains("failed"),
+                    msg.contains("not announced")
+                        || msg.contains("not resolved")
+                        || msg.contains("failed"),
                     "error should indicate identity resolution failure, got: {}",
                     msg
                 );
@@ -120,10 +107,7 @@ async fn delivery_to_unannounced_peer_fails_gracefully() {
                     .expect("query")
                     .expect("message should be persisted even on failure");
                 assert!(
-                    msg.receipt_status
-                        .as_deref()
-                        .map(|s| s.contains("failed"))
-                        .unwrap_or(false),
+                    msg.receipt_status.as_deref().map(|s| s.contains("failed")).unwrap_or(false),
                     "failed delivery should have 'failed' receipt status, got {:?}",
                     msg.receipt_status
                 );
@@ -145,16 +129,11 @@ async fn reply_uses_correct_peer_addressing() {
         let (alice, bob) = two_connected_nodes("alice-reply", "bob-reply").await;
 
         // Alice → Bob
-        alice
-            .send_chat(&bob.delivery_hash, "initial message")
-            .await
-            .expect("send");
+        alice.send_chat(&bob.delivery_hash, "initial message").await.expect("send");
         await_inbound_count(&bob.app_context, 1, Duration::from_secs(15)).await;
 
         // Bob replies to Alice using alice's delivery hash
-        bob.send_chat(&alice.delivery_hash, "reply message")
-            .await
-            .expect("reply");
+        bob.send_chat(&alice.delivery_hash, "reply message").await.expect("reply");
         await_inbound_count(&alice.app_context, 1, Duration::from_secs(15)).await;
 
         // Verify Bob's inbound has correct source
@@ -183,10 +162,7 @@ async fn reply_uses_correct_peer_addressing() {
 #[tokio::test]
 async fn delivery_before_mutual_announce_requires_sender_initiative() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-oneann")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-oneann").tcp_server("127.0.0.1:0").build().await;
 
         let bob = TestNodeBuilder::new("bob-oneann")
             .tcp_client(alice.listen_addr.expect("listen addr"))
@@ -197,12 +173,8 @@ async fn delivery_before_mutual_announce_requires_sender_initiative() {
 
         // Only Bob announces — Alice knows Bob but Bob doesn't know Alice
         bob.announce().await;
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Alice can send to Bob (she resolved his identity from his announce)
         alice
@@ -236,10 +208,7 @@ async fn message_with_title_roundtrips() {
 
         let received = await_inbound_message(&bob.app_context, Duration::from_secs(15)).await;
         assert_eq!(received.content, "message body");
-        assert_eq!(
-            received.title, "Important Subject",
-            "title should survive LXMF wire roundtrip"
-        );
+        assert_eq!(received.title, "Important Subject", "title should survive LXMF wire roundtrip");
     })
     .await;
 }
@@ -249,10 +218,7 @@ async fn empty_message_delivers() {
     with_timeout(async {
         let (alice, bob) = two_connected_nodes("alice-empty", "bob-empty").await;
 
-        alice
-            .send_chat(&bob.delivery_hash, "")
-            .await
-            .expect("send empty");
+        alice.send_chat(&bob.delivery_hash, "").await.expect("send empty");
 
         let received = await_inbound_message(&bob.app_context, Duration::from_secs(15)).await;
         assert_eq!(received.content, "");
@@ -270,10 +236,7 @@ async fn large_message_delivery() {
         // worker processes completed resource events.
         let large_content: String = (0..2048).map(|i| (b'A' + (i % 26) as u8) as char).collect();
 
-        alice
-            .send_chat(&bob.delivery_hash, &large_content)
-            .await
-            .expect("send large");
+        alice.send_chat(&bob.delivery_hash, &large_content).await.expect("send large");
 
         let received = await_inbound_message(&bob.app_context, Duration::from_secs(15)).await;
         assert_eq!(
@@ -311,10 +274,7 @@ async fn binary_safe_content() {
         // Content with null bytes, high bytes, control characters
         let tricky = "null\x00byte\ttab\nnewline\r\nCRLF\x1b[31mANSI\x1b[0m";
 
-        alice
-            .send_chat(&bob.delivery_hash, tricky)
-            .await
-            .expect("send tricky");
+        alice.send_chat(&bob.delivery_hash, tricky).await.expect("send tricky");
 
         let received = await_inbound_message(&bob.app_context, Duration::from_secs(15)).await;
         assert_eq!(received.content, tricky, "binary-safe content should roundtrip");

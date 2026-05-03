@@ -47,7 +47,12 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     if cli.install_service {
-        install_service(&cli.bind, cli.i2pd.as_deref(), cli.hub_addr.as_deref(), cli.hub.as_deref())?;
+        install_service(
+            &cli.bind,
+            cli.i2pd.as_deref(),
+            cli.hub_addr.as_deref(),
+            cli.hub.as_deref(),
+        )?;
         return Ok(());
     }
 
@@ -64,15 +69,11 @@ async fn main() -> anyhow::Result<()> {
     let i2pd_addr = match cli.i2pd {
         Some(ref addr) => addr.clone(),
         None => {
-            let defaults = [
-                "http://127.0.0.1:4444",
-                "http://i2pd.styrene-forge.svc:4444",
-            ];
+            let defaults = ["http://127.0.0.1:4444", "http://i2pd.styrene-forge.svc:4444"];
             let mut found = None;
             for addr in defaults {
-                if let Ok(client) = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(2))
-                    .build()
+                if let Ok(client) =
+                    reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build()
                 {
                     if client.get(addr).send().await.is_ok() {
                         found = Some(addr.to_string());
@@ -83,7 +84,9 @@ async fn main() -> anyhow::Result<()> {
             found.unwrap_or_else(|| {
                 eprintln!("[styrene-i2p] no i2pd found at default addresses");
                 eprintln!("[styrene-i2p] options:");
-                eprintln!("  --i2pd http://127.0.0.1:4444                 # local i2pd (direct mode)");
+                eprintln!(
+                    "  --i2pd http://127.0.0.1:4444                 # local i2pd (direct mode)"
+                );
                 eprintln!("  --hub-addr 192.168.0.10:4242 --hub <hash>    # mesh mode via hub");
                 std::process::exit(1);
             })
@@ -96,7 +99,12 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn install_service(bind: &str, i2pd: Option<&str>, hub_addr: Option<&str>, hub: Option<&str>) -> anyhow::Result<()> {
+fn install_service(
+    bind: &str,
+    i2pd: Option<&str>,
+    hub_addr: Option<&str>,
+    hub: Option<&str>,
+) -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
     let exe_path = exe.display();
 
@@ -113,9 +121,7 @@ fn install_service(bind: &str, i2pd: Option<&str>, hub_addr: Option<&str>, hub: 
 
     #[cfg(target_os = "macos")]
     {
-        let mut arg_xml = format!(
-            "        <string>{exe_path}</string>\n"
-        );
+        let mut arg_xml = format!("        <string>{exe_path}</string>\n");
         for arg in args_str.split_whitespace() {
             arg_xml.push_str(&format!("        <string>{arg}</string>\n"));
         }

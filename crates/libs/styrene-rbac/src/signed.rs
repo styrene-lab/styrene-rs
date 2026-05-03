@@ -59,18 +59,9 @@ impl SignedRosterEntry {
             self.entry.identity_hash.to_ascii_lowercase(),
             self.entry.role.as_str(),
             self.entry.label,
-            self.entry
-                .grants()
-                .iter()
-                .map(|g| format!(r#""{g}""#))
-                .collect::<Vec<_>>()
-                .join(","),
+            self.entry.grants().iter().map(|g| format!(r#""{g}""#)).collect::<Vec<_>>().join(","),
         );
-        format!(
-            "{CANONICAL_VERSION}\n{entry_json}\nissued_at:{}",
-            self.issued_at
-        )
-        .into_bytes()
+        format!("{CANONICAL_VERSION}\n{entry_json}\nissued_at:{}", self.issued_at).into_bytes()
     }
 
     /// Check whether the entry has expired.
@@ -112,14 +103,8 @@ impl SignedRosterEntry {
             let digest = Sha256::digest(signing_key.verifying_key().as_bytes());
             hex::encode(&digest[..16])
         };
-        let mut signed = Self {
-            entry,
-            hub_hash,
-            hub_pubkey,
-            signature: String::new(),
-            issued_at,
-            expires_at,
-        };
+        let mut signed =
+            Self { entry, hub_hash, hub_pubkey, signature: String::new(), issued_at, expires_at };
         let canonical = signed.canonical_bytes();
         let sig = signing_key.sign(&canonical);
         signed.signature = hex::encode(sig.to_bytes());

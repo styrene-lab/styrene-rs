@@ -166,10 +166,7 @@ impl SignerChain {
 
     /// List all signers with their availability status.
     pub fn status(&self) -> Vec<(&str, SignerTier, bool)> {
-        self.signers
-            .iter()
-            .map(|s| (s.label(), s.tier(), s.is_available()))
-            .collect()
+        self.signers.iter().map(|s| (s.label(), s.tier(), s.is_available())).collect()
     }
 }
 
@@ -269,11 +266,7 @@ mod tests {
                 name: "yubikey",
                 available: false,
             }),
-            Box::new(MockSigner {
-                tier: SignerTier::EncryptedFile,
-                name: "file",
-                available: true,
-            }),
+            Box::new(MockSigner { tier: SignerTier::EncryptedFile, name: "file", available: true }),
         ]);
         assert!(chain.is_available());
         assert_eq!(chain.label(), "file");
@@ -288,11 +281,7 @@ mod tests {
                 name: "yubikey",
                 available: true,
             }),
-            Box::new(MockSigner {
-                tier: SignerTier::EncryptedFile,
-                name: "file",
-                available: true,
-            }),
+            Box::new(MockSigner { tier: SignerTier::EncryptedFile, name: "file", available: true }),
         ]);
         assert_eq!(chain.label(), "yubikey");
         assert_eq!(chain.tier(), SignerTier::HardwareHsm);
@@ -330,11 +319,7 @@ mod tests {
                 name: "yubikey",
                 available: false,
             }),
-            Box::new(MockSigner {
-                tier: SignerTier::EncryptedFile,
-                name: "file",
-                available: true,
-            }),
+            Box::new(MockSigner { tier: SignerTier::EncryptedFile, name: "file", available: true }),
         ]);
         let sig = chain.sign(b"test").await.unwrap();
         assert_eq!(sig[0], SignerTier::EncryptedFile as u8);
@@ -362,11 +347,7 @@ mod tests {
     fn ephemeral_produces_unique_roots() {
         let a = RootSecret::ephemeral();
         let b = RootSecret::ephemeral();
-        assert_ne!(
-            a.as_bytes(),
-            b.as_bytes(),
-            "two ephemeral roots must be independent"
-        );
+        assert_ne!(a.as_bytes(), b.as_bytes(), "two ephemeral roots must be independent");
     }
 
     #[test]
@@ -381,10 +362,7 @@ mod tests {
         let k_fixed = d_fixed.derive(crate::derive::KeyPurpose::Signing);
         let k_ephemeral = d_ephemeral.derive(crate::derive::KeyPurpose::Signing);
 
-        assert_ne!(
-            k_fixed, k_ephemeral,
-            "ephemeral keys must not match any fixed identity"
-        );
+        assert_ne!(k_fixed, k_ephemeral, "ephemeral keys must not match any fixed identity");
     }
 
     #[test]
@@ -395,11 +373,7 @@ mod tests {
                 name: "yubikey",
                 available: false,
             }),
-            Box::new(MockSigner {
-                tier: SignerTier::EncryptedFile,
-                name: "file",
-                available: true,
-            }),
+            Box::new(MockSigner { tier: SignerTier::EncryptedFile, name: "file", available: true }),
         ]);
         let status = chain.status();
         assert_eq!(status.len(), 2);

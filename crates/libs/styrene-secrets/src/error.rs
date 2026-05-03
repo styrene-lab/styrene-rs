@@ -13,10 +13,7 @@ pub enum ResolveError {
     /// The store backend returned an error.
     #[cfg(feature = "file-store")]
     #[error("store error resolving '{key}': {source}")]
-    Store {
-        key: String,
-        source: StoreError,
-    },
+    Store { key: String, source: StoreError },
 }
 
 /// Error from the encrypted secret store.

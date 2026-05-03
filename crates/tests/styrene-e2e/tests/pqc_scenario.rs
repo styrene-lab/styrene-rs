@@ -6,9 +6,9 @@
 
 use std::net::IpAddr;
 
-use styrene_tunnel::session::{PqcSession, SessionState, CloseAction};
-use styrene_tunnel::traits::{TunnelParams, TunnelBackend};
 use styrene_e2e::tunnel_mock::MockTunnelBackend;
+use styrene_tunnel::session::{CloseAction, PqcSession, SessionState};
+use styrene_tunnel::traits::{TunnelBackend, TunnelParams};
 
 /// Full PQC lifecycle: handshake → encrypt → decrypt → rekey-equivalent →
 /// new session → encrypt again → close.
@@ -65,7 +65,10 @@ async fn pqc_full_lifecycle_scenario() {
         assert_eq!(decrypted, plaintext.as_bytes());
         bob_received.push(String::from_utf8(decrypted).expect("utf8"));
     }
-    assert_eq!(bob_received, vec!["alice-msg-0", "alice-msg-1", "alice-msg-2", "alice-msg-3", "alice-msg-4"]);
+    assert_eq!(
+        bob_received,
+        vec!["alice-msg-0", "alice-msg-1", "alice-msg-2", "alice-msg-3", "alice-msg-4"]
+    );
 
     // Bob sends 3 replies
     let mut alice_received = Vec::new();
@@ -104,10 +107,7 @@ async fn pqc_full_lifecycle_scenario() {
     bob2.process_confirm(&conf2).expect("rekey complete");
 
     let session_key_2 = *alice2.session_key().expect("new session key");
-    assert_ne!(
-        session_key_1, session_key_2,
-        "rekeyed session must produce different key material"
-    );
+    assert_ne!(session_key_1, session_key_2, "rekeyed session must produce different key material");
 
     // Rekey the tunnel
     mock_wg.rekey(&tunnel_id, &session_key_2).await.expect("rekey tunnel");
@@ -125,17 +125,13 @@ async fn pqc_full_lifecycle_scenario() {
     );
 
     // ── Phase 6: Authenticated close ───────────────────────────────
-    let close_action = alice2
-        .close(0x00, Some("session complete".into()))
-        .expect("close");
+    let close_action = alice2.close(0x00, Some("session complete".into())).expect("close");
     assert_eq!(alice2.state(), SessionState::Closed);
 
     match close_action {
         CloseAction::Authenticated(data) => {
             let plaintext = bob2.decrypt_data(&data).expect("decrypt close");
-            let (reason, msg) = bob2
-                .try_authenticated_close(&plaintext)
-                .expect("interpret close");
+            let (reason, msg) = bob2.try_authenticated_close(&plaintext).expect("interpret close");
             assert_eq!(reason, 0x00);
             assert_eq!(msg.as_deref(), Some("session complete"));
             assert_eq!(bob2.state(), SessionState::Closed);
@@ -152,11 +148,7 @@ async fn pqc_full_lifecycle_scenario() {
 
     // Verify the complete audit trail
     assert_eq!(mock_wg.establish_count(), 1, "exactly one tunnel established");
-    assert_eq!(
-        mock_wg.rekey_log.lock().expect("lock").len(),
-        1,
-        "exactly one rekey performed"
-    );
+    assert_eq!(mock_wg.rekey_log.lock().expect("lock").len(), 1, "exactly one rekey performed");
 }
 
 /// Cross-session isolation: data from one session cannot be decrypted by another,
@@ -180,27 +172,15 @@ fn session_isolation_between_same_peers() {
 
     // Data encrypted in session 1 must not decrypt in session 2
     let data1 = alice1.encrypt_data(b"session-1-data").expect("encrypt");
-    assert!(
-        bob2.decrypt_data(&data1).is_err(),
-        "session 2 must not decrypt session 1 data"
-    );
+    assert!(bob2.decrypt_data(&data1).is_err(), "session 2 must not decrypt session 1 data");
 
     // And vice versa
     let data2 = alice2.encrypt_data(b"session-2-data").expect("encrypt");
-    assert!(
-        bob1.decrypt_data(&data2).is_err(),
-        "session 1 must not decrypt session 2 data"
-    );
+    assert!(bob1.decrypt_data(&data2).is_err(), "session 1 must not decrypt session 2 data");
 
     // Each session works with its own data
-    assert_eq!(
-        bob1.decrypt_data(&data1).expect("decrypt in own session"),
-        b"session-1-data"
-    );
-    assert_eq!(
-        bob2.decrypt_data(&data2).expect("decrypt in own session"),
-        b"session-2-data"
-    );
+    assert_eq!(bob1.decrypt_data(&data1).expect("decrypt in own session"), b"session-1-data");
+    assert_eq!(bob2.decrypt_data(&data2).expect("decrypt in own session"), b"session-2-data");
 }
 
 fn establish(alice_hash: [u8; 16], bob_hash: [u8; 16]) -> (PqcSession, PqcSession) {

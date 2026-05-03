@@ -12,9 +12,7 @@ use styrene_content::chunk_profile::ChunkProfile;
 use styrene_content::content_id::ContentId;
 use styrene_content::manifest::{Sig64, StyreneManifest};
 
-use styrene_mesh::wire::{
-    ChunkRequestPayload, ChunkResponsePayload, ResourceAvailablePayload,
-};
+use styrene_mesh::wire::{ChunkRequestPayload, ChunkResponsePayload, ResourceAvailablePayload};
 use styrene_mesh::{StyreneMessage, StyreneMessageType};
 
 use styrene_e2e::helpers::{with_timeout, SETTLE};
@@ -77,10 +75,7 @@ async fn resource_available_payload_roundtrip_over_wire() {
 
 #[tokio::test]
 async fn chunk_request_response_roundtrip_over_wire() {
-    let req = ChunkRequestPayload {
-        content_id: [0x01u8; 32],
-        chunk_index: 42,
-    };
+    let req = ChunkRequestPayload { content_id: [0x01u8; 32], chunk_index: 42 };
     let req_bytes = req.encode().expect("encode request");
     let msg = StyreneMessage::new(StyreneMessageType::ChunkRequest, &req_bytes);
     let decoded_msg = StyreneMessage::decode(&msg.encode()).expect("decode");
@@ -104,10 +99,7 @@ async fn chunk_request_response_roundtrip_over_wire() {
 #[tokio::test]
 async fn content_announce_propagates_between_nodes() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-content")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-content").tcp_server("127.0.0.1:0").build().await;
 
         let bob = TestNodeBuilder::new("bob-content")
             .tcp_client(alice.listen_addr.expect("addr"))
@@ -171,12 +163,9 @@ async fn content_announce_propagates_between_nodes() {
             Ok(Ok(data)) => {
                 // Try to decode as StyreneMessage
                 if let Ok(decoded) = StyreneMessage::decode(data.data.as_slice()) {
-                    assert_eq!(
-                        decoded.message_type,
-                        StyreneMessageType::ResourceAvailable
-                    );
-                    let p = ResourceAvailablePayload::decode(&decoded.payload)
-                        .expect("decode payload");
+                    assert_eq!(decoded.message_type, StyreneMessageType::ResourceAvailable);
+                    let p =
+                        ResourceAvailablePayload::decode(&decoded.payload).expect("decode payload");
                     assert_eq!(p.content_id, *manifest.content_id.as_bytes());
                     assert_eq!(p.seeder_hash, alice_id);
                 }
@@ -209,10 +198,7 @@ async fn mesh_content_transport_adapter_compiles_and_constructs() {
     // Full publish/download over mesh requires link-based delivery (future work),
     // but construction and trait conformance should work.
     with_timeout(async {
-        let node = TestNodeBuilder::new("content-adapter")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("content-adapter").tcp_server("127.0.0.1:0").build().await;
 
         let _transport = styrened::transport::content_transport::MeshContentTransport::new(
             node.app_context.transport_arc(),

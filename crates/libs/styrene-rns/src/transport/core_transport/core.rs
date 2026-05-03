@@ -152,9 +152,7 @@ impl Transport {
     }
 
     /// Dump the entire path table as (destination, hops, received_from, interface) tuples.
-    pub async fn path_table_entries(
-        &self,
-    ) -> Vec<(AddressHash, u8, AddressHash, AddressHash)> {
+    pub async fn path_table_entries(&self) -> Vec<(AddressHash, u8, AddressHash, AddressHash)> {
         let handler = self.handler.lock().await;
         handler
             .path_table

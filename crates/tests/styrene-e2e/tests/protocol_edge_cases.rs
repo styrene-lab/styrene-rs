@@ -7,11 +7,11 @@ use std::time::Duration;
 use tokio::net::UnixStream;
 
 use styrene_e2e::helpers::{
-    with_timeout, await_identity_resolved, await_inbound_count, two_connected_nodes, SETTLE,
+    await_identity_resolved, await_inbound_count, two_connected_nodes, with_timeout, SETTLE,
 };
 use styrene_e2e::node::TestNodeBuilder;
 use styrene_mesh::{StyreneMessage, StyreneMessageType, WIRE_VERSION};
-use styrene_rbac::{RosterEntry, Role};
+use styrene_rbac::{Role, RosterEntry};
 
 // ── Wire Version Rejection ─────────────────────────────────────────────
 
@@ -78,11 +78,8 @@ async fn ipc_events_arrive_in_send_order() {
         }
 
         // Filter to our test messages
-        let ordered: Vec<_> = message_contents
-            .iter()
-            .filter(|c| c.starts_with("order-"))
-            .cloned()
-            .collect();
+        let ordered: Vec<_> =
+            message_contents.iter().filter(|c| c.starts_with("order-")).cloned().collect();
 
         assert_eq!(ordered.len(), 3, "should have 3 ordered events");
         assert_eq!(ordered[0], "order-0");
@@ -97,10 +94,7 @@ async fn ipc_events_arrive_in_send_order() {
 #[tokio::test]
 async fn ipc_send_triggers_event_for_subscriber() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-cross")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-cross").tcp_server("127.0.0.1:0").build().await;
         let bob = TestNodeBuilder::new("bob-cross")
             .tcp_client(alice.listen_addr.expect("addr"))
             .build()
@@ -109,12 +103,8 @@ async fn ipc_send_triggers_event_for_subscriber() {
         tokio::time::sleep(SETTLE).await;
         alice.announce().await;
         bob.announce().await;
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Start IPC server on bob with event bridge
         let dir = tempfile::tempdir().expect("tempdir");
@@ -136,7 +126,9 @@ async fn ipc_send_triggers_event_for_subscriber() {
         tokio::spawn(async move {
             loop {
                 match daemon_rx.recv().await {
-                    Ok(ev) => { let _ = event_tx.send(ev); }
+                    Ok(ev) => {
+                        let _ = event_tx.send(ev);
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(_) => break,
                 }
@@ -184,10 +176,7 @@ async fn ipc_send_triggers_event_for_subscriber() {
             styrene_ipc_server::wire::MessageType::EventMessage,
             "subscriber should receive EventMessage"
         );
-        assert_eq!(
-            event.payload.get("content").and_then(|v| v.as_str()),
-            Some("cross-client")
-        );
+        assert_eq!(event.payload.get("content").and_then(|v| v.as_str()), Some("cross-client"));
     })
     .await;
 }
@@ -197,10 +186,7 @@ async fn ipc_send_triggers_event_for_subscriber() {
 #[tokio::test]
 async fn fleet_exec_on_own_delivery_hash() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("self-exec")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("self-exec").tcp_server("127.0.0.1:0").build().await;
 
         tokio::time::sleep(SETTLE).await;
 
@@ -217,10 +203,7 @@ async fn fleet_exec_on_own_delivery_hash() {
             .exec(&node.delivery_hash, "echo", &["self-test".into()], Some(3))
             .await;
 
-        assert!(
-            result.is_err(),
-            "fleet exec on self should fail (can't establish self-link)"
-        );
+        assert!(result.is_err(), "fleet exec on self should fail (can't establish self-link)");
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("timeout") || err.contains("failed"),
@@ -293,18 +276,40 @@ async fn content_distribution_multi_chunk() {
     #[derive(Debug)]
     struct ChanErr;
     impl core::fmt::Display for ChanErr {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { write!(f, "chan") }
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "chan")
+        }
     }
     impl ContentTransport for ChanTransport {
         type Error = ChanErr;
-        async fn broadcast_announce(&mut self, a: &styrene_content::announce::ResourceAvailableAnnounce) -> Result<(), ChanErr> {
+        async fn broadcast_announce(
+            &mut self,
+            a: &styrene_content::announce::ResourceAvailableAnnounce,
+        ) -> Result<(), ChanErr> {
             self.tx.send(ContentEvent::Announce(*a)).await.map_err(|_| ChanErr)
         }
-        async fn send_chunk_request(&mut self, f: &[u8; 16], c: ContentId, i: u32) -> Result<(), ChanErr> {
-            self.tx.send(ContentEvent::ChunkRequest { from: *f, content_id: c, index: i }).await.map_err(|_| ChanErr)
+        async fn send_chunk_request(
+            &mut self,
+            f: &[u8; 16],
+            c: ContentId,
+            i: u32,
+        ) -> Result<(), ChanErr> {
+            self.tx
+                .send(ContentEvent::ChunkRequest { from: *f, content_id: c, index: i })
+                .await
+                .map_err(|_| ChanErr)
         }
-        async fn send_chunk_response(&mut self, _: &[u8; 16], c: ContentId, i: u32, d: &[u8]) -> Result<(), ChanErr> {
-            self.tx.send(ContentEvent::ChunkResponse { content_id: c, index: i, data: d.to_vec() }).await.map_err(|_| ChanErr)
+        async fn send_chunk_response(
+            &mut self,
+            _: &[u8; 16],
+            c: ContentId,
+            i: u32,
+            d: &[u8],
+        ) -> Result<(), ChanErr> {
+            self.tx
+                .send(ContentEvent::ChunkResponse { content_id: c, index: i, data: d.to_vec() })
+                .await
+                .map_err(|_| ChanErr)
         }
         async fn recv_event(&mut self) -> Result<Option<ContentEvent>, ChanErr> {
             Ok(self.rx.recv().await)
@@ -316,14 +321,27 @@ async fn content_distribution_multi_chunk() {
 
     // Broadcast announce
     let mut held = ChunkBitset::new();
-    for i in 0..chunk_count { held.set(i); }
+    for i in 0..chunk_count {
+        held.set(i);
+    }
     let manifest_bytes = manifest.encode().expect("encode");
-    let manifest_hash = { let h = blake3::hash(&manifest_bytes); let mut o = [0u8;16]; o.copy_from_slice(&h.as_bytes()[..16]); o };
-    let announce = styrene_content::announce::ResourceAvailableAnnounce::new(content_id, manifest_hash, held, [0xAAu8; 16]);
+    let manifest_hash = {
+        let h = blake3::hash(&manifest_bytes);
+        let mut o = [0u8; 16];
+        o.copy_from_slice(&h.as_bytes()[..16]);
+        o
+    };
+    let announce = styrene_content::announce::ResourceAvailableAnnounce::new(
+        content_id,
+        manifest_hash,
+        held,
+        [0xAAu8; 16],
+    );
     pub_transport.broadcast_announce(&announce).await.expect("announce");
 
     // Downloader
-    let mut downloader = styrene_content::ContentDistributor::new(RamChunkStore::new(), dl_transport, [0xBBu8; 16]);
+    let mut downloader =
+        styrene_content::ContentDistributor::new(RamChunkStore::new(), dl_transport, [0xBBu8; 16]);
 
     let manifest_clone = manifest.clone();
     let dl_handle = tokio::spawn(async move { downloader.download(&manifest_clone).await });
@@ -335,7 +353,10 @@ async fn content_distribution_multi_chunk() {
             match pub_transport.recv_event().await {
                 Ok(Some(ContentEvent::ChunkRequest { from, content_id, index })) => {
                     let n = publisher_store.read_chunk(content_id, index, &mut buf).await.unwrap();
-                    pub_transport.send_chunk_response(&from, content_id, index, &buf[..n]).await.unwrap();
+                    pub_transport
+                        .send_chunk_response(&from, content_id, index, &buf[..n])
+                        .await
+                        .unwrap();
                 }
                 Ok(Some(_)) => {}
                 _ => break,

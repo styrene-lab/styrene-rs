@@ -8,7 +8,9 @@ use alloc::vec::Vec;
 use base64::Engine;
 use ed25519_dalek::Signature;
 use rand_core::CryptoRngCore;
-use rns_core::crypt::fernet::{Fernet, PlainText, Token, FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE};
+use rns_core::crypt::fernet::{
+    Fernet, PlainText, Token, FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE,
+};
 use rns_core::identity::{DerivedKey, Identity, PrivateIdentity, PUBLIC_KEY_LENGTH};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -288,9 +290,8 @@ pub fn decrypt_for_identity<R: CryptoRngCore + Copy>(
 
     let fernet = Fernet::new_from_slices(&key_bytes[..split], &key_bytes[split..], rng);
     let token = Token::from(&ciphertext[PUBLIC_KEY_LENGTH..]);
-    let token = fernet
-        .verify(token)
-        .map_err(|e| LxmfError::Decode(format!("fernet verify: {e:?}")))?;
+    let token =
+        fernet.verify(token).map_err(|e| LxmfError::Decode(format!("fernet verify: {e:?}")))?;
 
     let mut out = vec![0u8; ciphertext.len()];
     let plaintext = fernet

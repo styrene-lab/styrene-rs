@@ -4,18 +4,15 @@
 //! that paths are bidirectional, that unknown destinations have no path,
 //! and that paths are reachable through multi-hop topologies.
 
-use std::time::Duration;
-use styrene_e2e::helpers::{with_timeout, await_identity_resolved, await_path, SETTLE};
-use styrene_e2e::node::TestNodeBuilder;
 use rns_core::hash::AddressHash;
+use std::time::Duration;
+use styrene_e2e::helpers::{await_identity_resolved, await_path, with_timeout, SETTLE};
+use styrene_e2e::node::TestNodeBuilder;
 
 #[tokio::test]
 async fn bidirectional_path_resolution() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice").tcp_server("127.0.0.1:0").build().await;
 
         let bob = TestNodeBuilder::new("bob")
             .tcp_client(alice.listen_addr.expect("listen addr"))
@@ -27,24 +24,13 @@ async fn bidirectional_path_resolution() {
         bob.announce().await;
 
         // Wait for mutual discovery
-        await_identity_resolved(
-            &bob.app_context,
-            &alice.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&bob.app_context, &alice.delivery_addr, Duration::from_secs(10))
+            .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Bob → Alice path
-        bob.app_context
-            .transport()
-            .request_path(&alice.delivery_addr)
-            .await;
+        bob.app_context.transport().request_path(&alice.delivery_addr).await;
         await_path(&bob.app_context, &alice.delivery_addr, Duration::from_secs(10)).await;
 
         let (hops_b2a, next_hop_b2a) = bob
@@ -55,11 +41,7 @@ async fn bidirectional_path_resolution() {
             .expect("bob should have path to alice");
 
         // Alice → Bob path
-        alice
-            .app_context
-            .transport()
-            .request_path(&bob.delivery_addr)
-            .await;
+        alice.app_context.transport().request_path(&bob.delivery_addr).await;
         await_path(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10)).await;
 
         let (hops_a2b, next_hop_a2b) = alice
@@ -74,16 +56,8 @@ async fn bidirectional_path_resolution() {
         assert!(hops_a2b <= 2, "alice→bob should be direct, got {} hops", hops_a2b);
 
         // Next-hop interface addresses should be non-zero (real interfaces)
-        assert_ne!(
-            next_hop_b2a.as_slice(),
-            &[0u8; 16],
-            "next-hop interface should be non-zero"
-        );
-        assert_ne!(
-            next_hop_a2b.as_slice(),
-            &[0u8; 16],
-            "next-hop interface should be non-zero"
-        );
+        assert_ne!(next_hop_b2a.as_slice(), &[0u8; 16], "next-hop interface should be non-zero");
+        assert_ne!(next_hop_a2b.as_slice(), &[0u8; 16], "next-hop interface should be non-zero");
     })
     .await;
 }
@@ -91,35 +65,18 @@ async fn bidirectional_path_resolution() {
 #[tokio::test]
 async fn no_path_for_unknown_destination() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-nopath")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-nopath").tcp_server("127.0.0.1:0").build().await;
 
         tokio::time::sleep(SETTLE).await;
 
         // Query path for a fabricated destination — should be None
         let fake_dest = AddressHash::new([0xDE; 16]);
-        let path = alice
-            .app_context
-            .transport()
-            .query_path(&fake_dest)
-            .await;
-        assert!(
-            path.is_none(),
-            "should have no path to unknown destination"
-        );
+        let path = alice.app_context.transport().query_path(&fake_dest).await;
+        assert!(path.is_none(), "should have no path to unknown destination");
 
         // Identity resolution should also fail
-        let identity = alice
-            .app_context
-            .transport()
-            .resolve_identity(&fake_dest)
-            .await;
-        assert!(
-            identity.is_none(),
-            "should not resolve identity for unknown destination"
-        );
+        let identity = alice.app_context.transport().resolve_identity(&fake_dest).await;
+        assert!(identity.is_none(), "should not resolve identity for unknown destination");
     })
     .await;
 }
@@ -128,10 +85,7 @@ async fn no_path_for_unknown_destination() {
 async fn path_through_hub_node() {
     with_timeout(async {
         // A ↔ Hub ↔ C — both spokes connect to hub
-        let hub = TestNodeBuilder::new("hub")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let hub = TestNodeBuilder::new("hub").tcp_server("127.0.0.1:0").build().await;
 
         let spoke_a = TestNodeBuilder::new("spoke-a")
             .tcp_client(hub.listen_addr.expect("hub addr"))
@@ -149,28 +103,14 @@ async fn path_through_hub_node() {
         spoke_c.announce().await;
 
         // Hub should discover both spokes
-        await_identity_resolved(
-            &hub.app_context,
-            &spoke_a.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
-        await_identity_resolved(
-            &hub.app_context,
-            &spoke_c.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&hub.app_context, &spoke_a.delivery_addr, Duration::from_secs(10))
+            .await;
+        await_identity_resolved(&hub.app_context, &spoke_c.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Hub should have paths to both spokes
-        hub.app_context
-            .transport()
-            .request_path(&spoke_a.delivery_addr)
-            .await;
-        hub.app_context
-            .transport()
-            .request_path(&spoke_c.delivery_addr)
-            .await;
+        hub.app_context.transport().request_path(&spoke_a.delivery_addr).await;
+        hub.app_context.transport().request_path(&spoke_c.delivery_addr).await;
 
         await_path(&hub.app_context, &spoke_a.delivery_addr, Duration::from_secs(10)).await;
         await_path(&hub.app_context, &spoke_c.delivery_addr, Duration::from_secs(10)).await;
@@ -202,10 +142,7 @@ async fn path_through_hub_node() {
 #[tokio::test]
 async fn identity_resolution_returns_correct_public_key() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-resolve")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-resolve").tcp_server("127.0.0.1:0").build().await;
 
         let bob = TestNodeBuilder::new("bob-resolve")
             .tcp_client(alice.listen_addr.expect("listen addr"))
@@ -215,12 +152,8 @@ async fn identity_resolution_returns_correct_public_key() {
         tokio::time::sleep(SETTLE).await;
         bob.announce().await;
 
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Resolved identity's public key should match bob's actual keys
         let resolved = alice

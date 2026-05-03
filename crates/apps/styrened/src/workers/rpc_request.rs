@@ -7,7 +7,6 @@
 //! back via the transport layer.
 
 use crate::services::{MessagingService, PolicyService};
-use styrene_rbac::Capability;
 use crate::transport::mesh_transport::MeshTransport;
 use async_trait::async_trait;
 use rand_core::{OsRng, RngCore};
@@ -16,6 +15,7 @@ use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use std::sync::Arc;
 use styrene_mesh::{StyreneMessage, StyreneMessageType};
+use styrene_rbac::Capability;
 use styrene_services::protocol_registry::{HandleResult, InboundMessage, ProtocolHandler};
 
 /// RAII guard that removes a temp file on drop (including panics).
@@ -149,12 +149,10 @@ impl RpcRequestHandler {
         const MAX_OUTPUT: usize = 1024 * 1024; // 1 MB
         match output {
             Ok(output) => {
-                let stdout = String::from_utf8_lossy(
-                    &output.stdout[..output.stdout.len().min(MAX_OUTPUT)],
-                );
-                let stderr = String::from_utf8_lossy(
-                    &output.stderr[..output.stderr.len().min(MAX_OUTPUT)],
-                );
+                let stdout =
+                    String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(MAX_OUTPUT)]);
+                let stderr =
+                    String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(MAX_OUTPUT)]);
                 Self::cbor_encode(&serde_json::json!({
                     "exit_code": output.status.code().unwrap_or(-1),
                     "stdout": stdout,
@@ -219,7 +217,7 @@ impl RpcRequestHandler {
                 return Self::cbor_encode(&serde_json::json!({
                     "success": false, "verified": false, "exit_code": -1,
                     "stdout": "", "stderr": "invalid profile encoding",
-                }))
+                }));
             }
         };
 
@@ -265,9 +263,8 @@ impl RpcRequestHandler {
         // Verify if requested
         let mut verified = false;
         if verify {
-            let verify_output = std::process::Command::new("nex")
-                .args(["profile", "verify", &tmp_path])
-                .output();
+            let verify_output =
+                std::process::Command::new("nex").args(["profile", "verify", &tmp_path]).output();
             match verify_output {
                 Ok(output) if output.status.success() => {
                     verified = true;
@@ -292,9 +289,8 @@ impl RpcRequestHandler {
         }
 
         // Apply
-        let apply_output = std::process::Command::new("nex")
-            .args(["profile", "apply", &tmp_path])
-            .output();
+        let apply_output =
+            std::process::Command::new("nex").args(["profile", "apply", &tmp_path]).output();
 
         match apply_output {
             Ok(output) => Self::cbor_encode(&serde_json::json!({
@@ -345,10 +341,7 @@ impl ProtocolHandler for RpcRequestHandler {
         let (response_type, response_payload) = match message.message_type {
             StyreneMessageType::StatusRequest => {
                 // Status is read-only — allowed from any peer
-                (
-                    StyreneMessageType::StatusResponse,
-                    self.handle_status_request(),
-                )
+                (StyreneMessageType::StatusResponse, self.handle_status_request())
             }
             StyreneMessageType::Exec => {
                 if !self.policy.has_capability(source, Capability::RPC_EXEC) {
@@ -365,10 +358,7 @@ impl ProtocolHandler for RpcRequestHandler {
                         })),
                     )
                 } else {
-                    (
-                        StyreneMessageType::ExecResult,
-                        self.handle_exec_request(&message.payload),
-                    )
+                    (StyreneMessageType::ExecResult, self.handle_exec_request(&message.payload))
                 }
             }
             StyreneMessageType::Reboot => {
@@ -385,10 +375,7 @@ impl ProtocolHandler for RpcRequestHandler {
                         })),
                     )
                 } else {
-                    (
-                        StyreneMessageType::RebootResult,
-                        self.handle_reboot_request(&message.payload),
-                    )
+                    (StyreneMessageType::RebootResult, self.handle_reboot_request(&message.payload))
                 }
             }
             StyreneMessageType::ConfigUpdate => {
@@ -421,10 +408,7 @@ impl ProtocolHandler for RpcRequestHandler {
         let source = msg.source_hash.clone();
 
         // Send response asynchronously
-        match self
-            .send_response(&source, request_id, response_type, &response_payload)
-            .await
-        {
+        match self.send_response(&source, request_id, response_type, &response_payload).await {
             Ok(()) => {
                 eprintln!(
                     "[rpc-request] handled {:?} from {}, sent {:?}",

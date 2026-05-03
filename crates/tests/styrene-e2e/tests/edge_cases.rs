@@ -4,18 +4,13 @@
 //! late joiners, announce updates, message to self.
 
 use std::time::Duration;
-use styrene_e2e::helpers::{
-    with_timeout, await_identity_resolved, await_inbound_count, SETTLE,
-};
+use styrene_e2e::helpers::{await_identity_resolved, await_inbound_count, with_timeout, SETTLE};
 use styrene_e2e::node::TestNodeBuilder;
 
 #[tokio::test]
 async fn send_to_unknown_peer_fails_with_status() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-fail")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-fail").tcp_server("127.0.0.1:0").build().await;
 
         // No bob exists — alice tries to send to a fabricated hash
         let fake_hash = "deadbeefdeadbeefdeadbeefdeadbeef";
@@ -47,10 +42,7 @@ async fn send_to_unknown_peer_fails_with_status() {
                     .expect("query")
                     .expect("message should be persisted");
                 assert!(
-                    msg.receipt_status
-                        .as_deref()
-                        .map(|s| s.contains("failed"))
-                        .unwrap_or(false),
+                    msg.receipt_status.as_deref().map(|s| s.contains("failed")).unwrap_or(false),
                     "message to unknown peer should have 'failed' receipt status, got {:?}",
                     msg.receipt_status
                 );
@@ -64,10 +56,7 @@ async fn send_to_unknown_peer_fails_with_status() {
 async fn late_joiner_discovers_existing_node() {
     with_timeout(async {
         // Alice starts and announces first
-        let alice = TestNodeBuilder::new("alice-early")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-early").tcp_server("127.0.0.1:0").build().await;
 
         tokio::time::sleep(SETTLE).await;
         alice.announce().await;
@@ -84,30 +73,19 @@ async fn late_joiner_discovers_existing_node() {
 
         // Bob announces — alice should discover bob
         bob.announce().await;
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // But can bob discover alice? Alice announced before bob connected.
         // Alice needs to re-announce, or bob needs to have received the
         // announce that was broadcast when bob's TCP connection was up.
         // Let's have alice re-announce and verify bob gets it.
         alice.announce().await;
-        await_identity_resolved(
-            &bob.app_context,
-            &alice.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&bob.app_context, &alice.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Now verify they can actually exchange messages
-        alice
-            .send_chat(&bob.delivery_hash, "late joiner msg")
-            .await
-            .expect("send to late joiner");
+        alice.send_chat(&bob.delivery_hash, "late joiner msg").await.expect("send to late joiner");
         let received = await_inbound_count(&bob.app_context, 1, Duration::from_secs(15)).await;
         assert_eq!(received[0].content, "late joiner msg");
     })
@@ -117,10 +95,7 @@ async fn late_joiner_discovers_existing_node() {
 #[tokio::test]
 async fn announce_updates_node_store_display_name() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-name")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-name").tcp_server("127.0.0.1:0").build().await;
 
         let bob = TestNodeBuilder::new("bob-name")
             .tcp_client(alice.listen_addr.expect("listen addr"))
@@ -131,12 +106,8 @@ async fn announce_updates_node_store_display_name() {
 
         // First announce from bob
         bob.announce().await;
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Check initial node store state.
         // The announce worker keys by the delivery destination hash,
@@ -173,10 +144,7 @@ async fn announce_updates_node_store_display_name() {
             .iter()
             .find(|n| n.identity_hash == bob.delivery_hash)
             .expect("bob should be in node store");
-        assert!(
-            node.last_seen >= node.first_seen,
-            "last_seen should be >= first_seen"
-        );
+        assert!(node.last_seen >= node.first_seen, "last_seen should be >= first_seen");
     })
     .await;
 }
@@ -185,10 +153,7 @@ async fn announce_updates_node_store_display_name() {
 async fn three_nodes_linear_topology() {
     with_timeout(async {
         // A ↔ B ↔ C (hub-and-spoke through B)
-        let node_b = TestNodeBuilder::new("hub-b")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node_b = TestNodeBuilder::new("hub-b").tcp_server("127.0.0.1:0").build().await;
 
         let node_a = TestNodeBuilder::new("spoke-a")
             .tcp_client(node_b.listen_addr.expect("listen addr"))
@@ -236,33 +201,14 @@ async fn three_nodes_linear_topology() {
         .await;
 
         // A → B should work (direct connection)
-        node_a
-            .send_chat(&node_b.delivery_hash, "a-to-b")
-            .await
-            .expect("send a→b");
-        let received = await_inbound_count(
-            &node_b.app_context,
-            1,
-            Duration::from_secs(15),
-        )
-        .await;
+        node_a.send_chat(&node_b.delivery_hash, "a-to-b").await.expect("send a→b");
+        let received = await_inbound_count(&node_b.app_context, 1, Duration::from_secs(15)).await;
         assert_eq!(received[0].content, "a-to-b");
 
         // C → B should work (direct connection)
-        node_c
-            .send_chat(&node_b.delivery_hash, "c-to-b")
-            .await
-            .expect("send c→b");
-        let received = await_inbound_count(
-            &node_b.app_context,
-            2,
-            Duration::from_secs(15),
-        )
-        .await;
-        let c_msgs: Vec<_> = received
-            .iter()
-            .filter(|m| m.content == "c-to-b")
-            .collect();
+        node_c.send_chat(&node_b.delivery_hash, "c-to-b").await.expect("send c→b");
+        let received = await_inbound_count(&node_b.app_context, 2, Duration::from_secs(15)).await;
+        let c_msgs: Vec<_> = received.iter().filter(|m| m.content == "c-to-b").collect();
         assert_eq!(c_msgs.len(), 1, "B should have received c-to-b");
 
         // Verify B's store has messages from both A and C with correct attribution

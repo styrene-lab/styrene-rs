@@ -10,10 +10,7 @@ use styrene_e2e::node::TestNodeBuilder;
 async fn two_nodes_connect_via_tcp() {
     with_timeout(async {
         // Alice serves, Bob connects
-        let alice = TestNodeBuilder::new("alice")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice").tcp_server("127.0.0.1:0").build().await;
 
         let bob = TestNodeBuilder::new("bob")
             .tcp_client(alice.listen_addr.expect("alice must have listen addr"))
@@ -33,10 +30,7 @@ async fn two_nodes_connect_via_tcp() {
         );
 
         // Verify distinct identities
-        assert_ne!(
-            alice.identity_hash, bob.identity_hash,
-            "nodes must have different identities"
-        );
+        assert_ne!(alice.identity_hash, bob.identity_hash, "nodes must have different identities");
 
         // Verify listen address was resolved
         let addr = alice.listen_addr.expect("listen addr");
@@ -48,10 +42,7 @@ async fn two_nodes_connect_via_tcp() {
 #[tokio::test]
 async fn node_identity_hash_matches_delivery_derivation() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("hash-check")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("hash-check").tcp_server("127.0.0.1:0").build().await;
 
         // delivery_hash should differ from identity_hash
         // (delivery hash = Hash(dest_name_hash || identity_hash))

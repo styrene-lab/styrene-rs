@@ -127,8 +127,7 @@ fn sign_with_styrene_verify_with_rns() {
     let rns_verifying = rns_id.as_identity().verifying_key_bytes();
 
     assert_eq!(
-        attestation.pubkey,
-        *rns_verifying,
+        attestation.pubkey, *rns_verifying,
         "styrene-identity pubkey should match RNS verifying key"
     );
 
@@ -164,8 +163,7 @@ fn derived_identity_works_with_transport_bridge() {
     let rns_id = private_identity_from_root(&root);
 
     // The transport bridge should preserve the identity
-    let transport_id =
-        rns_core::transport::identity_bridge::to_transport_private_identity(&rns_id);
+    let transport_id = rns_core::transport::identity_bridge::to_transport_private_identity(&rns_id);
 
     assert_eq!(
         rns_id.address_hash().as_slice(),
@@ -195,11 +193,7 @@ fn all_protocol_keys_are_unique() {
     let mut keys = std::collections::HashSet::new();
     for purpose in KeyPurpose::all() {
         let key = deriver.derive(*purpose);
-        assert!(
-            keys.insert(key),
-            "key for {:?} should be unique",
-            purpose
-        );
+        assert!(keys.insert(key), "key for {:?} should be unique", purpose);
     }
 }
 
@@ -207,9 +201,9 @@ fn all_protocol_keys_are_unique() {
 
 #[tokio::test]
 async fn vault_init_unlock_produces_same_identity() {
-    use styrene_identity::IdentitySigner;
     use styrene_identity::file_signer::ClosurePassphraseProvider;
     use styrene_identity::vault::IdentityVault;
+    use styrene_identity::IdentitySigner;
 
     let dir = tempfile::tempdir().expect("tempdir");
     let key_path = dir.path().join("test-identity.key");
@@ -237,17 +231,14 @@ async fn vault_init_unlock_produces_same_identity() {
     let id2 = private_identity_from_root(&root2);
     let hash2 = hex::encode(id2.address_hash().as_slice());
 
-    assert_eq!(
-        hash1, hash2,
-        "same vault file should produce same identity on re-unlock"
-    );
+    assert_eq!(hash1, hash2, "same vault file should produce same identity on re-unlock");
 }
 
 #[tokio::test]
 async fn vault_wrong_passphrase_fails() {
-    use styrene_identity::IdentitySigner;
     use styrene_identity::file_signer::ClosurePassphraseProvider;
     use styrene_identity::vault::IdentityVault;
+    use styrene_identity::IdentitySigner;
 
     let dir = tempfile::tempdir().expect("tempdir");
     let key_path = dir.path().join("test-wrong-pass.key");
@@ -265,8 +256,5 @@ async fn vault_wrong_passphrase_fails() {
         Box::new(ClosurePassphraseProvider::new(|| Ok(b"wrong".to_vec()))),
     );
     let result = vault2.signer().root_secret().await;
-    assert!(
-        result.is_err(),
-        "wrong passphrase should fail to unlock vault"
-    );
+    assert!(result.is_err(), "wrong passphrase should fail to unlock vault");
 }

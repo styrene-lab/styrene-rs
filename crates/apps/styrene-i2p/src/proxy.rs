@@ -143,11 +143,8 @@ async fn handle_request(
         Ok(r) => r,
         Err(e) => {
             let code = if e.is_timeout() { 504 } else { 502 };
-            let msg = if e.is_timeout() {
-                "i2pd request timed out"
-            } else {
-                "i2pd proxy unreachable"
-            };
+            let msg =
+                if e.is_timeout() { "i2pd request timed out" } else { "i2pd proxy unreachable" };
             eprintln!("[proxy] i2pd error for {url}: {e}");
             return Ok(error_response(code, msg));
         }
@@ -159,10 +156,7 @@ async fn handle_request(
 
     for (name, value) in response.headers() {
         // Skip hop-by-hop headers
-        if !matches!(
-            name.as_str(),
-            "connection" | "transfer-encoding" | "keep-alive"
-        ) {
+        if !matches!(name.as_str(), "connection" | "transfer-encoding" | "keep-alive") {
             builder = builder.header(name, value);
         }
     }
@@ -177,9 +171,7 @@ async fn handle_request(
 
     eprintln!("[proxy] {status} {} bytes for {url}", response_body.len());
 
-    Ok(builder
-        .body(Full::new(Bytes::from(response_body.to_vec())))
-        .unwrap())
+    Ok(builder.body(Full::new(Bytes::from(response_body.to_vec()))).unwrap())
 }
 
 fn error_response(code: u16, message: &str) -> Response<Full<Bytes>> {
@@ -257,7 +249,11 @@ async fn handle_mesh_request(
     let body_bytes = match req.collect().await {
         Ok(b) => {
             let b = b.to_bytes();
-            if b.is_empty() { None } else { Some(b.to_vec()) }
+            if b.is_empty() {
+                None
+            } else {
+                Some(b.to_vec())
+            }
         }
         Err(e) => {
             eprintln!("[proxy] failed to read request body: {e}");
@@ -267,10 +263,7 @@ async fn handle_mesh_request(
 
     // Send via mesh
     let url = uri.to_string();
-    match client
-        .proxy_request(method.as_str(), &url, headers, body_bytes)
-        .await
-    {
+    match client.proxy_request(method.as_str(), &url, headers, body_bytes).await {
         Ok(resp) => {
             let mut builder = Response::builder().status(resp.status);
             for (name, value) in &resp.headers {
@@ -279,9 +272,7 @@ async fn handle_mesh_request(
                 }
             }
             eprintln!("[proxy] mesh {}: {} bytes for {url}", resp.status, resp.body.len());
-            Ok(builder
-                .body(Full::new(Bytes::from(resp.body)))
-                .unwrap())
+            Ok(builder.body(Full::new(Bytes::from(resp.body))).unwrap())
         }
         Err(e) => {
             eprintln!("[proxy] mesh error for {url}: {e}");

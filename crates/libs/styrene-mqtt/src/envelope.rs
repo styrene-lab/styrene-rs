@@ -71,10 +71,7 @@ pub fn encode_user_properties(meta: &Metadata) -> Vec<(String, String)> {
 /// Decode metadata from MQTT 5.0 user property key-value pairs.
 pub fn decode_user_properties(props: &[(String, String)]) -> Result<Metadata> {
     let find = |key: &str| -> Option<&str> {
-        props
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
+        props.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
     };
 
     let ts_str = find(KEY_TIMESTAMP).ok_or_else(|| {
@@ -128,10 +125,8 @@ pub fn encode_payload<T: Serialize>(payload: &T) -> Result<Vec<u8>> {
 
 /// Deserialize a payload from JSON bytes.
 pub fn decode_payload<T: DeserializeOwned>(bytes: &[u8], topic: &str) -> Result<T> {
-    serde_json::from_slice(bytes).map_err(|e| MqttError::Deserialization {
-        topic: topic.to_owned(),
-        source: e,
-    })
+    serde_json::from_slice(bytes)
+        .map_err(|e| MqttError::Deserialization { topic: topic.to_owned(), source: e })
 }
 
 #[cfg(test)]

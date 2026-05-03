@@ -7,11 +7,13 @@
 //! API for the local HTTP proxy.
 
 use anyhow::{Context, Result};
+use lxmf::inbound_decode::InboundPayloadMode;
 use rns_core::destination::DestinationName;
 use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
-use lxmf::inbound_decode::InboundPayloadMode;
-use rns_core::transport::core_transport::{ReceivedData, ReceivedPayloadMode, Transport, TransportConfig};
+use rns_core::transport::core_transport::{
+    ReceivedData, ReceivedPayloadMode, Transport, TransportConfig,
+};
 use rns_core::transport::iface::tcp_client::TcpClient;
 use rns_core::transport::iface::tcp_server::TcpServer;
 use std::collections::HashMap;
@@ -77,10 +79,7 @@ impl MeshClient {
         let identity = load_or_create_identity(&identity_path)
             .with_context(|| format!("load identity: {}", identity_path.display()))?;
 
-        eprintln!(
-            "[mesh] identity loaded: {}",
-            hex::encode(identity.address_hash().as_slice())
-        );
+        eprintln!("[mesh] identity loaded: {}", hex::encode(identity.address_hash().as_slice()));
 
         // Initialize transport
         let transport_identity =
@@ -93,32 +92,20 @@ impl MeshClient {
         let iface_manager = transport_instance.iface_manager();
         let listen_addr = "0.0.0.0:0".to_string(); // OS-assigned port
         let (tcp_server, _bound_rx) = TcpServer::new(listen_addr.clone(), iface_manager.clone());
-        let server_iface = iface_manager
-            .lock()
-            .await
-            .spawn(tcp_server, TcpServer::spawn);
+        let server_iface = iface_manager.lock().await.spawn(tcp_server, TcpServer::spawn);
         eprintln!("[mesh] TCP server iface={server_iface} (for return traffic)");
 
         // Connect to hub via TCP
-        let iface_id = iface_manager
-            .lock()
-            .await
-            .spawn(TcpClient::new(hub_addr), TcpClient::spawn);
+        let iface_id = iface_manager.lock().await.spawn(TcpClient::new(hub_addr), TcpClient::spawn);
         eprintln!("[mesh] TCP client iface={iface_id} connecting to {hub_addr}");
 
         // Register LXMF delivery destination (for receiving responses)
         let destination = transport_instance
-            .add_destination(
-                transport_identity.clone(),
-                DestinationName::new("lxmf", "delivery"),
-            )
+            .add_destination(transport_identity.clone(), DestinationName::new("lxmf", "delivery"))
             .await;
         let (delivery_hash, delivery_addr) = {
             let dest = destination.lock().await;
-            (
-                hex::encode(dest.desc.address_hash.as_slice()),
-                dest.desc.address_hash,
-            )
+            (hex::encode(dest.desc.address_hash.as_slice()), dest.desc.address_hash)
         };
         eprintln!("[mesh] delivery destination: {delivery_hash}");
 
@@ -271,11 +258,7 @@ impl MeshClient {
             }
         }
 
-        Ok(ProxyResponse {
-            status: resp.status,
-            headers: resp.headers,
-            body,
-        })
+        Ok(ProxyResponse { status: resp.status, headers: resp.headers, body })
     }
 
     /// Background listener for inbound response messages.
@@ -306,7 +289,8 @@ impl MeshClient {
                         m
                     } else {
                         // Fallback: try LXMF decode → extract custom_data
-                        let record = match decode_inbound_payload(destination, bytes, payload_mode) {
+                        let record = match decode_inbound_payload(destination, bytes, payload_mode)
+                        {
                             Some(r) => r,
                             None => continue,
                         };
@@ -365,7 +349,11 @@ impl MeshClient {
                 if let Ok(resp) = ciborium::from_reader::<I2pProxyResponse, _>(&msg.payload[..]) {
                     *req.response.lock().await = Some(resp);
                     // If no chunks expected, we're done
-                    let total = req.response.lock().await.as_ref()
+                    let total = req
+                        .response
+                        .lock()
+                        .await
+                        .as_ref()
                         .and_then(|r| r.total_chunks)
                         .unwrap_or(0);
                     if total == 0 {

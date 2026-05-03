@@ -112,6 +112,17 @@ pub struct App {
     // Messages workspace: selected conversation
     pub selected_conversation: Option<String>,
 
+    // Commands tab state
+    pub command_tab: CommandTabState,
+
+    // Terminal tab state
+    pub terminal_tab: TerminalTabState,
+
+    // Pages tab state
+    pub page_source: Option<String>,
+    pub page_path: Option<String>,
+    pub page_index: Vec<String>,
+
     // Daemon state (populated from IPC events)
     pub node_hash: String,
     pub node_name: String,
@@ -128,6 +139,12 @@ pub struct App {
     pub badge_lost: usize,
     pub unread_count: usize,
 
+    // Daemon command queue (None in demo mode)
+    pub cmd_tx: Option<tokio::sync::mpsc::Sender<crate::daemon::DaemonCmd>>,
+
+    // Settings panel
+    pub settings_open: bool,
+
     // UI state
     pub last_ctrl_c: Option<Instant>,
     pub last_tick: Instant,
@@ -140,6 +157,153 @@ pub enum PeerTab {
     Pages,
     Terminal,
     Commands,
+}
+
+// ─── Commands Tab State ──────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandAction {
+    QueryStatus,
+    RemoteExec,
+    Reboot,
+    ConfigPush,
+}
+
+impl CommandAction {
+    pub const ALL: [CommandAction; 4] = [
+        CommandAction::QueryStatus,
+        CommandAction::RemoteExec,
+        CommandAction::Reboot,
+        CommandAction::ConfigPush,
+    ];
+
+    pub fn title(&self) -> &'static str {
+        match self {
+            CommandAction::QueryStatus => "Query Status",
+            CommandAction::RemoteExec => "Execute Command",
+            CommandAction::Reboot => "Reboot Device",
+            CommandAction::ConfigPush => "Push Config",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            CommandAction::QueryStatus => {
+                "Query remote device status (uptime, version, mesh state)"
+            }
+            CommandAction::RemoteExec => "Execute a shell command on the remote device",
+            CommandAction::Reboot => "Reboot the remote device (with optional delay)",
+            CommandAction::ConfigPush => "Push a signed configuration profile to the remote node",
+        }
+    }
+
+    pub fn icon(&self) -> &'static str {
+        match self {
+            CommandAction::QueryStatus => "?",
+            CommandAction::RemoteExec => ">",
+            CommandAction::Reboot => "!",
+            CommandAction::ConfigPush => "^",
+        }
+    }
+}
+
+// ─── Terminal Tab State ──────────────────────────────────────────────────────
+
+pub struct TerminalTabState {
+    pub session_id: Option<String>,
+    pub scrollback: Vec<String>,
+    pub scroll_offset: usize,
+    pub status: TerminalStatus,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalStatus {
+    Disconnected,
+    Connecting,
+    Connected,
+    Error(String),
+}
+
+impl Default for TerminalTabState {
+    fn default() -> Self {
+        Self {
+            session_id: None,
+            scrollback: Vec::new(),
+            scroll_offset: 0,
+            status: TerminalStatus::Disconnected,
+        }
+    }
+}
+
+impl TerminalTabState {
+    pub fn push_output(&mut self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+        let text = String::from_utf8_lossy(data);
+        for line in text.split('\n') {
+            let clean = strip_ansi_escapes(line);
+            self.scrollback.push(clean);
+        }
+        // Cap scrollback at 10K lines
+        if self.scrollback.len() > 10_000 {
+            let excess = self.scrollback.len() - 10_000;
+            self.scrollback.drain(..excess);
+        }
+    }
+}
+
+fn strip_ansi_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            match chars.peek() {
+                Some('[') => {
+                    chars.next(); // consume '['
+                    // CSI: skip until final byte [A-Za-z@]
+                    for c in chars.by_ref() {
+                        if c.is_ascii_alphabetic() || c == '@' {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next(); // consume ']'
+                    // OSC: skip until BEL (\x07) or ST (ESC\)
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        }
+                        if c == '\x1b' {
+                            if chars.peek() == Some(&'\\') {
+                                chars.next();
+                                break;
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    chars.next(); // skip one char for other escape types
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+pub struct CommandTabState {
+    pub selected: usize,
+    pub result_text: String,
+    pub is_executing: bool,
+}
+
+impl Default for CommandTabState {
+    fn default() -> Self {
+        Self { selected: 0, result_text: String::new(), is_executing: false }
+    }
 }
 
 impl PeerTab {
@@ -190,6 +354,13 @@ impl App {
             selected_peer: None,
             peer_tab: PeerTab::Status,
             selected_conversation: None,
+            command_tab: CommandTabState::default(),
+            terminal_tab: TerminalTabState::default(),
+            page_source: None,
+            page_path: None,
+            page_index: Vec::new(),
+            cmd_tx: None,
+            settings_open: false,
             badge_online: 0,
             badge_stale: 0,
             badge_lost: 0,
@@ -255,15 +426,32 @@ impl App {
 
     // ─── Sidebar data ────────────────────────────────────────────────────────
 
-    fn sidebar_items(&self) -> Vec<(String, String, Option<usize>)> {
-        // Returns (hash, display_name, unread_count) for the current workspace
+    pub fn sidebar_items(&self) -> Vec<(String, String, Option<usize>)> {
+        // Returns (hash, display_name, unread_count) for the current workspace,
+        // filtered by search query when in Search mode.
+        let search = match &self.input_mode {
+            InputMode::Search { query } if !query.is_empty() => Some(query.to_lowercase()),
+            _ => None,
+        };
+
+        let matches_search = |hash: &str, name: &str| -> bool {
+            match &search {
+                Some(q) => name.to_lowercase().contains(q) || hash.to_lowercase().contains(q),
+                None => true,
+            }
+        };
+
         match self.workspace {
             Workspace::Home | Workspace::Peers => self
                 .peers
                 .iter()
-                .map(|p| {
+                .filter_map(|p| {
                     let name = p.name.clone().unwrap_or_else(|| p.hash[..8].to_string());
-                    (p.hash.clone(), name, None)
+                    if matches_search(&p.hash, &name) {
+                        Some((p.hash.clone(), name, None))
+                    } else {
+                        None
+                    }
                 })
                 .collect(),
             Workspace::Messages => {
@@ -290,6 +478,9 @@ impl App {
                                 matches!(s, crate::tui::segments::Segment::ReceivedMessage { .. })
                             })
                             .count();
+                        if !matches_search(hash, &name) {
+                            return None;
+                        }
                         Some((hash.clone(), name, Some(unread)))
                     })
                     .collect();
@@ -353,6 +544,11 @@ impl App {
         self.draw_top_bar(f, top_bar);
         self.draw_body(f, body);
         self.draw_input_bar(f, input_bar);
+
+        // Settings panel overlay (right side)
+        if self.settings_open {
+            self.draw_settings_overlay(f, body);
+        }
 
         // Post-process effects
         self.effects.process(f.buffer_mut(), body, input_bar, input_bar);
@@ -441,6 +637,11 @@ impl App {
     fn draw_sidebar(&mut self, f: &mut Frame, area: Rect) {
         let t = self.theme.as_ref();
         let items = self.sidebar_items();
+
+        // Clamp selection to valid range when search filters reduce item count
+        if !items.is_empty() && self.sidebar_selection >= items.len() {
+            self.sidebar_selection = items.len() - 1;
+        }
 
         let title = match self.workspace {
             Workspace::Home => " Peers ",
@@ -715,13 +916,64 @@ impl App {
         match self.peer_tab {
             PeerTab::Status => self.draw_peer_status(f, content_area, &peer_hash),
             PeerTab::Chat => self.draw_peer_chat(f, content_area),
-            _ => {
-                f.render_widget(
-                    Paragraph::new(format!("  {} — coming soon", self.peer_tab.title()))
-                        .style(Style::default().fg(t.dim()).bg(t.bg())),
-                    content_area,
-                );
+            PeerTab::Commands => self.draw_peer_commands(f, content_area, &peer_hash),
+            PeerTab::Terminal => self.draw_peer_terminal(f, content_area),
+            PeerTab::Pages => self.draw_peer_pages(f, content_area, &peer_hash),
+        }
+    }
+
+    fn draw_peer_pages(&self, f: &mut Frame, area: Rect, _peer_hash: &str) {
+        let t = self.theme.as_ref();
+
+        if let Some(source) = &self.page_source {
+            // Render Micron page content
+            let doc = styrene_micron::parse(source);
+            let rendered = crate::micron_widget::render_document(&doc, area.width);
+            let path_display = self.page_path.as_deref().unwrap_or("/");
+            let block = Block::default()
+                .title(Span::styled(format!(" {} ", path_display), Style::default().fg(t.muted())))
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(t.border_dim()))
+                .style(Style::default().bg(t.bg()));
+            f.render_widget(
+                Paragraph::new(rendered).block(block).wrap(ratatui::widgets::Wrap { trim: false }),
+                area,
+            );
+        } else if !self.page_index.is_empty() {
+            // Show page index
+            let mut lines = vec![
+                Line::from(Span::styled(
+                    "  Pages served by this node:",
+                    Style::default().fg(t.fg()).add_modifier(Modifier::BOLD),
+                )),
+                Line::default(),
+            ];
+            for path in &self.page_index {
+                lines.push(Line::from(vec![
+                    Span::styled("  > ", Style::default().fg(t.accent())),
+                    Span::styled(path.as_str(), Style::default().fg(t.fg())),
+                ]));
             }
+            lines.push(Line::default());
+            lines.push(Line::from(Span::styled(
+                "  Press Enter to browse selected page.",
+                Style::default().fg(t.dim()),
+            )));
+            f.render_widget(Paragraph::new(lines).style(Style::default().bg(t.bg())), area);
+        } else {
+            let lines = vec![
+                Line::default(),
+                Line::from(Span::styled(
+                    "  Page Browser",
+                    Style::default().fg(t.fg()).add_modifier(Modifier::BOLD),
+                )),
+                Line::default(),
+                Line::from(Span::styled(
+                    "  Press Enter to load pages from this node.",
+                    Style::default().fg(t.dim()),
+                )),
+            ];
+            f.render_widget(Paragraph::new(lines).style(Style::default().bg(t.bg())), area);
         }
     }
 
@@ -800,6 +1052,143 @@ impl App {
         }
     }
 
+    fn draw_peer_terminal(&self, f: &mut Frame, area: Rect) {
+        let t = self.theme.as_ref();
+
+        let status_line = match &self.terminal_tab.status {
+            TerminalStatus::Disconnected => Line::from(vec![
+                Span::styled("  Terminal session not connected. ", Style::default().fg(t.dim())),
+                Span::styled("Press Enter to open session.", Style::default().fg(t.muted())),
+            ]),
+            TerminalStatus::Connecting => {
+                Line::from(Span::styled("  Connecting...", Style::default().fg(t.warning())))
+            }
+            TerminalStatus::Connected => Line::from(vec![
+                Span::styled("  Terminal: ", Style::default().fg(t.dim())),
+                Span::styled("connected", Style::default().fg(t.success())),
+                Span::styled("  |  Ctrl+\\ to exit", Style::default().fg(t.dim())),
+            ]),
+            TerminalStatus::Error(msg) => Line::from(vec![
+                Span::styled("  Error: ", Style::default().fg(t.error())),
+                Span::styled(msg.as_str(), Style::default().fg(t.dim())),
+            ]),
+        };
+
+        let [status_area, content_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(area);
+
+        f.render_widget(
+            Paragraph::new(status_line).style(Style::default().bg(t.bg())),
+            status_area,
+        );
+
+        // Scrollback content — scroll_offset=0 means bottom (most recent)
+        let visible_height = content_area.height.saturating_sub(1) as usize; // -1 for border
+        let total_lines = self.terminal_tab.scrollback.len();
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let user_offset = self.terminal_tab.scroll_offset.min(max_scroll);
+        let skip_count = max_scroll.saturating_sub(user_offset);
+
+        let lines: Vec<Line> = self
+            .terminal_tab
+            .scrollback
+            .iter()
+            .skip(skip_count)
+            .take(visible_height)
+            .map(|s| Line::from(Span::raw(s.as_str())))
+            .collect();
+
+        let block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(t.border_dim()))
+            .style(Style::default().bg(Color::Black));
+
+        f.render_widget(Paragraph::new(lines).block(block), content_area);
+    }
+
+    fn draw_peer_commands(&self, f: &mut Frame, area: Rect, peer_hash: &str) {
+        let t = self.theme.as_ref();
+        let peer_name = self
+            .peers
+            .iter()
+            .find(|p| p.hash == peer_hash)
+            .and_then(|p| p.name.clone())
+            .unwrap_or_else(|| peer_hash[..8.min(peer_hash.len())].to_string());
+
+        let [actions_area, result_area] = Layout::vertical([
+            Constraint::Length(CommandAction::ALL.len() as u16 * 3 + 2),
+            Constraint::Min(3),
+        ])
+        .areas(area);
+
+        // Action cards
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled("  Target: ", Style::default().fg(t.dim())),
+                Span::styled(&peer_name, Style::default().fg(t.fg()).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("  ({})", &peer_hash[..12.min(peer_hash.len())]),
+                    Style::default().fg(t.dim()),
+                ),
+            ]),
+            Line::default(),
+        ];
+
+        for (i, action) in CommandAction::ALL.iter().enumerate() {
+            let is_selected = i == self.command_tab.selected;
+            let marker = if is_selected { ">" } else { " " };
+            let style = if is_selected {
+                Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(t.fg())
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {marker} "), style),
+                Span::styled(format!("[{}] ", action.icon()), Style::default().fg(t.muted())),
+                Span::styled(action.title(), style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::raw("      "),
+                Span::styled(action.description(), Style::default().fg(t.dim())),
+            ]));
+            lines.push(Line::default());
+        }
+
+        f.render_widget(Paragraph::new(lines).style(Style::default().bg(t.bg())), actions_area);
+
+        // Result area
+        let result_block = Block::default()
+            .title(Span::styled(" Result ", Style::default().fg(t.muted())))
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(t.border_dim()))
+            .style(Style::default().bg(t.bg()));
+
+        let result_text = if self.command_tab.is_executing {
+            "  Executing...".to_string()
+        } else if self.command_tab.result_text.is_empty() {
+            "  Select an action and press Enter to execute".to_string()
+        } else {
+            self.command_tab.result_text.clone()
+        };
+
+        let result_style = if self.command_tab.is_executing {
+            Style::default().fg(t.warning())
+        } else if self.command_tab.result_text.is_empty() {
+            Style::default().fg(t.dim())
+        } else {
+            Style::default().fg(t.fg())
+        };
+
+        f.render_widget(
+            Paragraph::new(result_text)
+                .style(result_style)
+                .block(result_block)
+                .wrap(ratatui::widgets::Wrap { trim: false }),
+            result_area,
+        );
+    }
+
     fn draw_messages_workspace(&mut self, f: &mut Frame, area: Rect) {
         let t = self.theme.as_ref();
 
@@ -824,6 +1213,143 @@ impl App {
                 area,
             );
         }
+    }
+
+    fn draw_settings_overlay(&self, f: &mut Frame, body_area: Rect) {
+        let t = self.theme.as_ref();
+        let panel_width = 34u16.min(body_area.width.saturating_sub(4));
+        let panel_area = Rect {
+            x: body_area.x + body_area.width - panel_width,
+            y: body_area.y,
+            width: panel_width,
+            height: body_area.height,
+        };
+
+        // Dim the area behind the panel
+        let dim_area = Rect {
+            x: body_area.x,
+            y: body_area.y,
+            width: body_area.width.saturating_sub(panel_width),
+            height: body_area.height,
+        };
+        f.render_widget(Block::default().style(Style::default().bg(Color::Black)), dim_area);
+
+        // Panel background
+        let block = Block::default()
+            .title(Span::styled(
+                " Settings ",
+                Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
+            ))
+            .borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM)
+            .border_style(Style::default().fg(t.border_dim()))
+            .style(Style::default().bg(t.surface_bg()));
+        let inner = block.inner(panel_area);
+        f.render_widget(block, panel_area);
+
+        let mut lines = Vec::new();
+
+        // Identity section
+        lines.push(Line::from(Span::styled(
+            " Identity",
+            Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled("  Name: ", Style::default().fg(t.dim())),
+            Span::styled(
+                if self.node_name.is_empty() { "(not set)" } else { &self.node_name },
+                Style::default().fg(t.fg()),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Hash: ", Style::default().fg(t.dim())),
+            Span::styled(
+                &self.node_hash[..16.min(self.node_hash.len())],
+                Style::default().fg(t.muted()),
+            ),
+        ]));
+        lines.push(Line::default());
+
+        // Network section
+        lines.push(Line::from(Span::styled(
+            " Network",
+            Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled("  Transport: ", Style::default().fg(t.dim())),
+            Span::styled(
+                if self.transport_active { "active" } else { "inactive" },
+                Style::default().fg(if self.transport_active { t.success() } else { t.error() }),
+            ),
+        ]));
+        let iface_str = self.interface_count.to_string();
+        lines.push(Line::from(vec![
+            Span::styled("  Interfaces: ", Style::default().fg(t.dim())),
+            Span::styled(iface_str, Style::default().fg(t.fg())),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Propagation: ", Style::default().fg(t.dim())),
+            Span::styled(
+                if self.propagation_enabled { "enabled" } else { "disabled" },
+                Style::default().fg(if self.propagation_enabled { t.success() } else { t.muted() }),
+            ),
+        ]));
+        let links_str = self.links.len().to_string();
+        lines.push(Line::from(vec![
+            Span::styled("  Links: ", Style::default().fg(t.dim())),
+            Span::styled(links_str, Style::default().fg(t.fg())),
+        ]));
+        lines.push(Line::default());
+
+        // Daemon section
+        lines.push(Line::from(Span::styled(
+            " Daemon",
+            Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled("  Status: ", Style::default().fg(t.dim())),
+            Span::styled(
+                if self.daemon_connected { "connected" } else { "disconnected" },
+                Style::default().fg(if self.daemon_connected { t.success() } else { t.error() }),
+            ),
+        ]));
+        if !self.daemon_version.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("  Version: ", Style::default().fg(t.dim())),
+                Span::styled(self.daemon_version.clone(), Style::default().fg(t.fg())),
+            ]));
+        }
+        lines.push(Line::default());
+
+        // Mesh stats
+        let peers_str = self.peers.len().to_string();
+        let mesh_summary =
+            format!(" ({}↑ {}? {}×)", self.badge_online, self.badge_stale, self.badge_lost);
+        lines.push(Line::from(Span::styled(
+            " Mesh",
+            Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled("  Peers: ", Style::default().fg(t.dim())),
+            Span::styled(peers_str, Style::default().fg(t.fg())),
+            Span::styled(mesh_summary, Style::default().fg(t.dim())),
+        ]));
+        let unread_str = self.unread_count.to_string();
+        lines.push(Line::from(vec![
+            Span::styled("  Unread: ", Style::default().fg(t.dim())),
+            Span::styled(
+                unread_str,
+                Style::default().fg(if self.unread_count > 0 { t.accent() } else { t.fg() }),
+            ),
+        ]));
+        lines.push(Line::default());
+
+        // Footer hint
+        lines.push(Line::from(Span::styled(
+            " Esc or :settings to close",
+            Style::default().fg(t.dim()),
+        )));
+
+        f.render_widget(Paragraph::new(lines).style(Style::default().bg(t.surface_bg())), inner);
     }
 
     fn draw_input_bar(&self, f: &mut Frame, area: Rect) {
@@ -960,6 +1486,13 @@ impl App {
         self.unread_count += 1;
     }
 
+    /// Queue a daemon command for async execution. No-op in demo mode.
+    pub fn send_daemon_cmd(&self, cmd: crate::daemon::DaemonCmd) {
+        if let Some(tx) = &self.cmd_tx {
+            let _ = tx.try_send(cmd);
+        }
+    }
+
     pub fn handle_compose_submit(&mut self, text: String) {
         let dest = self
             .selected_peer
@@ -973,9 +1506,9 @@ impl App {
             .and_then(|p| p.name.clone())
             .unwrap_or_else(|| "peer".to_string());
 
-        // Push to per-peer conversation
+        // Push to per-peer conversation (optimistic UI)
         let conv = self.peer_conversation(&dest);
-        conv.push_sent(&dest, Some(&name), &text, DeliveryStatus::Sent);
+        conv.push_sent(&dest, Some(&name), &text, DeliveryStatus::Sending);
 
         // Activity log
         self.activity.push(crate::mesh_state::ActivityEntry::new(
@@ -983,6 +1516,9 @@ impl App {
             &name,
             &text[..text.len().min(32)],
         ));
+
+        // Queue actual send via daemon
+        self.send_daemon_cmd(crate::daemon::DaemonCmd::SendChat { peer_hash: dest, content: text });
     }
 }
 

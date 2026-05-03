@@ -58,9 +58,7 @@ fn parse_micron(source: &str) -> Vec<MicronElement> {
 
         // Preformatted: lines starting with a space
         if line.starts_with("    ") || line.starts_with('\t') {
-            elements.push(MicronElement::Preformatted {
-                text: line.to_string(),
-            });
+            elements.push(MicronElement::Preformatted { text: line.to_string() });
             continue;
         }
 
@@ -88,7 +86,7 @@ fn strip_micron_codes(s: &str) -> String {
                 if "FfBb!".contains(next) {
                     // Skip until next backtick or end
                     chars.next(); // consume the code letter
-                    // Consume hex digits or content until space/end
+                                  // Consume hex digits or content until space/end
                     while let Some(&c) = chars.peek() {
                         if c == '`' || c == ' ' {
                             break;
@@ -127,10 +125,7 @@ fn parse_micron_link(line: &str) -> Option<MicronElement> {
 }
 
 #[component]
-pub fn PageBrowser(
-    page: Option<PageView>,
-    on_navigate: EventHandler<String>,
-) -> Element {
+pub fn PageBrowser(page: Option<PageView>, on_navigate: EventHandler<String>) -> Element {
     let mut url_input = use_signal(|| String::from("/"));
 
     rsx! {

@@ -156,10 +156,8 @@ mod tests {
     fn wireguard_privkey_base64_length() {
         let pk = wireguard_privkey(&TEST_SEED);
         assert_eq!(pk.len(), 44); // 32 bytes -> 44 base64 chars with padding
-        // verify it decodes back
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(&pk)
-            .unwrap();
+                                  // verify it decodes back
+        let decoded = base64::engine::general_purpose::STANDARD.decode(&pk).unwrap();
         assert_eq!(decoded.len(), 32);
     }
 

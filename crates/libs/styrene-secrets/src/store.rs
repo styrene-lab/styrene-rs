@@ -73,9 +73,7 @@ fn decrypt(key: &[u8; 32], ciphertext: &[u8], nonce_bytes: &[u8]) -> Result<Vec<
     let cipher = ChaCha20Poly1305::new_from_slice(key)
         .map_err(|e| StoreError::Crypto(format!("cipher init: {e}")))?;
     let nonce = Nonce::from_slice(nonce_bytes);
-    cipher
-        .decrypt(nonce, ciphertext)
-        .map_err(|_| StoreError::BadPassphrase)
+    cipher.decrypt(nonce, ciphertext).map_err(|_| StoreError::BadPassphrase)
 }
 
 /// Set restrictive permissions on a path (Unix only).
@@ -98,9 +96,7 @@ pub struct SecretStore {
 
 impl std::fmt::Debug for SecretStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SecretStore")
-            .field("enc_key", &"[REDACTED]")
-            .finish()
+        f.debug_struct("SecretStore").field("enc_key", &"[REDACTED]").finish()
     }
 }
 
@@ -184,9 +180,7 @@ impl SecretStore {
 
     /// Retrieve a secret by key. Returns `None` if the key doesn't exist.
     pub fn get(&self, key: &str) -> Result<Option<SecretValue>, StoreError> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT value, nonce FROM secrets WHERE key = ?1")?;
+        let mut stmt = self.conn.prepare("SELECT value, nonce FROM secrets WHERE key = ?1")?;
 
         let result = stmt.query_row(params![key], |row| {
             let value: Vec<u8> = row.get(0)?;
@@ -225,17 +219,13 @@ impl SecretStore {
     /// List all stored secret keys (not values).
     pub fn list(&self) -> Result<Vec<String>, StoreError> {
         let mut stmt = self.conn.prepare("SELECT key FROM secrets ORDER BY key")?;
-        let keys = stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<Result<Vec<String>, _>>()?;
+        let keys = stmt.query_map([], |row| row.get(0))?.collect::<Result<Vec<String>, _>>()?;
         Ok(keys)
     }
 
     /// Delete a secret. Returns `true` if the key existed.
     pub fn delete(&self, key: &str) -> Result<bool, StoreError> {
-        let count = self
-            .conn
-            .execute("DELETE FROM secrets WHERE key = ?1", params![key])?;
+        let count = self.conn.execute("DELETE FROM secrets WHERE key = ?1", params![key])?;
         Ok(count > 0)
     }
 }
@@ -245,15 +235,13 @@ impl SecretStore {
 /// Returns an error if `HOME` is not set or empty, rather than falling
 /// back to the current directory (which could be world-writable).
 pub fn default_path() -> Result<PathBuf, StoreError> {
-    let home = std::env::var("HOME")
-        .ok()
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| {
+    let home = std::env::var("HOME").ok().filter(|h| !h.is_empty()).map(PathBuf::from).ok_or_else(
+        || {
             StoreError::Crypto(
                 "HOME environment variable not set — cannot determine secrets store path".into(),
             )
-        })?;
+        },
+    )?;
     Ok(home.join(".styrene").join("secrets.db"))
 }
 
@@ -263,13 +251,8 @@ pub fn default_path() -> Result<PathBuf, StoreError> {
 /// processes try to create the store simultaneously.
 fn load_or_create_salt(conn: &Connection) -> Result<Vec<u8>, StoreError> {
     // Try to read existing salt first.
-    let existing: Option<Vec<u8>> = conn
-        .query_row(
-            "SELECT value FROM meta WHERE key = 'salt'",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
+    let existing: Option<Vec<u8>> =
+        conn.query_row("SELECT value FROM meta WHERE key = 'salt'", [], |row| row.get(0)).ok();
 
     if let Some(salt) = existing {
         return Ok(salt);
@@ -279,10 +262,8 @@ fn load_or_create_salt(conn: &Connection) -> Result<Vec<u8>, StoreError> {
     let mut salt = vec![0u8; SALT_LEN];
     OsRng.fill_bytes(&mut salt);
 
-    let rows = conn.execute(
-        "INSERT OR IGNORE INTO meta (key, value) VALUES ('salt', ?1)",
-        params![salt],
-    )?;
+    let rows =
+        conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('salt', ?1)", params![salt])?;
 
     if rows == 1 {
         // We created the salt.
@@ -291,12 +272,8 @@ fn load_or_create_salt(conn: &Connection) -> Result<Vec<u8>, StoreError> {
 
     // Another process beat us — read theirs.
     salt.zeroize();
-    conn.query_row(
-        "SELECT value FROM meta WHERE key = 'salt'",
-        [],
-        |row| row.get(0),
-    )
-    .map_err(StoreError::Db)
+    conn.query_row("SELECT value FROM meta WHERE key = 'salt'", [], |row| row.get(0))
+        .map_err(StoreError::Db)
 }
 
 /// Verify the passphrase against a stored verification ciphertext,
@@ -307,14 +284,10 @@ fn load_or_create_salt(conn: &Connection) -> Result<Vec<u8>, StoreError> {
 /// wrong passphrase.
 fn verify_or_init_passphrase(conn: &Connection, enc_key: &[u8; 32]) -> Result<(), StoreError> {
     let existing: Option<(Vec<u8>, Vec<u8>)> = conn
-        .query_row(
-            "SELECT value FROM meta WHERE key = 'verify'",
-            [],
-            |row| {
-                let blob: Vec<u8> = row.get(0)?;
-                Ok(blob)
-            },
-        )
+        .query_row("SELECT value FROM meta WHERE key = 'verify'", [], |row| {
+            let blob: Vec<u8> = row.get(0)?;
+            Ok(blob)
+        })
         .ok()
         .and_then(|blob| {
             // verify blob format: [nonce:12][ciphertext:...]
@@ -343,10 +316,7 @@ fn verify_or_init_passphrase(conn: &Connection, enc_key: &[u8; 32]) -> Result<()
             let mut blob = Vec::with_capacity(NONCE_LEN + ciphertext.len());
             blob.extend_from_slice(&nonce);
             blob.extend_from_slice(&ciphertext);
-            conn.execute(
-                "INSERT INTO meta (key, value) VALUES ('verify', ?1)",
-                params![blob],
-            )?;
+            conn.execute("INSERT INTO meta (key, value) VALUES ('verify', ?1)", params![blob])?;
             Ok(())
         }
     }
@@ -491,10 +461,7 @@ mod tests {
         }
 
         let err = SecretStore::open(&path, b"wrong").unwrap_err();
-        assert!(
-            matches!(err, StoreError::BadPassphrase),
-            "expected BadPassphrase, got: {err}"
-        );
+        assert!(matches!(err, StoreError::BadPassphrase), "expected BadPassphrase, got: {err}");
     }
 
     #[test]

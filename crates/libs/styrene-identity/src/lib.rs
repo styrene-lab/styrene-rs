@@ -96,16 +96,16 @@
 
 pub mod derive;
 pub mod discover;
-#[cfg(feature = "file-signer")]
-pub mod file_signer;
-#[cfg(feature = "keychain")]
-pub mod keychain_signer;
 #[cfg(feature = "signing")]
 pub mod export;
+#[cfg(feature = "file-signer")]
+pub mod file_signer;
 #[cfg(feature = "signing")]
 pub mod format;
 #[cfg(feature = "signing")]
 pub mod identity;
+#[cfg(feature = "keychain")]
+pub mod keychain_signer;
 #[cfg(feature = "signing")]
 pub mod pubkey;
 pub mod signer;

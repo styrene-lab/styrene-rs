@@ -10,9 +10,7 @@
 //! the same second, and INSERT OR REPLACE overwrites earlier records).
 
 use std::time::Duration;
-use styrene_e2e::helpers::{
-    with_timeout, await_inbound_count, two_connected_nodes,
-};
+use styrene_e2e::helpers::{await_inbound_count, two_connected_nodes, with_timeout};
 
 #[tokio::test]
 async fn multi_message_conversation() {
@@ -88,16 +86,10 @@ async fn multi_message_conversation() {
             let store = alice.app_context.store().lock().expect("lock");
             let all = store.list_messages(100, None).expect("list");
             let outbound: Vec<_> = all.iter().filter(|m| m.direction == "out").collect();
-            assert_eq!(
-                outbound.len(), 4,
-                "alice should have exactly 4 outbound records"
-            );
+            assert_eq!(outbound.len(), 4, "alice should have exactly 4 outbound records");
             for msg in &outbound {
                 assert_eq!(msg.destination, bob.delivery_hash);
-                assert!(
-                    msg.receipt_status.is_some(),
-                    "outbound should have receipt status"
-                );
+                assert!(msg.receipt_status.is_some(), "outbound should have receipt status");
             }
         }
 
@@ -105,10 +97,7 @@ async fn multi_message_conversation() {
             let store = bob.app_context.store().lock().expect("lock");
             let all = store.list_messages(100, None).expect("list");
             let outbound: Vec<_> = all.iter().filter(|m| m.direction == "out").collect();
-            assert_eq!(
-                outbound.len(), 2,
-                "bob should have exactly 2 outbound records"
-            );
+            assert_eq!(outbound.len(), 2, "bob should have exactly 2 outbound records");
             for msg in &outbound {
                 assert_eq!(msg.destination, alice.delivery_hash);
             }

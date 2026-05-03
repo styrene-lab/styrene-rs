@@ -8,7 +8,9 @@
 
 use dioxus::prelude::*;
 
-use crate::state::{GraphEdge, GraphNode, GraphNodeType, MeshStatusInfo, PathEntry, PeerEntry, PeerRole};
+use crate::state::{
+    GraphEdge, GraphNode, GraphNodeType, MeshStatusInfo, PathEntry, PeerEntry, PeerRole,
+};
 
 // ── Force-directed layout ─────────────────────────────────────────────────
 
@@ -215,7 +217,10 @@ fn peer_key(peers: &[PeerEntry]) -> String {
 fn is_notable(node: &GraphNode) -> bool {
     matches!(
         node.node_type,
-        GraphNodeType::Local | GraphNodeType::Interface { .. } | GraphNodeType::Hub { .. } | GraphNodeType::PageHost { .. }
+        GraphNodeType::Local
+            | GraphNodeType::Interface { .. }
+            | GraphNodeType::Hub { .. }
+            | GraphNodeType::PageHost { .. }
     )
 }
 
@@ -246,7 +251,8 @@ pub fn NetworkGraph(
 
     let current_key = format!("{}|{}", peer_key(&peers), paths.len());
     if *last_peer_key.read() != current_key {
-        let (new_nodes, new_edges) = build_graph(&local_hash, local_name.as_deref(), &peers, &paths);
+        let (new_nodes, new_edges) =
+            build_graph(&local_hash, local_name.as_deref(), &peers, &paths);
         nodes.set(new_nodes);
         edges.set(new_edges);
         last_peer_key.set(current_key);
@@ -328,10 +334,8 @@ pub fn NetworkGraph(
     let show_named_labels = z > 0.6;
 
     // Stats
-    let online_count = peers
-        .iter()
-        .filter(|p| p.status != "offline" && !p.status.is_empty())
-        .count();
+    let online_count =
+        peers.iter().filter(|p| p.status != "offline" && !p.status.is_empty()).count();
     let total_count = peers.len();
 
     let hit_test = move |world_x: f64, world_y: f64| -> Option<usize> {
@@ -388,9 +392,8 @@ pub fn NetworkGraph(
     };
 
     // Selected node detail for the sidebar
-    let selected_detail: Option<GraphNode> = selected
-        .read()
-        .and_then(|idx| nodes.read().get(idx).cloned());
+    let selected_detail: Option<GraphNode> =
+        selected.read().and_then(|idx| nodes.read().get(idx).cloned());
 
     rsx! {
         div { class: "network-view",

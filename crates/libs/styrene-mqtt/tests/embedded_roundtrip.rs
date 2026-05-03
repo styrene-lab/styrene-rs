@@ -128,10 +128,7 @@ async fn multiple_event_types() {
 
     // Subscribe to all events from omegon with wildcard.
     let mut sub: styrene_mqtt::Subscription<serde_json::Value> = subscriber
-        .subscribe(
-            "styrene/op1/omegon/+/events/#",
-            rumqttc::v5::mqttbytes::QoS::AtMostOnce,
-        )
+        .subscribe("styrene/op1/omegon/+/events/#", rumqttc::v5::mqttbytes::QoS::AtMostOnce)
         .await
         .expect("subscribe");
 
@@ -139,22 +136,14 @@ async fn multiple_event_types() {
 
     // Publish different event types.
     publisher
-        .publish(
-            "turn.started",
-            &TurnStarted { turn: 1 },
-            QosOverride::default(),
-        )
+        .publish("turn.started", &TurnStarted { turn: 1 }, QosOverride::default())
         .await
         .expect("pub1");
 
     publisher
         .publish(
             "tool.ended",
-            &ToolEnded {
-                id: "t1".into(),
-                name: "bash".into(),
-                is_error: false,
-            },
+            &ToolEnded { id: "t1".into(), name: "bash".into(), is_error: false },
             QosOverride::default(),
         )
         .await

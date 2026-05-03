@@ -75,20 +75,11 @@ impl AmcpCommand {
     }
 
     pub fn cg_update(channel: u16, layer: u16, data: &str) -> Self {
-        Self::CgUpdate {
-            channel,
-            layer,
-            cg_layer: 0,
-            data: data.to_owned(),
-        }
+        Self::CgUpdate { channel, layer, cg_layer: 0, data: data.to_owned() }
     }
 
     pub fn cg_stop(channel: u16, layer: u16) -> Self {
-        Self::CgStop {
-            channel,
-            layer,
-            cg_layer: 0,
-        }
+        Self::CgStop { channel, layer, cg_layer: 0 }
     }
 }
 
@@ -99,63 +90,32 @@ fn escape_data(data: &str) -> String {
 impl fmt::Display for AmcpCommand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CgAdd {
-                channel,
-                layer,
-                cg_layer,
-                template,
-                play_on_load,
-                data,
-            } => {
+            Self::CgAdd { channel, layer, cg_layer, template, play_on_load, data } => {
                 let pol = if *play_on_load { 1 } else { 0 };
-                write!(
-                    f,
-                    "CG {channel}-{layer} ADD {cg_layer} \"{template}\" {pol}"
-                )?;
+                write!(f, "CG {channel}-{layer} ADD {cg_layer} \"{template}\" {pol}")?;
                 if let Some(d) = data {
                     write!(f, " \"{}\"", escape_data(d))?;
                 }
                 Ok(())
             }
-            Self::CgUpdate {
-                channel,
-                layer,
-                cg_layer,
-                data,
-            } => {
-                write!(
-                    f,
-                    "CG {channel}-{layer} UPDATE {cg_layer} \"{}\"",
-                    escape_data(data)
-                )
+            Self::CgUpdate { channel, layer, cg_layer, data } => {
+                write!(f, "CG {channel}-{layer} UPDATE {cg_layer} \"{}\"", escape_data(data))
             }
-            Self::CgPlay {
-                channel,
-                layer,
-                cg_layer,
-            } => write!(f, "CG {channel}-{layer} PLAY {cg_layer}"),
-            Self::CgStop {
-                channel,
-                layer,
-                cg_layer,
-            } => write!(f, "CG {channel}-{layer} STOP {cg_layer}"),
+            Self::CgPlay { channel, layer, cg_layer } => {
+                write!(f, "CG {channel}-{layer} PLAY {cg_layer}")
+            }
+            Self::CgStop { channel, layer, cg_layer } => {
+                write!(f, "CG {channel}-{layer} STOP {cg_layer}")
+            }
             Self::CgClear { channel, layer } => write!(f, "CG {channel}-{layer} CLEAR"),
-            Self::Play {
-                channel,
-                layer,
-                clip,
-            } => {
+            Self::Play { channel, layer, clip } => {
                 write!(f, "PLAY {channel}-{layer}")?;
                 if let Some(c) = clip {
                     write!(f, " \"{c}\"")?;
                 }
                 Ok(())
             }
-            Self::Load {
-                channel,
-                layer,
-                clip,
-            } => write!(f, "LOAD {channel}-{layer} \"{clip}\""),
+            Self::Load { channel, layer, clip } => write!(f, "LOAD {channel}-{layer} \"{clip}\""),
             Self::Stop { channel, layer } => write!(f, "STOP {channel}-{layer}"),
             Self::Clear { channel, layer } => {
                 write!(f, "CLEAR {channel}")?;
@@ -182,19 +142,13 @@ mod tests {
     #[test]
     fn cg_add_with_data() {
         let cmd = AmcpCommand::cg_add_with_data(1, 10, "lower_third", r#"{"name":"Wilson"}"#);
-        assert_eq!(
-            cmd.to_string(),
-            r#"CG 1-10 ADD 0 "lower_third" 1 "{\"name\":\"Wilson\"}""#
-        );
+        assert_eq!(cmd.to_string(), r#"CG 1-10 ADD 0 "lower_third" 1 "{\"name\":\"Wilson\"}""#);
     }
 
     #[test]
     fn cg_update() {
         let cmd = AmcpCommand::cg_update(1, 10, r#"{"name":"Chris"}"#);
-        assert_eq!(
-            cmd.to_string(),
-            r#"CG 1-10 UPDATE 0 "{\"name\":\"Chris\"}""#
-        );
+        assert_eq!(cmd.to_string(), r#"CG 1-10 UPDATE 0 "{\"name\":\"Chris\"}""#);
     }
 
     #[test]
@@ -205,20 +159,13 @@ mod tests {
 
     #[test]
     fn play_with_clip() {
-        let cmd = AmcpCommand::Play {
-            channel: 1,
-            layer: 1,
-            clip: Some("AMB".to_owned()),
-        };
+        let cmd = AmcpCommand::Play { channel: 1, layer: 1, clip: Some("AMB".to_owned()) };
         assert_eq!(cmd.to_string(), r#"PLAY 1-1 "AMB""#);
     }
 
     #[test]
     fn clear_channel() {
-        let cmd = AmcpCommand::Clear {
-            channel: 1,
-            layer: None,
-        };
+        let cmd = AmcpCommand::Clear { channel: 1, layer: None };
         assert_eq!(cmd.to_string(), "CLEAR 1");
     }
 }

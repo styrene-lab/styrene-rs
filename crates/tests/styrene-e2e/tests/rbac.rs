@@ -8,21 +8,18 @@
 
 use std::time::Duration;
 
-use styrene_e2e::helpers::{with_timeout, two_connected_nodes, SETTLE};
+use styrene_e2e::helpers::{two_connected_nodes, with_timeout, SETTLE};
 use styrene_e2e::node::TestNodeBuilder;
-use styrene_rbac::{RosterEntry, Role};
-use styrened::daemon_facade::DaemonFacade;
 use styrene_ipc::error::IpcError;
 use styrene_ipc::traits::*;
 use styrene_ipc::types::*;
+use styrene_rbac::{Role, RosterEntry};
+use styrened::daemon_facade::DaemonFacade;
 
 #[tokio::test]
 async fn blocked_caller_denied_all_operations() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("rbac-blocked")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("rbac-blocked").tcp_server("127.0.0.1:0").build().await;
 
         let blocked_id = "aabbccddaabbccddaabbccddaabbccdd";
         node.app_context.policy().block(blocked_id, node.app_context.store()).expect("block");
@@ -58,10 +55,7 @@ async fn blocked_caller_denied_all_operations() {
 #[tokio::test]
 async fn peer_role_can_chat_but_not_exec() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("rbac-peer")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("rbac-peer").tcp_server("127.0.0.1:0").build().await;
 
         // Default role is Peer for unknown callers
         let peer_id = "ddccbbaa99887766ddccbbaa99887766";
@@ -76,9 +70,7 @@ async fn peer_role_can_chat_but_not_exec() {
         assert!(result.is_ok(), "peer should be able to query identity");
 
         // Peer CANNOT exec (Exec capability requires Operator or higher)
-        let result = facade
-            .exec("target", "ls", vec![], None)
-            .await;
+        let result = facade.exec("target", "ls", vec![], None).await;
         assert!(
             matches!(result, Err(IpcError::Unavailable { .. })),
             "peer should be denied exec, got: {:?}",
@@ -86,9 +78,7 @@ async fn peer_role_can_chat_but_not_exec() {
         );
 
         // Peer CANNOT reboot
-        let result = facade
-            .reboot_device("target", None, None)
-            .await;
+        let result = facade.reboot_device("target", None, None).await;
         assert!(
             matches!(result, Err(IpcError::Unavailable { .. })),
             "peer should be denied reboot"
@@ -100,10 +90,7 @@ async fn peer_role_can_chat_but_not_exec() {
 #[tokio::test]
 async fn operator_role_can_exec() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("rbac-operator")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("rbac-operator").tcp_server("127.0.0.1:0").build().await;
 
         let operator_id = "aabb00112233445566778899aabbccdd";
         let entry = RosterEntry::new(operator_id, Role::Admin);
@@ -118,9 +105,7 @@ async fn operator_role_can_exec() {
         // Operator can exec (Exec capability)
         // Will fail with transport error (no real connection), but should NOT
         // fail with Unavailable (auth denied).
-        let result = facade
-            .exec("target", "ls", vec![], None)
-            .await;
+        let result = facade.exec("target", "ls", vec![], None).await;
         match result {
             Err(IpcError::Unavailable { .. }) => {
                 panic!("operator should NOT be denied exec");
@@ -142,10 +127,7 @@ async fn operator_role_can_exec() {
 #[tokio::test]
 async fn unblock_restores_access() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("rbac-unblock")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("rbac-unblock").tcp_server("127.0.0.1:0").build().await;
 
         let peer_id = "11223344556677881122334455667788";
 

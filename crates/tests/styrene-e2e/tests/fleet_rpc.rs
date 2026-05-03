@@ -8,8 +8,8 @@
 //! delivery, protocol dispatch, request handling, response correlation.
 
 use std::time::Duration;
-use styrene_e2e::helpers::{with_timeout, two_connected_nodes};
-use styrene_rbac::{RosterEntry, Role};
+use styrene_e2e::helpers::{two_connected_nodes, with_timeout};
+use styrene_rbac::{Role, RosterEntry};
 
 #[tokio::test]
 async fn device_status_rpc_roundtrip() {
@@ -19,11 +19,7 @@ async fn device_status_rpc_roundtrip() {
         // Alice queries Bob's status via RPC.
         // This requires Bob to have an RpcRequestHandler registered that
         // processes StatusRequest and sends back StatusResponse.
-        let result = alice
-            .app_context
-            .fleet()
-            .device_status(&bob.delivery_hash, Some(10))
-            .await;
+        let result = alice.app_context.fleet().device_status(&bob.delivery_hash, Some(10)).await;
 
         match result {
             Ok(status) => {
@@ -72,10 +68,7 @@ async fn exec_rpc_roundtrip() {
             Ok(exec_result) => {
                 // The test handler should echo back
                 assert_eq!(exec_result.exit_code, 0);
-                assert!(
-                    !exec_result.stdout.is_empty(),
-                    "exec result should have stdout"
-                );
+                assert!(!exec_result.stdout.is_empty(), "exec result should have stdout");
             }
             Err(e) => {
                 panic!(

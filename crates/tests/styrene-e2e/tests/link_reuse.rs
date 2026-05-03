@@ -5,9 +5,7 @@
 //! Verifies link lifecycle events and transport efficiency.
 
 use std::time::Duration;
-use styrene_e2e::helpers::{
-    with_timeout, await_inbound_count, two_connected_nodes,
-};
+use styrene_e2e::helpers::{await_inbound_count, two_connected_nodes, with_timeout};
 use styrene_ipc::types::DaemonEvent;
 
 #[tokio::test]
@@ -19,10 +17,7 @@ async fn second_message_reuses_link() {
         let mut link_rx = alice.app_context.events().subscribe_daemon_events();
 
         // Send first message — establishes a new link
-        alice
-            .send_chat(&bob.delivery_hash, "msg-1")
-            .await
-            .expect("send 1");
+        alice.send_chat(&bob.delivery_hash, "msg-1").await.expect("send 1");
         await_inbound_count(&bob.app_context, 1, Duration::from_secs(15)).await;
 
         // Collect link events from first send
@@ -41,10 +36,7 @@ async fn second_message_reuses_link() {
         );
 
         // Send second message — should reuse existing link (no new activation)
-        alice
-            .send_chat(&bob.delivery_hash, "msg-2")
-            .await
-            .expect("send 2");
+        alice.send_chat(&bob.delivery_hash, "msg-2").await.expect("send 2");
         await_inbound_count(&bob.app_context, 2, Duration::from_secs(15)).await;
 
         // Check for new link activation events (should be zero — link reused)
@@ -92,10 +84,7 @@ async fn multiple_sequential_messages_all_deliver() {
         // Send 5 messages sequentially, each waiting for delivery
         for i in 0..5 {
             let content = format!("seq-msg-{}", i);
-            alice
-                .send_chat(&bob.delivery_hash, &content)
-                .await
-                .expect(&format!("send {}", i));
+            alice.send_chat(&bob.delivery_hash, &content).await.expect(&format!("send {}", i));
             await_inbound_count(&bob.app_context, i + 1, Duration::from_secs(15)).await;
         }
 

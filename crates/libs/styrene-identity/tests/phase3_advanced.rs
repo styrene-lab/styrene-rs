@@ -1,10 +1,10 @@
 //! Phase 3: Advanced verification — property-based testing, zeroization,
 //! cross-language vector export, and stress testing.
 
-use ed25519_dalek::{Signer, Verifier, SigningKey};
+use ed25519_dalek::{Signer, SigningKey, Verifier};
+use proptest::prelude::*;
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
-use proptest::prelude::*;
 
 use styrene_identity::derive::{KeyDeriver, KeyPurpose};
 use styrene_identity::pubkey::{ed25519_verifying_key, x25519_public_key};
@@ -199,7 +199,7 @@ fn key_deriver_drop_does_not_corrupt_state() {
 /// must produce different root secrets but consistent behavior.
 #[test]
 fn multiple_vaults_different_passphrases() {
-    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+    use styrene_identity::file_signer::{ClosurePassphraseProvider, FileSigner};
 
     let dir = tempfile::tempdir().unwrap();
     let mut roots = Vec::new();
@@ -233,7 +233,7 @@ fn multiple_vaults_different_passphrases() {
 /// (because the root is random, not derived from the passphrase).
 #[test]
 fn same_passphrase_different_roots() {
-    use styrene_identity::file_signer::{FileSigner, ClosurePassphraseProvider};
+    use styrene_identity::file_signer::{ClosurePassphraseProvider, FileSigner};
 
     let dir = tempfile::tempdir().unwrap();
     let passphrase = b"same-passphrase";
@@ -255,10 +255,7 @@ fn same_passphrase_different_roots() {
     // Same passphrase, different files → different roots
     for i in 0..roots.len() {
         for j in (i + 1)..roots.len() {
-            assert_ne!(
-                roots[i], roots[j],
-                "same passphrase produced same root on different files"
-            );
+            assert_ne!(roots[i], roots[j], "same passphrase produced same root on different files");
         }
     }
 }
@@ -288,14 +285,19 @@ fn export_test_vectors_to_file() {
         entry.insert("seed_hex".into(), hex::encode(&seed).into());
 
         match purpose {
-            KeyPurpose::Signing | KeyPurpose::SshHost | KeyPurpose::Yggdrasil |
-            KeyPurpose::I2pSigning | KeyPurpose::Tor => {
+            KeyPurpose::Signing
+            | KeyPurpose::SshHost
+            | KeyPurpose::Yggdrasil
+            | KeyPurpose::I2pSigning
+            | KeyPurpose::Tor => {
                 let vk = ed25519_verifying_key(&seed);
                 entry.insert("pubkey_hex".into(), hex::encode(vk.as_bytes()).into());
                 entry.insert("curve".into(), "ed25519".into());
             }
-            KeyPurpose::RnsEncryption | KeyPurpose::Age |
-            KeyPurpose::I2pEncryption | KeyPurpose::WireGuard => {
+            KeyPurpose::RnsEncryption
+            | KeyPurpose::Age
+            | KeyPurpose::I2pEncryption
+            | KeyPurpose::WireGuard => {
                 let pk = x25519_public_key(&seed);
                 entry.insert("pubkey_hex".into(), hex::encode(pk.as_bytes()).into());
                 entry.insert("curve".into(), "x25519".into());
@@ -339,9 +341,8 @@ fn export_test_vectors_to_file() {
     let json = serde_json::to_string_pretty(&serde_json::Value::Object(vectors)).unwrap();
 
     // Write to file for cross-language verification
-    let vectors_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("test-vectors.json");
+    let vectors_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("test-vectors.json");
     std::fs::write(&vectors_path, &json).unwrap();
 
     // Verify the file is valid JSON and contains expected fields

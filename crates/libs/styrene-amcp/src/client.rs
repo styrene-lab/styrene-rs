@@ -29,11 +29,7 @@ impl AmcpClient {
 
         debug!("connected to CasparCG at {addr}");
         let (read_half, write_half) = stream.into_split();
-        Ok(Self {
-            reader: BufReader::new(read_half),
-            writer: BufWriter::new(write_half),
-            timeout,
-        })
+        Ok(Self { reader: BufReader::new(read_half), writer: BufWriter::new(write_half), timeout })
     }
 
     pub async fn send(&mut self, cmd: AmcpCommand) -> Result<AmcpResponse> {
@@ -49,13 +45,10 @@ impl AmcpClient {
         let status_line = self.read_line_timeout().await?;
         let status_trimmed = status_line.trim();
 
-        let code: u16 = status_trimmed
-            .split_whitespace()
-            .next()
-            .and_then(|s| s.parse().ok())
-            .ok_or_else(|| {
-                AmcpError::Protocol(format!("invalid status line: {status_trimmed}"))
-            })?;
+        let code: u16 =
+            status_trimmed.split_whitespace().next().and_then(|s| s.parse().ok()).ok_or_else(
+                || AmcpError::Protocol(format!("invalid status line: {status_trimmed}")),
+            )?;
 
         // Read body based on response code semantics:
         //   200 = multiline body, terminated by blank line
@@ -76,10 +69,7 @@ impl AmcpClient {
         if resp.is_success() {
             Ok(resp)
         } else {
-            Err(AmcpError::Server {
-                code,
-                message: format!("{}: {}", status_trimmed, resp.body),
-            })
+            Err(AmcpError::Server { code, message: format!("{}: {}", status_trimmed, resp.body) })
         }
     }
 
@@ -93,10 +83,7 @@ impl AmcpClient {
             Ok(Err(e)) => Err(AmcpError::Io(e)),
             Err(_) => {
                 warn!("read timed out after {:?}", self.timeout);
-                Err(AmcpError::Protocol(format!(
-                    "read timed out after {:?}",
-                    self.timeout
-                )))
+                Err(AmcpError::Protocol(format!("read timed out after {:?}", self.timeout)))
             }
         }
     }

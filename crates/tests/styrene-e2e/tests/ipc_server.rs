@@ -10,13 +10,11 @@ use std::sync::Arc;
 use tokio::net::UnixStream;
 
 use styrene_e2e::helpers::{with_timeout, SETTLE};
-use tokio::io::AsyncWriteExt;
 use styrene_e2e::node::TestNodeBuilder;
-use styrened::daemon_facade::DaemonFacade;
 use styrene_ipc::traits::Daemon;
-use styrene_ipc_server::wire::{
-    self, encode_frame, MessageType, REQUEST_ID_SIZE,
-};
+use styrene_ipc_server::wire::{self, encode_frame, MessageType, REQUEST_ID_SIZE};
+use styrened::daemon_facade::DaemonFacade;
+use tokio::io::AsyncWriteExt;
 
 fn random_request_id() -> [u8; REQUEST_ID_SIZE] {
     let mut id = [0u8; 16];
@@ -36,10 +34,8 @@ async fn start_ipc_server(
     let dir = tempfile::tempdir().expect("tempdir");
     let socket_path = dir.path().join("test.sock");
 
-    let facade = Arc::new(DaemonFacade::new(
-        node.app_context.clone(),
-        node.identity_hash.clone(),
-    )) as Arc<dyn Daemon>;
+    let facade = Arc::new(DaemonFacade::new(node.app_context.clone(), node.identity_hash.clone()))
+        as Arc<dyn Daemon>;
 
     let config = styrene_ipc_server::IpcServerConfig {
         socket_path: socket_path.clone(),
@@ -63,14 +59,9 @@ async fn request(
 ) -> wire::Frame {
     let request_id = random_request_id();
     let (mut read, mut write) = stream.split();
-    wire::write_frame_async(&mut write, msg_type, &request_id, payload)
-        .await
-        .expect("write frame");
+    wire::write_frame_async(&mut write, msg_type, &request_id, payload).await.expect("write frame");
     let frame = wire::read_frame_async(&mut read).await.expect("read frame");
-    assert_eq!(
-        frame.request_id, request_id,
-        "response should echo request_id"
-    );
+    assert_eq!(frame.request_id, request_id, "response should echo request_id");
     frame
 }
 
@@ -79,10 +70,7 @@ async fn request(
 #[tokio::test]
 async fn ping_pong() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("ipc-ping")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("ipc-ping").tcp_server("127.0.0.1:0").build().await;
 
         let (_server, socket_path) = start_ipc_server(&node).await;
         tokio::time::sleep(SETTLE).await;
@@ -98,10 +86,7 @@ async fn ping_pong() {
 #[tokio::test]
 async fn query_status_returns_daemon_info() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("ipc-status")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("ipc-status").tcp_server("127.0.0.1:0").build().await;
 
         let (_server, socket_path) = start_ipc_server(&node).await;
         tokio::time::sleep(SETTLE).await;
@@ -112,10 +97,7 @@ async fn query_status_returns_daemon_info() {
         assert_eq!(frame.msg_type, MessageType::Result);
 
         // Should contain daemon version
-        let version = frame
-            .payload
-            .get("daemon_version")
-            .and_then(|v| v.as_str());
+        let version = frame.payload.get("daemon_version").and_then(|v| v.as_str());
         assert!(
             version.is_some(),
             "status should include daemon_version, payload: {:?}",
@@ -123,10 +105,7 @@ async fn query_status_returns_daemon_info() {
         );
 
         // Should report transport initialized
-        let rns_init = frame
-            .payload
-            .get("rns_initialized")
-            .and_then(|v| v.as_bool());
+        let rns_init = frame.payload.get("rns_initialized").and_then(|v| v.as_bool());
         assert_eq!(rns_init, Some(true), "transport should be initialized");
     })
     .await;
@@ -135,10 +114,7 @@ async fn query_status_returns_daemon_info() {
 #[tokio::test]
 async fn query_identity_returns_hashes() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("ipc-identity")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("ipc-identity").tcp_server("127.0.0.1:0").build().await;
 
         let (_server, socket_path) = start_ipc_server(&node).await;
         tokio::time::sleep(SETTLE).await;
@@ -168,10 +144,7 @@ async fn query_identity_returns_hashes() {
 #[tokio::test]
 async fn announce_via_ipc() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("ipc-announce")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("ipc-announce").tcp_server("127.0.0.1:0").build().await;
 
         let (_server, socket_path) = start_ipc_server(&node).await;
         tokio::time::sleep(SETTLE).await;
@@ -192,10 +165,7 @@ async fn announce_via_ipc() {
 #[tokio::test]
 async fn multiple_requests_on_same_connection() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("ipc-multi")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("ipc-multi").tcp_server("127.0.0.1:0").build().await;
 
         let (_server, socket_path) = start_ipc_server(&node).await;
         tokio::time::sleep(SETTLE).await;
@@ -205,12 +175,7 @@ async fn multiple_requests_on_same_connection() {
         // Send 5 requests on the same connection
         for i in 0..5 {
             let frame = request(&mut stream, MessageType::QueryStatus, &empty_payload()).await;
-            assert_eq!(
-                frame.msg_type,
-                MessageType::Result,
-                "request {} should succeed",
-                i
-            );
+            assert_eq!(frame.msg_type, MessageType::Result, "request {} should succeed", i);
         }
     })
     .await;
@@ -219,10 +184,7 @@ async fn multiple_requests_on_same_connection() {
 #[tokio::test]
 async fn concurrent_clients() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("ipc-concurrent")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("ipc-concurrent").tcp_server("127.0.0.1:0").build().await;
 
         let (_server, socket_path) = start_ipc_server(&node).await;
         tokio::time::sleep(SETTLE).await;
@@ -260,10 +222,7 @@ async fn concurrent_clients() {
 #[tokio::test]
 async fn query_contacts_via_ipc() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("ipc-contacts")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("ipc-contacts").tcp_server("127.0.0.1:0").build().await;
 
         let (_server, socket_path) = start_ipc_server(&node).await;
         tokio::time::sleep(SETTLE).await;
@@ -295,10 +254,7 @@ async fn query_contacts_via_ipc() {
 #[tokio::test]
 async fn auto_reply_crud_via_ipc() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("ipc-autoreply")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("ipc-autoreply").tcp_server("127.0.0.1:0").build().await;
 
         let (_server, socket_path) = start_ipc_server(&node).await;
         tokio::time::sleep(SETTLE).await;
@@ -335,10 +291,7 @@ async fn auto_reply_crud_via_ipc() {
 async fn ipc_reflects_state_after_real_message_delivery() {
     with_timeout(async {
         // Two nodes connected with real TCP
-        let alice = TestNodeBuilder::new("alice-ipc-state")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-ipc-state").tcp_server("127.0.0.1:0").build().await;
         let bob = TestNodeBuilder::new("bob-ipc-state")
             .tcp_client(alice.listen_addr.expect("addr"))
             .build()
@@ -360,10 +313,7 @@ async fn ipc_reflects_state_after_real_message_delivery() {
         tokio::time::sleep(SETTLE).await;
 
         // Alice sends a real message to bob over TCP
-        alice
-            .send_chat(&bob.delivery_hash, "ipc-state-test")
-            .await
-            .expect("send");
+        alice.send_chat(&bob.delivery_hash, "ipc-state-test").await.expect("send");
         styrene_e2e::helpers::await_inbound_count(
             &bob.app_context,
             1,
@@ -402,21 +352,14 @@ async fn ipc_reflects_state_after_real_message_delivery() {
         let frame = request(&mut stream, MessageType::QueryMessages, &msg_payload).await;
         assert_eq!(frame.msg_type, MessageType::Result);
 
-        let messages = frame
-            .payload
-            .get("messages")
-            .and_then(|v| v.as_array())
-            .expect("should have messages");
+        let messages =
+            frame.payload.get("messages").and_then(|v| v.as_array()).expect("should have messages");
         assert!(!messages.is_empty(), "IPC should return the delivered message");
 
         // Verify message content
-        let content = messages[0]
-            .as_map()
-            .and_then(|m| {
-                m.iter()
-                    .find(|(k, _)| k.as_str() == Some("content"))
-                    .and_then(|(_, v)| v.as_str())
-            });
+        let content = messages[0].as_map().and_then(|m| {
+            m.iter().find(|(k, _)| k.as_str() == Some("content")).and_then(|(_, v)| v.as_str())
+        });
         assert_eq!(content, Some("ipc-state-test"));
     })
     .await;
@@ -425,10 +368,7 @@ async fn ipc_reflects_state_after_real_message_delivery() {
 #[tokio::test]
 async fn error_response_for_unimplemented_method() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("ipc-error")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("ipc-error").tcp_server("127.0.0.1:0").build().await;
 
         let (_server, socket_path) = start_ipc_server(&node).await;
         tokio::time::sleep(SETTLE).await;
@@ -437,11 +377,7 @@ async fn error_response_for_unimplemented_method() {
 
         // Terminal operations are not implemented — should get an error
         let frame = request(&mut stream, MessageType::CmdTerminalOpen, &empty_payload()).await;
-        assert_eq!(
-            frame.msg_type,
-            MessageType::Error,
-            "unimplemented method should return Error"
-        );
+        assert_eq!(frame.msg_type, MessageType::Error, "unimplemented method should return Error");
     })
     .await;
 }
@@ -449,10 +385,7 @@ async fn error_response_for_unimplemented_method() {
 #[tokio::test]
 async fn malformed_client_does_not_crash_server() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("ipc-malformed")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("ipc-malformed").tcp_server("127.0.0.1:0").build().await;
 
         let (_server, socket_path) = start_ipc_server(&node).await;
         tokio::time::sleep(SETTLE).await;
@@ -470,10 +403,7 @@ async fn malformed_client_does_not_crash_server() {
         {
             let mut bad_stream = UnixStream::connect(&socket_path).await.expect("connect");
             let fake_len: u32 = 1000;
-            bad_stream
-                .write_all(&fake_len.to_be_bytes())
-                .await
-                .expect("write len");
+            bad_stream.write_all(&fake_len.to_be_bytes()).await.expect("write len");
             bad_stream.write_all(&[0x01, 0x02, 0x03, 0x04, 0x05]).await.expect("write partial");
             drop(bad_stream);
         }
@@ -495,10 +425,7 @@ async fn malformed_client_does_not_crash_server() {
 #[tokio::test]
 async fn client_disconnect_mid_session_does_not_affect_others() {
     with_timeout(async {
-        let node = TestNodeBuilder::new("ipc-disconnect")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let node = TestNodeBuilder::new("ipc-disconnect").tcp_server("127.0.0.1:0").build().await;
 
         let (_server, socket_path) = start_ipc_server(&node).await;
         tokio::time::sleep(SETTLE).await;

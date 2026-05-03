@@ -731,9 +731,8 @@ impl MessagesStore {
 
     /// Load all RBAC roster entries from the database.
     pub fn load_rbac_roster(&self) -> rusqlite::Result<Vec<styrene_rbac::RosterEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT identity_hash, role, label, grants FROM rbac_roster",
-        )?;
+        let mut stmt =
+            self.conn.prepare("SELECT identity_hash, role, label, grants FROM rbac_roster")?;
         let rows = stmt.query_map([], |row| {
             let hash: String = row.get(0)?;
             let role_str: String = row.get(1)?;
@@ -744,8 +743,7 @@ impl MessagesStore {
         let mut entries = Vec::new();
         for row in rows {
             let (hash, role_str, label, grants_csv) = row?;
-            let role = styrene_rbac::Role::from_name(&role_str)
-                .unwrap_or(styrene_rbac::Role::Peer);
+            let role = styrene_rbac::Role::from_name(&role_str).unwrap_or(styrene_rbac::Role::Peer);
             let grants: Vec<String> = if grants_csv.is_empty() {
                 Vec::new()
             } else if grants_csv.starts_with('[') {
@@ -756,9 +754,7 @@ impl MessagesStore {
                 grants_csv.split(',').map(|s| s.trim().to_string()).collect()
             };
             entries.push(
-                styrene_rbac::RosterEntry::new(hash, role)
-                    .with_label(label)
-                    .with_grants(grants),
+                styrene_rbac::RosterEntry::new(hash, role).with_label(label).with_grants(grants),
             );
         }
         Ok(entries)
@@ -784,10 +780,9 @@ impl MessagesStore {
     /// Identity hash is normalized to lowercase to match stored format.
     pub fn remove_rbac_entry(&self, identity_hash: &str) -> rusqlite::Result<bool> {
         let normalized = identity_hash.to_ascii_lowercase();
-        let changed = self.conn.execute(
-            "DELETE FROM rbac_roster WHERE identity_hash = ?1",
-            params![normalized],
-        )?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM rbac_roster WHERE identity_hash = ?1", params![normalized])?;
         Ok(changed > 0)
     }
 

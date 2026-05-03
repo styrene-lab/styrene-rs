@@ -6,9 +6,9 @@
 
 use std::net::IpAddr;
 
-use styrene_tunnel::session::{PqcSession, SessionState};
-use styrene_tunnel::traits::{TunnelParams, TunnelBackend};
 use styrene_e2e::tunnel_mock::MockTunnelBackend;
+use styrene_tunnel::session::{PqcSession, SessionState};
+use styrene_tunnel::traits::{TunnelBackend, TunnelParams};
 
 fn identity_hash(val: u8) -> [u8; 16] {
     [val; 16]
@@ -91,17 +91,14 @@ fn pqc_out_of_order_within_window() {
 fn pqc_authenticated_close() {
     let (mut initiator, mut responder) = establish();
 
-    let close_action = initiator
-        .close(0x00, Some("goodbye".into()))
-        .expect("close");
+    let close_action = initiator.close(0x00, Some("goodbye".into())).expect("close");
     assert_eq!(initiator.state(), SessionState::Closed);
 
     match close_action {
         styrene_tunnel::session::CloseAction::Authenticated(data_payload) => {
             let plaintext = responder.decrypt_data(&data_payload).expect("decrypt close");
-            let (reason, message) = responder
-                .try_authenticated_close(&plaintext)
-                .expect("should be close");
+            let (reason, message) =
+                responder.try_authenticated_close(&plaintext).expect("should be close");
             assert_eq!(reason, 0x00);
             assert_eq!(message.as_deref(), Some("goodbye"));
             assert_eq!(responder.state(), SessionState::Closed);
@@ -158,10 +155,7 @@ async fn mock_tunnel_backend_establish_and_rekey() {
     // Status
     let info = mock.status(&tunnel_id).await.expect("status");
     assert_eq!(info.backend, "wireguard");
-    assert_eq!(
-        info.state,
-        styrene_tunnel::traits::TunnelState::Established
-    );
+    assert_eq!(info.state, styrene_tunnel::traits::TunnelState::Established);
 
     // Rekey
     let new_psk = [0x42u8; 32];

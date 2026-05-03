@@ -12,13 +12,15 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::services::{
-    AutoReplyService, ConfigService, DiscoveryService, EventService, FleetService,
-    IdentityService, MessagingService, PageService, PolicyService, PropagationService,
-    ProtocolService, StatusService, TunnelService,
-};
 #[cfg(feature = "i2p-proxy")]
 use crate::services::I2pProxyService;
+#[cfg(feature = "terminal")]
+use crate::services::TerminalService;
+use crate::services::{
+    AutoReplyService, ConfigService, DiscoveryService, EventService, FleetService, IdentityService,
+    MessagingService, PageService, PolicyService, PropagationService, ProtocolService,
+    StatusService, TunnelService,
+};
 use crate::storage::messages::MessagesStore;
 use crate::transport::mesh_transport::MeshTransport;
 use rns_core::identity::PrivateIdentity;
@@ -49,6 +51,8 @@ pub struct AppContext {
     i2p_proxy: Arc<I2pProxyService>,
     propagation: Arc<PropagationService>,
     pages: Arc<PageService>,
+    #[cfg(feature = "terminal")]
+    terminal: Arc<TerminalService>,
     conversations: Arc<ConversationStore>,
 }
 
@@ -75,8 +79,7 @@ impl AppContext {
         node_store: Arc<NodeStore>,
         policy: PolicyService,
     ) -> Self {
-        let mut ctx =
-            Self::with_node_store(transport, identity_hash, store, node_store);
+        let mut ctx = Self::with_node_store(transport, identity_hash, store, node_store);
         ctx.policy = Arc::new(policy);
         ctx
     }
@@ -132,8 +135,13 @@ impl AppContext {
         // Phase 13: Page server (NomadNet-compatible page hosting)
         let pages = Arc::new(PageService::with_default_dir());
 
+        // Phase 14: Terminal sessions (local shell access for operators, desktop only)
+        #[cfg(feature = "terminal")]
+        let terminal = Arc::new(TerminalService::new());
+
         // Phase 13: Conversation metadata (pin/mute)
-        let conversations = Arc::new(ConversationStore::in_memory().expect("in-memory conversation store"));
+        let conversations =
+            Arc::new(ConversationStore::in_memory().expect("in-memory conversation store"));
 
         Self {
             transport,
@@ -154,6 +162,8 @@ impl AppContext {
             #[cfg(feature = "i2p-proxy")]
             i2p_proxy,
             pages,
+            #[cfg(feature = "terminal")]
+            terminal,
             conversations,
         }
     }
@@ -288,6 +298,20 @@ impl AppContext {
     /// NomadNet-compatible page server.
     pub fn pages(&self) -> &PageService {
         &self.pages
+    }
+
+    pub fn pages_arc(&self) -> Arc<PageService> {
+        self.pages.clone()
+    }
+
+    #[cfg(feature = "terminal")]
+    pub fn terminal(&self) -> &TerminalService {
+        &self.terminal
+    }
+
+    #[cfg(feature = "terminal")]
+    pub fn terminal_arc(&self) -> Arc<TerminalService> {
+        self.terminal.clone()
     }
 
     /// The persistent node store.

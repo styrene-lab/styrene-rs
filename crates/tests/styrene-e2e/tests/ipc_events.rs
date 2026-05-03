@@ -11,13 +11,11 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 
-use styrene_e2e::helpers::{
-    with_timeout, await_identity_resolved, await_inbound_message, SETTLE,
-};
+use styrene_e2e::helpers::{await_identity_resolved, await_inbound_message, with_timeout, SETTLE};
 use styrene_e2e::node::TestNodeBuilder;
-use styrened::daemon_facade::DaemonFacade;
 use styrene_ipc::traits::Daemon;
 use styrene_ipc_server::wire::{self, MessageType, REQUEST_ID_SIZE};
+use styrened::daemon_facade::DaemonFacade;
 
 fn random_request_id() -> [u8; REQUEST_ID_SIZE] {
     let mut id = [0u8; 16];
@@ -34,10 +32,8 @@ async fn start_ipc_server(
 ) -> (styrene_ipc_server::IpcServer, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let socket_path = dir.path().join("test.sock");
-    let facade = Arc::new(DaemonFacade::new(
-        node.app_context.clone(),
-        node.identity_hash.clone(),
-    )) as Arc<dyn Daemon>;
+    let facade = Arc::new(DaemonFacade::new(node.app_context.clone(), node.identity_hash.clone()))
+        as Arc<dyn Daemon>;
     let config = styrene_ipc_server::IpcServerConfig {
         socket_path: socket_path.clone(),
         event_capacity: 64,
@@ -105,21 +101,20 @@ async fn read_until_event(
                 continue;
             }
             Ok(Err(_)) => return None, // read error
-            Err(_) => return None,      // timeout
+            Err(_) => return None,     // timeout
         }
     }
 }
 
 /// Drain all available event frames from the socket (non-blocking after initial wait).
-async fn drain_event_frames(
-    stream: &mut UnixStream,
-    wait: Duration,
-) -> Vec<wire::Frame> {
+async fn drain_event_frames(stream: &mut UnixStream, wait: Duration) -> Vec<wire::Frame> {
     tokio::time::sleep(wait).await;
     let mut frames = Vec::new();
     loop {
         let (mut read, _) = stream.split();
-        match tokio::time::timeout(Duration::from_millis(100), wire::read_frame_async(&mut read)).await {
+        match tokio::time::timeout(Duration::from_millis(100), wire::read_frame_async(&mut read))
+            .await
+        {
             Ok(Ok(frame)) if frame.msg_type.is_event() => {
                 frames.push(frame);
             }
@@ -135,10 +130,7 @@ async fn drain_event_frames(
 #[tokio::test]
 async fn ipc_subscribe_messages_receives_new_event() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-ipc-ev")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-ipc-ev").tcp_server("127.0.0.1:0").build().await;
         let bob = TestNodeBuilder::new("bob-ipc-ev")
             .tcp_client(alice.listen_addr.expect("addr"))
             .build()
@@ -147,12 +139,8 @@ async fn ipc_subscribe_messages_receives_new_event() {
         tokio::time::sleep(SETTLE).await;
         alice.announce().await;
         bob.announce().await;
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Start IPC server on bob
         let (_server, socket_path) = start_ipc_server(&bob).await;
@@ -167,22 +155,17 @@ async fn ipc_subscribe_messages_receives_new_event() {
         await_inbound_message(&bob.app_context, Duration::from_secs(15)).await;
 
         // Read the pushed EventMessage frame
-        let event = read_until_event(&mut stream, MessageType::EventMessage, Duration::from_secs(5))
-            .await
-            .expect("should receive EventMessage");
+        let event =
+            read_until_event(&mut stream, MessageType::EventMessage, Duration::from_secs(5))
+                .await
+                .expect("should receive EventMessage");
 
         // Verify zero request_id (pushed event, not response)
         assert_eq!(event.request_id, [0u8; 16], "event should have zero request_id");
 
         // Verify payload
-        assert_eq!(
-            event.payload.get("kind").and_then(|v| v.as_str()),
-            Some("new")
-        );
-        assert_eq!(
-            event.payload.get("content").and_then(|v| v.as_str()),
-            Some("ipc-event-msg")
-        );
+        assert_eq!(event.payload.get("kind").and_then(|v| v.as_str()), Some("new"));
+        assert_eq!(event.payload.get("content").and_then(|v| v.as_str()), Some("ipc-event-msg"));
         assert_eq!(
             event.payload.get("source_hash").and_then(|v| v.as_str()),
             Some(alice.identity_hash.as_str())
@@ -194,10 +177,7 @@ async fn ipc_subscribe_messages_receives_new_event() {
 #[tokio::test]
 async fn ipc_subscribe_devices_receives_announce_event() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-ipc-dev")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-ipc-dev").tcp_server("127.0.0.1:0").build().await;
         let bob = TestNodeBuilder::new("bob-ipc-dev")
             .tcp_client(alice.listen_addr.expect("addr"))
             .build()
@@ -215,9 +195,10 @@ async fn ipc_subscribe_devices_receives_announce_event() {
         // Bob announces — alice should push EventDevice
         bob.announce().await;
 
-        let event = read_until_event(&mut stream, MessageType::EventDevice, Duration::from_secs(10))
-            .await
-            .expect("should receive EventDevice");
+        let event =
+            read_until_event(&mut stream, MessageType::EventDevice, Duration::from_secs(10))
+                .await
+                .expect("should receive EventDevice");
 
         assert_eq!(event.request_id, [0u8; 16]);
         assert_eq!(
@@ -231,10 +212,7 @@ async fn ipc_subscribe_devices_receives_announce_event() {
 #[tokio::test]
 async fn ipc_subscribe_links_receives_active_event() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-ipc-link")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-ipc-link").tcp_server("127.0.0.1:0").build().await;
         let bob = TestNodeBuilder::new("bob-ipc-link")
             .tcp_client(alice.listen_addr.expect("addr"))
             .build()
@@ -243,12 +221,8 @@ async fn ipc_subscribe_links_receives_active_event() {
         tokio::time::sleep(SETTLE).await;
         alice.announce().await;
         bob.announce().await;
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
         // Subscribe to links on alice's IPC
         let (_server, socket_path) = start_ipc_server(&alice).await;
@@ -279,10 +253,7 @@ async fn ipc_subscribe_links_receives_active_event() {
 #[tokio::test]
 async fn ipc_unsubscribe_stops_events() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-unsub")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-unsub").tcp_server("127.0.0.1:0").build().await;
         let bob = TestNodeBuilder::new("bob-unsub")
             .tcp_client(alice.listen_addr.expect("addr"))
             .build()
@@ -300,8 +271,8 @@ async fn ipc_unsubscribe_stops_events() {
 
         // Verify event arrives
         bob.announce().await;
-        let event = read_until_event(&mut stream, MessageType::EventDevice, Duration::from_secs(10))
-            .await;
+        let event =
+            read_until_event(&mut stream, MessageType::EventDevice, Duration::from_secs(10)).await;
         assert!(event.is_some(), "should receive event while subscribed");
 
         // Unsubscribe
@@ -318,12 +289,9 @@ async fn ipc_unsubscribe_stops_events() {
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         // Should NOT receive any more events
-        let late_event = read_until_event(&mut stream, MessageType::EventDevice, Duration::from_secs(2))
-            .await;
-        assert!(
-            late_event.is_none(),
-            "should NOT receive events after unsubscribe"
-        );
+        let late_event =
+            read_until_event(&mut stream, MessageType::EventDevice, Duration::from_secs(2)).await;
+        assert!(late_event.is_none(), "should NOT receive events after unsubscribe");
     })
     .await;
 }
@@ -331,10 +299,7 @@ async fn ipc_unsubscribe_stops_events() {
 #[tokio::test]
 async fn ipc_multiple_subscriptions_on_same_connection() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-multi-sub")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
+        let alice = TestNodeBuilder::new("alice-multi-sub").tcp_server("127.0.0.1:0").build().await;
         let bob = TestNodeBuilder::new("bob-multi-sub")
             .tcp_client(alice.listen_addr.expect("addr"))
             .build()
@@ -343,12 +308,8 @@ async fn ipc_multiple_subscriptions_on_same_connection() {
         tokio::time::sleep(SETTLE).await;
         alice.announce().await;
         bob.announce().await;
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
+            .await;
 
         let (_server, socket_path) = start_ipc_server(&bob).await;
         tokio::time::sleep(SETTLE).await;
@@ -369,23 +330,13 @@ async fn ipc_multiple_subscriptions_on_same_connection() {
         // Collect all events
         let events = drain_event_frames(&mut stream, Duration::from_secs(1)).await;
 
-        let device_events: Vec<_> = events
-            .iter()
-            .filter(|f| f.msg_type == MessageType::EventDevice)
-            .collect();
-        let message_events: Vec<_> = events
-            .iter()
-            .filter(|f| f.msg_type == MessageType::EventMessage)
-            .collect();
+        let device_events: Vec<_> =
+            events.iter().filter(|f| f.msg_type == MessageType::EventDevice).collect();
+        let message_events: Vec<_> =
+            events.iter().filter(|f| f.msg_type == MessageType::EventMessage).collect();
 
-        assert!(
-            !device_events.is_empty(),
-            "should receive at least one device event"
-        );
-        assert!(
-            !message_events.is_empty(),
-            "should receive at least one message event"
-        );
+        assert!(!device_events.is_empty(), "should receive at least one device event");
+        assert!(!message_events.is_empty(), "should receive at least one message event");
     })
     .await;
 }
