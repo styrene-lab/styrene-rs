@@ -342,17 +342,6 @@ body {
     font-size: 10px;
     opacity: 0.6;
     margin-top: 2px;
-    display: flex;
-    gap: 4px;
-    align-items: baseline;
-}
-
-.message-status {
-    font-size: 10px;
-}
-
-.message.sent .message-status {
-    color: rgba(255, 255, 255, 0.7);
 }
 
 .chat-input-bar {
@@ -492,36 +481,6 @@ body {
     overflow: hidden;
 }
 
-.page-nav-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 16px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-}
-
-.page-nav-btn {
-    padding: 4px 10px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-size: 13px;
-    cursor: pointer;
-    flex-shrink: 0;
-}
-
-.page-nav-btn:hover:not(:disabled) {
-    background: var(--surface-hover);
-}
-
-.page-nav-btn:disabled {
-    opacity: 0.3;
-    cursor: default;
-}
-
 .page-url-bar {
     display: flex;
     gap: 8px;
@@ -654,35 +613,6 @@ body {
     border: none;
     border-top: 1px solid var(--border);
     margin: 16px 0;
-}
-
-.micron-section {
-    margin-left: 0;
-}
-
-.micron-section-body {
-    margin-left: 16px;
-}
-
-.micron-spacer {
-    height: 8px;
-}
-
-.micron-center {
-    text-align: center;
-}
-
-.micron-right {
-    text-align: right;
-}
-
-.micron-field {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-dim);
-    border: 1px solid var(--border);
-    padding: 1px 4px;
-    border-radius: 3px;
 }
 
 .micron-pre {
@@ -868,166 +798,6 @@ body {
     font-size: 11px;
 }
 
-/* ── Node detail metadata ───────────────────────────────────── */
-.detail-meta {
-    display: flex;
-    justify-content: space-between;
-    padding: 2px 0;
-}
-
-.detail-meta-label {
-    font-size: 11px;
-    color: var(--text-muted);
-}
-
-.detail-meta-value {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text);
-}
-
-/* ── Active links ──────────────────────────────────────────── */
-.link-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 0;
-    font-size: 12px;
-}
-
-.link-name {
-    flex: 1;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.link-rtt {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--green);
-    flex-shrink: 0;
-}
-
-.link-status {
-    font-size: 10px;
-    flex-shrink: 0;
-}
-
-/* ── Path table ─────────────────────────────────────────────── */
-.path-table {
-    max-height: 150px;
-    overflow-y: auto;
-}
-
-.path-item {
-    padding: 3px 0;
-    border-bottom: 1px solid var(--border);
-}
-
-.path-item:last-child {
-    border-bottom: none;
-}
-
-.path-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-}
-
-.path-dest {
-    font-size: 11px;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-}
-
-.path-hops {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--accent);
-    flex-shrink: 0;
-}
-
-.path-relay {
-    font-size: 10px;
-    color: var(--text-dim);
-}
-
-/* ── Announce stream ────────────────────────────────────────── */
-.announce-stream {
-    max-height: 200px;
-    overflow-y: auto;
-}
-
-.announce-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px 0;
-    font-size: 11px;
-}
-
-.announce-icon {
-    flex-shrink: 0;
-    color: var(--text-dim);
-    font-size: 10px;
-    width: 12px;
-    text-align: center;
-}
-
-.announce-name {
-    flex: 1;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.announce-time {
-    flex-shrink: 0;
-    color: var(--text-dim);
-    font-size: 10px;
-}
-
-/* ── Interface items ────────────────────────────────────────── */
-.iface-item {
-    padding: 4px 0;
-    border-bottom: 1px solid var(--border);
-}
-
-.iface-item:last-child {
-    border-bottom: none;
-}
-
-.iface-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.iface-status {
-    font-size: 8px;
-    flex-shrink: 0;
-}
-
-.iface-name {
-    font-size: 12px;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.iface-traffic {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--text-muted);
-}
-
 .graph-tooltip .tt-caps {
     margin-top: 2px;
     font-size: 10px;
@@ -1192,4 +962,326 @@ body {
 
 .action-btn.primary:hover {
     background: rgba(88, 166, 255, 0.25);
+}
+
+/* ── Node detail metadata ───────────────────────────────────── */
+.detail-meta {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+}
+
+.detail-meta-label {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.detail-meta-value {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text);
+}
+
+/* ── Active links ──────────────────────────────────────────── */
+.link-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 12px;
+}
+
+.link-name {
+    flex: 1;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.link-rtt {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--green);
+    flex-shrink: 0;
+}
+
+.link-status {
+    font-size: 10px;
+    flex-shrink: 0;
+}
+
+/* ── Interface items ────────────────────────────────────────── */
+.iface-item {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.iface-item:last-child {
+    border-bottom: none;
+}
+
+.iface-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.iface-status {
+    font-size: 8px;
+    flex-shrink: 0;
+}
+
+.iface-name {
+    font-size: 12px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.iface-traffic {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+/* ── Path table ─────────────────────────────────────────────── */
+.path-table {
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.path-item {
+    padding: 3px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.path-item:last-child {
+    border-bottom: none;
+}
+
+.path-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+.path-dest {
+    font-size: 11px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.path-hops {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--accent);
+    flex-shrink: 0;
+}
+
+.path-relay {
+    font-size: 10px;
+    color: var(--text-dim);
+}
+
+/* ── Announce stream ────────────────────────────────────────── */
+.announce-stream {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.announce-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    font-size: 11px;
+}
+
+.announce-icon {
+    flex-shrink: 0;
+    color: var(--text-dim);
+    font-size: 10px;
+    width: 12px;
+    text-align: center;
+}
+
+.announce-name {
+    flex: 1;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.announce-time {
+    flex-shrink: 0;
+    color: var(--text-dim);
+    font-size: 10px;
+}
+
+/* ── Conversation sidebar ───────────────────────────────────── */
+.convo-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+}
+
+.convo-item:hover {
+    background: var(--surface-hover);
+}
+
+.convo-item.selected {
+    background: rgba(88, 166, 255, 0.1);
+    border-left: 2px solid var(--accent);
+}
+
+.convo-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.convo-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.convo-time {
+    font-size: 10px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+}
+
+.convo-preview {
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.convo-unread {
+    font-size: 10px;
+    font-weight: 700;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 10px;
+    padding: 1px 6px;
+    flex-shrink: 0;
+    min-width: 18px;
+    text-align: center;
+}
+
+.sidebar-empty {
+    padding: 16px;
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+.empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.message-meta {
+    display: flex;
+    gap: 4px;
+    align-items: baseline;
+}
+
+.message-status {
+    font-size: 10px;
+}
+
+.message.sent .message-status {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* ── Page loading ──────────────────────────────────────────── */
+.page-loading {
+    color: var(--text-muted);
+    text-align: center;
+    padding-top: 60px;
+}
+
+.page-loading h3 {
+    color: var(--accent);
+    margin-bottom: 8px;
+}
+
+.page-loading p {
+    font-size: 13px;
+    margin: 4px 0;
+}
+
+.loading-elapsed {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--text);
+    margin-top: 12px;
+}
+
+.loading-spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid var(--border);
+    border-top: 3px solid var(--accent);
+    border-radius: 50%;
+    margin: 0 auto 16px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ── Micron section indenting ──────────────────────────────── */
+.micron-section {
+    margin-left: 0;
+}
+
+.micron-section-body {
+    margin-left: 16px;
+}
+
+.micron-spacer {
+    height: 8px;
+}
+
+.micron-center {
+    text-align: center;
+}
+
+.micron-right {
+    text-align: right;
+}
+
+.micron-field {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    padding: 1px 4px;
+    border-radius: 3px;
 }
