@@ -34,7 +34,8 @@ async fn query_status_reflects_connected_state() {
 
         assert!(status.rns_initialized, "transport should be initialized");
         assert!(status.transport_enabled, "transport should be enabled");
-        assert!(status.uptime >= 0);
+        // uptime is u64 — just verify the field is accessible
+        let _ = status.uptime;
         assert!(!status.daemon_version.is_empty());
     })
     .await;
