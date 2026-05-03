@@ -288,6 +288,15 @@ pub struct PathEntry {
     pub interface: String,
 }
 
+/// An announce event for the activity stream.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnnounceEvent {
+    pub peer_hash: String,
+    pub peer_name: Option<String>,
+    pub timestamp: i64,
+    pub node_role: PeerRole,
+}
+
 /// Per-interface stats for the interface panel.
 #[derive(Clone, Debug, PartialEq)]
 pub struct InterfaceInfo {

@@ -52,6 +52,7 @@ fn App() -> Element {
     let mut conversations = use_signal(Vec::<state::ConversationEntry>::new);
     let mut links = use_signal(Vec::<state::LinkInfo>::new);
     let mut interfaces = use_signal(Vec::<state::InterfaceInfo>::new);
+    let mut announce_log = use_signal(Vec::<state::AnnounceEvent>::new);
 
     // Bridge handle — shared with UI for RPC calls (send_chat, browse_page, etc.)
     let mut bridge: Signal<Option<Arc<Mutex<daemon_bridge::DaemonBridge>>>> = use_signal(|| None);
@@ -114,6 +115,7 @@ fn App() -> Element {
                             &mut connection_mode,
                             &mut path_table,
                             &mut links,
+                            &mut announce_log,
                         );
                     }
                 }
@@ -198,6 +200,7 @@ fn App() -> Element {
                             },
                             links: links.read().clone(),
                             interfaces: interfaces.read().clone(),
+                            announce_log: announce_log.read().clone(),
                             on_browse_page: move |host_hash: String| {
                                 send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
                                     host: host_hash,
@@ -418,6 +421,7 @@ fn handle_daemon_event(
     connection_mode: &mut Signal<String>,
     path_table: &mut Signal<Vec<state::PathEntry>>,
     links: &mut Signal<Vec<state::LinkInfo>>,
+    announce_log: &mut Signal<Vec<state::AnnounceEvent>>,
 ) {
     match ev {
         daemon_bridge::DaemonEvent::Identity(info) => {
@@ -454,6 +458,9 @@ fn handle_daemon_event(
                 };
                 let display =
                     if parsed.display_name.is_empty() { None } else { Some(parsed.display_name) };
+                let peer_hash = dev.destination_hash.clone();
+                let peer_name = display.clone();
+                let peer_role = role.clone();
                 p.push(state::PeerEntry {
                     hash: dev.destination_hash,
                     name: display,
@@ -464,6 +471,23 @@ fn handle_daemon_event(
                     last_announce: dev.last_announce,
                     announce_count: dev.announce_count,
                 });
+                // Push to announce log
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let mut log = announce_log.write();
+                log.push(state::AnnounceEvent {
+                    peer_hash,
+                    peer_name: peer_name,
+                    timestamp: dev.last_announce.unwrap_or(now),
+                    node_role: peer_role,
+                });
+                // Cap at 200 entries
+                if log.len() > 200 {
+                    let excess = log.len() - 200;
+                    log.drain(..excess);
+                }
             }
         }
         daemon_bridge::DaemonEvent::MessageReceived(msg) => {

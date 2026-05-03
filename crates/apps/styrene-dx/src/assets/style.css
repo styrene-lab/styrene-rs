@@ -915,6 +915,42 @@ body {
     flex-shrink: 0;
 }
 
+/* ── Announce stream ────────────────────────────────────────── */
+.announce-stream {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.announce-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    font-size: 11px;
+}
+
+.announce-icon {
+    flex-shrink: 0;
+    color: var(--text-dim);
+    font-size: 10px;
+    width: 12px;
+    text-align: center;
+}
+
+.announce-name {
+    flex: 1;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.announce-time {
+    flex-shrink: 0;
+    color: var(--text-dim);
+    font-size: 10px;
+}
+
 /* ── Interface items ────────────────────────────────────────── */
 .iface-item {
     padding: 4px 0;
