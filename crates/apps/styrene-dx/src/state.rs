@@ -304,6 +304,8 @@ pub struct ChatMessage {
     pub content: String,
     pub timestamp: i64,
     pub is_outgoing: bool,
+    /// Delivery status: "pending", "delivered", "read", "failed", or empty.
+    pub status: String,
 }
 
 // ── Styrene announce name parser ──────────────────────────────────────────

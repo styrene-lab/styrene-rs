@@ -109,6 +109,30 @@ impl DaemonBridge {
         result
     }
 
+    /// RPC with a custom timeout (for long-running operations like remote page fetch).
+    async fn rpc_timeout(
+        &mut self,
+        msg_type: MessageType,
+        payload: &HashMap<String, MpValue>,
+        timeout_secs: u64,
+    ) -> Result<Frame, String> {
+        let req_id = self.next_request_id();
+        let start = std::time::Instant::now();
+        debug!(target: "dx::rpc", ?msg_type, timeout_secs, "acquiring stream lock (long)");
+        let mut stream = self.stream.lock().await;
+        wire::write_frame_async(&mut *stream, msg_type, &req_id, payload)
+            .await
+            .map_err(|e| format!("write: {e}"))?;
+        let result =
+            timeout(Duration::from_secs(timeout_secs), wire::read_frame_async(&mut *stream))
+                .await
+                .map_err(|_| format!("rpc timeout ({timeout_secs}s)"))?
+                .map_err(|e| format!("read: {e}"));
+        let elapsed_ms = start.elapsed().as_millis();
+        debug!(target: "dx::rpc", ?msg_type, elapsed_ms, "rpc complete");
+        result
+    }
+
     pub async fn identity(&mut self) -> Result<IdentityInfo, String> {
         let frame = self.rpc(MessageType::QueryIdentity, &HashMap::new()).await?;
         Ok(parse_identity(&frame.payload))
@@ -177,7 +201,10 @@ impl DaemonBridge {
         let mut p = HashMap::new();
         p.insert("host".into(), MpValue::from(host));
         p.insert("path".into(), MpValue::from(path));
-        let frame = self.rpc(MessageType::QueryPage, &p).await?;
+        p.insert("timeout".into(), MpValue::from(25_u64));
+        // Remote page fetches need 30s — mesh link establishment + transfer
+        let timeout_secs = if host.is_empty() || host == "local" { 5 } else { 30 };
+        let frame = self.rpc_timeout(MessageType::QueryPage, &p, timeout_secs).await?;
         Ok(mp_str(&frame.payload, "source"))
     }
 
