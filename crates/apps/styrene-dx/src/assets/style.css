@@ -615,6 +615,10 @@ body {
     margin: 16px 0;
 }
 
+.micron-spacer {
+    height: 8px;
+}
+
 .micron-pre {
     font-family: var(--font-mono);
     font-size: 12px;
