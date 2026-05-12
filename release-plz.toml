@@ -1,0 +1,45 @@
+# release-plz configuration for the styrene-rs workspace.
+#
+# Defaults: don't publish anything. Crates opt-in explicitly below.
+# The workspace has ~30 crates — apps (styrened, styrene-tui),
+# bindings (styrene-native, styrene-mobile-ffi), tests, and internal
+# libs aren't meant for crates.io. Only the public ecosystem libraries
+# get auto-published here.
+
+[workspace]
+publish = false
+release = false
+
+# ── Public ecosystem libraries ─────────────────────────────────────
+
+[[package]]
+name = "styrene-identity"
+publish = true
+release = true
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
+
+[[package]]
+name = "styrene-forge"
+publish = true
+release = true
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
+
+[[package]]
+name = "styrene-mqtt"
+publish = true
+release = true
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
+
+[[package]]
+name = "styrene-secrets"
+publish = true
+release = true
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
