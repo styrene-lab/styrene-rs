@@ -12,7 +12,7 @@ supersedes: [styrene-identity (design), yubikey-rns-identity (research)]
 
 ## 1. Overview
 
-Styrene Identity provides a unified cryptographic root from which all protocol-specific keys are deterministically derived. A single 32-byte root secret, stored in hardware (YubiKey), a credential manager (Bitwarden), or an encrypted file, feeds an HKDF-SHA256 derivation hierarchy that produces keys for mesh networking (RNS, Yggdrasil, WireGuard), SSH authentication, git commit signing, age file encryption, and agent delegation.
+Styrene Identity provides a unified cryptographic root from which all protocol-specific keys are deterministically derived. A single 32-byte root secret, stored in hardware (YubiKey), a credential manager (Bitwarden), or an encrypted file, feeds an HKDF-SHA256 derivation hierarchy that produces keys for mesh networking (RNS, Yggdrasil, WireGuard), SSH authentication, git commit signing, age file encryption, agent delegation, and identity-bound X.509 control-plane certificates.
 
 This document specifies the derivation hierarchy, signer tiers, SSH agent protocol, agent delegation model, and security properties of the system as implemented in the `styrene-identity` Rust crate.
 
@@ -22,7 +22,8 @@ This document specifies the derivation hierarchy, signer tiers, SSH agent protoc
 2. **Hardware-first, software-fallback.** YubiKey (Tier A) is the primary signer. Bitwarden (Tier C) distributes the root to devices without the token. Encrypted file (Tier D) is the universal fallback.
 3. **No private keys on disk.** The SSH agent derives keys in memory, signs, and zeroizes. File export exists only as an explicit opt-in escape hatch.
 4. **Agent accountability.** Agents receive their own signing keys, derived from the same root, enabling cryptographic distinction between human and agent commits.
-5. **Collision resistance by construction.** Parameterized key families (SSH user keys, agent keys) use two-level HKDF, making collisions with flat-namespace purposes structurally impossible.
+5. **Collision resistance by construction.** Parameterized key families (SSH user keys, agent keys, TLS certificate keys) use two-level HKDF, making collisions with flat-namespace purposes structurally impossible.
+6. **Scoped control-plane PKI.** Managed agents can receive deterministic server/client certificates rooted in a Styrene identity without inventing a separate secret lifecycle.
 
 ### 1.2 Scope
 
@@ -32,8 +33,9 @@ This specification covers:
 - YubiKey FIDO2 integration (Section 4)
 - SSH agent protocol (Section 5)
 - Git commit signing and agent delegation (Section 6)
-- Security properties, threat model, and known limitations (Section 7)
-- Recovery and rotation (Section 8)
+- Identity-bound PKI for TLS and mTLS control planes (Section 7)
+- Security properties, threat model, and known limitations (Section 8)
+- Recovery and rotation (Section 9)
 
 This specification does NOT cover:
 - The identity manifest and cross-protocol binding wire format (see `styrene-identity.md`)
@@ -115,10 +117,11 @@ The master key is zeroized immediately after the level-2 HKDF-Extract.
 |--------|--------------------|-------------|----------------|----------------|
 | SSH user keys | `"styrene-ssh-user-master-v1"` | `"styrene-identity-ssh-user-v1"` | `"github"`, `"work"` | `styrene-ssh-user-{label}` |
 | Agent signing keys | `"styrene-agent-master-v1"` | `"styrene-identity-agent-v1"` | `"omegon-primary"`, `"omegon-cleave-0"` | `styrene-agent:{name}` |
+| TLS certificate keys | `"styrene-tls-cert-master-v1"` | `"styrene-identity-tls-cert-v1"` | `"auspex-control/dev/server/0"` | X.509 Ed25519 key material |
 
 Empty labels and agent names are rejected with `DeriveError::EmptyLabel`.
 
-**Collision resistance:** Level-2 keys are derived from a different IKM (the family master) AND a different salt than level-1 flat keys. Additionally, each family uses its own distinct level-2 salt, so even identical labels across families (e.g., SSH user `"github"` vs agent `"github"`) produce different keys through three independent mechanisms: different master key, different salt, different HKDF tree. This is a structural guarantee, not a probabilistic one.
+**Collision resistance:** Level-2 keys are derived from a different IKM (the family master) AND a different salt than level-1 flat keys. Additionally, each family uses its own distinct level-2 salt, so even identical labels across families (e.g., SSH user `"github"` vs agent `"github"` vs TLS certificate `"github"`) produce different keys through three independent mechanisms: different master key, different salt, different HKDF tree. This is a structural guarantee, not a probabilistic one.
 
 ### 2.5 Full Derivation Tree
 
@@ -141,12 +144,18 @@ root_secret (32 bytes)
   │       ├─ "work"                                 → SSH key for work
   │       └─ ...
   │
-  └─ Expand(PRK, "styrene-agent-master-v1")         → agent master
-      └─ Extract(salt="styrene-identity-agent-v1", master) then Expand(info=name)
-          ├─ "omegon-primary"                       → primary agent signing key
-          ├─ "omegon-cleave-0"                      → cleave worker 0
-          ├─ "auspex-deploy"                        → deployed agent
-          └─ ...
+  ├─ Expand(PRK, "styrene-agent-master-v1")         → agent master
+  │   └─ Extract(salt="styrene-identity-agent-v1", master) then Expand(info=name)
+  │       ├─ "omegon-primary"                       → primary agent signing key
+  │       ├─ "omegon-cleave-0"                      → cleave worker 0
+  │       ├─ "auspex-deploy"                        → deployed agent
+  │       └─ ...
+  │
+  └─ Expand(PRK, "styrene-tls-cert-master-v1")      → TLS certificate master
+      └─ Extract(salt="styrene-identity-tls-cert-v1", master) then Expand(info=label)
+          ├─ "auspex-control/dev/ca/default/0"       → scoped CA key
+          ├─ "auspex-control/dev/server/agent/0"     → server leaf key
+          └─ "auspex-control/dev/client/operator/0"  → mTLS client leaf key
 ```
 
 ### 2.6 Key Type Constraints
@@ -279,7 +288,7 @@ This salt is:
 - Same YubiKey + same credential + same salt = same root secret on any machine (portable).
 - PIN protects against unauthorized use of stolen token (8 attempts before lockout).
 - **The root secret exists in process memory after extraction.** This is Tier A for the extraction step only — the YubiKey provides a PRF, not an on-device signing service. All derived keys (SSH, git, age, etc.) are computed in software from the extracted root. A process memory dump during derivation reveals the root and all derivable keys.
-- The root is NOT cached across calls in the current implementation. Each `root_secret()` call contacts the YubiKey, which may require a physical touch. This provides strong freshness but has UX implications (see Section 7.6).
+- The root is NOT cached across calls in the current implementation. Each `root_secret()` call contacts the YubiKey, which may require a physical touch. This provides strong freshness but has UX implications (see Section 8.6).
 
 ### 4.6 PIN and Passphrase Input
 
@@ -407,7 +416,7 @@ Agent keys are deterministic: the same root + the same agent name = the same key
 - **Adding an agent:** Configure the name in the SSH agent. The key is immediately derivable.
 - **Removing an agent:** Remove the name from the SSH agent config. Revoke the public key from GitHub.
 - **Compromised agent:** The agent's key is derived from the root, but the root is not compromised. Revoke the specific agent key on GitHub. Other agents and the user's personal key are unaffected.
-- **Root rotation:** ALL keys change. All GitHub signing keys must be updated. See Section 8.
+- **Root rotation:** ALL keys change. All GitHub signing keys must be updated. See Section 9.
 
 ### 6.6 Future: Delegation Attestation
 
@@ -427,7 +436,83 @@ This is NOT implemented. The current model relies on GitHub's signing key regist
 
 ---
 
-## 7. Security Properties and Threat Model
+## 7. Identity-Bound PKI
+
+### 7.1 Purpose
+
+The `pki` feature derives deterministic Ed25519 X.509 certificate material from
+the same Styrene root used for SSH, git signing, mesh identity, and agent keys.
+It exists to give Auspex and Omegon a shared control-plane TLS/mTLS foundation:
+
+- Every managed agent can receive a scoped server certificate for HTTPS/WSS.
+- Operators and control-plane callers can receive scoped client certificates for mTLS.
+- Trust anchors can be regenerated from the root when appropriate, but should be distributed through normal deployment secret paths.
+
+The PKI layer is not a general public CA and not an anonymity mechanism. It is a
+private transport identity system for Styrene-managed control planes.
+
+### 7.2 Certificate Roles
+
+| Role | Derivation label shape | URI SAN shape | Extended Key Usage |
+|------|------------------------|---------------|--------------------|
+| CA | `{scope}/ca/{profile}/{ca_epoch}` | `spiffe://styrene.dev/identity/{hash}/ca/{scope}` | CA only |
+| Server | `{scope}/server/{agent_label}/{leaf_epoch}` | `spiffe://styrene.dev/identity/{hash}/agent/{agent_label}` | ServerAuth |
+| Client | `{scope}/client/{client_label}/{leaf_epoch}` | `spiffe://styrene.dev/identity/{hash}/client/{client_label}` | ClientAuth |
+
+Server certificates may also include DNS and IP subject alternative names. These
+names are canonicalized, sorted, and deduplicated before issuance so the same
+semantic request produces the same certificate bytes.
+
+### 7.3 Rotation Model
+
+Rotation is explicit and label-driven:
+
+| Rotation knob | Changes | Does not change |
+|---------------|---------|-----------------|
+| `leaf_epoch` | Leaf private key, certificate, fingerprint | Scoped CA |
+| `ca_epoch` | Scoped CA key/cert and every issued leaf chain | Styrene identity hash |
+| `profile` | Derivation labels and validity profile namespace | Root secret |
+| Root secret | All certificates and all other derived keys | Nothing |
+
+Auspex should use leaf epochs for routine certificate replacement and CA epochs
+only when the trust anchor itself must rotate. Secret grants should carry the
+issued material to the target environment; the target does not need access to the
+root secret.
+
+### 7.4 Auspex/Omegon Deployment Contract
+
+Auspex consumes this layer as a producer of deployment-ready TLS material:
+
+1. Resolve the operator root via the active Styrene signer tier.
+2. Derive a scoped CA for the control domain, such as `auspex-control/prod`.
+3. Derive each Omegon instance's server chain from its managed agent label.
+4. Derive client chains for Auspex callers that need mTLS access.
+5. Deliver the PEM bundle via a deployment-specific secret grant:
+   Kubernetes Secret, Vault Secrets Operator, SSH/shuttle bootstrap, or another
+   secret broker.
+
+Omegon should receive only the cert chain, private key, and CA bundle needed for
+its listener. It should not receive the Styrene root unless it is itself acting
+as an identity authority for a delegated trust domain.
+
+### 7.5 Implemented API Surface
+
+The crate exposes:
+
+| API | Output |
+|-----|--------|
+| `derive_ca_certificate` | Scoped CA certificate and private key |
+| `derive_server_certificate_chain` | Server leaf plus CA bundle |
+| `derive_client_certificate_chain` | Client leaf plus CA bundle |
+| `StyreneCertificateProfile` | Profile name, CA epoch, leaf epoch, validity years |
+| `styrene_ca_uri`, `styrene_agent_uri`, `styrene_client_uri` | Deterministic URI SAN helpers |
+
+Private key material is stored in zeroizing wrappers and redacted from `Debug`.
+Callers still must treat returned PEM/DER bytes as secrets.
+
+---
+
+## 8. Security Properties and Threat Model
 
 ### 7.1 What the System Guarantees
 
@@ -440,7 +525,7 @@ This is NOT implemented. The current model relies on GitHub's signing key regist
 ### 7.2 What the System Does NOT Guarantee
 
 1. **Process memory confidentiality.** A privileged attacker with access to process memory (root on the machine, debugger attached) can read the root secret during derivation. This is inherent to any software that processes secrets.
-2. **Root compromise blast radius.** Compromising the root secret (on any machine, via any tier) reveals ALL derived keys for ALL protocols. This is the fundamental trade-off of deterministic key hierarchies. See Section 7.4.
+2. **Root compromise blast radius.** Compromising the root secret (on any machine, via any tier) reveals ALL derived keys for ALL protocols. This is the fundamental trade-off of deterministic key hierarchies. See Section 8.4.
 3. **Forward secrecy.** Derived keys are static (not ephemeral). Compromise of a derived key does not compromise the root, but compromise of the root compromises all derived keys retroactively.
 4. **Post-quantum security.** Ed25519 and X25519 are not quantum-resistant. The ML-DSA-65 hybrid layer (specified in `styrene-identity.md`) is designed but not implemented in this crate.
 
@@ -484,7 +569,7 @@ The `ed25519-dalek` `SigningKey` type does not implement `Zeroize`. After constr
 
 ---
 
-## 8. Recovery and Rotation
+## 9. Recovery and Rotation
 
 ### 8.1 Recovery via Seed Phrase
 
@@ -524,9 +609,9 @@ The revoked key remains derivable from the root (deterministic), but is no longe
 
 ---
 
-## 9. Implementation Reference
+## 10. Implementation Reference
 
-### 9.1 Crate Structure
+### 10.1 Crate Structure
 
 ```
 styrene-identity/
@@ -535,21 +620,23 @@ styrene-identity/
     derive.rs           # HKDF hierarchy, KeyDeriver, KeyPurpose
     signer.rs           # IdentitySigner trait, SignerTier, RootSecret
     pubkey.rs           # Ed25519/X25519 public key helpers [feature: signing]
+    pki.rs              # X.509 CA/client/server issuance [feature: pki]
     file_signer.rs      # Tier D: encrypted file signer [feature: file-signer]
     yubikey_signer.rs   # Tier A: YubiKey FIDO2 signer [feature: yubikey]
     ssh_agent.rs        # SSH agent protocol [feature: ssh-agent]
 ```
 
-### 9.2 Feature Gates
+### 10.2 Feature Gates
 
 | Feature | Dependencies | Default | Enables |
 |---------|-------------|---------|---------|
 | `file-signer` | argon2, chacha20poly1305, signing | Yes | `FileSigner` |
 | `signing` | ed25519-dalek, x25519-dalek | Via file-signer | `pubkey` module |
+| `pki` | signing, rcgen | No | Identity-bound X.509 certificate issuance |
 | `yubikey` | ctap-hid-fido2, base64, signing | No | `YubiKeySigner` |
 | `ssh-agent` | ssh-agent-lib, ssh-key, signing, tokio | No | `StyreneAgent` |
 
-### 9.3 Test Coverage
+### 10.3 Test Coverage
 
 51 tests across all features (yubikey + ssh-agent). Key properties tested:
 - Derivation determinism (same input → same output)
@@ -560,18 +647,19 @@ styrene-identity/
 - X25519 public key determinism
 - SSH agent identity listing and signing
 - Git signing and agent key signing via SSH agent
+- X.509 deterministic issuance, SAN/EKU validation, rotation boundaries, redaction
 - FileSigner encrypt/decrypt roundtrip
 - YubiKey salt independence from RNS salts
 
 ---
 
-## 10. Relationship to Other Styrene Components
+## 11. Relationship to Other Styrene Components
 
 | Component | Relationship |
 |-----------|-------------|
 | **nex** | Uses `styrene-identity` as credential root for workstation bootstrap. Profile secrets encrypted to age key. SSH keys served via agent. |
-| **omegon** | Agents receive per-agent signing keys via the SSH agent. Cleave workers get distinct keys per worker. |
-| **auspex** | Monitors agent instances, each identified by their agent signing key. |
+| **omegon** | Agents receive per-agent signing keys via the SSH agent. Control-plane listeners can receive identity-bound TLS material. Cleave workers get distinct keys per worker. |
+| **auspex** | Monitors and deploys agent instances, derives scoped control-plane TLS/mTLS material, and brokers the resulting secrets to deployment targets. |
 | **codex** | Documents signed or encrypted with user's identity keys. |
 | **styrened** | RNS/LXMF mesh identity derived from same root. Legacy Python path uses direct hmac-secret derivation; Rust path uses HKDF hierarchy. |
 
@@ -592,8 +680,10 @@ All HKDF info strings used in the system, for collision auditing:
 | `styrene-git-signing-v1` | 1 (flat) | Signing |
 | `styrene-ssh-user-master-v1` | 1 (master) | SSH |
 | `styrene-agent-master-v1` | 1 (master) | Signing |
+| `styrene-tls-cert-master-v1` | 1 (master) | PKI |
 | *(label bytes)* | 2 (under SSH user master, salt=`styrene-identity-ssh-user-v1`) | SSH |
 | *(agent name bytes)* | 2 (under agent master, salt=`styrene-identity-agent-v1`) | Signing |
+| *(certificate label bytes)* | 2 (under TLS certificate master, salt=`styrene-identity-tls-cert-v1`) | PKI |
 
 Level-2 info strings are in a separate HKDF tree (different IKM AND different salt) from level-1 strings, and each family uses its own salt. No collision is possible between levels or between families.
 
@@ -610,6 +700,7 @@ Level-2 info strings are in a separate HKDF tree (different IKM AND different sa
 | argon2id params | `m=65536 (64 MiB), t=3, p=1, Argon2id v0x13` | Key derivation from passphrase |
 | Level-2 salt (SSH user) | `b"styrene-identity-ssh-user-v1"` | Two-level HKDF for SSH user keys |
 | Level-2 salt (agent) | `b"styrene-identity-agent-v1"` | Two-level HKDF for agent keys |
+| Level-2 salt (TLS certificate) | `b"styrene-identity-tls-cert-v1"` | Two-level HKDF for X.509 certificate keys |
 
 **File format versioning (v1):**
 The v1 format prepends `STID` magic bytes and a version byte (0x01) before the payload.
@@ -653,6 +744,11 @@ work   = (derive with same method, label="work")
 ```
 omegon-primary  = 4dd66edcda091a5e3d15aa3fb8ec32d81e212d94760b61915b1d6f204b0672e2
 omegon-cleave-0 = (derive with same method, name="omegon-cleave-0")
+```
+
+**TLS certificate keys (two-level HKDF, salt=`"styrene-identity-tls-cert-v1"`, certificate label as info):**
+```
+auspex/control = bdbce0671a517c65205339d22d04adecc45b588396d8b4762ddedb71cd390ec6
 ```
 
 These vectors can be reproduced with any HKDF-SHA256 implementation following the derivation rules in Section 2.

@@ -42,6 +42,7 @@
 //! |---------|---------|---------|
 //! | `file-signer` | **yes** | `FileSigner`, `IdentityVault` |
 //! | `signing` | via file-signer | `pubkey` module (ed25519, x25519) |
+//! | `pki` | no | identity-bound X.509 CA/client/server certificates |
 //! | `yubikey` | no | `YubiKeySigner` (FIDO2 hmac-secret) |
 //! | `ssh-agent` | no | `StyreneAgent` (SSH agent protocol) |
 //!
@@ -62,8 +63,11 @@
 //!   ├─ SSH user keys (two-level, salt="styrene-identity-ssh-user-v1")
 //!   │   └─ Expand(label) → per-host SSH Ed25519
 //!   │
-//!   └─ Agent keys (two-level, salt="styrene-identity-agent-v1")
-//!       └─ Expand(name) → per-agent signing Ed25519
+//!   ├─ Agent keys (two-level, salt="styrene-identity-agent-v1")
+//!   │   └─ Expand(name) → per-agent signing Ed25519
+//!   │
+//!   └─ TLS certificate keys (two-level, salt="styrene-identity-tls-cert-v1")
+//!       └─ Expand(label) → per-certificate Ed25519 X.509 key
 //! ```
 //!
 //! # Linkability warning
@@ -106,6 +110,8 @@ pub mod format;
 pub mod identity;
 #[cfg(feature = "keychain")]
 pub mod keychain_signer;
+#[cfg(feature = "pki")]
+pub mod pki;
 #[cfg(feature = "signing")]
 pub mod pubkey;
 pub mod signer;
@@ -123,8 +129,17 @@ pub use discover::{discover, DiscoveredIdentity};
 #[cfg(feature = "signing")]
 pub use export::AllPublicKeys;
 #[cfg(feature = "signing")]
+#[allow(deprecated)]
 pub use identity::{
     identity_hash, identity_pubkey, identity_sign, identity_verify, IdentityInfo, PublicIdentity,
     SignedAttestation, IDENTITY_HASH_BYTES,
+};
+#[cfg(feature = "pki")]
+pub use pki::{
+    derive_ca_certificate, derive_ca_certificate_with_profile, derive_client_certificate_chain,
+    derive_client_certificate_chain_with_profile, derive_server_certificate_chain,
+    derive_server_certificate_chain_with_profile, styrene_agent_uri, styrene_ca_uri,
+    styrene_client_uri, CertificateRole, StyreneCertificate, StyreneCertificateChain,
+    StyreneCertificateProfile, StyrenePkiError,
 };
 pub use signer::{IdentitySigner, SignerChain, SignerError, SignerTier};

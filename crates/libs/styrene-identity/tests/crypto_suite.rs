@@ -88,6 +88,12 @@ fn pinned_vectors_parameterized_families() {
         "Agent 'omegon-primary' vector changed"
     );
 
+    assert_eq!(
+        hex::encode(d.derive_tls_certificate_key("auspex/control").unwrap()),
+        "bdbce0671a517c65205339d22d04adecc45b588396d8b4762ddedb71cd390ec6",
+        "TLS certificate 'auspex/control' vector changed"
+    );
+
     // I2P service — pin now
     let (i2p_sign, i2p_enc) = d.derive_i2p_service("forge").unwrap();
     assert_ne!(i2p_sign, [0u8; 32]);
@@ -356,10 +362,11 @@ fn same_label_different_families_different_keys() {
 
     let ssh = d.derive_ssh_user_key(label).unwrap();
     let agent = d.derive_agent_key(label).unwrap();
+    let tls = d.derive_tls_certificate_key(label).unwrap();
     let (i2p_sign, i2p_enc) = d.derive_i2p_service(label).unwrap();
     let onion = d.derive_onion_service(label).unwrap();
 
-    let keys = [ssh, agent, i2p_sign, i2p_enc, onion];
+    let keys = [ssh, agent, tls, i2p_sign, i2p_enc, onion];
     for i in 0..keys.len() {
         for j in (i + 1)..keys.len() {
             assert_ne!(keys[i], keys[j], "family collision: keys {i} and {j} with label '{label}'");
