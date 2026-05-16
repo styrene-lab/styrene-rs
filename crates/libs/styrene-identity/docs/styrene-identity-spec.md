@@ -479,6 +479,16 @@ only when the trust anchor itself must rotate. Secret grants should carry the
 issued material to the target environment; the target does not need access to the
 root secret.
 
+Certificate derivation labels MUST use the v2 length-prefixed form:
+
+```
+styrene/tls/v2/{kind}/{component_len_hex}:{component}/...
+```
+
+The length is a fixed-width 16-character hexadecimal byte count. Implementations
+MUST NOT derive certificate keys by slash-joining raw profile, scope, label, or
+epoch fields; raw joining is ambiguous when components themselves contain `/`.
+
 ### 7.4 Auspex/Omegon Deployment Contract
 
 Auspex consumes this layer as a producer of deployment-ready TLS material:
@@ -508,7 +518,9 @@ The crate exposes:
 | `styrene_ca_uri`, `styrene_agent_uri`, `styrene_client_uri` | Deterministic URI SAN helpers |
 
 Private key material is stored in zeroizing wrappers and redacted from `Debug`.
-Callers still must treat returned PEM/DER bytes as secrets.
+Callers still must treat returned PEM/DER bytes as secrets. Internally, key
+material also passes through `rcgen::KeyPair`; this type is scoped tightly, but
+does not expose an explicit zeroization contract.
 
 ---
 

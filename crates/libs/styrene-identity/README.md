@@ -168,6 +168,10 @@ Use different CA scopes for different trust domains, such as
 Use leaf epochs for routine certificate rollover and CA epochs for trust-anchor
 rotation.
 
+Certificate seed labels are composed with length-prefixed components under the
+`styrene/tls/v2` namespace. This keeps profiles, scopes, labels, and epochs
+unambiguous even when they contain path separators.
+
 ## Signer tiers
 
 The `IdentitySigner` trait abstracts over four storage tiers. All tiers
