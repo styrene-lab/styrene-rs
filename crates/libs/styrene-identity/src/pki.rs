@@ -182,7 +182,7 @@ pub fn derive_ca_certificate_with_profile(
     validate_label(ca_scope)?;
     validate_profile(profile)?;
     let identity_hash = identity_hash(root);
-    let seed_label = format!("styrene/tls/ca/{}/{ca_scope}/{}", profile.profile, profile.ca_epoch);
+    let seed_label = tls_seed_label("ca", &[&profile.profile, ca_scope, &profile.ca_epoch]);
     let uri = styrene_ca_uri(&identity_hash, ca_scope);
     let key_pair = key_pair_from_derived_seed(root, &seed_label)?;
     let params = ca_params(&identity_hash, ca_scope, &uri, profile)?;
@@ -276,8 +276,7 @@ fn derive_leaf_certificate_chain(
     validate_label(label)?;
     validate_profile(profile)?;
     let identity_hash = identity_hash(root);
-    let ca_seed_label =
-        format!("styrene/tls/ca/{}/{ca_scope}/{}", profile.profile, profile.ca_epoch);
+    let ca_seed_label = tls_seed_label("ca", &[&profile.profile, ca_scope, &profile.ca_epoch]);
     let ca_uri = styrene_ca_uri(&identity_hash, ca_scope);
     let ca_key_pair = key_pair_from_derived_seed(root, &ca_seed_label)?;
     let ca_params = ca_params(&identity_hash, ca_scope, &ca_uri, profile)?;
@@ -287,16 +286,10 @@ fn derive_leaf_certificate_chain(
 
     let leaf_seed_label = match role {
         CertificateRole::Server => {
-            format!(
-                "styrene/tls/server/{}/{ca_scope}/{label}/{}",
-                profile.profile, profile.leaf_epoch
-            )
+            tls_seed_label("server", &[&profile.profile, ca_scope, label, &profile.leaf_epoch])
         }
         CertificateRole::Client => {
-            format!(
-                "styrene/tls/client/{}/{ca_scope}/{label}/{}",
-                profile.profile, profile.leaf_epoch
-            )
+            tls_seed_label("client", &[&profile.profile, ca_scope, label, &profile.leaf_epoch])
         }
         CertificateRole::Ca => return Err(StyrenePkiError::EmptyLabel),
     };
@@ -337,6 +330,8 @@ fn ca_params(
     profile: &StyreneCertificateProfile,
 ) -> Result<CertificateParams, StyrenePkiError> {
     let mut params = CertificateParams::new(Vec::<String>::new())?;
+    let ca_not_before = profile.ca_not_before_year.to_string();
+    let ca_not_after = profile.ca_not_after_year.to_string();
     params.serial_number = Some(deterministic_serial(&[
         "ca",
         identity_hash,
@@ -344,6 +339,8 @@ fn ca_params(
         uri,
         &profile.profile,
         &profile.ca_epoch,
+        &ca_not_before,
+        &ca_not_after,
         "v1",
     ]));
     params.not_before = date_time_ymd(profile.ca_not_before_year, 1, 1);
@@ -372,6 +369,8 @@ fn leaf_params(
     let normalized_subject_alt_names = normalize_subject_alt_names(subject_alt_names)?;
 
     let mut params = CertificateParams::new(Vec::<String>::new())?;
+    let leaf_not_before = profile.leaf_not_before_year.to_string();
+    let leaf_not_after = profile.leaf_not_after_year.to_string();
     let mut serial_parts = vec![
         role_name(role),
         identity_hash,
@@ -380,6 +379,8 @@ fn leaf_params(
         &profile.profile,
         &profile.ca_epoch,
         &profile.leaf_epoch,
+        &leaf_not_before,
+        &leaf_not_after,
         "v1",
     ];
     serial_parts
@@ -481,6 +482,16 @@ fn role_name(role: CertificateRole) -> &'static str {
         CertificateRole::Server => "server",
         CertificateRole::Client => "client",
     }
+}
+
+fn tls_seed_label(kind: &str, components: &[&str]) -> String {
+    let mut label = format!("styrene/tls/v2/{kind}");
+    for component in components {
+        label.push('/');
+        label.push_str(&format!("{:016x}:", component.len()));
+        label.push_str(component);
+    }
+    label
 }
 
 fn validate_label(value: &str) -> Result<(), StyrenePkiError> {
@@ -660,6 +671,23 @@ mod tests {
     }
 
     #[test]
+    fn leaf_certificate_signature_verifies_against_ca() {
+        let root = root();
+        let chain = derive_server_certificate_chain(
+            &root,
+            "cluster-a",
+            "omegon-primary",
+            ["omegon-primary.default.svc"],
+        )
+        .unwrap();
+        let (_, ca) = X509Certificate::from_der(&chain.ca_cert_der).unwrap();
+        let leaf = parse_cert(&chain.leaf);
+
+        ca.verify_signature(None).unwrap();
+        leaf.verify_signature(Some(&ca.tbs_certificate.subject_pki)).unwrap();
+    }
+
+    #[test]
     fn server_subject_alt_names_are_canonicalized_for_determinism() {
         let root = root();
         let a = derive_server_certificate_chain(
@@ -760,6 +788,66 @@ mod tests {
 
         assert_ne!(a.leaf.private_key_der(), b.leaf.private_key_der());
         assert_eq!(a.leaf.identity_hash, b.leaf.identity_hash);
+    }
+
+    #[test]
+    fn seed_labels_are_unambiguous_across_slash_bearing_components() {
+        let root = root();
+        let profile_a = StyreneCertificateProfile::default().with_profile("fleet");
+        let profile_b = StyreneCertificateProfile::default().with_profile("fleet/edge");
+
+        let a = derive_server_certificate_chain_with_profile(
+            &root,
+            "edge/prod",
+            "primary",
+            ["primary.edge.svc"],
+            &profile_a,
+        )
+        .unwrap();
+        let b = derive_server_certificate_chain_with_profile(
+            &root,
+            "prod",
+            "primary",
+            ["primary.edge.svc"],
+            &profile_b,
+        )
+        .unwrap();
+
+        assert_ne!(a.ca_cert_der, b.ca_cert_der);
+        assert_ne!(a.leaf.private_key_der(), b.leaf.private_key_der());
+    }
+
+    #[test]
+    fn validity_change_changes_serial_number() {
+        let root = root();
+        let current = StyreneCertificateProfile::default();
+        let extended = StyreneCertificateProfile {
+            leaf_not_after_year: 2032,
+            ca_not_after_year: 2037,
+            ..StyreneCertificateProfile::default()
+        };
+
+        let a = derive_server_certificate_chain_with_profile(
+            &root,
+            "cluster-a",
+            "omegon-primary",
+            ["omegon-primary.default.svc"],
+            &current,
+        )
+        .unwrap();
+        let b = derive_server_certificate_chain_with_profile(
+            &root,
+            "cluster-a",
+            "omegon-primary",
+            ["omegon-primary.default.svc"],
+            &extended,
+        )
+        .unwrap();
+
+        assert_ne!(
+            parse_cert(&a.leaf).tbs_certificate.raw_serial(),
+            parse_cert(&b.leaf).tbs_certificate.raw_serial()
+        );
     }
 
     #[test]
