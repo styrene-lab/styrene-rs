@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
   check:
@@ -49,7 +50,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings -A clippy::unwrap_used -A clippy::items_after_test_module -A clippy::single_match -A clippy::useless_conversion -A clippy::vec_init_then_push
+      - run: cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings -A clippy::unwrap_used -A clippy::items_after_test_module -A clippy::single_match -A clippy::useless_conversion -A clippy::vec_init_then_push -A clippy::needless_borrows_for_generic_args
 
   interop:
     name: Interop

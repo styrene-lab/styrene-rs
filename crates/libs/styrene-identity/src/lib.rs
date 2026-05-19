@@ -108,7 +108,7 @@ pub mod file_signer;
 pub mod format;
 #[cfg(feature = "signing")]
 pub mod identity;
-#[cfg(feature = "keychain")]
+#[cfg(all(feature = "keychain", any(target_os = "macos", target_os = "ios")))]
 pub mod keychain_signer;
 #[cfg(feature = "pki")]
 pub mod pki;

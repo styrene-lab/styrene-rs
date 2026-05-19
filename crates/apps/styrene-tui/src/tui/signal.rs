@@ -283,11 +283,9 @@ mod tests {
 
     #[test]
     fn render_does_not_panic_with_empty_data() {
-        let mut state = SignalState::new();
+        let state = SignalState::new();
         let log = ActivityLog::new();
         let links: Vec<LinkRecord> = vec![];
-        let area = Rect::new(0, 0, 80, 20);
-        let mut buf = Buffer::empty(area);
         // Just verify it doesn't panic by exercising the logic without a real frame
         let _ = (links.len(), log.len(), state.time);
     }

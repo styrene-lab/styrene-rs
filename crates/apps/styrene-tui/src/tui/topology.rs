@@ -237,9 +237,6 @@ mod tests {
     #[test]
     fn empty_peers_does_not_panic() {
         let mut state = TopologyState::new();
-        let area = Rect::new(0, 0, 40, 20);
-        let mut buf = ratatui::buffer::Buffer::empty(area);
-        let mut frame_buf = ratatui::buffer::Buffer::empty(area);
         // Just verify the state functions don't panic
         let _ = state.selected_peer_hash(&[]);
         state.toggle_active();
@@ -273,7 +270,7 @@ mod tests {
     #[test]
     fn topology_state_key_handling() {
         let mut state = TopologyState::new();
-        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let up = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
         // Key handling should not panic with empty tree
         let _ = state.handle_key(up);
