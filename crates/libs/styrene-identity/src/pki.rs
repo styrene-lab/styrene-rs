@@ -188,12 +188,14 @@ pub fn derive_ca_certificate_with_profile(
     let params = ca_params(&identity_hash, ca_scope, &uri, profile)?;
     let cert = params.self_signed(&key_pair)?;
     Ok(material_from_cert(
-        CertificateRole::Ca,
-        identity_hash,
-        ca_scope,
-        &profile.profile,
-        &profile.ca_epoch,
-        uri,
+        CertificateMetadata {
+            role: CertificateRole::Ca,
+            identity_hash,
+            label: ca_scope,
+            profile: &profile.profile,
+            epoch: &profile.ca_epoch,
+            uri_san: uri,
+        },
         cert,
         key_pair,
     ))
@@ -311,12 +313,14 @@ fn derive_leaf_certificate_chain(
         ca_cert_der,
         ca_fingerprint_sha256,
         leaf: material_from_cert(
-            role,
-            identity_hash,
-            label,
-            &profile.profile,
-            &profile.leaf_epoch,
-            leaf_uri,
+            CertificateMetadata {
+                role,
+                identity_hash,
+                label,
+                profile: &profile.profile,
+                epoch: &profile.leaf_epoch,
+                uri_san: leaf_uri,
+            },
             leaf_cert,
             leaf_key_pair,
         ),
@@ -421,23 +425,22 @@ fn key_pair_from_derived_seed(root: &RootSecret, label: &str) -> Result<KeyPair,
     Ok(KeyPair::try_from(pkcs8.as_slice())?)
 }
 
-fn material_from_cert(
+struct CertificateMetadata<'a> {
     role: CertificateRole,
     identity_hash: String,
-    label: &str,
-    profile: &str,
-    epoch: &str,
+    label: &'a str,
+    profile: &'a str,
+    epoch: &'a str,
     uri_san: String,
+}
+
+fn material_from_cert(
+    metadata: CertificateMetadata<'_>,
     cert: rcgen::Certificate,
     key_pair: KeyPair,
 ) -> StyreneCertificate {
     material_from_raw(
-        role,
-        identity_hash,
-        label,
-        profile,
-        epoch,
-        uri_san,
+        metadata,
         cert,
         Zeroizing::new(key_pair.serialize_pem()),
         Zeroizing::new(key_pair.serialize_der()),
@@ -445,12 +448,7 @@ fn material_from_cert(
 }
 
 fn material_from_raw(
-    role: CertificateRole,
-    identity_hash: String,
-    label: &str,
-    profile: &str,
-    epoch: &str,
-    uri_san: String,
+    metadata: CertificateMetadata<'_>,
     cert: rcgen::Certificate,
     private_key_pem: Zeroizing<String>,
     private_key_der: Zeroizing<Vec<u8>>,
@@ -458,12 +456,12 @@ fn material_from_raw(
     let cert_der = cert.der().to_vec();
     let fingerprint_sha256 = fingerprint_sha256(&cert_der);
     StyreneCertificate {
-        role,
-        identity_hash,
-        label: label.to_string(),
-        profile: profile.to_string(),
-        epoch: epoch.to_string(),
-        uri_san,
+        role: metadata.role,
+        identity_hash: metadata.identity_hash,
+        label: metadata.label.to_string(),
+        profile: metadata.profile.to_string(),
+        epoch: metadata.epoch.to_string(),
+        uri_san: metadata.uri_san,
         cert_pem: cert.pem(),
         cert_der,
         private_key_pem,
