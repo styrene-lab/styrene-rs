@@ -768,7 +768,7 @@ impl DaemonFleet for DaemonFacade {
         self.require(Capability::RPC_EXEC)?; // Admin-level operation
 
         // Prevent self-revocation: revoking the daemon's own Admin would lock out local IPC.
-        if identity_hash.to_ascii_lowercase() == self.caller_identity.to_ascii_lowercase() {
+        if identity_hash.eq_ignore_ascii_case(&self.caller_identity) {
             return Err(IpcError::invalid_request(
                 "cannot revoke the daemon's own role (self-lockout protection)",
             ));

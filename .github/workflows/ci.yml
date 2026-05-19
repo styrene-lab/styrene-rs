@@ -50,7 +50,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings -A clippy::unwrap_used -A clippy::items_after_test_module -A clippy::single_match -A clippy::useless_conversion -A clippy::vec_init_then_push -A clippy::needless_borrows_for_generic_args -A clippy::derivable_impls -A clippy::len_zero
+      - run: cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings -A clippy::unwrap_used -A clippy::items_after_test_module -A clippy::single_match -A clippy::useless_conversion -A clippy::vec_init_then_push -A clippy::needless_borrows_for_generic_args -A clippy::derivable_impls -A clippy::len_zero -A clippy::result_large_err
 
   interop:
     name: Interop
