@@ -7,7 +7,6 @@
 //! This exercises: StyreneMessage wire encoding, LXMF wrapping, link
 //! delivery, protocol dispatch, request handling, response correlation.
 
-use std::time::Duration;
 use styrene_e2e::helpers::{two_connected_nodes, with_timeout};
 use styrene_rbac::{Role, RosterEntry};
 

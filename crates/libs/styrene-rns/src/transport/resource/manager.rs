@@ -53,6 +53,7 @@ impl ResourceManager {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn has_no_outbound_state(&self) -> bool {
         self.pending_outgoing.is_empty() && self.outgoing.is_empty()
     }
