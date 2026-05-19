@@ -12,10 +12,8 @@
 mod sa;
 mod vici;
 
-use std::net::IpAddr;
-
 use crate::error::TunnelError;
-use crate::traits::{TunnelBackend, TunnelId, TunnelInfo, TunnelParams, TunnelState};
+use crate::traits::{TunnelBackend, TunnelId, TunnelInfo, TunnelParams};
 
 /// strongSwan tunnel backend.
 ///
@@ -34,6 +32,12 @@ impl StrongSwanBackend {
     /// Create a new strongSwan backend with a custom VICI socket path.
     pub fn with_socket(path: impl Into<String>) -> Self {
         Self { vici_socket: path.into() }
+    }
+}
+
+impl Default for StrongSwanBackend {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

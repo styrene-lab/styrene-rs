@@ -31,6 +31,7 @@ pub struct PathTableEntry {
 
 /// Events pushed from the daemon to the UI.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum DaemonEvent {
     Connected { mode: ConnectionMode },
     Identity(IdentityInfo),
@@ -51,6 +52,7 @@ pub enum ConnectionMode {
 
 /// Commands sent from the UI to the daemon.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum DaemonCommand {
     SendChat { peer_hash: String, content: String },
     Announce,
@@ -69,6 +71,7 @@ pub struct DaemonBridge {
     next_id: u64,
 }
 
+#[allow(dead_code)]
 impl DaemonBridge {
     fn next_request_id(&mut self) -> [u8; REQUEST_ID_SIZE] {
         self.next_id = self.next_id.wrapping_add(1);
