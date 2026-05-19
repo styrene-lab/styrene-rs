@@ -137,6 +137,12 @@ impl WireGuardBackend {
     }
 }
 
+impl Default for WireGuardBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl TunnelBackend for WireGuardBackend {
     fn name(&self) -> &str {
