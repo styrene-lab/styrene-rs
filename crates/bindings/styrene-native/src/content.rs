@@ -285,9 +285,9 @@ impl PyResourceAvailableAnnounce {
         // Build ChunkBitset from 32 raw bytes
         let mut bitset = ChunkBitset::new();
         if chunks_held_bytes.len() == 32 {
-            for byte_idx in 0..32usize {
+            for (byte_idx, byte) in chunks_held_bytes.iter().enumerate().take(32) {
                 for bit in 0..8usize {
-                    if chunks_held_bytes[byte_idx] & (1 << bit) != 0 {
+                    if byte & (1 << bit) != 0 {
                         bitset.set((byte_idx * 8 + bit) as u32);
                     }
                 }
