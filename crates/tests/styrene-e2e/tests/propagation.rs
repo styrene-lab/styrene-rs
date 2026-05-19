@@ -5,7 +5,6 @@
 //! later retrieval. Covers the full lifecycle: store → fetch → delete,
 //! deduplication, expiry, and the inbound worker routing decision.
 
-use rns_core::identity::PrivateIdentity;
 use std::time::Duration;
 use styrene_e2e::helpers::{await_identity_resolved, await_inbound_count, with_timeout, SETTLE};
 use styrene_e2e::node::TestNodeBuilder;

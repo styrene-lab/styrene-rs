@@ -7,7 +7,7 @@
 //! Enabled by the `hardware-trng` feature.
 
 use serialport::SerialPort;
-use std::{io, time::Duration};
+use std::{io, sync::Mutex, time::Duration};
 
 use super::EntropySource;
 use crate::{
@@ -85,7 +85,7 @@ struct Frame {
 /// let src = HardwareSource::open("/dev/ttyUSB0").expect("failed to open serial port");
 /// ```
 pub struct HardwareSource {
-    port: Box<dyn SerialPort>,
+    port: Mutex<Box<dyn SerialPort>>,
     health: SourceHealth,
     checker: HealthChecker,
     port_path: String,
@@ -109,7 +109,7 @@ impl HardwareSource {
             serialport::new(port_path, 1_000_000).timeout(Duration::from_millis(500)).open()?;
 
         Ok(Self {
-            port,
+            port: Mutex::new(port),
             health: SourceHealth::Ok,
             checker: HealthChecker::default(),
             port_path: port_path.to_owned(),
@@ -118,25 +118,28 @@ impl HardwareSource {
 
     /// Read and decode one frame from the serial port.
     fn read_frame(&mut self) -> io::Result<Frame> {
+        let port =
+            self.port.get_mut().map_err(|_| io::Error::other("serial port mutex poisoned"))?;
+
         // Scan for sync byte
         let mut sync = [0u8; 1];
         loop {
-            self.port.read_exact(&mut sync)?;
+            port.read_exact(&mut sync)?;
             if sync[0] == SYNC_BYTE {
                 break;
             }
         }
 
         let mut header = [0u8; 2]; // [LEN, TYPE]
-        self.port.read_exact(&mut header)?;
+        port.read_exact(&mut header)?;
         let len = header[0] as usize;
         let type_byte = header[1];
 
         let mut payload = vec![0u8; len];
-        self.port.read_exact(&mut payload)?;
+        port.read_exact(&mut payload)?;
 
         let mut crc_buf = [0u8; 1];
-        self.port.read_exact(&mut crc_buf)?;
+        port.read_exact(&mut crc_buf)?;
         let received_crc = crc_buf[0];
 
         // Verify CRC over TYPE || PAYLOAD
@@ -163,20 +166,24 @@ impl HardwareSource {
 
     /// Send a REQUEST frame asking for `n` bytes of entropy.
     fn send_request(&mut self, n: u16) -> io::Result<()> {
+        let port =
+            self.port.get_mut().map_err(|_| io::Error::other("serial port mutex poisoned"))?;
         let payload = n.to_le_bytes();
         let type_byte = MsgType::Request as u8;
         let crc = crc8(&[type_byte, payload[0], payload[1]]);
         let frame = [SYNC_BYTE, 2, type_byte, payload[0], payload[1], crc];
-        self.port.write_all(&frame)?;
+        port.write_all(&frame)?;
         Ok(())
     }
 
     /// Send a RESET frame to trigger coprocessor TRNG reseed.
     fn send_reset(&mut self) -> io::Result<()> {
+        let port =
+            self.port.get_mut().map_err(|_| io::Error::other("serial port mutex poisoned"))?;
         let type_byte = MsgType::Reset as u8;
         let crc = crc8(&[type_byte]);
         let frame = [SYNC_BYTE, 0, type_byte, crc];
-        self.port.write_all(&frame)?;
+        port.write_all(&frame)?;
         Ok(())
     }
 
