@@ -211,7 +211,7 @@ impl TelemetryBatch {
     ///
     /// Returns `Err(record)` if the batch is already at [`MAX_BATCH_RECORDS`].
     pub fn push(&mut self, record: TelemetryRecord) -> Result<(), TelemetryRecord> {
-        self.records.push(record).map_err(|r| r)
+        self.records.push(record)
     }
 
     /// Number of records in this batch.
