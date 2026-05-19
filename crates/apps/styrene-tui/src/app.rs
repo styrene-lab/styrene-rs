@@ -217,6 +217,7 @@ pub struct TerminalTabState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum TerminalStatus {
     Disconnected,
     Connecting,

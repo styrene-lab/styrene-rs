@@ -42,7 +42,7 @@ impl DiscoveredIdentity {
 /// only checks file existence and env var presence.
 pub fn discover() -> Option<DiscoveredIdentity> {
     // 0. Keychain with biometric protection (macOS/iOS)
-    #[cfg(feature = "keychain")]
+    #[cfg(all(feature = "keychain", any(target_os = "macos", target_os = "ios")))]
     {
         let ks = crate::keychain_signer::KeychainSigner::default();
         if ks.exists() {
