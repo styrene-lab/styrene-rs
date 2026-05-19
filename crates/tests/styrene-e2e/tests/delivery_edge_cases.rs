@@ -1,7 +1,7 @@
 //! Delivery edge cases — retry, error propagation, and failure handling.
 
 use std::time::Duration;
-use styrene_e2e::helpers::{await_inbound_message, two_connected_nodes, with_timeout, SETTLE};
+use styrene_e2e::helpers::{await_inbound_message, two_connected_nodes, with_timeout};
 use styrene_e2e::node::TestNodeBuilder;
 use styrene_ipc::traits::*;
 use styrene_rbac::{Role, RosterEntry};
@@ -16,7 +16,7 @@ async fn failed_message_has_failed_receipt_status() {
 
         // Send to unknown peer — will fail after 12s identity resolution timeout
         let fake_hash = "deadbeefdeadbeefdeadbeefdeadbeef";
-        let result = alice.send_chat(fake_hash, "will fail").await;
+        let _result = alice.send_chat(fake_hash, "will fail").await;
 
         // Whether Ok or Err, check the store has a failed record
         let store = alice.app_context.store().lock().expect("lock");

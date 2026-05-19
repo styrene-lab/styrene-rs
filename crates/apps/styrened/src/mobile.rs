@@ -406,6 +406,7 @@ fn load_or_create_identity(
 fn load_or_create_keychain(paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
     #[cfg(feature = "mobile-keychain")]
     {
+        let _ = paths;
         use styrene_identity::keychain_signer::KeychainSigner;
         use styrene_identity::{IdentitySigner, KeyDeriver, KeyPurpose};
 

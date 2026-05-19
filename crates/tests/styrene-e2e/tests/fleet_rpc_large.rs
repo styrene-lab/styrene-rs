@@ -3,7 +3,6 @@
 //! Tests that exec commands producing large stdout (>300 bytes, triggering
 //! resource transfer on the return path) deliver complete results.
 
-use std::time::Duration;
 use styrene_e2e::helpers::{two_connected_nodes, with_timeout};
 use styrene_rbac::{Role, RosterEntry};
 
