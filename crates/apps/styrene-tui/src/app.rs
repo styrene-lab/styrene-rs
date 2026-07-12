@@ -81,6 +81,7 @@ pub enum Focus {
 
 pub struct App {
     pub theme: Box<dyn Theme>,
+    pub runtime_profile: crate::RuntimeProfile,
 
     // Navigation
     pub workspace: Workspace,
@@ -329,6 +330,7 @@ impl App {
 
         Self {
             theme,
+            runtime_profile: crate::RuntimeProfile::Standard,
             workspace: Workspace::Home,
             focus: Focus::Main,
             input_mode: InputMode::Normal,
@@ -600,6 +602,14 @@ impl App {
         let mut left_spans = vec![
             Span::styled("⬡ ", Style::default().fg(t.accent())),
             Span::styled("styrene", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" [{}]", self.runtime_profile.label()),
+                Style::default().fg(if self.runtime_profile.is_ephemeral() {
+                    t.warning()
+                } else {
+                    t.dim()
+                }),
+            ),
             Span::styled(&hash_short, Style::default().fg(t.dim())),
             Span::styled("   ", Style::default()),
         ];

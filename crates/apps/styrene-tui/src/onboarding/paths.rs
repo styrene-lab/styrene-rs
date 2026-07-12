@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::runtime::RuntimeProfile;
+
 /// All paths used by TUI environment detection and setup.
 ///
 /// Production uses platform defaults. Tests and alternate profiles construct
@@ -38,6 +40,36 @@ impl StyrenePaths {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(".")),
         }
+    }
+
+    pub fn for_profile(profile: &RuntimeProfile) -> Result<Self, String> {
+        match profile {
+            RuntimeProfile::Standard => Ok(Self::from_defaults()),
+            RuntimeProfile::Portable { root } => Ok(Self::portable(root)),
+            RuntimeProfile::Ghost => Self::ghost(None),
+            RuntimeProfile::PortableGhost { root } => Self::ghost(Some(root)),
+        }
+    }
+
+    fn portable(root: &Path) -> Self {
+        let home = root.join("home");
+        Self::new(root.join("config"), root.join("data"), root.join("run/styrene.sock"), home)
+    }
+
+    fn ghost(portable_root: Option<&PathBuf>) -> Result<Self, String> {
+        let base = if let Some(root) = portable_root {
+            root.join(".ghost")
+        } else {
+            std::env::temp_dir().join(format!("styrene-ghost-{}", std::process::id()))
+        };
+        std::fs::create_dir_all(&base)
+            .map_err(|error| format!("create ghost runtime {}: {error}", base.display()))?;
+        Ok(Self::new(
+            base.join("config"),
+            base.join("data"),
+            base.join("run/styrene.sock"),
+            base.join("home"),
+        ))
     }
 
     pub fn config_path(&self) -> PathBuf {
@@ -94,9 +126,16 @@ impl Default for StyrenePaths {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TuiOptions {
     pub paths: StyrenePaths,
+    pub runtime_profile: RuntimeProfile,
+}
+
+impl Default for TuiOptions {
+    fn default() -> Self {
+        Self { paths: StyrenePaths::default(), runtime_profile: RuntimeProfile::Standard }
+    }
 }
 
 #[cfg(test)]
