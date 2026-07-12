@@ -12,9 +12,13 @@ mod daemon;
 mod mesh_state;
 mod micron_widget;
 mod onboarding;
+mod runtime;
 mod tui;
 
 pub use onboarding::paths::{StyrenePaths, TuiOptions};
+pub use runtime::{
+    RuntimeContext, RuntimeEnvironment, RuntimeHost, RuntimeOverrides, RuntimeProfile,
+};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -70,6 +74,7 @@ async fn run_terminal(
     options: &TuiOptions,
 ) -> Result<()> {
     let mut app = App::new();
+    app.runtime_profile = options.runtime_profile.clone();
 
     // ── Splash ──────────────────────────────────────────────────────────────
     let size = terminal.size()?;
