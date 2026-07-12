@@ -12,7 +12,6 @@ open_questions = [
   "[assumption] Nym bandwidth credential acquisition can be automated headlessly on daemon nodes (no interactive wallet flow) at acceptable operational cost.",
   "[assumption] Mixnet latency and throughput are sufficient for RNS announce propagation and link establishment without protocol-level timeout changes (per-iface tuning at most).",
   "[assumption] Bumping the workspace lockfile tokio from 1.44.2 to >=1.47 (required by nym-sdk) does not raise the effective toolchain floor for default-member crates.",
-  "Endpoint extension for tunnel payloads: kind discriminator enum vs optional nym_recipient field — which preserves msgpack wire-compat with Python styrened?",
   "Should tunnel control (0xD8-0xDE) over Nym ride LXMF-over-NymIface (no new message types) or a direct Nym Stream side-channel?",
   "Per-iface announce/path-request timing: does core_transport need per-interface timeout overrides for high-latency bearers, and does that generalize to LoRa too?",
   "How does a peer discover another peer's Nym recipient address — announce app-data extension, LXMF field, or out-of-band exchange? (First slice: static config; this question gates dynamic peering.)",
@@ -62,7 +61,7 @@ Announces, path requests, links, and LXMF then flow over the mixnet like any oth
 **Today:** `TunnelOffer` / `TunnelAccept` carry `endpoint: String` (WireGuard IP:port) and transit LXMF. The discovery-to-tunnel pipeline (docs/pqc-tunnel-architecture.md) leaks the peer relationship to anyone watching the backhaul during bootstrap, and the resulting WG tunnel endpoints are directly observable.
 
 **Proposal:**
-- Extend the endpoint representation with a kind discriminator (direct IP:port vs Nym recipient address vs future Tor/I2P/Yggdrasil), or add an optional `nym_recipient` field — wire-compat with Python `styrened` must be checked either way.
+- Extend the endpoint representation with a kind discriminator (direct IP:port vs Nym recipient address vs future Tor/I2P/Yggdrasil endpoints). Python `styrened` is archived and dead — cross-language wire compat is a non-constraint (Decision 6). The only compat obligation is rolling-upgrade tolerance among styrene-rs nodes: older nodes must degrade gracefully (reject or ignore unknown endpoint kinds) rather than misparse. Standard msgpack forward-compat practice (additive fields, unknown-variant rejection) covers this.
 - Allow the tunnel control channel (offer/accept/rekey/keepalive/teardown, 0xD8–0xDE) to run over the mixnet — either via `NymIface` (LXMF-over-Nym, no new message types) or via a direct Nym Stream side-channel.
 - This subsumes the open question in the voice design node about retaining Tor/I2P/Yggdrasil endpoint advertisements as tunnel rendezvous helpers: Nym is the strongest candidate for that role (decentralized, incentivized, GPA-resistant, Rust-native SDK).
 
@@ -122,6 +121,8 @@ Announces, path requests, links, and LXMF then flow over the mixnet like any oth
 4. **Dialer topology mirrors the existing tcp_client/tcp_server pair.** Two interface kinds: `nym` (dialer — config carries the peer's Nym recipient address, mirrors `TcpClient`) and `nym_listen` (acceptor — `listener().accept()` loop spawning an HDLC loop pair per inbound stream, mirrors `TcpServer`). SURB-based replies mean the acceptor writes back through the accepted stream without ever learning the dialer's address — hub-style deployments get inbound-anonymity for free.
 
 5. **App-layer wiring is feature-gated in `styrened`.** `styrened` is a default-member (MSRV 1.75), so it cannot depend on `styrene-nym` unconditionally. `styrene-nym` becomes an *optional* dependency behind a `nym` cargo feature on `styrened`; the default build stays on 1.75, `cargo build -p styrened --features nym` requires 1.87. Optional deps are not compiled when disabled, so the MSRV check never fires for default builds. This is the one place a feature flag *is* correct — at the app composition layer, not the protocol layer.
+
+6. **Python `styrened` compatibility is a non-constraint** (operator ruling, 2026-07-12: the Python implementation is old, archived, and dead). Wire-protocol design for the tunnel endpoint extension — and any future Styrene envelope change — answers only to rolling-upgrade compatibility among styrene-rs nodes. Choose the clean representation (tagged endpoint-kind discriminator) rather than contorting around a retired peer implementation. Note: README, PARITY_GAPS.md, and COMPAT_ISSUES.md still describe Python styrened as supported/canonical-peer; they are stale on this point and should be updated in a separate housekeeping change.
 
 ## Implementation Design — Bearer Slice (`styrene-nym`)
 
@@ -199,5 +200,5 @@ for iface in config.enabled_nym_dialers() {
 
 ## Scope Boundary
 
-The bearer slice above is Integration Point 1 end-to-end. Tunnel rendezvous (Integration Point 2) builds on the proven bearer and is a separate change gated on the Python msgpack wire-compat review of the tunnel payload endpoint extension.
+The bearer slice above is Integration Point 1 end-to-end. Tunnel rendezvous (Integration Point 2) builds on the proven bearer and is a separate change. With Python compat retired (Decision 6), its only remaining design gate is rolling-upgrade behavior of the endpoint-kind extension among styrene-rs nodes.
 
