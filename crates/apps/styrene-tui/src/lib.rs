@@ -9,6 +9,7 @@
 
 mod app;
 mod daemon;
+mod ghost;
 mod mesh_state;
 mod micron_widget;
 mod onboarding;
@@ -43,6 +44,10 @@ pub fn run_default() -> Result<()> {
 
 /// Launch the Styrene terminal application with explicit installation options.
 pub async fn run(options: TuiOptions) -> Result<()> {
+    let _ghost_session = ghost::GhostSession::for_paths(
+        options.runtime_profile.is_ephemeral(),
+        &options.paths.data_dir,
+    );
     tui::spinner::seed(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -67,6 +72,20 @@ pub async fn run(options: TuiOptions) -> Result<()> {
     disable_raw_mode()?;
     execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
     result
+}
+
+async fn connect_with_retry(
+    socket: &std::path::Path,
+) -> Result<(daemon::DaemonHandle, tokio::sync::mpsc::Receiver<daemon::TuiEvent>), String> {
+    let mut last_error = "socket not ready".to_string();
+    for _ in 0..30 {
+        match daemon::connect(Some(socket)).await {
+            Ok(connection) => return Ok(connection),
+            Err(error) => last_error = error,
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    Err(last_error)
 }
 
 async fn run_terminal(
@@ -105,7 +124,9 @@ async fn run_terminal(
 
     // ── Onboarding wizard ─────────────────────────────────────────────────────
     let env = onboarding::detect::scan_environment(&options.paths);
-    let daemon_mode = if env.needs_wizard() {
+    let daemon_mode = if options.runtime_profile.is_ephemeral() {
+        onboarding::setup::DaemonMode::Embedded
+    } else if env.needs_wizard() {
         let mut wizard = onboarding::WizardState::new(env);
         loop {
             terminal.draw(|f| wizard.draw(f, app.theme.as_ref()))?;
@@ -142,42 +163,43 @@ async fn run_terminal(
     // ── Daemon connection (mode-aware) ──────────────────────────────────────
     let (daemon_tx, mut daemon_rx) = tokio::sync::mpsc::channel::<daemon::TuiEvent>(128);
 
+    let embedded_daemon = if daemon_mode == onboarding::setup::DaemonMode::Embedded {
+        match styrened::daemon::start(styrened::daemon::DaemonConfig2 {
+            db: Some(options.paths.data_dir.join("messages.db")),
+            config: options.paths.config_path().exists().then(|| options.paths.config_path()),
+            identity: (!options.runtime_profile.is_ephemeral())
+                .then(|| options.paths.identity_path()),
+            socket: Some(options.paths.daemon_socket.clone()),
+            ephemeral: options.runtime_profile.is_ephemeral(),
+        })
+        .await
+        {
+            Ok(handle) => {
+                app.conversation.push_system("⬡ embedded runtime ready");
+                Some(handle)
+            }
+            Err(error) => {
+                app.conversation.push_system(&format!("⬡ embedded runtime failed: {error}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let connect_result = match daemon_mode {
         onboarding::setup::DaemonMode::Embedded => {
-            // TODO: embedded daemon bootstrap (Step 6)
-            // For now, fall back to standard socket connect
-            app.conversation.push_system("⬡ embedded daemon not yet implemented — trying socket");
-            daemon::connect(Some(&options.paths.daemon_socket)).await
+            if embedded_daemon.is_none() {
+                Err("embedded runtime failed to start".into())
+            } else {
+                connect_with_retry(&options.paths.daemon_socket).await
+            }
         }
         onboarding::setup::DaemonMode::Background => {
-            // Try to spawn styrened as a child process, then connect
-            match std::process::Command::new("styrened")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-            {
-                Ok(_child) => {
-                    app.conversation.push_system("⬡ starting daemon...");
-                    // Give the daemon a moment to create its socket
-                    let mut connected = Err("timeout".to_string());
-                    for _ in 0..30 {
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                        match daemon::connect(Some(&options.paths.daemon_socket)).await {
-                            Ok(result) => {
-                                connected = Ok(result);
-                                break;
-                            }
-                            Err(_) => continue,
-                        }
-                    }
-                    connected
-                }
-                Err(e) => {
-                    app.conversation
-                        .push_system(&format!("⬡ failed to start daemon: {e} — trying socket"));
-                    daemon::connect(Some(&options.paths.daemon_socket)).await
-                }
-            }
+            app.conversation.push_system(
+                "⬡ background mode requires an externally managed daemon; trying configured socket",
+            );
+            daemon::connect(Some(&options.paths.daemon_socket)).await
         }
         onboarding::setup::DaemonMode::ConnectExisting => {
             daemon::connect(Some(&options.paths.daemon_socket)).await
@@ -212,6 +234,9 @@ async fn run_terminal(
             app.conversation.push_system(&format!("⬡ daemon unavailable ({e}) — demo mode"));
         }
     }
+
+    // Keep the embedded runtime alive for the full terminal session.
+    let _embedded_daemon = embedded_daemon;
 
     // ── Main event loop — 60fps ──────────────────────────────────────────────
     loop {

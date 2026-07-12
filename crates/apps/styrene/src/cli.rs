@@ -10,12 +10,12 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Run with an ephemeral identity and isolated storage
-    #[arg(long, global = true)]
+    /// Run with an ephemeral identity and isolated storage (interactive mode only)
+    #[arg(long)]
     pub ghost: bool,
 
-    /// Keep all state beneath this portable root
-    #[arg(long, global = true, value_name = "DIR")]
+    /// Keep all state beneath this portable root (interactive mode only)
+    #[arg(long, value_name = "DIR")]
     pub portable: Option<PathBuf>,
 
     /// Path to the daemon IPC socket

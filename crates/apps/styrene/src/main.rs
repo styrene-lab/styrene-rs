@@ -13,18 +13,18 @@ use cli::{Cli, Command};
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let socket = cli.socket.as_deref();
-    #[cfg(feature = "tui")]
-    let runtime = styrene_tui_app::RuntimeContext::resolve(styrene_tui_app::RuntimeOverrides {
-        ghost: cli.ghost,
-        portable: cli.portable.clone(),
-    })
-    .map_err(anyhow::Error::msg)?;
 
     match cli.command {
         // No subcommand is the canonical product entry point.
         None => {
             #[cfg(feature = "tui")]
             {
+                let runtime =
+                    styrene_tui_app::RuntimeContext::resolve(styrene_tui_app::RuntimeOverrides {
+                        ghost: cli.ghost,
+                        portable: cli.portable,
+                    })
+                    .map_err(anyhow::Error::msg)?;
                 styrene_tui_app::run(styrene_tui_app::TuiOptions {
                     paths: runtime.paths,
                     runtime_profile: runtime.profile,
