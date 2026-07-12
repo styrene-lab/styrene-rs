@@ -57,13 +57,20 @@ impl StyrenePaths {
     }
 
     fn ghost(portable_root: Option<&PathBuf>) -> Result<Self, String> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let session = format!("{}-{nonce}", std::process::id());
         let base = if let Some(root) = portable_root {
-            root.join(".ghost")
+            root.join(".ghost").join(session)
         } else {
-            std::env::temp_dir().join(format!("styrene-ghost-{}", std::process::id()))
+            std::env::temp_dir().join(format!("styrene-ghost-{session}"))
         };
         std::fs::create_dir_all(&base)
             .map_err(|error| format!("create ghost runtime {}: {error}", base.display()))?;
+        set_private_directory(&base)
+            .map_err(|error| format!("secure ghost runtime {}: {error}", base.display()))?;
         Ok(Self::new(
             base.join("config"),
             base.join("data"),
@@ -118,6 +125,17 @@ impl StyrenePaths {
     pub fn home_dir(&self) -> &Path {
         &self.home_dir
     }
+}
+
+#[cfg(unix)]
+fn set_private_directory(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn set_private_directory(_path: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 impl Default for StyrenePaths {
