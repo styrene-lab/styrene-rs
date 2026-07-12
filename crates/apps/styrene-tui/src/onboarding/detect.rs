@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use super::paths::StyrenePaths;
 use super::reticulum::ReticulumState;
 
 /// Complete snapshot of the operator's environment at TUI startup.
@@ -122,39 +123,38 @@ impl EnvironmentReport {
 }
 
 /// Scan the local filesystem for all detectable state. Synchronous — runs
-/// before any wizard UI. The `daemon_responsive` field is left false; the
-/// caller should set it after an async ping attempt.
-pub fn scan_environment() -> EnvironmentReport {
+/// before any wizard UI. Detection is rooted entirely in `paths`; it never
+/// mutates process-global HOME/XDG state. The `daemon_responsive` field is left
+/// false; the caller should set it after an async ping attempt.
+pub fn scan_environment(paths: &StyrenePaths) -> EnvironmentReport {
     let mut report = EnvironmentReport::default();
 
     // ── Styrene ─────────────────────────────────────────────────────────────
-    report.styrene_identity_exists = styrened::config::default_identity_path().exists();
-    report.styrene_config_exists = styrened::config::default_config_path().exists();
-    report.setup_complete = setup_complete_path().exists();
-
-    let socket_path = styrene_ipc_server::default_socket_path();
-    report.daemon_socket_exists = socket_path.exists();
+    report.styrene_identity_exists = paths.identity_path().exists();
+    report.styrene_config_exists = paths.config_path().exists();
+    report.setup_complete = paths.setup_complete_path().exists();
+    report.daemon_socket_exists = paths.daemon_socket.exists();
 
     // ── Reticulum ───────────────────────────────────────────────────────────
-    let rns_dir = home_dir().join(".reticulum");
+    let rns_dir = paths.reticulum_dir();
     if rns_dir.is_dir() {
         report.reticulum = Some(super::reticulum::scan_reticulum(&rns_dir));
     }
 
     // ── NomadNet ────────────────────────────────────────────────────────────
-    let nomad_dir = home_dir().join(".nomadnetwork");
+    let nomad_dir = paths.nomadnet_dir();
     if nomad_dir.is_dir() {
         report.nomadnet_dir = Some(nomad_dir);
     }
 
     // ── Sideband ────────────────────────────────────────────────────────────
-    let sideband = sideband_dir();
+    let sideband = paths.sideband_dir();
     if sideband.is_dir() {
         report.sideband_dir = Some(sideband);
     }
 
     // ── Yggdrasil ───────────────────────────────────────────────────────────
-    for path in &[PathBuf::from("/etc/yggdrasil.conf"), home_dir().join(".yggdrasil.conf")] {
+    for path in &[PathBuf::from("/etc/yggdrasil.conf"), paths.home_dir().join(".yggdrasil.conf")] {
         if path.is_file() {
             report.yggdrasil_config = Some(path.clone());
             break;
@@ -174,35 +174,12 @@ pub fn scan_environment() -> EnvironmentReport {
     }
 
     // ── I2P ─────────────────────────────────────────────────────────────────
-    let i2pd_dir = home_dir().join(".i2pd");
+    let i2pd_dir = paths.i2p_dir();
     if i2pd_dir.is_dir() {
         report.i2p_dir = Some(i2pd_dir);
     }
 
     report
-}
-
-/// Path to the setup-complete marker file.
-pub fn setup_complete_path() -> PathBuf {
-    styrened::config::default_config_dir().join("setup_complete")
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."))
-}
-
-fn sideband_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        home_dir().join("Library").join("Application Support").join("Sideband")
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-            return PathBuf::from(xdg).join("sideband");
-        }
-        home_dir().join(".config").join("sideband")
-    }
 }
 
 #[cfg(test)]
@@ -237,6 +214,31 @@ mod tests {
             ..Default::default()
         };
         assert!(!report.needs_wizard());
+    }
+
+    #[test]
+    fn scan_is_rooted_in_explicit_paths() {
+        let nonce =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("styrene-detect-{}-{nonce}", std::process::id()));
+        let paths = StyrenePaths::new(
+            root.join("config"),
+            root.join("data"),
+            root.join("run/styrene.sock"),
+            root.join("home"),
+        );
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(paths.identity_path(), [0u8; 64]).unwrap();
+        std::fs::write(paths.config_path(), "role = \"full_node\"\n").unwrap();
+        std::fs::write(paths.setup_complete_path(), "").unwrap();
+
+        let report = scan_environment(&paths);
+        assert!(report.styrene_identity_exists);
+        assert!(report.styrene_config_exists);
+        assert!(report.setup_complete);
+        assert!(!report.needs_wizard());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

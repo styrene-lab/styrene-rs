@@ -13,7 +13,7 @@
 //!
 //! Usage:
 //!
-//! ```no_run
+//! ```ignore
 //! // In main, after building App:
 //! if let Ok((handle, mut rx)) = daemon::connect(None).await {
 //!     app.footer.node_hash = handle.identity().await.destination_hash;

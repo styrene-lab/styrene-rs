@@ -15,17 +15,15 @@ async fn main() -> anyhow::Result<()> {
     let socket = cli.socket.as_deref();
 
     match cli.command {
-        // No subcommand: launch TUI if available, otherwise print help
+        // No subcommand is the canonical product entry point.
         None => {
             #[cfg(feature = "tui")]
             {
-                // TODO: launch TUI with embedded daemon
-                eprintln!("TUI not yet wired — run `styrene daemon` or `styrene status`");
-                std::process::exit(1);
+                styrene_tui_app::run(styrene_tui_app::TuiOptions::default()).await
             }
             #[cfg(not(feature = "tui"))]
             {
-                // Re-parse with --help to show usage
+                // Minimal builds deliberately omit the interactive application.
                 let _ = Cli::parse_from(["styrene", "--help"]);
                 Ok(())
             }
