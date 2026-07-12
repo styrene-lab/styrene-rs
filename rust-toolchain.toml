@@ -1,4 +1,6 @@
+# Pinned to latest stable. Policy: track latest stable, not N-1 —
+# bump this pin (and workspace rust-version) each Rust release cycle (~6 weeks).
 [toolchain]
-channel = "stable"
+channel = "1.97.0"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

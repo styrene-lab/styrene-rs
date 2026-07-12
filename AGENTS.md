@@ -92,5 +92,5 @@ crates/
 - **justfile** is the command runner (`just --list` for all recipes)
 - **Workspace lints** enforced: `unsafe_code = "forbid"`, `clippy::unwrap_used = "warn"`
 - **Boundary checks** prevent unauthorized inter-crate dependencies
-- Changes to wire protocol must be synchronized with Python `styrened`
-- All crates target `edition = "2021"`, `rust-version = "1.75"`
+- Wire protocol evolution answers to rolling-upgrade compatibility among `styrene-rs` nodes; the archived Python implementation is not a compatibility target
+- All crates inherit `rust-version` from the workspace (pinned to latest stable; see rust-toolchain.toml). Editions are per-crate (`2021` for most, `2024` for styrene-tui)

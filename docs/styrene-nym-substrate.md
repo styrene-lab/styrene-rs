@@ -52,7 +52,7 @@ Announces, path requests, links, and LXMF then flow over the mixnet like any oth
 
 **Config:** `styrened` `InterfaceConfig.kind` is an open string enum (`"tcp_client"`, `"tcp_server"`); add `kind = "nym"` with a `recipient` field (peer Nym address) and optional gateway selection.
 
-**Dependency isolation:** nym-sdk is a heavy dependency (WebSocket gateway client, Sphinx crypto, cover-traffic scheduler). **Decided:** separate `styrene-nym` crate, excluded from default-members — see Decisions. A feature flag on `styrene-rns` cannot scope nym-sdk's 1.87 MSRV and would drag its ungated dependency tree into the core crate's manifest.
+**Dependency isolation:** nym-sdk is a heavy dependency (WebSocket gateway client, Sphinx crypto, cover-traffic scheduler). **Decided:** separate `styrene-nym` crate — see Decisions. The enduring reason is architectural isolation: a feature on `styrene-rns` would drag nym-sdk's ungated dependency tree into the no_std-capable core crate.
 
 ## Integration Point 2 — Tunnel Rendezvous over Mixnet
 
@@ -100,19 +100,18 @@ Announces, path requests, links, and LXMF then flow over the mixnet like any oth
 
 | Axis | styrene-rs | nym-sdk 1.21.2 | Consequence |
 |---|---|---|---|
-| MSRV | workspace `rust-version = 1.75` | `1.87.0` | Cannot be a dependency of any default-member crate |
+| MSRV | workspace `rust-version = 1.97` | `1.87.0` | Compatible; no longer a crate-boundary constraint |
 | tokio | 1.44.2 | ^1.47 | Lockfile bumps to ≥1.47 workspace-wide (tokio's own MSRV stays low; verify) |
 | thiserror | 1 | ^2.0 | Duplicate major versions coexist; tree bloat only |
 | rand_core | 0.6.4 | rand ^0.8 (rand_core 0.6) | Compatible |
 
 ## Decisions
 
-1. **Separate crate `crates/libs/styrene-nym`, not a feature flag on styrene-rns.** Three independent lines of evidence converge:
-   - **MSRV:** nym-sdk requires 1.87; workspace pins 1.75. `rust-version` is crate-wide metadata — a feature flag cannot scope it. A separate crate declares its own `rust-version = "1.87"`.
+1. **Separate crate `crates/libs/styrene-nym`, not a feature flag on styrene-rns.** Two enduring lines of evidence support the boundary (the former MSRV mismatch was retired when the workspace moved to Rust 1.97):
    - **The repo's own extension architecture:** `iface/driver.rs` states drivers "should implement these traits in external crates and integrate through the public interface manager API" — `InterfaceDriver`/`InterfaceDriverFactory` exist precisely for this.
    - **Dependency weight is not optional:** nym-sdk has no feature gates; a styrene-rns feature would drag the full Cosmos-client tree into the core protocol crate's manifest. The `no_std`-capable core stays clean only with a hard crate boundary.
 
-   Follow the `styrene-dx` precedent: workspace member, **excluded from default-members** ("build explicitly with `-p styrene-nym`"), so the 1.75 toolchain keeps building the default workspace.
+   Keep it as a normal workspace member. The old `styrene-dx`-style MSRV exclusion is no longer needed: workspace Rust 1.97 exceeds nym-sdk's 1.87 requirement.
 
 2. **NymIface composes public APIs, not new traits:** construct `MixnetClient` → `open_stream`/`listener().accept()` → `tokio::io::split` → hand halves to `run_hdlc_rx_loop`/`run_hdlc_tx_loop`, registering via the public `InterfaceChannel` machinery. IFAC and packet serde inherited.
 
@@ -120,7 +119,7 @@ Announces, path requests, links, and LXMF then flow over the mixnet like any oth
 
 4. **Dialer topology mirrors the existing tcp_client/tcp_server pair.** Two interface kinds: `nym` (dialer — config carries the peer's Nym recipient address, mirrors `TcpClient`) and `nym_listen` (acceptor — `listener().accept()` loop spawning an HDLC loop pair per inbound stream, mirrors `TcpServer`). SURB-based replies mean the acceptor writes back through the accepted stream without ever learning the dialer's address — hub-style deployments get inbound-anonymity for free.
 
-5. **App-layer wiring is feature-gated in `styrened`.** `styrened` is a default-member (MSRV 1.75), so it cannot depend on `styrene-nym` unconditionally. `styrene-nym` becomes an *optional* dependency behind a `nym` cargo feature on `styrened`; the default build stays on 1.75, `cargo build -p styrened --features nym` requires 1.87. Optional deps are not compiled when disabled, so the MSRV check never fires for default builds. This is the one place a feature flag *is* correct — at the app composition layer, not the protocol layer.
+5. **App-layer wiring remains feature-gated in `styrened`.** The old MSRV reason is retired (workspace Rust 1.97 satisfies nym-sdk 1.87), but optional composition still prevents every Styrene installation from paying for Nym's large ungated dependency tree and runtime/storage machinery. This is where a feature flag is correct — at the app composition layer, not inside the protocol core.
 
 6. **Python `styrened` compatibility is a non-constraint** (operator ruling, 2026-07-12: the Python implementation is old, archived, and dead). Wire-protocol design for the tunnel endpoint extension — and any future Styrene envelope change — answers only to rolling-upgrade compatibility among styrene-rs nodes. Choose the clean representation (tagged endpoint-kind discriminator) rather than contorting around a retired peer implementation. Note: README, PARITY_GAPS.md, and COMPAT_ISSUES.md still describe Python styrened as supported/canonical-peer; they are stale on this point and should be updated in a separate housekeeping change.
 
@@ -130,7 +129,7 @@ Announces, path requests, links, and LXMF then flow over the mixnet like any oth
 
 ```
 crates/libs/styrene-nym/
-├── Cargo.toml           # rust-version = "1.87", nym-sdk pinned "=1.21.2"
+├── Cargo.toml           # inherits workspace Rust 1.97; nym-sdk pinned "=1.21.2"
 └── src/
     ├── lib.rs           # public surface: NymDial, NymListen, config types
     ├── client.rs        # MixnetClient lifecycle: builder, persistent storage,
