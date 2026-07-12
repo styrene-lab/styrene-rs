@@ -15,10 +15,7 @@ open_questions = [
   "Endpoint extension for tunnel payloads: kind discriminator enum vs optional nym_recipient field — which preserves msgpack wire-compat with Python styrened?",
   "Should tunnel control (0xD8-0xDE) over Nym ride LXMF-over-NymIface (no new message types) or a direct Nym Stream side-channel?",
   "Per-iface announce/path-request timing: does core_transport need per-interface timeout overrides for high-latency bearers, and does that generalize to LoRa too?",
-  "How does a peer discover another peer's Nym recipient address — announce app-data extension, LXMF field, or out-of-band exchange?",
-  "What is the reconnect/failover story when the entry gateway drops — does InterfaceDriver's lifecycle handle it or does NymIface need internal retry?",
-  "Stream idle timeout (default 30 min) will reap quiet iface streams — keepalive frames, reopen-on-EOF, or builder-configured longer timeout?",
-  "Dialer topology: which side calls open_stream vs listener().accept() — config-driven peer list (tcp_client-style) or accept-any (tcp_server-style), or both kinds?",
+  "How does a peer discover another peer's Nym recipient address — announce app-data extension, LXMF field, or out-of-band exchange? (First slice: static config; this question gates dynamic peering.)",
 ]
 +++
 
@@ -120,14 +117,87 @@ Announces, path requests, links, and LXMF then flow over the mixnet like any oth
 
 2. **NymIface composes public APIs, not new traits:** construct `MixnetClient` → `open_stream`/`listener().accept()` → `tokio::io::split` → hand halves to `run_hdlc_rx_loop`/`run_hdlc_tx_loop`, registering via the public `InterfaceChannel` machinery. IFAC and packet serde inherited.
 
-## Suggested First Slice
+3. **Idle-timeout handling: reopen-on-EOF, not keepalive.** `TcpClient::spawn` already runs a reconnect loop (connect → split → HDLC loops → on exit, sleep and reconnect). The mixnet stream's idle-timeout EOF surfaces as a 0-byte read, which exits the rx loop — exactly the same signal as a dropped TCP connection. Reusing the reconnect-loop shape handles gateway drops and idle reaping with one mechanism and zero cover-traffic cost. Keepalive frames stay available as a later optimization if reopen latency hurts announce propagation.
 
-A spike proving the bearer path end-to-end, smallest possible scope:
+4. **Dialer topology mirrors the existing tcp_client/tcp_server pair.** Two interface kinds: `nym` (dialer — config carries the peer's Nym recipient address, mirrors `TcpClient`) and `nym_listen` (acceptor — `listener().accept()` loop spawning an HDLC loop pair per inbound stream, mirrors `TcpServer`). SURB-based replies mean the acceptor writes back through the accepted stream without ever learning the dialer's address — hub-style deployments get inbound-anonymity for free.
 
-1. New crate `crates/libs/styrene-nym` (workspace member, excluded from default-members, `rust-version = "1.87"`) wrapping nym-sdk Stream into the `InterfaceDriver` shape.
-2. Wire `kind = "nym"` into `styrened` config → iface spawn.
-3. E2E test in `crates/tests/styrene-e2e`: two nodes exchange an LXMF message where the only shared bearer is the mixnet.
-4. Measure: announce propagation latency, link establishment RTT, LXMF delivery time over mixnet vs TCP baseline.
+5. **App-layer wiring is feature-gated in `styrened`.** `styrened` is a default-member (MSRV 1.75), so it cannot depend on `styrene-nym` unconditionally. `styrene-nym` becomes an *optional* dependency behind a `nym` cargo feature on `styrened`; the default build stays on 1.75, `cargo build -p styrened --features nym` requires 1.87. Optional deps are not compiled when disabled, so the MSRV check never fires for default builds. This is the one place a feature flag *is* correct — at the app composition layer, not the protocol layer.
 
-Tunnel rendezvous (Integration Point 2) builds on the proven bearer and is a separate change with wire-protocol compatibility review.
+## Implementation Design — Bearer Slice (`styrene-nym`)
+
+### Crate layout
+
+```
+crates/libs/styrene-nym/
+├── Cargo.toml           # rust-version = "1.87", nym-sdk pinned "=1.21.2"
+└── src/
+    ├── lib.rs           # public surface: NymDial, NymListen, config types
+    ├── client.rs        # MixnetClient lifecycle: builder, persistent storage,
+    │                    #   stream-mode transition, disconnect on shutdown
+    ├── dial.rs          # NymDial::spawn — reconnect loop mirroring TcpClient::spawn:
+    │                    #   open_stream(recipient) → io::split → HDLC loops →
+    │                    #   on EOF/error: backoff, reopen
+    └── listen.rs        # NymListen::spawn — listener().accept() loop mirroring
+                         #   TcpServer: per-stream HDLC loop pair via iface_manager
+```
+
+Workspace: added to `members`, **not** `default-members`, with a `# nym — requires rust 1.87, build with -p` comment (styrene-dx precedent). Pin `nym-sdk = "=1.21.2"` — upstream warns of breaking changes between minors.
+
+### Client lifecycle
+
+- One dedicated `MixnetClient` per iface in stream mode (streams/messages mutual exclusivity makes sharing impossible by construction).
+- **Persistent identity via `MixnetClientBuilder`** with storage under the styrened data dir (e.g. `<data>/nym/<iface-name>/`): the node's Nym recipient address must be stable across restarts or peers cannot dial it. Ephemeral `connect_new()` is for tests only.
+- Client connect happens inside the spawn loop, not at construction — gateway unavailability at boot must not wedge the daemon (same posture as TcpClient's connect-retry).
+
+### styrened config surface
+
+Extend `InterfaceConfig` (all new fields optional, serde-defaulted — no break to existing TOML):
+
+```toml
+[[interfaces]]
+type = "nym"                 # dialer
+enabled = true
+name = "nym-hub"
+recipient = "<peer nym address>"   # new field: Option<String>
+nym_storage = "nym/hub"            # new field: Option<String>, relative to data dir
+
+[[interfaces]]
+type = "nym_listen"          # acceptor
+enabled = true
+name = "nym-in"
+nym_storage = "nym/listen"
+```
+
+`DaemonConfig` gains `enabled_nym_dialers()` / `enabled_nym_listener()` accessors beside `enabled_tcp_clients()`; `daemon.rs` wiring sits behind `#[cfg(feature = "nym")]`.
+
+### Spawn integration
+
+`daemon.rs` already does `iface_manager.lock().await.spawn(TcpClient::new(endpoint), TcpClient::spawn)`. `styrene-nym` types implement the same `Interface` + `InterfaceContext<T>` contract and are spawned identically:
+
+```rust
+#[cfg(feature = "nym")]
+for iface in config.enabled_nym_dialers() {
+    iface_manager.lock().await.spawn(
+        NymDial::new(iface.recipient.clone().expect("recipient required"), storage),
+        NymDial::spawn,
+    );
+}
+```
+
+### Test plan
+
+- **Unit (offline, in-crate):** static assertions `MixnetStream: Send + Unpin` (locks assumption→fact); config parsing; backoff schedule.
+- **E2E (network-gated):** in `crates/tests/styrene-e2e` (not a default-member), behind a `nym-live` feature or `#[ignore]`: two daemon nodes whose *only* shared bearer is the mixnet — announce propagates, link establishes, one LXMF message delivers. Requires live Nym mainnet and gateway reachability; CI runs it on demand, not per-commit.
+- **Measurements to record in this node:** announce propagation latency, link establishment RTT, LXMF delivery time — mixnet vs TCP baseline. These numbers decide whether per-iface timeout overrides (open question) are actually needed.
+
+### Spike sequencing
+
+1. Scaffold crate + workspace entry; static assertions compile on 1.87. *(proves toolchain/dep story)*
+2. `NymDial` against an ephemeral self-listener (nym-sdk's loopback example pattern) — HDLC round-trip of a raw RNS packet. *(proves the bounds and framing in practice)*
+3. Config + feature-gated daemon wiring; two-node e2e over mainnet. *(proves the bearer)*
+4. Measure; then revisit the announce/path-timing open question with data.
+
+## Scope Boundary
+
+The bearer slice above is Integration Point 1 end-to-end. Tunnel rendezvous (Integration Point 2) builds on the proven bearer and is a separate change gated on the Python msgpack wire-compat review of the tunnel payload endpoint extension.
 
