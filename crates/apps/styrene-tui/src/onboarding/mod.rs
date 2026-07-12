@@ -6,6 +6,7 @@
 #![allow(dead_code)] // Public API surface — items used by main.rs integration + future consumers
 
 pub mod detect;
+pub mod paths;
 pub mod reticulum;
 pub mod screens;
 pub mod setup;
@@ -14,17 +15,12 @@ pub mod wizard;
 pub use setup::DaemonMode;
 pub use wizard::{WizardAction, WizardState};
 
-use std::path::PathBuf;
+use paths::StyrenePaths;
 
 /// Load saved TUI preferences from a previous wizard run.
-pub fn load_tui_prefs() -> TuiPrefs {
-    let path = tui_prefs_path();
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
+pub fn load_tui_prefs(paths: &StyrenePaths) -> TuiPrefs {
+    let content = std::fs::read_to_string(paths.tui_preferences_path()).unwrap_or_default();
     toml::from_str(&content).unwrap_or_default()
-}
-
-fn tui_prefs_path() -> PathBuf {
-    styrened::config::default_config_dir().join("tui.toml")
 }
 
 #[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
