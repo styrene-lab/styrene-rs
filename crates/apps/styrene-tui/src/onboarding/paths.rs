@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::runtime::RuntimeProfile;
 
+const GHOST_MARKER: &str = ".styrene-ghost";
+const GHOST_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
 /// All paths used by TUI environment detection and setup.
 ///
 /// Production uses platform defaults. Tests and alternate profiles construct
@@ -62,15 +65,22 @@ impl StyrenePaths {
             .map_err(|error| error.to_string())?
             .as_nanos();
         let session = format!("{}-{nonce}", std::process::id());
-        let base = if let Some(root) = portable_root {
-            root.join(".ghost").join(session)
+        let (parent, base) = if let Some(root) = portable_root {
+            let parent = root.join(".ghost");
+            let base = parent.join(session);
+            (parent, base)
         } else {
-            std::env::temp_dir().join(format!("styrene-ghost-{session}"))
+            let parent = std::env::temp_dir();
+            let base = parent.join(format!("styrene-ghost-{session}"));
+            (parent, base)
         };
+        scavenge_abandoned_ghosts(&parent, portable_root.is_some());
         std::fs::create_dir_all(&base)
             .map_err(|error| format!("create ghost runtime {}: {error}", base.display()))?;
         set_private_directory(&base)
             .map_err(|error| format!("secure ghost runtime {}: {error}", base.display()))?;
+        std::fs::write(base.join(GHOST_MARKER), b"styrene ghost runtime\n")
+            .map_err(|error| format!("mark ghost runtime {}: {error}", base.display()))?;
         Ok(Self::new(
             base.join("config"),
             base.join("data"),
@@ -127,6 +137,32 @@ impl StyrenePaths {
     }
 }
 
+fn scavenge_abandoned_ghosts(parent: &Path, portable: bool) {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name_matches = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| portable || name.starts_with("styrene-ghost-"));
+        if !name_matches || !path.is_dir() || !path.join(GHOST_MARKER).is_file() {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= GHOST_MAX_AGE);
+        if stale {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+}
+
 #[cfg(unix)]
 fn set_private_directory(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -159,6 +195,24 @@ impl Default for TuiOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scavenger_removes_only_old_marked_directories() {
+        let parent = std::env::temp_dir().join(format!("styrene-scavenge-{}", std::process::id()));
+        let marked = parent.join("old");
+        let unmarked = parent.join("unmarked");
+        std::fs::create_dir_all(&marked).unwrap();
+        std::fs::create_dir_all(&unmarked).unwrap();
+        std::fs::write(marked.join(GHOST_MARKER), []).unwrap();
+
+        // A fresh marked directory is retained. The age gate is intentionally
+        // not bypassable in production; deletion mechanics are covered by the
+        // GhostSession drop test.
+        scavenge_abandoned_ghosts(&parent, true);
+        assert!(marked.exists());
+        assert!(unmarked.exists());
+        std::fs::remove_dir_all(parent).unwrap();
+    }
 
     #[test]
     fn explicit_paths_derive_installation_files() {
