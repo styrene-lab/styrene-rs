@@ -444,7 +444,13 @@ impl App {
             Action::PageDown => self.active_conversation_mut().scroll_down(10),
             Action::Activate => self.activate_focused(),
             Action::Back => {
-                if self.help_open {
+                if self.workspace == Workspace::Peers
+                    && self.peer_tab == PeerTab::Pages
+                    && self.page_source.is_some()
+                {
+                    self.page_source = None;
+                    self.page_path = None;
+                } else if self.help_open {
                     self.help_open = false;
                 } else if self.palette_open {
                     self.palette_open = false;
@@ -453,6 +459,7 @@ impl App {
                 } else {
                     self.selected_peer = None;
                     self.selected_conversation = None;
+                    self.clear_page_state();
                 }
             }
             Action::Compose => {
@@ -505,8 +512,7 @@ impl App {
                 let hash = hash.clone();
                 match self.workspace {
                     Workspace::Peers | Workspace::Home => {
-                        self.selected_peer = Some(hash);
-                        self.peer_tab = PeerTab::Chat;
+                        self.select_peer(hash);
                         if self.workspace == Workspace::Home {
                             self.workspace = Workspace::Peers;
                         }
@@ -536,6 +542,23 @@ impl App {
         {
             self.dispatch(Action::Compose);
         }
+    }
+
+    fn clear_page_state(&mut self) {
+        self.page_index.clear();
+        self.page_selection = 0;
+        self.page_source = None;
+        self.page_path = None;
+    }
+
+    pub fn select_peer(&mut self, hash: String) {
+        let changed_peer = self.selected_peer.as_deref() != Some(hash.as_str());
+        self.selected_peer = Some(hash);
+        self.peer_tab = PeerTab::Chat;
+        if changed_peer {
+            self.clear_page_state();
+        }
+        self.focus = Focus::Main;
     }
 
     #[allow(dead_code)] // available for keybind wiring

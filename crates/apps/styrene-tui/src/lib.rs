@@ -7,6 +7,7 @@
 //!
 //! Run: `cargo run -p styrene-tui`
 
+pub mod action;
 mod app;
 mod daemon;
 mod ghost;
@@ -34,6 +35,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
+use action::{Action, action_for_key};
 use app::{App, Focus, InputMode, Workspace};
 use tui::splash;
 
@@ -302,10 +304,8 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         InputMode::Normal => {}
     }
 
-    // ── Global keys (Normal mode) ───────────────────────────────────────────
-    match (key.code, key.modifiers) {
-        // Quit
-        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+    if let Some(action) = action_for_key(app, key) {
+        if action == Action::Quit {
             let now = std::time::Instant::now();
             if let Some(last) = app.last_ctrl_c {
                 if now.duration_since(last) < Duration::from_secs(1) {
@@ -314,14 +314,17 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             }
             app.last_ctrl_c = Some(now);
             app.conversation.push_system("Press Ctrl+C again to quit");
+            return false;
         }
+        return app.dispatch(action);
+    }
+
+    match (key.code, key.modifiers) {
         (KeyCode::Char('q'), KeyModifiers::NONE) if app.focus != Focus::Input => {
             return true;
         }
 
-        // Workspace navigation
-        (KeyCode::Tab, _) => app.next_workspace(),
-        (KeyCode::BackTab, _) => app.prev_workspace(),
+        // Workspace navigation accelerators
         (KeyCode::Char('1'), _) => app.set_workspace(Workspace::Home),
         (KeyCode::Char('2'), _) => app.set_workspace(Workspace::Peers),
         (KeyCode::Char('3'), _) => app.set_workspace(Workspace::Messages),
@@ -329,14 +332,6 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         // Mode triggers
         (KeyCode::Char(':'), _) => {
             app.input_mode = InputMode::Command { buffer: String::new() };
-            app.focus = Focus::Input;
-        }
-        (KeyCode::Char('/'), _) => {
-            app.input_mode = InputMode::Search { query: String::new() };
-            app.focus = Focus::Input;
-        }
-        (KeyCode::Char('i'), _) => {
-            app.input_mode = InputMode::Compose;
             app.focus = Focus::Input;
         }
 
@@ -354,10 +349,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             if let Some((hash, _, _)) = items.get(app.sidebar_selection) {
                 let hash = hash.clone();
                 match app.workspace {
-                    Workspace::Peers => {
-                        app.selected_peer = Some(hash);
-                        app.focus = Focus::Main;
-                    }
+                    Workspace::Peers => app.select_peer(hash),
                     Workspace::Messages => {
                         app.selected_conversation = Some(hash);
                         app.focus = Focus::Main;
@@ -422,13 +414,17 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 && app.peer_tab == app::PeerTab::Pages =>
         {
             if let Some(peer_hash) = app.selected_peer.clone() {
-                if app.page_source.is_none() && app.page_index.is_empty() {
-                    // First press: load page index (use "local" for own pages, peer hash for remote)
-                    app.send_daemon_cmd(daemon::DaemonCmd::BrowsePage {
-                        host: peer_hash,
-                        path: "/".into(),
-                    });
-                    app.conversation.push_system("⬡ loading page from peer...");
+                if app.page_source.is_some() {
+                    app.page_source = None;
+                    app.page_path = None;
+                } else if app.page_index.is_empty() {
+                    app.send_daemon_cmd(daemon::DaemonCmd::ListPages { host: peer_hash });
+                    app.conversation.push_system("⬡ loading page index from peer...");
+                } else {
+                    let index = app.page_selection.min(app.page_index.len() - 1);
+                    let path = app.page_index[index].clone();
+                    app.send_daemon_cmd(daemon::DaemonCmd::BrowsePage { host: peer_hash, path });
+                    app.conversation.push_system("⬡ loading selected page...");
                 }
             }
         }
