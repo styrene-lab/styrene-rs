@@ -610,6 +610,14 @@ impl App {
                     t.dim()
                 }),
             ),
+            Span::styled(
+                format!(
+                    " v{}+{}",
+                    env!("CARGO_PKG_VERSION"),
+                    option_env!("STYRENE_BUILD_SHA").unwrap_or("unknown")
+                ),
+                Style::default().fg(t.dim()),
+            ),
             Span::styled(&hash_short, Style::default().fg(t.dim())),
             Span::styled("   ", Style::default()),
         ];

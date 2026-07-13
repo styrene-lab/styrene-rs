@@ -82,7 +82,7 @@ impl TcpClient {
 
             log::info!("tcp_client connected to <{}>", addr);
             if tx_diag_enabled() {
-                eprintln!("[tp-diag] tcp_client connected iface={}", iface_address);
+                crate::transport_diagnostic!("[tp-diag] tcp_client connected iface={}", iface_address);
             }
 
             let rx_task = {

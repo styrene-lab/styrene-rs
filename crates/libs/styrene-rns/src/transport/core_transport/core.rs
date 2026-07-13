@@ -206,7 +206,7 @@ impl Transport {
         app_data: Option<&[u8]>,
     ) {
         let mut destination = destination.lock().await;
-        eprintln!(
+        crate::transport_diagnostic!(
             "[tp] announce_tx dst={} app_data_len={}",
             destination.desc.address_hash,
             app_data.map(|value| value.len()).unwrap_or(0)

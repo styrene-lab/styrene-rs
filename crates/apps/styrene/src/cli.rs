@@ -4,8 +4,12 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+fn build_version() -> &'static str {
+    concat!(env!("CARGO_PKG_VERSION"), "+", env!("STYRENE_BUILD_SHA"))
+}
+
 #[derive(Parser)]
-#[command(name = "styrene", about = "Styrene mesh node — daemon, TUI, and CLI", version)]
+#[command(name = "styrene", about = "Styrene mesh node — daemon, TUI, and CLI", version = build_version())]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,

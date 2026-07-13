@@ -68,6 +68,9 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
 
     // --- Config ---
     let config_path = cfg.config.or_else(|| {
+        if cfg.ephemeral {
+            return None;
+        }
         let default = crate::config::default_config_path();
         default.exists().then_some(default)
     });
