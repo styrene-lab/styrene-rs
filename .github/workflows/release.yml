@@ -36,6 +36,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Verify release tag matches product versions
+        run: python3 scripts/check_release_version.py "$RELEASE_TAG"
       - name: Verify tag is on main/master
         run: |
           git fetch origin main master 2>/dev/null || true

@@ -1,6 +1,6 @@
 [package]
 name = "styrene"
-version = "0.1.0"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -30,10 +30,10 @@ toml = { workspace = true }
 tokio = { workspace = true }
 
 # Daemon (feature-gated)
-styrened = { path = "../styrened", version = "0.1.0", optional = true }
+styrened = { path = "../styrened", version = "0.3.0", optional = true }
 
 # TUI (feature-gated)
-styrene-tui-app = { package = "styrene-tui", path = "../styrene-tui", version = "0.0.1", optional = true }
+styrene-tui-app = { package = "styrene-tui", path = "../styrene-tui", version = "0.3.0", optional = true }
 
 [features]
 default = ["daemon", "cli", "tui"]
