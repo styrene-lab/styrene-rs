@@ -1529,10 +1529,11 @@ impl App {
         conv.push_sent(&dest, Some(&name), &text, DeliveryStatus::Sending);
 
         // Activity log
+        let activity_summary = crate::tui::widgets::truncate_str(&text, 32, "…");
         self.activity.push(crate::mesh_state::ActivityEntry::new(
             crate::mesh_state::ActivityKind::OutboundMessage,
             &name,
-            &text[..text.len().min(32)],
+            &activity_summary,
         ));
 
         // Queue actual send via daemon
@@ -1543,11 +1544,25 @@ impl App {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn truncate_to(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else if max > 1 {
-        format!("{}…", &s[..max - 1])
-    } else {
-        s[..max].to_string()
+    crate::tui::widgets::truncate_str(s, max, "…")
+}
+
+#[cfg(test)]
+mod unicode_regression_tests {
+    use super::*;
+
+    #[test]
+    fn truncate_to_never_slices_inside_multibyte_text() {
+        let text = "Styrene 𝗲phemeral identity loaded";
+        let shortened = truncate_to(text, 24);
+        assert!(shortened.ends_with('…'));
+        assert!(unicode_width::UnicodeWidthStr::width(shortened.as_str()) <= 24);
+    }
+
+    #[test]
+    fn compose_activity_accepts_styled_unicode() {
+        let mut app = App::new();
+        app.handle_compose_submit("Styrene 𝗲phemeral identity loaded across the mesh".into());
+        assert!(!app.activity.is_empty());
     }
 }
