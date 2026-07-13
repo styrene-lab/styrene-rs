@@ -354,7 +354,7 @@ impl I2pProxyService {
             // Fits in a single packet
             match transport.send_raw(delivery_addr, &wire_bytes).await {
                 Ok(outcome) => {
-                    eprintln!(
+                    crate::daemon_diagnostic!(
                         "[i2p-proxy] sent {:?} to {} ({} bytes, outcome={:?})",
                         msg.message_type,
                         &peer_identity[..12.min(peer_identity.len())],
@@ -381,7 +381,7 @@ impl I2pProxyService {
                         .await
                     {
                         Ok(_) => {
-                            eprintln!(
+                            crate::daemon_diagnostic!(
                                 "[i2p-proxy] sent {:?} to {} ({} bytes via link)",
                                 msg.message_type,
                                 &peer_identity[..12.min(peer_identity.len())],
@@ -437,20 +437,24 @@ impl ProtocolHandler for I2pProxyService {
         match message.message_type {
             StyreneMessageType::I2pProxyRequest => {
                 if !*self.wired.lock().unwrap() {
-                    eprintln!("[i2p-proxy] not wired to transport, ignoring request");
+                    crate::daemon_diagnostic!(
+                        "[i2p-proxy] not wired to transport, ignoring request"
+                    );
                     return HandleResult::Handled;
                 }
 
                 // Rate limit check
                 if !self.check_rate_limit(source) {
-                    eprintln!(
+                    crate::daemon_diagnostic!(
                         "[i2p-proxy] rate limit exceeded for {}",
                         &source[..12.min(source.len())]
                     );
                     let err_msg =
                         self.make_error_msg(0, message.request_id, 429, "Rate limit exceeded");
                     if let Err(e) = self.send_i2p_message(source, &err_msg).await {
-                        eprintln!("[i2p-proxy] failed to send rate limit error: {e}");
+                        crate::daemon_diagnostic!(
+                            "[i2p-proxy] failed to send rate limit error: {e}"
+                        );
                     }
                     return HandleResult::Handled;
                 }
@@ -464,7 +468,9 @@ impl ProtocolHandler for I2pProxyService {
                         "Too many concurrent requests",
                     );
                     if let Err(e) = self.send_i2p_message(source, &err_msg).await {
-                        eprintln!("[i2p-proxy] failed to send concurrency error: {e}");
+                        crate::daemon_diagnostic!(
+                            "[i2p-proxy] failed to send concurrency error: {e}"
+                        );
                     }
                     return HandleResult::Handled;
                 }
@@ -473,12 +479,12 @@ impl ProtocolHandler for I2pProxyService {
                 let request: I2pProxyRequest = match ciborium::from_reader(&message.payload[..]) {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("[i2p-proxy] decode I2pProxyRequest failed: {e}");
+                        crate::daemon_diagnostic!("[i2p-proxy] decode I2pProxyRequest failed: {e}");
                         return HandleResult::Handled;
                     }
                 };
 
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[i2p-proxy] {} {} from {}",
                     request.method,
                     request.url,
@@ -490,7 +496,7 @@ impl ProtocolHandler for I2pProxyService {
 
                 for resp in responses {
                     if let Err(e) = self.send_i2p_message(source, &resp).await {
-                        eprintln!("[i2p-proxy] failed to send response: {e}");
+                        crate::daemon_diagnostic!("[i2p-proxy] failed to send response: {e}");
                         break;
                     }
                 }
@@ -501,7 +507,10 @@ impl ProtocolHandler for I2pProxyService {
             StyreneMessageType::I2pProxyClose => {
                 // Client is aborting a request — nothing to clean up on the hub
                 // since we process requests synchronously per message.
-                eprintln!("[i2p-proxy] close from {}", &source[..12.min(source.len())]);
+                crate::daemon_diagnostic!(
+                    "[i2p-proxy] close from {}",
+                    &source[..12.min(source.len())]
+                );
                 HandleResult::Handled
             }
 

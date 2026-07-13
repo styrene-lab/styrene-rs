@@ -87,7 +87,7 @@ impl TerminalService {
             .unwrap()
             .insert(session_id.clone(), Session { input_tx, pty_pair: pair });
 
-        eprintln!("[terminal] opened PTY session {session_id} ({shell_cmd})");
+        crate::daemon_diagnostic!("[terminal] opened PTY session {session_id} ({shell_cmd})");
         Ok(session_id)
     }
 
@@ -115,7 +115,7 @@ impl TerminalService {
             .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .map_err(|e| format!("resize failed: {e}"))?;
 
-        eprintln!("[terminal] resized session {session_id} to {cols}x{rows}");
+        crate::daemon_diagnostic!("[terminal] resized session {session_id} to {cols}x{rows}");
         Ok(())
     }
 
@@ -123,7 +123,7 @@ impl TerminalService {
     pub fn close(&self, session_id: &str) -> Result<(), String> {
         let removed = self.sessions.lock().unwrap().remove(session_id).is_some();
         if removed {
-            eprintln!("[terminal] closed session {session_id}");
+            crate::daemon_diagnostic!("[terminal] closed session {session_id}");
             Ok(())
         } else {
             Err(format!("session not found: {session_id}"))

@@ -77,7 +77,11 @@ impl PageService {
 
         self.scan_dir(&self.pages_dir, &self.pages_dir, &mut pages);
 
-        eprintln!("[pages] scanned {} pages from {}", pages.len(), self.pages_dir.display());
+        crate::daemon_diagnostic!(
+            "[pages] scanned {} pages from {}",
+            pages.len(),
+            self.pages_dir.display()
+        );
     }
 
     fn scan_dir(&self, dir: &Path, root: &Path, pages: &mut HashMap<String, PageEntry>) {
@@ -143,7 +147,7 @@ impl PageService {
         if output.status.success() {
             Some(output.stdout)
         } else {
-            eprintln!(
+            crate::daemon_diagnostic!(
                 "[pages] dynamic page {} failed: {}",
                 path.display(),
                 String::from_utf8_lossy(&output.stderr)

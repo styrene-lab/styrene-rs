@@ -59,22 +59,30 @@ pub fn spawn_announce_worker(
                         Ok(record) => {
                             let aspect =
                                 if is_page_host { "nomadnetwork.node" } else { "lxmf.delivery" };
-                            eprintln!(
+                            crate::daemon_diagnostic!(
                                 "[worker] announce from {} (name={:?}, aspect={}, seen={})",
-                                peer_hash, record.name, aspect, record.seen_count
+                                peer_hash,
+                                record.name,
+                                aspect,
+                                record.seen_count
                             );
                             events.emit_device_update(&peer_hash);
                         }
                         Err(e) => {
-                            eprintln!("[worker] announce processing error for {}: {e}", peer_hash);
+                            crate::daemon_diagnostic!(
+                                "[worker] announce processing error for {}: {e}",
+                                peer_hash
+                            );
                         }
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    eprintln!("[worker] announce worker lagged, skipped {n} events");
+                    crate::daemon_diagnostic!(
+                        "[worker] announce worker lagged, skipped {n} events"
+                    );
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    eprintln!("[worker] announce channel closed, worker stopping");
+                    crate::daemon_diagnostic!("[worker] announce channel closed, worker stopping");
                     break;
                 }
             }

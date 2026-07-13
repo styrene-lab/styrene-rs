@@ -415,7 +415,7 @@ fn load_or_create_keychain(paths: &PlatformPaths) -> anyhow::Result<PrivateIdent
         // No passphrase prompt, no user interaction. Biometric required on read.
         if !signer.exists() {
             signer.create().map_err(|e| anyhow::anyhow!("keychain create: {e}"))?;
-            eprintln!("[mobile] created new identity in platform keychain");
+            crate::daemon_diagnostic!("[mobile] created new identity in platform keychain");
         }
 
         // Retrieve root secret (triggers biometric on iOS)
@@ -439,7 +439,9 @@ fn load_or_create_keychain(paths: &PlatformPaths) -> anyhow::Result<PrivateIdent
 
     #[cfg(not(feature = "mobile-keychain"))]
     {
-        eprintln!("[mobile] keychain feature not enabled, falling back to plaintext file");
+        crate::daemon_diagnostic!(
+            "[mobile] keychain feature not enabled, falling back to plaintext file"
+        );
         load_or_create_plaintext_file(paths)
     }
 }
@@ -466,7 +468,10 @@ fn load_or_create_encrypted_file(paths: &PlatformPaths) -> anyhow::Result<Privat
             .map_err(|e| anyhow::anyhow!("encrypted file access: {e}"))?;
 
         if !identity_path.exists() {
-            eprintln!("[mobile] created new encrypted identity at {}", identity_path.display());
+            crate::daemon_diagnostic!(
+                "[mobile] created new encrypted identity at {}",
+                identity_path.display()
+            );
         }
 
         let deriver = KeyDeriver::new(root.as_bytes());
@@ -483,7 +488,9 @@ fn load_or_create_encrypted_file(paths: &PlatformPaths) -> anyhow::Result<Privat
 
     #[cfg(not(feature = "mobile-identity"))]
     {
-        eprintln!("[mobile] file-signer feature not enabled, falling back to plaintext");
+        crate::daemon_diagnostic!(
+            "[mobile] file-signer feature not enabled, falling back to plaintext"
+        );
         load_or_create_plaintext_file(paths)
     }
 }
@@ -508,7 +515,10 @@ fn load_or_create_plaintext_file(paths: &PlatformPaths) -> anyhow::Result<Privat
                 .as_nanos()
         ));
         std::fs::write(&identity_path, id.to_private_key_bytes())?;
-        eprintln!("[mobile] created new plaintext identity at {}", identity_path.display());
+        crate::daemon_diagnostic!(
+            "[mobile] created new plaintext identity at {}",
+            identity_path.display()
+        );
         Ok(id)
     }
 }
