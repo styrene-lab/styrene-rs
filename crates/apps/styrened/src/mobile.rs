@@ -45,6 +45,7 @@ use std::sync::{Arc, Mutex};
 use crate::app_context::AppContext;
 use crate::config::PlatformPaths;
 use crate::daemon_facade::DaemonFacade;
+use crate::services::messaging::InboundAcceptOutcome;
 use crate::storage::messages::MessagesStore;
 use crate::transport::mesh_transport::MeshTransport;
 
@@ -222,19 +223,49 @@ impl MobileNode {
 
         let mut poll_messages = Vec::new();
 
-        // Decode and persist each message
+        // Decode and persist each message. Duplicate imports are ACKed at the
+        // hub but do not produce another notification.
         for (_id, lxmf_bytes) in &messages {
-            // Try to decode for notification preview
-            if let Some(record) = self.app_context.messaging().accept_inbound(
+            match self.app_context.messaging().accept_inbound(
                 [0u8; 16], // destination filled by decoder from wire
                 lxmf_bytes,
                 lxmf::inbound_decode::InboundPayloadMode::FullWire,
             ) {
-                poll_messages.push(PollMessage {
-                    source_hash: record.source.clone(),
-                    content_preview: record.content[..record.content.len().min(100)].to_string(),
-                    timestamp: record.timestamp,
-                });
+                InboundAcceptOutcome::Accepted(record) => {
+                    poll_messages.push(PollMessage {
+                        source_hash: record.source.clone(),
+                        content_preview: record.content[..record.content.len().min(100)]
+                            .to_string(),
+                        timestamp: record.timestamp,
+                    });
+                }
+                InboundAcceptOutcome::Duplicate { message_id } => {
+                    self.app_context.events().emit_inbound_drop(
+                        "mobile_poll",
+                        "duplicate",
+                        Some(&message_id),
+                        None,
+                        None,
+                    );
+                }
+                InboundAcceptOutcome::Rejected { diagnostics } => {
+                    self.app_context.events().emit_inbound_drop(
+                        "mobile_poll",
+                        "malformed",
+                        None,
+                        None,
+                        Some(&diagnostics.summary()),
+                    );
+                }
+                InboundAcceptOutcome::StorageError { message_id, error } => {
+                    self.app_context.events().emit_inbound_drop(
+                        "mobile_poll",
+                        "storage_error",
+                        Some(&message_id),
+                        None,
+                        Some(&error.to_string()),
+                    );
+                }
             }
         }
 

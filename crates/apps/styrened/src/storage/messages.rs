@@ -101,10 +101,20 @@ impl MessagesStore {
     }
 
     pub fn insert_message(&self, record: &MessageRecord) -> rusqlite::Result<()> {
+        self.write_message(record, "INSERT OR REPLACE").map(|_| ())
+    }
+
+    /// Insert an inbound message without replacing an existing immutable LXMF
+    /// record. Returns `true` only for the first accepted delivery.
+    pub fn insert_message_if_absent(&self, record: &MessageRecord) -> rusqlite::Result<bool> {
+        self.write_message(record, "INSERT OR IGNORE").map(|changed| changed > 0)
+    }
+
+    fn write_message(&self, record: &MessageRecord, insert: &str) -> rusqlite::Result<usize> {
         let fields_json =
             record.fields.as_ref().map(|value| serde_json::to_string(value).unwrap_or_default());
         self.conn.execute(
-            "INSERT OR REPLACE INTO messages (id, source, destination, title, content, timestamp, direction, fields, receipt_status, read) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            &format!("{insert} INTO messages (id, source, destination, title, content, timestamp, direction, fields, receipt_status, read) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"),
             params![
                 &record.id,
                 &record.source,
@@ -117,8 +127,7 @@ impl MessagesStore {
                 &record.receipt_status,
                 record.read as i64,
             ],
-        )?;
-        Ok(())
+        )
     }
 
     pub fn list_messages(

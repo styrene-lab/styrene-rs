@@ -1,4 +1,35 @@
     #[test]
+    fn duplicate_direct_inbound_is_not_replaced_and_emits_drop_event() {
+        let daemon = RpcDaemon::test_instance();
+        let original = MessageRecord {
+            id: "same-message".into(),
+            source: "source".into(),
+            destination: "destination".into(),
+            title: String::new(),
+            content: "first".into(),
+            timestamp: 1,
+            direction: "in".into(),
+            fields: None,
+            receipt_status: None,
+            read: false,
+        };
+        assert!(daemon.accept_inbound(original.clone()).expect("first inbound"));
+        let _ = daemon.take_event().expect("first inbound event");
+
+        let mut replay = original;
+        replay.content = "mutated replay".into();
+        assert!(!daemon.accept_inbound(replay).expect("duplicate inbound"));
+
+        let stored = daemon.messages().get_message("same-message").unwrap().unwrap();
+        assert_eq!(stored.content, "first");
+        let event = daemon.take_event().expect("drop event");
+        assert_eq!(event.event_type, "inbound_dropped");
+        assert_eq!(event.payload["path"], "rpc_direct");
+        assert_eq!(event.payload["reason"], "duplicate");
+        assert_eq!(event.payload["message_id"], "same-message");
+    }
+
+    #[test]
     fn sdk_poll_events_v2_validates_cursor_and_expires_stale_tokens() {
         let daemon = RpcDaemon::test_instance();
         daemon.emit_event(RpcEvent {
