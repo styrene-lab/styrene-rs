@@ -1,4 +1,4 @@
-# Reference integration: service-hosted reticulumd
+# Reference integration: service-hosted styrened
 
 [rpc]
 listen = "127.0.0.1:7443"
