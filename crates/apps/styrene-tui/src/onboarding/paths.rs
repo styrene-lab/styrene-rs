@@ -34,6 +34,10 @@ impl StyrenePaths {
         }
     }
 
+    pub fn standard_preferences() -> Self {
+        Self::from_defaults()
+    }
+
     pub fn from_defaults() -> Self {
         Self {
             config_dir: styrened::config::default_config_dir(),
@@ -103,6 +107,10 @@ impl StyrenePaths {
 
     pub fn tui_preferences_path(&self) -> PathBuf {
         self.config_dir.join("tui.toml")
+    }
+
+    pub fn ghost_preferences_path(&self) -> PathBuf {
+        self.config_dir.join("ghost.toml")
     }
 
     pub fn setup_complete_path(&self) -> PathBuf {

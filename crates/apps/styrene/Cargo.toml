@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Styrene mesh node — daemon, TUI, and CLI in one binary"
+build = "build.rs"
 publish = false
 
 [[bin]]

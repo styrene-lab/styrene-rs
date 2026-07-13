@@ -15,6 +15,9 @@ pub mod ratchets;
 
 pub mod serde;
 
+#[cfg(feature = "std")]
+pub mod diagnostics;
+
 #[cfg(feature = "transport")]
 pub mod transport;
 

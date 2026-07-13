@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Styrene terminal UI spike — Ratatui mesh status display"
+build = "build.rs"
 publish = false
 
 [[bin]]

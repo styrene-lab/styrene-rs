@@ -10,6 +10,7 @@
 mod app;
 mod daemon;
 mod ghost;
+mod ghost_preferences;
 mod mesh_state;
 mod micron_widget;
 mod onboarding;
@@ -43,8 +44,23 @@ pub fn run_default() -> Result<()> {
 }
 
 /// Launch the Styrene terminal application with explicit installation options.
-pub async fn run(options: TuiOptions) -> Result<()> {
+pub async fn run(mut options: TuiOptions) -> Result<()> {
     styrened::diagnostics::set_enabled(false);
+    rns_core::diagnostics::set_enabled(false);
+    if options.runtime_profile.is_ephemeral() {
+        let preference_paths = match &options.runtime_profile {
+            RuntimeProfile::PortableGhost { root } => StyrenePaths::new(
+                root.join("config"),
+                root.join("data"),
+                root.join("run/styrene.sock"),
+                root.join("home"),
+            ),
+            _ => StyrenePaths::standard_preferences(),
+        };
+        let preferences =
+            ghost_preferences::GhostPreferences::load(&preference_paths.ghost_preferences_path());
+        preferences.write_session_config(&options.paths.config_path())?;
+    }
     let _ghost_session = ghost::GhostSession::for_paths(
         options.runtime_profile.is_ephemeral(),
         &options.paths.data_dir,
