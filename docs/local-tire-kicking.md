@@ -29,14 +29,16 @@ Quit with `q`, or press `Ctrl+C` twice within one second.
 
 ## Persistent local installation
 
-Build and install the canonical binary into Cargo's binary directory:
+Build and atomically replace the local binaries through the repository recipe:
 
 ```bash
-cargo install --path crates/apps/styrene --features tui --locked --force
+just install
 styrene
 ```
 
-The first persistent launch presents onboarding and writes the normal platform configuration. Existing state is not needed before launch.
+By default this installs `styrene`, `styrened`, and the compatibility `styrene-tui` binary into `~/.cargo/bin`. Override the destination for packaging tests with either `STYRENE_INSTALL_DIR=/path just install` or `just install /path`. The recipe builds with the committed lockfile, copies each artifact to a temporary sibling, and renames it into place so a failed build or interrupted copy does not truncate the currently installed executable.
+
+The canonical application remains `styrene`; the other binaries are installed so local upgrades exercise every shipped executable.
 
 ## Portable persistent session
 
