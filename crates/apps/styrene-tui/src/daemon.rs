@@ -1051,13 +1051,15 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
         }
 
         TuiEvent::PageLoaded { host: _, path, source } => {
-            // Store page content for the Pages tab to render
             app.page_source = Some(source);
             app.page_path = Some(path);
+            app.focus = crate::app::Focus::Main;
         }
 
         TuiEvent::PageList { host: _, pages } => {
             app.page_index = pages;
+            app.page_selection = 0;
+            app.focus = crate::app::Focus::Main;
         }
 
         TuiEvent::TerminalOutput { session_id, data } => {
