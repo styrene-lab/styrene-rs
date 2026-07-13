@@ -6,6 +6,7 @@
 # ─── Configuration ──────────────────────────────────────────────────────────
 
 project_root := justfile_directory()
+install_dir := env_var_or_default("STYRENE_INSTALL_DIR", env_var("HOME") + "/.cargo/bin")
 
 # ─── Help ───────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,17 @@ build:
 # Build in release mode
 build-release:
     cargo build --workspace --release
+
+# Build and atomically replace local Styrene binaries (defaults to ~/.cargo/bin)
+install destination=install_dir:
+    cargo build --release --locked -p styrene --features tui -p styrened -p styrene-tui
+    sh scripts/install-local.sh "{{ destination }}" \
+        target/release/styrene \
+        target/release/styrened \
+        target/release/styrene-tui
+    @"{{ destination }}/styrene" --version
+    @"{{ destination }}/styrened" --version
+    @echo "installed {{ destination }}/styrene-tui (interactive compatibility launcher)"
 
 # Run all validation checks (format + lint + test)
 validate: format-check lint test
