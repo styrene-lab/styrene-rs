@@ -129,7 +129,7 @@ impl PropagationRequestHandler {
                             &request.lxmf_bytes,
                             InboundPayloadMode::FullWire,
                         ) {
-                            eprintln!(
+                            crate::daemon_diagnostic!(
                                 "[propagation] ingest for local dest — delivered as id={}",
                                 record.id
                             );
@@ -152,9 +152,10 @@ impl PropagationRequestHandler {
         ) {
             Ok(stored) => {
                 let count = if stored { 1 } else { 0 };
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[propagation] ingested for dest={} stored={}",
-                    request.dest_hash, stored
+                    request.dest_hash,
+                    stored
                 );
                 Self::cbor_encode(&PropagationStatusPayload {
                     success: true,
@@ -192,9 +193,11 @@ impl PropagationRequestHandler {
         };
 
         if request.dest_hash != expected_delivery {
-            eprintln!(
+            crate::daemon_diagnostic!(
                 "[propagation] DENIED fetch: caller={} requested={} expected={}",
-                caller_identity, request.dest_hash, expected_delivery
+                caller_identity,
+                request.dest_hash,
+                expected_delivery
             );
             return Self::error_response("permission denied: can only fetch your own messages");
         }
@@ -205,7 +208,7 @@ impl PropagationRequestHandler {
                     .into_iter()
                     .map(|(id, lxmf_bytes)| PropagationMessageEntry { id, lxmf_bytes })
                     .collect();
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[propagation] fetch for dest={}: {} messages",
                     request.dest_hash,
                     entries.len()
@@ -229,7 +232,7 @@ impl PropagationRequestHandler {
         let count = request.ids.len();
         match self.propagation.delete_delivered(&request.ids) {
             Ok(()) => {
-                eprintln!("[propagation] deleted {} messages", count);
+                crate::daemon_diagnostic!("[propagation] deleted {} messages", count);
                 Self::cbor_encode(&PropagationStatusPayload {
                     success: true,
                     error: None,
@@ -287,16 +290,20 @@ impl ProtocolHandler for PropagationRequestHandler {
 
         match self.send_response(&source, request_id, response_type, &response_payload).await {
             Ok(()) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[propagation] handled {:?} from {}, sent {:?}",
-                    message.message_type, source, response_type
+                    message.message_type,
+                    source,
+                    response_type
                 );
                 HandleResult::Handled
             }
             Err(e) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[propagation] failed to send response for {:?} from {}: {}",
-                    message.message_type, source, e
+                    message.message_type,
+                    source,
+                    e
                 );
                 HandleResult::Error(e)
             }

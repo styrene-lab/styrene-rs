@@ -44,6 +44,7 @@ pub fn run_default() -> Result<()> {
 
 /// Launch the Styrene terminal application with explicit installation options.
 pub async fn run(options: TuiOptions) -> Result<()> {
+    styrened::diagnostics::set_enabled(false);
     let _ghost_session = ghost::GhostSession::for_paths(
         options.runtime_profile.is_ephemeral(),
         &options.paths.data_dir,

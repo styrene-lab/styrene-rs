@@ -203,11 +203,13 @@ impl TunnelService {
                 Some(arr)
             }
             Ok(_) => {
-                eprintln!("[tunnel] WireGuard: peer pubkey wrong length, skipping backend config");
+                crate::daemon_diagnostic!(
+                    "[tunnel] WireGuard: peer pubkey wrong length, skipping backend config"
+                );
                 return;
             }
             Err(e) => {
-                eprintln!("[tunnel] WireGuard: failed to decode peer pubkey: {e}");
+                crate::daemon_diagnostic!("[tunnel] WireGuard: failed to decode peer pubkey: {e}");
                 return;
             }
         };
@@ -220,11 +222,13 @@ impl TunnelService {
                 arr
             }
             Ok(_) => {
-                eprintln!("[tunnel] WireGuard: PSK wrong length, skipping backend config");
+                crate::daemon_diagnostic!(
+                    "[tunnel] WireGuard: PSK wrong length, skipping backend config"
+                );
                 return;
             }
             Err(e) => {
-                eprintln!("[tunnel] WireGuard: failed to decode PSK: {e}");
+                crate::daemon_diagnostic!("[tunnel] WireGuard: failed to decode PSK: {e}");
                 return;
             }
         };
@@ -241,13 +245,13 @@ impl TunnelService {
 
         match backend.establish(params).await {
             Ok(tunnel_id) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[tunnel] WireGuard peer configured: {}",
                     &tunnel_id[..12.min(tunnel_id.len())]
                 );
             }
             Err(e) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[tunnel] WireGuard establish failed for {}: {e} (tunnel state still valid)",
                     &peer_identity[..12.min(peer_identity.len())]
                 );
@@ -266,13 +270,13 @@ impl TunnelService {
 
         match backend.teardown(peer_identity).await {
             Ok(()) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[tunnel] WireGuard peer removed: {}",
                     &peer_identity[..12.min(peer_identity.len())]
                 );
             }
             Err(e) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[tunnel] WireGuard teardown failed for {}: {e}",
                     &peer_identity[..12.min(peer_identity.len())]
                 );
@@ -335,7 +339,7 @@ impl TunnelService {
 
         self.emit_state(peer_identity, "torn_down");
 
-        eprintln!(
+        crate::daemon_diagnostic!(
             "[tunnel] operator-initiated teardown for {}",
             &peer_identity[..12.min(peer_identity.len())]
         );
@@ -378,7 +382,7 @@ impl TunnelService {
         let payload = rmp_serde::to_vec(&offer).map_err(|e| format!("encode: {e}"))?;
         self.send_tunnel_message(peer_identity, StyreneMessageType::TunnelOffer, &payload).await?;
 
-        eprintln!(
+        crate::daemon_diagnostic!(
             "[tunnel] sent TUNNEL_OFFER to {} nonce={}",
             &peer_identity[..12.min(peer_identity.len())],
             &nonce[..8]
@@ -388,18 +392,18 @@ impl TunnelService {
 
     async fn handle_offer(&self, source: &str, offer: TunnelOffer) -> HandleResult {
         if !self.check_nonce(&offer.nonce) {
-            eprintln!("[tunnel] rejected TUNNEL_OFFER: duplicate nonce");
+            crate::daemon_diagnostic!("[tunnel] rejected TUNNEL_OFFER: duplicate nonce");
             return HandleResult::Handled;
         }
 
         let now = tunnel_payloads::now_ts();
         if (now - offer.timestamp).unsigned_abs() > TIMESTAMP_TOLERANCE_SECS as u64 {
-            eprintln!("[tunnel] rejected TUNNEL_OFFER: stale timestamp");
+            crate::daemon_diagnostic!("[tunnel] rejected TUNNEL_OFFER: stale timestamp");
             return HandleResult::Handled;
         }
 
         if !self.is_peer_allowed(source) {
-            eprintln!(
+            crate::daemon_diagnostic!(
                 "[tunnel] rejected TUNNEL_OFFER from {}: not in allowlist",
                 &source[..12.min(source.len())]
             );
@@ -415,7 +419,7 @@ impl TunnelService {
             return HandleResult::Handled;
         }
 
-        eprintln!(
+        crate::daemon_diagnostic!(
             "[tunnel] received TUNNEL_OFFER from {} endpoint={}",
             &source[..12.min(source.len())],
             offer.endpoint
@@ -455,7 +459,10 @@ impl TunnelService {
 
         self.emit_state(source, "established");
 
-        eprintln!("[tunnel] sent TUNNEL_ACCEPT to {}", &source[..12.min(source.len())]);
+        crate::daemon_diagnostic!(
+            "[tunnel] sent TUNNEL_ACCEPT to {}",
+            &source[..12.min(source.len())]
+        );
 
         HandleResult::Handled
     }
@@ -466,14 +473,14 @@ impl TunnelService {
         let pending = match pending {
             Some(p) => p,
             None => {
-                eprintln!("[tunnel] rejected TUNNEL_ACCEPT: unknown offer_nonce");
+                crate::daemon_diagnostic!("[tunnel] rejected TUNNEL_ACCEPT: unknown offer_nonce");
                 return HandleResult::Handled;
             }
         };
 
         // Verify the accept came from the peer we sent the offer to.
         if pending.peer_identity != source {
-            eprintln!(
+            crate::daemon_diagnostic!(
                 "[tunnel] rejected TUNNEL_ACCEPT: source mismatch (expected {}, got {})",
                 &pending.peer_identity[..12.min(pending.peer_identity.len())],
                 &source[..12.min(source.len())]
@@ -481,7 +488,7 @@ impl TunnelService {
             return HandleResult::Handled;
         }
 
-        eprintln!(
+        crate::daemon_diagnostic!(
             "[tunnel] received TUNNEL_ACCEPT from {} endpoint={}",
             &source[..12.min(source.len())],
             accept.endpoint
@@ -520,7 +527,10 @@ impl TunnelService {
 
         self.emit_state(source, "torn_down");
 
-        eprintln!("[tunnel] received TUNNEL_TEARDOWN from {}", &source[..12.min(source.len())]);
+        crate::daemon_diagnostic!(
+            "[tunnel] received TUNNEL_TEARDOWN from {}",
+            &source[..12.min(source.len())]
+        );
 
         HandleResult::Handled
     }
@@ -633,7 +643,7 @@ impl ProtocolHandler for TunnelService {
                 match rmp_serde::from_slice::<TunnelOffer>(&message.payload) {
                     Ok(offer) => self.handle_offer(source, offer).await,
                     Err(e) => {
-                        eprintln!("[tunnel] decode TUNNEL_OFFER failed: {e}");
+                        crate::daemon_diagnostic!("[tunnel] decode TUNNEL_OFFER failed: {e}");
                         HandleResult::Handled
                     }
                 }
@@ -642,7 +652,7 @@ impl ProtocolHandler for TunnelService {
                 match rmp_serde::from_slice::<TunnelAccept>(&message.payload) {
                     Ok(accept) => self.handle_accept(source, accept).await,
                     Err(e) => {
-                        eprintln!("[tunnel] decode TUNNEL_ACCEPT failed: {e}");
+                        crate::daemon_diagnostic!("[tunnel] decode TUNNEL_ACCEPT failed: {e}");
                         HandleResult::Handled
                     }
                 }
@@ -650,7 +660,7 @@ impl ProtocolHandler for TunnelService {
             StyreneMessageType::TunnelReject => {
                 match rmp_serde::from_slice::<TunnelReject>(&message.payload) {
                     Ok(reject) => {
-                        eprintln!(
+                        crate::daemon_diagnostic!(
                             "[tunnel] TUNNEL_REJECT from {}: {}",
                             &source[..12.min(source.len())],
                             reject.reason
@@ -660,7 +670,7 @@ impl ProtocolHandler for TunnelService {
                         HandleResult::Handled
                     }
                     Err(e) => {
-                        eprintln!("[tunnel] decode TUNNEL_REJECT failed: {e}");
+                        crate::daemon_diagnostic!("[tunnel] decode TUNNEL_REJECT failed: {e}");
                         HandleResult::Handled
                     }
                 }
@@ -669,7 +679,7 @@ impl ProtocolHandler for TunnelService {
                 match rmp_serde::from_slice::<TunnelTeardown>(&message.payload) {
                     Ok(teardown) => self.handle_teardown(source, teardown).await,
                     Err(e) => {
-                        eprintln!("[tunnel] decode TUNNEL_TEARDOWN failed: {e}");
+                        crate::daemon_diagnostic!("[tunnel] decode TUNNEL_TEARDOWN failed: {e}");
                         HandleResult::Handled
                     }
                 }

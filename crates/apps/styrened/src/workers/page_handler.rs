@@ -124,7 +124,7 @@ impl ProtocolHandler for PageRequestHandler {
         let request: PageRequestPayload = match ciborium::from_reader(&message.payload[..]) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("[pages] invalid PageRequest payload: {e}");
+                crate::daemon_diagnostic!("[pages] invalid PageRequest payload: {e}");
                 return HandleResult::NotHandled;
             }
         };
@@ -149,7 +149,7 @@ impl ProtocolHandler for PageRequestHandler {
 
         match self.send_response(&source_hash, request_id, &response_payload).await {
             Ok(()) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[pages] served {} to {} ({}b)",
                     request.path,
                     &source_hash[..8.min(source_hash.len())],
@@ -158,7 +158,7 @@ impl ProtocolHandler for PageRequestHandler {
                 HandleResult::Handled
             }
             Err(e) => {
-                eprintln!("[pages] failed to send response: {e}");
+                crate::daemon_diagnostic!("[pages] failed to send response: {e}");
                 HandleResult::Error(e)
             }
         }

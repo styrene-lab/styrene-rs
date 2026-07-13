@@ -103,8 +103,8 @@ pub fn spawn_expiry_task(service: Arc<PropagationService>) -> tokio::task::JoinH
             if service.is_enabled() {
                 match service.expire_old() {
                     Ok(0) => {}
-                    Ok(n) => eprintln!("[propagation] expired {n} stale messages"),
-                    Err(e) => eprintln!("[propagation] expiry error: {e}"),
+                    Ok(n) => crate::daemon_diagnostic!("[propagation] expired {n} stale messages"),
+                    Err(e) => crate::daemon_diagnostic!("[propagation] expiry error: {e}"),
                 }
             }
         }

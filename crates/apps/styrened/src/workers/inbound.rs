@@ -73,7 +73,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     Ok(event) => {
                         if let ResourceEventKind::Complete(complete) = event.kind {
                             let data = &complete.data;
-                            eprintln!(
+                            crate::daemon_diagnostic!(
                                 "[worker] resource complete: len={} link={}",
                                 data.len(),
                                 event.link_id
@@ -82,7 +82,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                             // Resource data is the full LXMF wire payload.
                             // Determine destination from the first 16 bytes.
                             if data.len() < 32 {
-                                eprintln!("[worker] resource too short to decode");
+                                crate::daemon_diagnostic!("[worker] resource too short to decode");
                                 continue;
                             }
                             let mut destination = [0u8; 16];
@@ -101,7 +101,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                             if let Some(record) =
                                 messaging.accept_inbound(destination, data, payload_mode)
                             {
-                                eprintln!(
+                                crate::daemon_diagnostic!(
                                     "[worker] resource message: id={} src={} content_len={}",
                                     record.id,
                                     record.source,
@@ -113,7 +113,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        eprintln!("[worker] resource worker lagged, skipped {n}");
+                        crate::daemon_diagnostic!("[worker] resource worker lagged, skipped {n}");
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
@@ -131,7 +131,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     let dest_hex = hex::encode(destination);
                     let payload_mode = to_lxmf_mode(event.payload_mode);
 
-                    eprintln!(
+                    crate::daemon_diagnostic!(
                         "[worker] inbound: dst={} len={} mode={:?}",
                         dest_hex,
                         data.len(),
@@ -143,7 +143,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                         local_delivery_hash.as_ref().is_some_and(|local| *local == dest_hex);
 
                     if !is_local {
-                        eprintln!(
+                        crate::daemon_diagnostic!(
                             "[worker] non-local message: dest={} local={:?}",
                             dest_hex,
                             local_delivery_hash.as_deref().unwrap_or("none")
@@ -153,17 +153,20 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     if !is_local && propagation.is_enabled() {
                         match propagation.store_for_propagation(&dest_hex, data, None) {
                             Ok(true) => {
-                                eprintln!(
+                                crate::daemon_diagnostic!(
                                     "[worker] propagation: stored message for dst={} ({} bytes)",
                                     dest_hex,
                                     data.len()
                                 );
                             }
                             Ok(false) => {
-                                eprintln!("[worker] propagation: duplicate for dst={}", dest_hex);
+                                crate::daemon_diagnostic!(
+                                    "[worker] propagation: duplicate for dst={}",
+                                    dest_hex
+                                );
                             }
                             Err(e) => {
-                                eprintln!(
+                                crate::daemon_diagnostic!(
                                     "[worker] propagation: store error for dst={}: {e}",
                                     dest_hex
                                 );
@@ -217,14 +220,14 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                     match verified {
                                         Some(true) => {} // signature valid
                                         Some(false) => {
-                                            eprintln!(
+                                            crate::daemon_diagnostic!(
                                                 "[worker] REJECTED inbound message: invalid signature from {}",
                                                 hex::encode(source_bytes)
                                             );
                                             continue;
                                         }
                                         None => {
-                                            eprintln!(
+                                            crate::daemon_diagnostic!(
                                                 "[worker] WARNING: could not parse wire for signature verification from {}",
                                                 hex::encode(source_bytes)
                                             );
@@ -241,7 +244,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     // Local delivery: decode and persist
                     if let Some(record) = messaging.accept_inbound(destination, data, payload_mode)
                     {
-                        eprintln!(
+                        crate::daemon_diagnostic!(
                             "[worker] inbound message: id={} src={} content_len={}",
                             record.id,
                             record.source,
@@ -300,9 +303,11 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                                 )
                                                 .await
                                             {
-                                                eprintln!("[worker] auto-reply failed: {e}");
+                                                crate::daemon_diagnostic!(
+                                                    "[worker] auto-reply failed: {e}"
+                                                );
                                             } else {
-                                                eprintln!(
+                                                crate::daemon_diagnostic!(
                                                     "[worker] auto-reply sent to {}",
                                                     dest_hash
                                                 );
@@ -315,10 +320,10 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    eprintln!("[worker] inbound worker lagged, skipped {n} events");
+                    crate::daemon_diagnostic!("[worker] inbound worker lagged, skipped {n} events");
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    eprintln!("[worker] inbound channel closed, worker stopping");
+                    crate::daemon_diagnostic!("[worker] inbound channel closed, worker stopping");
                     break;
                 }
             }

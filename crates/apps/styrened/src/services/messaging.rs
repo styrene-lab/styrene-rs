@@ -176,7 +176,7 @@ impl MessagingService {
                 // try routing through the configured propagation hub.
                 if err_msg.contains("not announced") || err_msg.contains("not resolved") {
                     if let Some(hub_hash) = self.propagation_hub.get() {
-                        eprintln!(
+                        crate::daemon_diagnostic!(
                             "[messaging] direct delivery failed, routing via propagation hub {}",
                             hub_hash
                         );
@@ -340,12 +340,12 @@ impl MessagingService {
         let record = match record {
             Some(r) => r,
             None => {
-                eprintln!("[messaging] decode failed: {}", diag.summary());
+                crate::daemon_diagnostic!("[messaging] decode failed: {}", diag.summary());
                 return None;
             }
         };
         if let Err(e) = self.store.lock().unwrap().insert_message(&record) {
-            eprintln!("[messaging] insert_message failed: {e}");
+            crate::daemon_diagnostic!("[messaging] insert_message failed: {e}");
             return None;
         }
         Some(record)
