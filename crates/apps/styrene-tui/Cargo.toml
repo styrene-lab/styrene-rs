@@ -1,6 +1,6 @@
 [package]
 name = "styrene-tui"
-version = "0.0.1"
+version = "0.3.0"
 edition = "2024"
 rust-version.workspace = true
 license.workspace = true
@@ -32,7 +32,7 @@ styrene-micron = { workspace = true }
 # Daemon integration
 styrene-ipc = { path = "../../libs/styrene-ipc", version = "0.1.0" }
 styrene-ipc-server = { path = "../../libs/styrene-ipc-server", version = "0.1.0" }
-styrened = { path = "../styrened", version = "0.1.0" }
+styrened = { path = "../styrened", version = "0.3.0" }
 
 # Utilities
 hex.workspace = true

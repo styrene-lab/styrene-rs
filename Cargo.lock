@@ -6997,7 +6997,7 @@ dependencies = [
 
 [[package]]
 name = "styrene"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -7362,7 +7362,7 @@ dependencies = [
 
 [[package]]
 name = "styrene-tui"
-version = "0.0.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -7411,7 +7411,7 @@ dependencies = [
 
 [[package]]
 name = "styrened"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
