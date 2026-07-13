@@ -124,6 +124,29 @@ impl EventService {
             self.daemon_tx.send(DaemonEvent::Message { kind: MessageEventKind::New, message: msg });
     }
 
+    /// Emit a structured inbound drop outcome for observability. Drop events
+    /// intentionally remain internal `RpcEvent`s until the typed IPC schema
+    /// gains a compatible variant.
+    pub fn emit_inbound_drop(
+        &self,
+        path: &str,
+        reason: &str,
+        message_id: Option<&str>,
+        destination: Option<&str>,
+        detail: Option<&str>,
+    ) {
+        self.publish(RpcEvent {
+            event_type: "inbound_dropped".into(),
+            payload: serde_json::json!({
+                "path": path,
+                "reason": reason,
+                "message_id": message_id,
+                "destination": destination,
+                "detail": detail,
+            }),
+        });
+    }
+
     /// Emit a message status change event.
     pub fn emit_message_status(&self, message_id: &str, status: &str) {
         self.publish(RpcEvent {
@@ -317,6 +340,21 @@ mod tests {
             }
             _ => panic!("expected Device event"),
         }
+    }
+
+    #[test]
+    fn emit_inbound_drop_records_structured_outcome() {
+        let svc = EventService::new();
+        svc.emit_inbound_drop("direct_packet", "duplicate", Some("msg-1"), Some("dest-1"), None);
+
+        let ring = svc.activity_ring();
+        assert_eq!(ring.len(), 1);
+        assert_eq!(ring[0].event_type, "inbound_dropped");
+        assert_eq!(ring[0].payload["path"], "direct_packet");
+        assert_eq!(ring[0].payload["reason"], "duplicate");
+        assert_eq!(ring[0].payload["message_id"], "msg-1");
+        assert_eq!(ring[0].payload["destination"], "dest-1");
+        assert!(ring[0].payload["detail"].is_null());
     }
 
     #[test]
