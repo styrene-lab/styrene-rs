@@ -60,6 +60,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.97.0
         with:
           components: rustfmt, clippy
@@ -77,6 +79,8 @@ jobs:
     environment: crates-io
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@1.97.0
       - name: Publish crates in dependency order
         env:
@@ -146,12 +150,12 @@ jobs:
             libayatana-appindicator3-dev
 
       # Build daemon + TUI
-      - name: Build styrened + styrene-tui
+      - name: Build product binaries
         run: |
           if [ "${{ matrix.zigbuild }}" = "true" ]; then
-            cargo zigbuild --release --target ${{ matrix.target }} -p styrened -p styrene-tui
+            cargo zigbuild --release --target ${{ matrix.target }} -p styrene --features tui -p styrened -p styrene-tui
           else
-            cargo build --release --target ${{ matrix.target }} -p styrened -p styrene-tui
+            cargo build --release --target ${{ matrix.target }} -p styrene --features tui -p styrened -p styrene-tui
           fi
 
       # Desktop app (may fail — still experimental)
@@ -165,9 +169,21 @@ jobs:
             cargo build --release --target ${{ matrix.target }} -p styrene-dx
           fi
 
+      - name: Verify built product versions
+        if: ${{ !matrix.zigbuild }}
+        run: |
+          EXPECTED="${RELEASE_TAG#v}"
+          for binary in styrene styrened; do
+            actual=$("target/${{ matrix.target }}/release/$binary" --version | awk '{print $2}' | cut -d+ -f1)
+            test "$actual" = "$EXPECTED" || {
+              echo "ERROR: $binary reports $actual, expected $EXPECTED"
+              exit 1
+            }
+          done
+
       - name: Strip binaries
         run: |
-          for bin in styrened styrene-tui styrene-dx; do
+          for bin in styrene styrened styrene-tui styrene-dx; do
             BINARY="target/${{ matrix.target }}/release/${bin}"
             [ -f "$BINARY" ] || continue
             if command -v llvm-strip >/dev/null 2>&1; then
@@ -196,7 +212,7 @@ jobs:
       - name: Sign macOS binaries
         if: runner.os == 'macOS' && env.APPLE_SIGNING_CERT_B64 != '' && env.APPLE_CODESIGN_IDENTITY != ''
         run: |
-          for bin in styrened styrene-tui styrene-dx; do
+          for bin in styrene styrened styrene-tui styrene-dx; do
             BINARY="target/${{ matrix.target }}/release/${bin}"
             [ -f "$BINARY" ] || continue
             codesign --force --options runtime --timestamp --sign "$APPLE_CODESIGN_IDENTITY" "$BINARY"
@@ -209,7 +225,7 @@ jobs:
           set -euo pipefail
           KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
           echo "$APPLE_API_KEY_P8_B64" | base64 --decode > "$KEY_PATH"
-          for bin in styrened styrene-tui styrene-dx; do
+          for bin in styrene styrened styrene-tui styrene-dx; do
             BINARY="target/${{ matrix.target }}/release/${bin}"
             [ -f "$BINARY" ] || continue
             NOTARY_ZIP="$RUNNER_TEMP/${bin}-${{ matrix.target }}-notary.zip"
@@ -233,7 +249,7 @@ jobs:
           ARCHIVE="styrene-${VERSION}-${{ matrix.target }}.tar.gz"
           STAGING="styrene-${VERSION}-${{ matrix.target }}"
           mkdir -p "$STAGING"
-          for bin in styrened styrene-tui styrene-dx; do
+          for bin in styrene styrened styrene-tui styrene-dx; do
             BINARY="target/${{ matrix.target }}/release/${bin}"
             [ -f "$BINARY" ] && cp "$BINARY" "$STAGING/"
           done
@@ -278,12 +294,12 @@ jobs:
       - name: Install cargo-zigbuild
         run: cargo install cargo-zigbuild --locked
 
-      - name: Build styrened + styrene-tui
-        run: cargo zigbuild --release --target aarch64-unknown-linux-gnu -p styrened -p styrene-tui
+      - name: Build product binaries
+        run: cargo zigbuild --release --target aarch64-unknown-linux-gnu -p styrene --features tui -p styrened -p styrene-tui
 
       - name: Strip binaries
         run: |
-          for bin in styrened styrene-tui; do
+          for bin in styrene styrened styrene-tui; do
             BINARY="target/aarch64-unknown-linux-gnu/release/${bin}"
             [ -f "$BINARY" ] && llvm-strip "$BINARY" 2>/dev/null || strip "$BINARY" 2>/dev/null || true
           done
@@ -294,6 +310,7 @@ jobs:
           ARCHIVE="styrene-${VERSION}-aarch64-unknown-linux-gnu.tar.gz"
           STAGING="styrene-${VERSION}-aarch64-unknown-linux-gnu"
           mkdir -p "$STAGING"
+          cp target/aarch64-unknown-linux-gnu/release/styrene "$STAGING/"
           cp target/aarch64-unknown-linux-gnu/release/styrened "$STAGING/"
           cp target/aarch64-unknown-linux-gnu/release/styrene-tui "$STAGING/"
           chmod +x "$STAGING"/*
