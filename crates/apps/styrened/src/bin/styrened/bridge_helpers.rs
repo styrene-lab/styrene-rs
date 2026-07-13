@@ -16,7 +16,8 @@ pub(crate) fn log_delivery_trace(message_id: &str, destination: &str, stage: &st
 pub(crate) fn diagnostics_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("RETICULUMD_DIAGNOSTICS")
+        std::env::var("STYRENED_DIAGNOSTICS")
+            .or_else(|_| std::env::var("RETICULUMD_DIAGNOSTICS"))
             .ok()
             .map(|value| {
                 matches!(

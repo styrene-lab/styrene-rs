@@ -17,7 +17,8 @@ use super::{Interface, InterfaceContext};
 fn tx_diag_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("RETICULUMD_DIAGNOSTICS")
+        std::env::var("STYRENED_DIAGNOSTICS")
+            .or_else(|_| std::env::var("RETICULUMD_DIAGNOSTICS"))
             .or_else(|_| std::env::var("RETICULUM_TRANSPORT_DIAGNOSTICS"))
             .ok()
             .map(|value| {

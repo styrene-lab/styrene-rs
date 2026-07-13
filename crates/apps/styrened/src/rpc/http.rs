@@ -51,7 +51,7 @@ pub fn handle_http_request_with_transport_auth(
             ("GET", "/healthz") => {
                 let body = serde_json::to_vec(&json!({
                     "ok": true,
-                    "service": "reticulumd-rpc",
+                    "service": "styrened-rpc",
                     "status": "healthy",
                 }))
                 .map_err(io::Error::other)?;
@@ -60,7 +60,7 @@ pub fn handle_http_request_with_transport_auth(
             ("GET", "/readyz") => {
                 let body = serde_json::to_vec(&json!({
                     "ok": true,
-                    "service": "reticulumd-rpc",
+                    "service": "styrened-rpc",
                     "status": "ready",
                 }))
                 .map_err(io::Error::other)?;
@@ -69,7 +69,7 @@ pub fn handle_http_request_with_transport_auth(
             ("GET", "/livez") => {
                 let body = serde_json::to_vec(&json!({
                     "ok": true,
-                    "service": "reticulumd-rpc",
+                    "service": "styrened-rpc",
                     "status": "alive",
                 }))
                 .map_err(io::Error::other)?;
@@ -408,7 +408,7 @@ mod tests {
             assert_eq!(parse_status_line(&response), "HTTP/1.1 200 OK");
             let body = parse_json_body(&response);
             assert_eq!(body["ok"], json!(true));
-            assert_eq!(body["service"], json!("reticulumd-rpc"));
+            assert_eq!(body["service"], json!("styrened-rpc"));
         }
     }
 
