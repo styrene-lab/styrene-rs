@@ -7,44 +7,55 @@
 
 PyO3 and a local Python interpreter are **not requirements for building, installing, running, or validating the Styrene Rust product**.
 
-The only crate that depends on PyO3 is:
+The repository still contains the historical Python extension source at:
 
 ```text
 crates/bindings/styrene-native
 ```
 
-`styrene-native` is a Python extension from the superseded incremental Python-to-Rust migration plan documented in [`incremental-rust-migration.md`](incremental-rust-migration.md). That plan assumed a Python daemon would remain the product orchestrator and import Rust modules through PyO3. Rust is now the canonical distribution, so that architecture no longer applies.
+`styrene-native` comes from the superseded incremental Python-to-Rust migration plan documented in [`incremental-rust-migration.md`](incremental-rust-migration.md). That plan assumed a Python daemon would remain the product orchestrator and import Rust modules through PyO3. Rust is now the canonical distribution, so that architecture no longer applies.
 
-The crate remains listed in `Cargo.toml` under `workspace.members`, although it is not in `workspace.default-members`. Consequently:
+On 2026-07-12, `styrene-native` was removed from `workspace.members`. Its source remains only as historical reference and is no longer resolved, built, tested, or published by workspace-wide Cargo commands.
 
-- `cargo test` does not select it through the default-member set;
-- `cargo test --workspace` does select it;
-- selecting it builds PyO3 and makes the result depend on the host Python ABI;
-- on this machine, PyO3 0.23 rejects Python 3.14 because it declares support through Python 3.13.
+The resulting boundary is intentional:
 
-That Python-version failure is therefore **legacy workspace coupling**, not a Styrene product failure and not a reason to constrain the host Python installation.
+- `cargo test` validates the canonical default product set;
+- `cargo test --workspace` validates every maintained workspace member;
+- neither command resolves PyO3 or depends on the host Python ABI;
+- the operator's Python version must not constrain Styrene's Rust toolchain.
+
+The previous Python 3.14 failure was legacy workspace coupling, not a Styrene product failure.
+
+Verified after removal on 2026-07-12:
+
+```text
+cargo metadata --locked: 24 workspace members; no styrene-native, pyo3, or pyo3-ffi
+cargo test --workspace --exclude styrene-dx --locked: 1,252 passed; 0 failed; 11 ignored
+```
+
+`styrene-dx` is excluded on this macOS host because its desktop WebView dependency is Linux-specific. That platform exclusion is unrelated to Python and does not weaken the maintained non-GUI Rust boundary.
 
 ## Active validation boundary
 
-Until `styrene-native` is removed from the active workspace, use one of these boundaries:
+Use the ordinary Cargo boundaries:
 
 ```bash
 # Canonical maintained/default product set
 cargo test
 
-# Every active Rust workspace crate except the superseded Python extension
-cargo test --workspace --exclude styrene-native
+# Every maintained Rust workspace member
+cargo test --workspace
 ```
 
-Do not use `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1` to make ordinary Styrene validation pass. That masks the obsolete workspace boundary instead of correcting it.
+Do not use `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1` for ordinary Styrene validation. It is neither required nor an acceptable way to hide accidental Python coupling.
 
 Python-generated protocol fixtures and optional Python interoperability harnesses are separate concerns. Consuming checked-in fixtures does not require PyO3. Tests that intentionally launch Python must remain explicit, isolated compatibility tests rather than implicit requirements of the Rust product build.
 
-## Required cleanup
+## Historical binding policy
 
-Treat removal of `crates/bindings/styrene-native` from `workspace.members` as workspace hygiene. The source may remain temporarily for historical reference, or move to an archive, but it must not gate product-wide Rust validation.
+`crates/bindings/styrene-native` is not an active Cargo package from the workspace's perspective. Do not add it back to `workspace.members` or upgrade its PyO3 dependency without a new, explicit product decision to support a Python extension distribution.
 
-Removing it from the active workspace is preferred over upgrading PyO3: upgrading would maintain an abandoned integration architecture and retain an unnecessary host-language dependency.
+If the historical source becomes misleading or costly to retain, remove or archive it in a separate change. Its presence on disk does not make it part of the maintained build graph.
 
 ## `styrene-ipc-server` timeout correction
 
@@ -72,4 +83,4 @@ For each bounded FreeTAKTeam behavior-adoption slice:
 2. run all tests and all-target checking for the affected product crate;
 3. run relevant `styrene-e2e` tests;
 4. run the maintained workspace boundary above when a full regression pass is warranted;
-5. report legacy/archived compatibility targets separately from product validation.
+5. report historical or external compatibility targets separately from product validation.

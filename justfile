@@ -260,8 +260,8 @@ test-e2e-file file:
 # Run the exact CI checks locally before tagging a release
 preflight:
     cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx --exclude styrene-native
-    cargo test --workspace --exclude styrene-dx --exclude styrene-native --exclude styrene-e2e
+    cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx
+    cargo test --workspace --exclude styrene-dx --exclude styrene-e2e
 
 # ─── Hub Deployment ───────────────────────────────────────────────────────
 
