@@ -44,7 +44,7 @@ build:
 build-release:
     cargo build --workspace --release
 
-# Build and atomically replace local Styrene binaries (defaults to ~/.cargo/bin)
+# Build and transactionally replace local Styrene binaries (defaults to ~/.cargo/bin)
 install destination=install_dir:
     cargo build --release --locked -p styrene --features tui -p styrened -p styrene-tui
     sh scripts/install-local.sh "{{ destination }}" \
@@ -54,6 +54,10 @@ install destination=install_dir:
     @"{{ destination }}/styrene" --version
     @"{{ destination }}/styrened" --version
     @echo "installed {{ destination }}/styrene-tui (interactive compatibility launcher)"
+
+# Verify the local installer (preflight, success, rollback, and state preservation)
+test-install:
+    sh scripts/test-install-local.sh
 
 # Run all validation checks (format + lint + test)
 validate: format-check lint test
