@@ -46,13 +46,23 @@ run() {
     "$image" "$@"
 }
 
+run_evidence() {
+  "$engine" run --rm \
+    --platform "$platform" \
+    --cpus "$cpus" \
+    --memory "$memory" \
+    --pids-limit 128 \
+    --network none \
+    --tmpfs "/state:rw,size=$state_size,mode=0777" \
+    --tmpfs "/run/styrene:rw,size=16m,mode=0777" \
+    --entrypoint /usr/local/bin/styrene-evidence-scenarios \
+    "$image"
+}
+
 echo "== R36S-class simulation: binary =="
 run --version
 
-echo "== R36S-class simulation: persistent installation =="
-run doctor --root /state/doctor
-
-echo "== R36S-class simulation: ephemeral Ghost lifecycle =="
-run ghost-check --root /state/ghost --timeout 15
+echo "== R36S-class simulation: evidence scenarios =="
+run_evidence
 
 echo "R36S-class smoke test: ok"
