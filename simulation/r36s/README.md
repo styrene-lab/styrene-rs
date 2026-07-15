@@ -60,6 +60,26 @@ STYRENE_R36S_MEMORY=128m just sim-r36s-smoke
 
 A successful run at a container memory limit is not equivalent to measured device RSS/PSS or a support claim.
 
+Run the standard descending memory matrix with swap disabled:
+
+```bash
+just sim-r36s-characterize
+```
+
+The default matrix is `768m 512m 256m 128m 96m 64m`. Override it without editing the script:
+
+```bash
+STYRENE_R36S_MEMORY_MATRIX="128m 96m 80m 64m 48m" just sim-r36s-characterize
+```
+
+Results are written to:
+
+```text
+target/simulation/r36s/memory-matrix.tsv
+```
+
+Each limit runs version, doctor, and Ghost checks in separate fresh containers. This is a coarse cgroup survival boundary, not an RSS measurement: passing at 64 MiB means these bounded startup/lifecycle checks survived that ceiling on the developer host, not that a complete communicator workload fits a 64 MiB device budget.
+
 ## Kick the tires
 
 Open a shell in the same constrained image:
