@@ -49,6 +49,14 @@ pub enum Command {
         ephemeral: bool,
     },
 
+    /// Validate a fresh persistent installation without entering the TUI
+    #[cfg(feature = "tui")]
+    Doctor {
+        /// Keep all generated state beneath this root
+        #[arg(long, value_name = "DIR")]
+        root: PathBuf,
+    },
+
     /// Show daemon and mesh status
     #[cfg(feature = "cli")]
     Status,

@@ -39,6 +39,19 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        #[cfg(feature = "tui")]
+        Some(Command::Doctor { root }) => {
+            let paths = styrene_tui_app::StyrenePaths::new(
+                root.join("config"),
+                root.join("data"),
+                root.join("run/styrene.sock"),
+                root.join("home"),
+            );
+            styrene_tui_app::run_clean_room_check(&paths)?;
+            println!("styrene doctor: ok ({})", root.display());
+            Ok(())
+        }
+
         #[cfg(feature = "daemon")]
         Some(Command::Daemon { rpc: _, db, config, identity, ephemeral }) => {
             styrened::daemon::run(styrened::daemon::DaemonConfig2 {

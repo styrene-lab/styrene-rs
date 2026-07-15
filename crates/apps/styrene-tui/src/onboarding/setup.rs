@@ -43,6 +43,20 @@ pub struct SetupResult {
 }
 
 impl SetupResult {
+    /// Minimal product-owned persistent setup used by clean-room installation
+    /// checks. Interactive onboarding may gather richer choices, but both paths
+    /// commit through the same setup transaction.
+    pub fn clean_room_default() -> Self {
+        Self {
+            identity_source: IdentitySource::CreateNew,
+            display_name: "Styrene Node".into(),
+            node_role: styrened::config::NodeRole::FullNode,
+            interfaces: Vec::new(),
+            daemon_mode: DaemonMode::Embedded,
+            contacts: Vec::new(),
+        }
+    }
+
     /// Apply all wizard choices. The completion marker is committed last, so a
     /// crash or validation error causes onboarding to resume on the next run.
     pub fn apply(&self, paths: &StyrenePaths) -> io::Result<()> {
@@ -51,10 +65,18 @@ impl SetupResult {
         set_private_directory(&paths.config_dir)?;
         set_private_directory(&paths.data_dir)?;
 
+        // Invalidate an earlier commit before touching required state. A failed
+        // repair must never leave a stale marker that claims setup is complete.
+        match fs::remove_file(paths.setup_complete_path()) {
+            Ok(()) => sync_directory(&paths.config_dir)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
         match &self.identity_source {
             IdentitySource::CreateNew => {
-                styrened::identity_store::load_or_create_identity(&paths.identity_path())
-                    .map_err(|error| io::Error::other(error.to_string()))?;
+                styrened::identity_store::load_or_create_identity(&paths.identity_path())?;
+                set_private_file(&paths.identity_path())?;
             }
             IdentitySource::ImportReticulum(source) => {
                 let bytes = fs::read(source)?;
@@ -86,6 +108,38 @@ impl SetupResult {
         // Commit point. Never write this until every required artifact exists.
         atomic_write(&paths.setup_complete_path(), b"", true)
     }
+}
+
+/// Apply the canonical noninteractive setup transaction and verify the
+/// resulting persistent installation from disk.
+pub fn run_clean_room_check(paths: &StyrenePaths) -> io::Result<()> {
+    SetupResult::clean_room_default().apply(paths)?;
+
+    let identity_bytes = fs::read(paths.identity_path())?;
+    validate_identity_bytes(&identity_bytes)?;
+    styrened::config::DaemonConfig::from_path(&paths.config_path())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+
+    let report = super::detect::scan_environment(paths);
+    if report.needs_wizard() || !report.styrene_config_exists {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "clean-room installation remained incomplete",
+        ));
+    }
+
+    verify_private_directory(&paths.config_dir)?;
+    verify_private_directory(&paths.data_dir)?;
+    for path in [
+        paths.identity_path(),
+        paths.config_path(),
+        paths.profile_path(),
+        paths.tui_preferences_path(),
+        paths.setup_complete_path(),
+    ] {
+        verify_private_file(&path)?;
+    }
+    Ok(())
 }
 
 fn validate_identity_bytes(bytes: &[u8]) -> io::Result<()> {
@@ -140,6 +194,66 @@ fn set_private_directory(_path: &Path) -> io::Result<()> {
 }
 
 #[cfg(unix)]
+fn set_private_file(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn set_private_file(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn verify_private_directory(path: &Path) -> io::Result<()> {
+    verify_mode(path, 0o700)
+}
+
+#[cfg(not(unix))]
+fn verify_private_directory(path: &Path) -> io::Result<()> {
+    if path.is_dir() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("not a directory: {}", path.display()),
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn verify_private_file(path: &Path) -> io::Result<()> {
+    verify_mode(path, 0o600)
+}
+
+#[cfg(not(unix))]
+fn verify_private_file(path: &Path) -> io::Result<()> {
+    if path.is_file() {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("not a file: {}", path.display()),
+        ))
+    }
+}
+
+#[cfg(unix)]
+fn verify_mode(path: &Path, expected: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = fs::metadata(path)?;
+    let actual = metadata.permissions().mode() & 0o777;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{} has mode {actual:04o}; expected {expected:04o}", path.display()),
+        ))
+    }
+}
+
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> io::Result<()> {
     fs::File::open(path)?.sync_all()
 }
@@ -186,6 +300,54 @@ mod tests {
         assert!(paths.setup_complete_path().is_file());
         styrened::config::DaemonConfig::from_path(&paths.config_path()).unwrap();
         let _ = styrened::identity_store::load_or_create_identity(&paths.identity_path()).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn clean_room_check_is_idempotent_and_preserves_user_state() {
+        let (root, paths) = sandbox();
+        run_clean_room_check(&paths).unwrap();
+        let identity = fs::read(paths.identity_path()).unwrap();
+        let sentinel = paths.data_dir.join("operator-state");
+        fs::write(&sentinel, b"preserve me").unwrap();
+
+        run_clean_room_check(&paths).unwrap();
+
+        assert_eq!(fs::read(paths.identity_path()).unwrap(), identity);
+        assert_eq!(fs::read(sentinel).unwrap(), b"preserve me");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_room_check_repairs_private_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (root, paths) = sandbox();
+        run_clean_room_check(&paths).unwrap();
+        fs::set_permissions(&paths.config_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(paths.identity_path(), fs::Permissions::from_mode(0o644)).unwrap();
+
+        run_clean_room_check(&paths).unwrap();
+
+        assert_eq!(fs::metadata(&paths.config_dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            fs::metadata(paths.identity_path()).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corrupt_existing_identity_invalidates_completion_marker() {
+        let (root, paths) = sandbox();
+        run_clean_room_check(&paths).unwrap();
+        fs::write(paths.identity_path(), b"corrupt").unwrap();
+
+        let error = run_clean_room_check(&paths).unwrap_err();
+
+        assert!(matches!(error.kind(), io::ErrorKind::InvalidData | io::ErrorKind::Other));
+        assert!(!paths.setup_complete_path().exists());
         fs::remove_dir_all(root).unwrap();
     }
 
