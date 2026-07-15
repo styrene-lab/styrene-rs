@@ -1,0 +1,57 @@
+schema_version = 1
+hardware_profile = "anbernic-rg35xxsp"
+status = "research"
+last_reviewed = "2026-07-15"
+
+# Every boot-critical component must graduate to a pinned immutable source,
+# hash, license, and source-based build before physical image delivery.
+
+[[components]]
+name = "u-boot"
+role = "SPL and second-stage bootloader"
+status = "unresolved"
+preferred_provenance = "upstream-source"
+candidate_url = "https://source.denx.de/u-boot/u-boot.git"
+required_evidence = ["RG35XXSP defconfig or documented compatible target", "SD boot offset", "cold-boot result"]
+
+[[components]]
+name = "trusted-firmware-a"
+role = "EL3 firmware where required by selected U-Boot build"
+status = "unresolved"
+preferred_provenance = "upstream-source"
+candidate_url = "https://git.trustedfirmware.org/TF-A/trusted-firmware-a.git"
+required_evidence = ["selected platform", "U-Boot build dependency", "license"]
+
+[[components]]
+name = "linux"
+role = "kernel and modules"
+status = "unresolved"
+preferred_provenance = "upstream-source-with-reviewed-patches"
+candidate_url = "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git"
+reference_url = "https://github.com/ROCKNIX/distribution"
+required_evidence = ["H700 platform support", "RG35XXSP display/input/PMIC support", "config", "three cold boots"]
+
+[[components]]
+name = "device-tree"
+role = "RG35XXSP hardware description"
+status = "unresolved"
+preferred_provenance = "upstream-source-with-reviewed-patches"
+candidate_path = "allwinner/sun50i-h700-anbernic-rg35xx-sp.dts"
+reference_url = "https://github.com/ROCKNIX/distribution"
+required_evidence = ["DTS source", "compatible string", "panel", "buttons", "Hall switch", "Wi-Fi", "HDMI"]
+
+[[components]]
+name = "firmware"
+role = "Wi-Fi/Bluetooth and other redistributable device firmware"
+status = "unresolved"
+preferred_provenance = "redistributable-firmware"
+candidate_url = "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+required_evidence = ["detected chipset", "exact filenames", "redistribution license"]
+
+[[components]]
+name = "nixos-userspace"
+role = "minimal immutable system closure"
+status = "selected"
+preferred_provenance = "upstream-source"
+source = "repository flake input nixpkgs"
+required_evidence = ["locked revision", "aarch64 image evaluation", "QEMU userspace boot"]

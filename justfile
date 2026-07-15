@@ -59,6 +59,21 @@ install destination=install_dir:
 test-install:
     sh scripts/test-install-local.sh
 
+# Package the current native target into a versioned release archive
+package target=`rustc -vV | sed -n 's/^host: //p'`:
+    cargo build --release --locked -p styrene --features tui -p styrened -p styrene-tui
+    python3 scripts/release_artifact.py package \
+        --version "$(sed -n 's/^version = \"\([^\"]*\)\"/\1/p' crates/apps/styrene/Cargo.toml | head -1)" \
+        --target "{{ target }}" \
+        --commit "$(git rev-parse HEAD)" \
+        --rust-version "$(sed -n 's/^channel = \"\([^\"]*\)\"/\1/p' rust-toolchain.toml)" \
+        --binary-dir target/release \
+        --output-dir target/artifacts
+
+# Safely validate and execute a packaged release archive
+verify-artifact archive:
+    python3 scripts/release_artifact.py verify "{{ archive }}"
+
 # Run all validation checks (format + lint + test)
 validate: format-check lint test
 
