@@ -1,0 +1,39 @@
+schema_version = 1
+id = "full-workstation"
+deployment_tier = "desktop-full"
+streams = ["conversations", "information-access", "mesh-operations", "fleet-operations"]
+
+required = [
+  "identity.persistent",
+  "messaging.lxmf.direct",
+  "messaging.history",
+  "messaging.receipts",
+  "contacts.manage",
+  "browse.nomadnet.micron",
+  "network.node.embedded",
+  "network.topology.observe",
+  "fleet.status",
+  "installation.clean-room-doctor",
+  "runtime.portable",
+]
+
+experimental = [
+  "browse.i2p.proxy",
+  "network.i2p.adapter",
+  "network.tunnel.control",
+  "fleet.remote-command",
+  "media.voice.signaling",
+  "runtime.ghost",
+]
+
+excluded = [
+  "ui.compact.gamepad",
+  "sdk.embedded-alloc",
+]
+
+[requirements]
+process_model = true
+allocator = true
+interactive_display = "full"
+min_memory_bytes = 268435456
+min_storage_bytes = 1073741824
