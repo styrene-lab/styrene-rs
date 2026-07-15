@@ -378,3 +378,7 @@ sim-r36s-smoke:
 # Open an interactive shell in the bounded arm64 simulation image
 sim-r36s-shell:
     ./scripts/smoke-r36s-sim.sh shell
+
+# Characterize the simulated R36S userspace across descending memory ceilings
+sim-r36s-characterize:
+    ./scripts/characterize-r36s-sim.sh
