@@ -397,3 +397,21 @@ sim-r36s-shell:
 # Characterize the simulated R36S userspace across descending memory ceilings
 sim-r36s-characterize:
     ./scripts/characterize-r36s-sim.sh
+
+# ─── Raspberry Pi materialization ─────────────────────────────────────────
+
+# Evaluate the Raspberry Pi 4B builder SD-image composition
+nix-rpi4-builder-eval:
+    STYRENE_BUILDER_SSH_KEY="${STYRENE_BUILDER_SSH_KEY:?set operator public key}" nix eval --impure .#nixosConfigurations.rpi4-builder.config.system.build.sdImage.drvPath
+
+# Build the Raspberry Pi 4B builder SD image (requires an aarch64-linux builder)
+nix-rpi4-builder-build:
+    STYRENE_BUILDER_SSH_KEY="${STYRENE_BUILDER_SSH_KEY:?set operator public key}" nix build --impure .#nixosConfigurations.rpi4-builder.config.system.build.sdImage --out-link result-rpi4-builder
+
+# Evaluate the Raspberry Pi 4B Styrene appliance SD-image composition
+nix-rpi4-appliance-eval:
+    STYRENE_APPLIANCE_SSH_KEY="${STYRENE_APPLIANCE_SSH_KEY:?set operator public key}" nix eval --impure .#nixosConfigurations.rpi4-appliance.config.system.build.sdImage.drvPath
+
+# Build the Raspberry Pi 4B Styrene appliance SD image (requires an aarch64-linux builder)
+nix-rpi4-appliance-build:
+    STYRENE_APPLIANCE_SSH_KEY="${STYRENE_APPLIANCE_SSH_KEY:?set operator public key}" nix build --impure .#nixosConfigurations.rpi4-appliance.config.system.build.sdImage --out-link result-rpi4-appliance
