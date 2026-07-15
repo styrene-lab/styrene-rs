@@ -10,11 +10,12 @@ priority = 1
 dependencies = ["5dc53189-e2e3-44fb-ba23-e95b7b053f0b"]
 open_questions = [
   "[assumption] The first reference device exposes a Linux userspace and stable evdev inputs",
-  "[assumption] The reference image can reserve at least 64 MiB RAM and 256 MiB persistent storage for the complete Styrene composition",
+  "[assumption] The first reference image can reserve at least 64 MiB RAM and 256 MiB persistent storage for the complete Styrene composition",
   "[assumption] Text entry without a hardware keyboard can be made usable without shipping a general desktop environment",
   "[assumption] Suspend/resume is a required product behavior rather than reboot-on-use",
-  "[assumption] Wi-Fi is the baseline network substrate; device-integrated LoRa is optional",
-  "Which exact R36S hardware revision or equivalent reference device is authoritative?",
+  "[assumption] The RG35XXSP is the first reference candidate because it has integrated Wi-Fi, mini-HDMI diagnostics, and a Hall lid switch",
+  "Which exact R36S board, panel, DTB, battery, and clone/genuine family does the unit in hand use?",
+  "Which exact RG35XXSP board revision, stock firmware, boot chain, and kernel interfaces does the unit in hand use?",
   "What RAM remains available after the selected OS, graphics stack, audio services, and networking are resident?",
   "What display viewport, DPI, minimum readable cell size, and safe-area constraints must the UI satisfy?",
   "Which controls are exposed through evdev, and are there stable mappings across hardware revisions?",
@@ -26,6 +27,9 @@ open_questions = [
   "Which network loss, latency, and partition scenarios are release-gating?",
   "Are audio capture/playback and push-to-talk in the first milestone or a later composition?",
   "Which measurements can run under emulation, and which require physical hardware?",
+  "Can the RG35XXSP boot stack be redistributed and materialized by Nex with acceptable source/provenance guarantees?",
+  "Which external networking substrate, if any, is acceptable for the R36S target?",
+  "Does Bluetooth on the RG35XXSP support required non-controller profiles under the selected OS?",
 ]
 +++
 
@@ -189,6 +193,140 @@ Every claim advances independently:
 7. **Field conformance** — intermittent network, suspend, battery, and repeated-use scenarios pass.
 
 Evidence must name the artifact digest, hardware revision, OS/image revision, Styrene revision, measurement command/tool, and result. “Works on R36S” is not sufficient provenance.
+
+## Device Research — 2026-07-15
+
+This section records online research for the two physical devices available to the operator. It distinguishes manufacturer claims, community documentation, and facts that must be probed on the actual units. URLs were accessed on 2026-07-15.
+
+### Source quality
+
+1. **Manufacturer:** ANBERNIC RG35XXSP product specification — <https://anbernic.com/products/rg35xxsp>
+2. **Community hardware catalog:** Handhelds Wiki R36S Overview — <https://handhelds.wiki/R36S_Overview>
+3. **Community OS/port documentation:** KNULLI RG35XX SP page — <https://knulli.org/devices/anbernic/rg35xx-sp/>
+4. **Community firmware source:** AeolusUX ArkOS-R3XS — <https://github.com/AeolusUX/ArkOS-R3XS>
+
+The R36S lacks a reliable single manufacturer specification and is sold under one name with materially different boards, displays, batteries, and clones. Community facts are useful for choosing probes, but the unit in hand is authoritative. ANBERNIC provides a model-level specification for the RG35XXSP, but its software page still does not establish the exact board revision or Linux interfaces of the operator's unit.
+
+### R36S with two TF slots
+
+**Model-family facts reported by Handhelds Wiki:**
+
+- Rockchip RK3326 SoC; Cortex-A35 CPU; Mali-G31 MP2 GPU;
+- 1 GiB DDR3L RAM;
+- 3.5-inch 640×480 4:3 IPS display;
+- Linux OS;
+- no internal storage and two microSD slots;
+- no integrated Wi-Fi, Bluetooth, or video output on the standard model;
+- mono speaker and 3.5 mm audio jack;
+- nominal dimensions 130×83×35 mm and weight 187 g.
+
+These align with the operator's observation of two TF slots but do **not** identify the board. The same source documents at least six display variants, V12/V21/V22 and later board variants, clone boards, and changing battery/regulator/GPIO mappings. It explains that the correct device-tree blob is panel/board dependent and that a mismatch commonly produces a black screen. Reported batteries vary by manufacturer; common community reports are removable 3.7 V 3000 or 3200 mAh packs, despite some seller claims of 3500 mAh. Battery telemetry is reported as inaccurate.
+
+**Product implications:**
+
+- Treat this physical R36S as a revision-specific bring-up target, not as evidence for all “R36S” devices.
+- Do not build or flash an image before preserving both existing cards and identifying the board/panel/DTB.
+- The two-slot topology is valuable: one slot can hold the boot/system medium and the other product data, fixtures, or recovery material, subject to actual mount and boot behavior.
+- Standard-model networking requires an external supported USB Wi-Fi adapter or another external substrate. Wi-Fi cannot remain an assumed baseline for this target.
+- Lack of video output removes external-display debugging as a normal path.
+- Removable storage, uncertain battery telemetry, and hard-power behavior make power-loss and card-integrity tests release-gating.
+
+### ANBERNIC RG35XXSP with mini HDMI
+
+**Manufacturer-confirmed model facts:**
+
+- Allwinner H700, quad-core ARM Cortex-A53 at up to 1.5 GHz;
+- dual-core Mali-G31 MP2 GPU;
+- 1 GiB LPDDR4 RAM;
+- 3.5-inch 640×480 full-view IPS, OCA laminated display;
+- 64-bit Linux;
+- dual TF/microSD slots, up to 512 GB expansion claimed;
+- integrated dual-band 2.4/5 GHz 802.11a/b/g/n/ac Wi-Fi;
+- Bluetooth 4.2, with ANBERNIC specifically describing controller use;
+- 3300 mAh lithium-polymer battery, manufacturer claim of about eight hours;
+- 5 V/1.5 A charging with C-to-C support;
+- Hall-effect lid switch/magnetic closure;
+- TV output, consistent with the observed mini-HDMI port;
+- speaker, vibration, USB controller support, and network multiplayer/streaming claims.
+
+**Community OS facts from KNULLI:**
+
+- identifies the device as Allwinner H700 ARM with Mali-G31;
+- its current device page reports an Allwinner BSP 4.9.170 kernel;
+- reports wireless, Bluetooth, suspend by brief power-button press, and HDMI support;
+- states ANBERNIC had not published the RG35XXSP U-Boot and kernel source used by the stock firmware;
+- KNULLI releases therefore include bootloader/U-Boot/kernel binaries extracted from stock firmware, while source-built alternatives may lack elements.
+
+**Product implications:**
+
+- This is the stronger first constrained-communicator candidate: integrated Wi-Fi, a clamshell/Hall lifecycle signal, mini-HDMI for development/diagnostics, 64-bit Cortex-A53, and dual-card storage reduce bring-up uncertainty.
+- The Hall switch introduces a first-class close/open policy: close-to-suspend, close-to-lock, or close-to-orderly-stop must be measured rather than assumed.
+- HDMI is a useful diagnostic surface but must not become a product requirement; the handheld UI must remain complete on 640×480.
+- A vendor BSP 4.9 kernel and redistributed binary boot chain create maintenance, provenance, and reproducibility constraints for Nex. “Image builds” cannot imply a fully source-reproducible boot stack.
+- Manufacturer Bluetooth wording does not prove arbitrary BLE peripheral support. Probe kernel config, controller, BlueZ behavior, and profiles before assigning a communication function.
+- The manufacturer battery-life figure is a marketing claim, not a Styrene power budget.
+
+### Comparative disposition
+
+| Constraint | R36S unit | RG35XXSP unit |
+|---|---|---|
+| CPU/RAM class | RK3326 / reported 1 GiB DDR3L | H700 / manufacturer-confirmed 1 GiB LPDDR4 |
+| Internal networking | standard model reports none | dual-band Wi-Fi + Bluetooth 4.2 |
+| Display | reported 3.5-inch 640×480; panel/DTB varies | manufacturer-confirmed 3.5-inch 640×480 |
+| Storage | two microSD; boot topology revision/OS dependent | dual microSD, up to 512 GB claimed |
+| External display | reported none | mini-HDMI/TV output |
+| Lifecycle sensor | no model-wide lid/suspend signal | Hall lid switch + suspend support reported |
+| Reproducibility risk | clones, board/panel/DTB variance | vendor BSP and binary boot-chain dependency |
+| Recommended role | secondary compatibility and offline/removable-media target | first discovery/reference candidate |
+
+This is a recommendation, not a support claim. The RG35XXSP should be probed first because it removes networking and diagnostic blockers. The R36S remains valuable precisely because it exercises a harsher offline/external-network and revision-fragmented boundary.
+
+### Required local probes before deciding budgets
+
+Preserve the original cards first. Perform read-only capture from each running stock/community OS where possible:
+
+```text
+uname -a
+cat /proc/cpuinfo
+cat /proc/meminfo
+cat /proc/device-tree/model
+tr '\0' '\n' </proc/device-tree/compatible
+cat /proc/cmdline
+lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS,RO,MODEL
+findmnt
+cat /proc/partitions
+ip -brief link
+rfkill list
+lsusb
+cat /proc/bus/input/devices
+dmesg
+```
+
+Capture supporting interfaces when present:
+
+```text
+for event in /dev/input/event*; do evtest --query "$event" EV_KEY 2>/dev/null; done
+modetest -c -p 2>/dev/null
+fbset -i 2>/dev/null
+cat /sys/class/graphics/fb0/virtual_size 2>/dev/null
+cat /sys/class/power_supply/*/uevent 2>/dev/null
+cat /sys/class/drm/*/status 2>/dev/null
+aplay -l 2>/dev/null
+arecord -l 2>/dev/null
+zcat /proc/config.gz 2>/dev/null
+```
+
+Also record:
+
+- photographs of labels, ports, card-slot labels, and board/revision markings available without destructive disassembly;
+- SHA-256 hashes plus partition tables and full images of both original cards;
+- exact current firmware name/version and download source;
+- boot behavior with each card removed independently;
+- input events for every button, lid close/open, short power press, and long power press;
+- RG35XXSP HDMI hotplug, mode, audio, and lid behavior while HDMI is connected;
+- R36S USB-OTG role and tested Wi-Fi dongle chipset, if any.
+
+Do not publish serial numbers, Wi-Fi credentials, private keys, identities, or full unredacted `dmesg`/environment captures. Probe bundles must be reviewed for secrets before entering the repository.
 
 ## Discovery Work Packages
 
