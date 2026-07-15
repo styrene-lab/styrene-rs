@@ -402,3 +402,20 @@ The first SD write is authorized only when:
 ## Success criterion
 
 This design reaches its first milestone when a source-first, Nix-built SD image boots the operator's RG35XXSP to minimal NixOS stage 2 on three consecutive cold starts, emits a provenance-linked evidence report, responds to controls through evdev, and performs controlled reboot and shutdown without filesystem damage. Styrene integration is the immediately following gate, not part of claiming the board boot itself.
+
+## Generic ARM64 VM service evidence
+
+The generic `aarch64-linux` QEMU system consumes the repository-owned
+`packages.aarch64-linux.styrene` closure and runs `styrene-qemu-smoke.service`
+at boot. The service executes:
+
+```text
+styrene --version
+styrene doctor --root /state/doctor
+styrene ghost-check --root /state/ghost --timeout 15
+```
+
+Success writes `/state/evidence/qemu-smoke.pass` and emits the serial marker
+`STYRENE_QEMU_SMOKE=pass`. Failure leaves no marker and fails the unit. This
+proves system composition and the real product lifecycle on generic ARM64
+`virt` hardware only; it does not change the unresolved H700 hardware status.

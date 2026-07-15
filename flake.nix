@@ -244,6 +244,12 @@
         # Build deps once, reuse for all packages
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
+        # The canonical product binary used by installation and Ghost checks
+        styrene = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
+          cargoExtraArgs = "-p styrene --all-features";
+        });
+
         # The daemon binary
         styrened = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
@@ -291,18 +297,24 @@
 
       in {
         packages = {
-          inherit styrened styrened-i2p styrene-i2p styrene-tui oci oci-i2p;
+          inherit styrene styrened styrened-i2p styrene-i2p styrene-tui oci oci-i2p;
           rg35xxsp-qemu = let
             qemuSystem = nixpkgs.lib.nixosSystem {
               inherit system;
+              specialArgs = { styrenePackage = self.packages.${system}.styrene; };
               modules = [
                 ./nix/modules/minimal-appliance.nix
-                ({ modulesPath, ... }: {
+                ./nix/modules/styrene-qemu-smoke.nix
+                ({ modulesPath, styrenePackage, ... }: {
                   imports = [
                     "${modulesPath}/profiles/qemu-guest.nix"
                     "${modulesPath}/virtualisation/qemu-vm.nix"
                   ];
                   virtualisation.graphics = false;
+                  services.styrene-qemu-smoke = {
+                    enable = true;
+                    package = styrenePackage;
+                  };
                 })
               ];
             };
@@ -310,14 +322,20 @@
           rg35xxsp-qemu-system = let
             qemuSystem = nixpkgs.lib.nixosSystem {
               inherit system;
+              specialArgs = { styrenePackage = self.packages.${system}.styrene; };
               modules = [
                 ./nix/modules/minimal-appliance.nix
-                ({ modulesPath, ... }: {
+                ./nix/modules/styrene-qemu-smoke.nix
+                ({ modulesPath, styrenePackage, ... }: {
                   imports = [
                     "${modulesPath}/profiles/qemu-guest.nix"
                     "${modulesPath}/virtualisation/qemu-vm.nix"
                   ];
                   virtualisation.graphics = false;
+                  services.styrene-qemu-smoke = {
+                    enable = true;
+                    package = styrenePackage;
+                  };
                 })
               ];
             };
@@ -372,14 +390,20 @@
 
       nixosConfigurations.rg35xxsp-qemu = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
+        specialArgs = { styrenePackage = self.packages.aarch64-linux.styrene; };
         modules = [
           ./nix/modules/minimal-appliance.nix
-          ({ modulesPath, ... }: {
+          ./nix/modules/styrene-qemu-smoke.nix
+          ({ modulesPath, styrenePackage, ... }: {
             imports = [
               "${modulesPath}/profiles/qemu-guest.nix"
               "${modulesPath}/virtualisation/qemu-vm.nix"
             ];
             virtualisation.graphics = false;
+            services.styrene-qemu-smoke = {
+              enable = true;
+              package = styrenePackage;
+            };
           })
         ];
       };
