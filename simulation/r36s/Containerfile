@@ -24,7 +24,9 @@ RUN apt-get update \
     && mkdir -p /state /run/styrene \
     && chown styrene:styrene /state /run/styrene
 
+COPY simulation/r36s/evidence-scenarios.sh /usr/local/bin/styrene-evidence-scenarios
 COPY --from=builder /build/target/release/styrene /usr/local/bin/styrene
+RUN chmod 0755 /usr/local/bin/styrene-evidence-scenarios
 
 ENV HOME=/home/styrene \
     XDG_CONFIG_HOME=/state/config \

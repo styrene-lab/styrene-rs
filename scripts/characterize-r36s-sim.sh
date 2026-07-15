@@ -11,7 +11,7 @@ report_dir="${STYRENE_R36S_REPORT_DIR:-target/simulation/r36s}"
 mkdir -p "$report_dir"
 report="$report_dir/memory-matrix.tsv"
 
-printf 'limit\tversion\tdoctor\tghost\n' >"$report"
+printf 'limit\tversion\tevidence_scenarios\n' >"$report"
 
 run_at_limit() {
   local limit="$1"
@@ -28,14 +28,27 @@ run_at_limit() {
     "$image" "$@" >/dev/null 2>&1
 }
 
+run_evidence_at_limit() {
+  local limit="$1"
+  "$engine" run --rm \
+    --platform "$platform" \
+    --cpus "$cpus" \
+    --memory "$limit" \
+    --memory-swap "$limit" \
+    --pids-limit 128 \
+    --network none \
+    --tmpfs "/state:rw,size=$state_size,mode=0777" \
+    --tmpfs "/run/styrene:rw,size=16m,mode=0777" \
+    --entrypoint /usr/local/bin/styrene-evidence-scenarios \
+    "$image" >/dev/null 2>&1
+}
+
 for limit in $limits; do
   version=fail
-  doctor=fail
-  ghost=fail
+  evidence=fail
   if run_at_limit "$limit" --version; then version=pass; fi
-  if run_at_limit "$limit" doctor --root /state/doctor; then doctor=pass; fi
-  if run_at_limit "$limit" ghost-check --root /state/ghost --timeout 15; then ghost=pass; fi
-  printf '%s\t%s\t%s\t%s\n' "$limit" "$version" "$doctor" "$ghost" | tee -a "$report"
+  if run_evidence_at_limit "$limit"; then evidence=pass; fi
+  printf '%s\t%s\t%s\n' "$limit" "$version" "$evidence" | tee -a "$report"
 done
 
 echo "report: $report"
