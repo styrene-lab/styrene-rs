@@ -10,9 +10,11 @@ priority = 1
 dependencies = ["5dc53189-e2e3-44fb-ba23-e95b7b053f0b"]
 open_questions = [
   "[assumption] The first reference device exposes a Linux userspace and stable evdev inputs",
+  "[assumption] The R36S unit is a standard/original family device with a panel 4 display and V22 board, based only on seller reviews and circumstantial evidence pending physical or software identification",
   "[assumption] The first reference image can reserve at least 64 MiB RAM and 256 MiB persistent storage for the complete Styrene composition",
   "[assumption] Text entry without a hardware keyboard can be made usable without shipping a general desktop environment",
   "[assumption] Suspend/resume is a required product behavior rather than reboot-on-use",
+  "[assumption] The R36S unit in hand is a standard/original Panel 4 V22 board, based on seller reviews and circumstantial evidence; this is a temporary planning hypothesis pending physical/self-reporting confirmation",
   "[assumption] The RG35XXSP is the first reference candidate because it has integrated Wi-Fi, mini-HDMI diagnostics, and a Hall lid switch",
   "Which exact R36S board, panel, DTB, battery, and clone/genuine family does the unit in hand use?",
   "Which exact RG35XXSP board revision, stock firmware, boot chain, and kernel interfaces does the unit in hand use?",
@@ -207,7 +209,13 @@ This section records online research for the two physical devices available to t
 
 The R36S lacks a reliable single manufacturer specification and is sold under one name with materially different boards, displays, batteries, and clones. Community facts are useful for choosing probes, but the unit in hand is authoritative. ANBERNIC provides a model-level specification for the RG35XXSP, but its software page still does not establish the exact board revision or Linux interfaces of the operator's unit.
 
+### R36S working assumption
+
+Pending conclusive self-reporting or physical inspection, planning may use **standard/original R36S family, panel 4, V22 board** as a provisional hypothesis. This is based on seller-review evidence associated with the purchased item and other circumstantial markers, not a verified unit identity. It may guide which DTB and probe documentation to examine, but it must not authorize flashing, become a Nex hardware-profile fact, or support compatibility claims. Any conflicting runtime, card-image, label, or board evidence supersedes it immediately.
+
 ### R36S with two TF slots
+
+**Temporary unit hypothesis:** until self-reporting or physical inspection provides conclusive evidence, planning may treat the operator's unit as a standard/original R36S with a Panel 4 display and V22 board. This is based on seller reviews and circumstantial evidence, not verified hardware identity. It may guide selection of a read-only test image/DTB, but it must not be promoted to a Nex hardware profile, used to overwrite the original cards, or generalized to other R36S units. A failed display boot should invalidate the hypothesis rather than trigger blind DTB replacement.
 
 **Model-family facts reported by Handhelds Wiki:**
 

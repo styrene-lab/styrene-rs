@@ -41,8 +41,17 @@ pub struct DaemonHandle {
     pub app_context: Arc<AppContext>,
     pub daemon_facade: Arc<DaemonFacade>,
     #[cfg(feature = "ipc-server")]
-    _ipc_server: styrene_ipc_server::IpcServer,
-    _cancel: CancellationToken,
+    ipc_server: styrene_ipc_server::IpcServer,
+    cancel: CancellationToken,
+}
+
+impl DaemonHandle {
+    /// Stop background work and await IPC socket cleanup.
+    pub async fn shutdown(mut self) {
+        self.cancel.cancel();
+        #[cfg(feature = "ipc-server")]
+        self.ipc_server.stop().await;
+    }
 }
 
 /// Start the daemon with the given configuration.
@@ -360,8 +369,8 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         app_context,
         daemon_facade,
         #[cfg(feature = "ipc-server")]
-        _ipc_server: ipc_server,
-        _cancel: cancel,
+        ipc_server,
+        cancel,
     })
 }
 

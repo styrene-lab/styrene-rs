@@ -364,3 +364,17 @@ publish:
     cargo publish -p styrene-ipc
     sleep 30
     cargo publish -p styrene-tunnel
+
+# ─── Constrained-device simulation ────────────────────────────────────────
+
+# Build an arm64 Linux image approximating the R36S userspace envelope
+sim-r36s-build:
+    ./scripts/smoke-r36s-sim.sh build
+
+# Smoke-test version, persistent setup, and Ghost lifecycle under bounded resources
+sim-r36s-smoke:
+    ./scripts/smoke-r36s-sim.sh smoke
+
+# Open an interactive shell in the bounded arm64 simulation image
+sim-r36s-shell:
+    ./scripts/smoke-r36s-sim.sh shell
