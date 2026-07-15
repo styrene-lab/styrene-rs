@@ -387,6 +387,27 @@
       # NixOS module (system-independent)
       nixosModules.default = nixosModule;
       nixosModules.rg35xxsp-hardware = import ./nix/hardware/rg35xxsp;
+      nixosModules.rpi4b-hardware = import ./nix/hardware/rpi4b;
+
+      nixosConfigurations.rpi4-builder = nixpkgs.lib.nixosSystem {
+        system = "aarch64-linux";
+        modules = [
+          ./nix/hardware/rpi4b
+          ./nix/hosts/rpi4-builder.nix
+          ({ ... }: { system.stateVersion = "26.05"; })
+        ];
+      };
+
+      nixosConfigurations.rpi4-appliance = nixpkgs.lib.nixosSystem {
+        system = "aarch64-linux";
+        specialArgs = { styrenePackage = self.packages.aarch64-linux.styrene; };
+        modules = [
+          ./nix/hardware/rpi4b
+          ./nix/modules/minimal-appliance.nix
+          ./nix/modules/styrene-qemu-smoke.nix
+          ./nix/hosts/rpi4-appliance.nix
+        ];
+      };
 
       nixosConfigurations.rg35xxsp-qemu = nixpkgs.lib.nixosSystem {
         system = "aarch64-linux";
