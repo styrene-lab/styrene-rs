@@ -52,6 +52,17 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
+        #[cfg(feature = "tui")]
+        Some(Command::GhostCheck { root, timeout }) => {
+            styrene_tui_app::run_ghost_lifecycle_check(
+                &root,
+                std::time::Duration::from_secs(timeout),
+            )
+            .await?;
+            println!("styrene ghost check: ok ({})", root.display());
+            Ok(())
+        }
+
         #[cfg(feature = "daemon")]
         Some(Command::Daemon { rpc: _, db, config, identity, ephemeral }) => {
             styrened::daemon::run(styrened::daemon::DaemonConfig2 {

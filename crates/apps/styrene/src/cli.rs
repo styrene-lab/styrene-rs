@@ -57,6 +57,17 @@ pub enum Command {
         root: PathBuf,
     },
 
+    /// Validate a bounded ephemeral Ghost runtime lifecycle without entering the TUI
+    #[cfg(feature = "tui")]
+    GhostCheck {
+        /// Parent directory beneath which the disposable session is created
+        #[arg(long, value_name = "DIR")]
+        root: PathBuf,
+        /// Maximum seconds allowed for startup and shutdown
+        #[arg(long, default_value = "10")]
+        timeout: u64,
+    },
+
     /// Show daemon and mesh status
     #[cfg(feature = "cli")]
     Status,
