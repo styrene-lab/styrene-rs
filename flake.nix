@@ -292,6 +292,36 @@
       in {
         packages = {
           inherit styrened styrened-i2p styrene-i2p styrene-tui oci oci-i2p;
+          rg35xxsp-qemu = let
+            qemuSystem = nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = [
+                ./nix/modules/minimal-appliance.nix
+                ({ modulesPath, ... }: {
+                  imports = [
+                    "${modulesPath}/profiles/qemu-guest.nix"
+                    "${modulesPath}/virtualisation/qemu-vm.nix"
+                  ];
+                  virtualisation.graphics = false;
+                })
+              ];
+            };
+          in qemuSystem.config.system.build.vm;
+          rg35xxsp-qemu-system = let
+            qemuSystem = nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = [
+                ./nix/modules/minimal-appliance.nix
+                ({ modulesPath, ... }: {
+                  imports = [
+                    "${modulesPath}/profiles/qemu-guest.nix"
+                    "${modulesPath}/virtualisation/qemu-vm.nix"
+                  ];
+                  virtualisation.graphics = false;
+                })
+              ];
+            };
+          in qemuSystem.config.system.build.toplevel;
           default = styrened;
         };
 
@@ -306,6 +336,25 @@
             inherit cargoArtifacts;
             cargoClippyExtraArgs = "-- -D warnings";
           });
+
+          rg35xxsp-provenance = pkgs.runCommand "rg35xxsp-provenance-check" {
+            nativeBuildInputs = [ pkgs.python3 ];
+          } ''
+            python3 - <<'PY'
+            import pathlib, tomllib
+            data = tomllib.loads(pathlib.Path("${./nix/hardware/rg35xxsp/provenance.toml}").read_text())
+            assert data["schema_version"] == 1
+            assert data["hardware_profile"] == "anbernic-rg35xxsp"
+            names = [entry["name"] for entry in data["components"]]
+            assert len(names) == len(set(names))
+            assert {"u-boot", "trusted-firmware-a", "linux", "device-tree", "firmware", "nixos-userspace"} <= set(names)
+            for entry in data["components"]:
+                assert entry["status"] in {"unresolved", "selected", "pinned", "validated"}
+                assert entry["preferred_provenance"]
+                assert entry["required_evidence"]
+            PY
+            touch "$out"
+          '';
         };
 
         devShells.default = craneLib.devShell {
@@ -319,5 +368,20 @@
     ) // {
       # NixOS module (system-independent)
       nixosModules.default = nixosModule;
+      nixosModules.rg35xxsp-hardware = import ./nix/hardware/rg35xxsp;
+
+      nixosConfigurations.rg35xxsp-qemu = nixpkgs.lib.nixosSystem {
+        system = "aarch64-linux";
+        modules = [
+          ./nix/modules/minimal-appliance.nix
+          ({ modulesPath, ... }: {
+            imports = [
+              "${modulesPath}/profiles/qemu-guest.nix"
+              "${modulesPath}/virtualisation/qemu-vm.nix"
+            ];
+            virtualisation.graphics = false;
+          })
+        ];
+      };
     };
 }
