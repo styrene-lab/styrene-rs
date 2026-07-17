@@ -29,4 +29,11 @@ expect_failure "refusing non-device target" "$flash" --image "$image" --device "
 expect_failure "not a block device" "$flash" --image "$image" --device /dev/null --confirm ERASE
 expect_failure "unknown argument" "$flash" --bogus
 
+# A compressed stream commonly produces short reads. The flash pipeline must
+# not use dd conv=sync, which would pad every short read and expand the image.
+if grep -Eq 'dd .*conv=(sync|[^ ]*,sync)' "$flash"; then
+  echo "compressed flash path must not pad short reads with conv=sync" >&2
+  exit 1
+fi
+
 echo "flash guard tests: pass"

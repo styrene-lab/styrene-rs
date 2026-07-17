@@ -77,9 +77,11 @@ fi
 "${unmount[@]}"
 if [[ $image == *.zst ]]; then
   command -v zstd >/dev/null || { echo "zstd is required" >&2; exit 2; }
-  zstd -dc -- "$image" | dd of="$device" bs=4m conv=sync,noerror status=progress
+  # Do not use conv=sync on a decompressor pipe: short pipe reads are normal,
+  # and padding every short read would expand and corrupt the image.
+  zstd -dc -- "$image" | dd of="$device" bs=4m status=progress
 else
-  dd if="$image" of="$device" bs=4m conv=sync,noerror status=progress
+  dd if="$image" of="$device" bs=4m status=progress
 fi
 sync
 "${eject[@]}"
