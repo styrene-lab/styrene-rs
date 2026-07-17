@@ -7,12 +7,27 @@ import tomllib
 from pathlib import Path
 
 REQUIRED_PHASES = ("materialization", "artifact_validation", "delivery", "first_boot")
-REQUIRED_BOOT_CHECKS = {
+BUILDER_BOOT_CHECKS = {
     "ssh-public-key",
     "aarch64-linux",
     "nix-daemon-active",
     "nix-sandbox-enabled",
     "native-derivation-build",
+}
+BRINGUP_BOOT_CHECKS = {
+    "three-cold-boots",
+    "nixos-stage2",
+    "display",
+    "evdev-controls",
+    "controlled-shutdown",
+    "filesystem-clean",
+}
+VALID_STATUSES = {
+    "planned",
+    "materializable",
+    "artifact-validated",
+    "delivery-approved",
+    "hardware-validated",
 }
 
 
@@ -22,6 +37,9 @@ def validate(path: Path, root: Path) -> None:
 
     if data.get("schema_version") != 1:
         errors.append("schema_version must be 1")
+    status = data.get("status")
+    if status not in VALID_STATUSES:
+        errors.append(f"status must be one of: {', '.join(sorted(VALID_STATUSES))}")
     if not data.get("id") or not data.get("hardware_profile"):
         errors.append("id and hardware_profile are required")
     for phase in REQUIRED_PHASES:
@@ -43,6 +61,9 @@ def validate(path: Path, root: Path) -> None:
         errors.append("materialization.contract_validator must name an existing repository file")
 
     delivery = data.get("delivery", {})
+    delivery_enabled = delivery.get("enabled", True)
+    if status == "planned" and delivery_enabled is not False:
+        errors.append("planned target must disable delivery")
     delivery_command = delivery.get("command")
     if not isinstance(delivery_command, str) or not (root / delivery_command).is_file():
         errors.append("delivery.command must name an existing repository file")
@@ -58,14 +79,15 @@ def validate(path: Path, root: Path) -> None:
     if not isinstance(acceptance_command, str) or not (root / acceptance_command).is_file():
         errors.append("first_boot.acceptance_command must name an existing repository file")
     checks = set(first_boot.get("required_checks", []))
-    missing_checks = sorted(REQUIRED_BOOT_CHECKS - checks)
+    required_checks = BUILDER_BOOT_CHECKS if data.get("purpose") == "native-aarch64-builder" else BRINGUP_BOOT_CHECKS
+    missing_checks = sorted(required_checks - checks)
     if missing_checks:
         errors.append(f"first_boot.required_checks missing: {', '.join(missing_checks)}")
     if first_boot.get("password_authentication") is not False:
         errors.append("first_boot.password_authentication must be false")
 
     evidence = data.get("evidence", {}).get("reference_run", {})
-    if data.get("status") == "hardware-validated":
+    if status == "hardware-validated":
         for field in ("date", "kernel", "nix", "native_derivation", "native_output"):
             if not evidence.get(field):
                 errors.append(f"hardware-validated target requires evidence.reference_run.{field}")

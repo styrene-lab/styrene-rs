@@ -404,6 +404,32 @@ sim-r36s-characterize:
 nix-rpi4-builder-contract:
     python3 scripts/validate_flashers.py product/flashers/rpi4b-builder-v1.toml
 
+# Validate all declarative flasher contracts
+nix-flasher-contracts:
+    python3 scripts/validate_flashers.py product/flashers/rpi4b-builder-v1.toml product/flashers/rg35xxsp-bringup-v1.toml
+    python3 scripts/test_validate_flashers.py
+
+# Discover the accepted RPi4 native ARM64 builder
+nix-rpi4-builder-discover:
+    ./scripts/discover-rpi4-builder.sh
+
+# Build a flake output natively on the accepted RPi4 builder
+nix-rpi4-remote-build attr out="result-rpi-build":
+    ./scripts/build-on-rpi4-builder.sh "{{attr}}" "{{out}}"
+
+# Validate bounded OEM evidence; full preservation is still required for delivery approval
+rg35xxsp-oem-evidence bundle="target/device-evidence/operator-rg35xxsp-a/oem-tf1-bounded":
+    ./scripts/validate-rg35xxsp-oem-evidence.py "{{bundle}}"
+
+# Deliberately fails until a complete OEM image and checksum exist
+rg35xxsp-oem-evidence-full bundle="target/device-evidence/operator-rg35xxsp-a/oem-tf1-bounded":
+    ./scripts/validate-rg35xxsp-oem-evidence.py --require-full "{{bundle}}"
+
+# RG35XXSP source-first image build remains unavailable until the flake output exists
+nix-rg35xxsp-bringup-build:
+    python3 scripts/validate_flashers.py product/flashers/rg35xxsp-bringup-v1.toml
+    ./scripts/build-on-rpi4-builder.sh .#packages.aarch64-linux.rg35xxsp-bringup-image result-rg35xxsp-bringup
+
 # Re-run physical builder acceptance; optionally pass a native derivation
 nix-rpi4-builder-accept host="nix-builder@styrene-builder-a.local" derivation="":
     ./scripts/verify-rpi4-builder-host.sh --host "{{host}}" {{ if derivation != "" { "--derivation \"" + derivation + "\"" } else { "" } }}

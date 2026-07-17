@@ -1,0 +1,74 @@
+schema_version = 1
+id = "rg35xxsp-bringup"
+version = 1
+status = "planned"
+purpose = "minimal-h700-hardware-bringup"
+hardware_profile = "anbernic-rg35xxsp-h700"
+deployment_tier = "constrained-linux"
+
+[materialization]
+flake_attribute = "packages.aarch64-linux.rg35xxsp-bringup-image"
+artifact_glob = "sd-image/*.img.zst"
+builder_system = "aarch64-linux"
+builder_contract = "product/flashers/rpi4b-builder-v1.toml"
+build_recipe = "nix-rg35xxsp-bringup-build"
+contract_validator = "scripts/validate_flashers.py"
+
+[prerequisites]
+required_contract_status = "hardware-validated"
+required_artifacts = [
+  "nix/hardware/rg35xxsp/provenance.toml",
+  "docs/rg35xxsp-nixos-bringup.md",
+]
+required_checks = [
+  "generic-aarch64-qemu-smoke",
+  "complete-oem-media-preservation",
+  "boot-chain-provenance-ready",
+]
+
+[artifact_validation]
+command = "scripts/verify-rg35xxsp-bringup-image.sh"
+requires = [
+  "zstd-integrity",
+  "partition-layout",
+  "boot-chain-hashes",
+  "linux-root-partition",
+  "ext4-fsck",
+  "provenance-manifest",
+]
+
+[delivery]
+enabled = false
+command = "scripts/flash-rpi4-image.sh"
+confirmation = "ERASE"
+whole_disk_only = true
+removable_only = true
+build_is_non_destructive = true
+supported_host_os = ["darwin", "linux"]
+supported_artifacts = ["img", "img.zst"]
+blocked_until_status = "delivery-approved"
+
+[first_boot]
+interface = "serial-or-hdmi"
+password_authentication = false
+acceptance_command = "scripts/verify-rg35xxsp-bringup-host.sh"
+required_checks = [
+  "three-cold-boots",
+  "nixos-stage2",
+  "display",
+  "evdev-controls",
+  "wifi",
+  "audio",
+  "hall-switch",
+  "controlled-reboot",
+  "controlled-shutdown",
+  "filesystem-clean",
+]
+
+[boundaries]
+notes = [
+  "This planned contract MUST NOT authorize flashing.",
+  "OEM binary evidence is local and must not be committed or redistributed.",
+  "A source-pinned bootloader, kernel, device tree, and firmware set is required before delivery approval.",
+  "Styrene communicator enablement follows board bring-up and is not part of the first boot claim.",
+]
