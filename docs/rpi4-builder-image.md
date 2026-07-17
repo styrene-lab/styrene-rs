@@ -191,3 +191,36 @@ stable access contract.
 
 The builder is operationally validated when SSH succeeds with the injected key
 and a native, non-substituted `aarch64-linux` derivation completes.
+
+## Durable copy-back and recovery
+
+Completed remote derivations are archived on the workstation under:
+
+```text
+.builder-artifacts/rpi4b/<store-path>.nar.zst
+.builder-artifacts/rpi4b/<store-path>.nar.zst.manifest
+```
+
+`build-on-rpi4-builder.sh` performs this archival automatically before copying
+presentation files into its result directory. The NAR export preserves Nix store
+metadata and the complete reference closure, unlike a plain tar copy. Each
+manifest records the source store path, remote Nix hash, references, compressed
+size, and SHA-256. The archive command also creates an indirect GC root on the
+Pi so routine collection cannot remove a completed long-running output.
+
+Archive an already-completed output explicitly:
+
+```bash
+just nix-rpi4-archive-outputs /nix/store/OUTPUT
+```
+
+Restore it after reflashing or replacing the builder:
+
+```bash
+just nix-rpi4-restore .builder-artifacts/rpi4b/OUTPUT.nar.zst
+```
+
+Restore verifies the workstation SHA-256 before importing over authenticated
+SSH. Archives are intentionally gitignored: they are local build-cache assets,
+not source artifacts. They must be backed up separately if loss of both the Pi
+and this workstation is in scope.

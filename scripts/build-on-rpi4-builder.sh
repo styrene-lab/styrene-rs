@@ -17,6 +17,11 @@ nix --extra-experimental-features 'nix-command flakes' copy --to "$store_uri" "$
 output=$(ssh -o BatchMode=yes "$host" nix-store -r "$drv")
 [[ $output == /nix/store/* ]] || { echo "remote build returned invalid output: $output" >&2; exit 1; }
 
+# Preserve every completed output as a restorable NAR before exporting its
+# presentation files. This retains Nix metadata and the transitive closure.
+read -r -a outputs <<< "$(ssh -o BatchMode=yes "$host" nix-store -q --outputs "$drv")"
+./scripts/archive-rpi4-outputs.sh "${outputs[@]}"
+
 rm -rf "$out"
 mkdir -p "$out"
 # The dedicated builder does not yet sign Nix store outputs. Export artifacts
