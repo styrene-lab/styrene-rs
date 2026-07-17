@@ -78,6 +78,8 @@ docs/_build/
 target/
 .nix-linux-store/
 result-rpi4-builder
+result-rpi-provenance
+result-rg35xxsp-bringup
 
 # Jupyter Notebook
 .ipynb_checkpoints
