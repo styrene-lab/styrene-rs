@@ -80,6 +80,7 @@ target/
 result-rpi4-builder
 result-rpi-provenance
 result-rg35xxsp-bringup
+.builder-artifacts/
 
 # Jupyter Notebook
 .ipynb_checkpoints

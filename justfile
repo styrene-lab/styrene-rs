@@ -417,6 +417,14 @@ nix-rpi4-builder-discover:
 nix-rpi4-remote-build attr out="result-rpi-build":
     ./scripts/build-on-rpi4-builder.sh "{{attr}}" "{{out}}"
 
+# Archive completed RPi4 Nix outputs locally as restorable NARs
+nix-rpi4-archive-outputs *outputs:
+    ./scripts/archive-rpi4-outputs.sh {{ outputs }}
+
+# Restore a locally archived RPi4 output to the builder
+nix-rpi4-restore archive:
+    ./scripts/restore-rpi4-output.sh "{{archive}}"
+
 # Validate selected immutable H700 boot-chain sources
 rg35xxsp-provenance:
     ./scripts/validate-rg35xxsp-provenance.py
