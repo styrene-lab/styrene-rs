@@ -33,7 +33,11 @@ def run_batch(image: Path, commands: list[str]) -> None:
 
 
 def quote(value: str) -> str:
-    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    # debugfs command files do not treat a backslash in a quoted pathname as a
+    # shell escape. Doubling it changes the literal filename (for example,
+    # systemd's `system-systemd\x2dcryptsetup.slice`) and therefore changes the
+    # NAR hash. Escape only the delimiter itself.
+    return '"' + value.replace('"', '\\"') + '"'
 
 
 def main() -> int:
