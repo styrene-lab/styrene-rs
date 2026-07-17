@@ -63,12 +63,15 @@ $engine run --rm --privileged \
         mkdir /verify/root
         loop=$(losetup -f --show /verify/root.img)
         mount -o rw "$loop" /verify/root
-        cleanup() { umount /verify/root || true; losetup -d "$loop" || true; }
+        cleanup() {
+          umount /verify/root 2>/dev/null || true
+          losetup -d "$loop" 2>/dev/null || true
+        }
         trap cleanup EXIT INT TERM
         test -e /verify/root/nix-path-registration
         mkdir -p /verify/root/nix/var/nix/db
-        nix-store --store /verify/root --load-db < /verify/root/nix-path-registration
-        nix-store --store /verify/root --verify --check-contents
+        nix-store --store "local?root=/verify/root" --load-db < /verify/root/nix-path-registration
+        nix-store --store "local?root=/verify/root" --verify --check-contents
         sync
         umount /verify/root
         losetup -d "$loop"
