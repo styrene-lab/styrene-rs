@@ -400,12 +400,20 @@ sim-r36s-characterize:
 
 # ─── Raspberry Pi materialization ─────────────────────────────────────────
 
+# Validate the machine-readable repeatable-flasher contract
+nix-rpi4-builder-contract:
+    python3 scripts/validate_flashers.py product/flashers/rpi4b-builder-v1.toml
+
+# Re-run physical builder acceptance; optionally pass a native derivation
+nix-rpi4-builder-accept host="nix-builder@styrene-builder-a.local" derivation="":
+    ./scripts/verify-rpi4-builder-host.sh --host "{{host}}" {{ if derivation != "" { "--derivation \"" + derivation + "\"" } else { "" } }}
+
 # Evaluate the Raspberry Pi 4B builder SD-image composition
-nix-rpi4-builder-eval:
+nix-rpi4-builder-eval: nix-rpi4-builder-contract
     STYRENE_BUILDER_SSH_KEY="${STYRENE_BUILDER_SSH_KEY:?set operator public key}" nix eval --impure .#nixosConfigurations.rpi4-builder.config.system.build.sdImage.drvPath
 
 # Build the Raspberry Pi 4B builder SD image in the persistent Linux builder
-nix-rpi4-builder-build:
+nix-rpi4-builder-build: nix-rpi4-builder-contract
     STYRENE_BUILDER_SSH_KEY="${STYRENE_BUILDER_SSH_KEY:?set operator public key}" ./scripts/build-nix-linux.sh .#nixosConfigurations.rpi4-builder.config.system.build.sdImage result-rpi4-builder
 
 # Verify partition filesystems and all registered Nix store contents offline
