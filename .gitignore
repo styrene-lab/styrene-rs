@@ -76,6 +76,8 @@ docs/_build/
 
 # PyBuilder
 target/
+.nix-linux-store/
+result-rpi4-builder
 
 # Jupyter Notebook
 .ipynb_checkpoints

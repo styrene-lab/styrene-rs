@@ -404,9 +404,17 @@ sim-r36s-characterize:
 nix-rpi4-builder-eval:
     STYRENE_BUILDER_SSH_KEY="${STYRENE_BUILDER_SSH_KEY:?set operator public key}" nix eval --impure .#nixosConfigurations.rpi4-builder.config.system.build.sdImage.drvPath
 
-# Build the Raspberry Pi 4B builder SD image (requires an aarch64-linux builder)
+# Build the Raspberry Pi 4B builder SD image in the persistent Linux builder
 nix-rpi4-builder-build:
-    STYRENE_BUILDER_SSH_KEY="${STYRENE_BUILDER_SSH_KEY:?set operator public key}" nix build --impure .#nixosConfigurations.rpi4-builder.config.system.build.sdImage --out-link result-rpi4-builder
+    STYRENE_BUILDER_SSH_KEY="${STYRENE_BUILDER_SSH_KEY:?set operator public key}" ./scripts/build-nix-linux.sh .#nixosConfigurations.rpi4-builder.config.system.build.sdImage result-rpi4-builder
+
+# Exercise all non-destructive RPi 4 flash guards
+nix-rpi4-flash-test:
+    ./scripts/test-flash-rpi4-image.sh
+
+# Validate a specific removable device without writing it
+nix-rpi4-flash-dry-run device image="result-rpi4-builder/sd-image/nixos-image-sd-card-26.11.20260713.6cdc7fc-aarch64-linux.img.zst":
+    ./scripts/flash-rpi4-image.sh --image "{{image}}" --device "{{device}}" --confirm ERASE --dry-run
 
 # Evaluate the Raspberry Pi 4B Styrene appliance SD-image composition
 nix-rpi4-appliance-eval:
@@ -415,3 +423,19 @@ nix-rpi4-appliance-eval:
 # Build the Raspberry Pi 4B Styrene appliance SD image (requires an aarch64-linux builder)
 nix-rpi4-appliance-build:
     STYRENE_APPLIANCE_SSH_KEY="${STYRENE_APPLIANCE_SSH_KEY:?set operator public key}" nix build --impure .#nixosConfigurations.rpi4-appliance.config.system.build.sdImage --out-link result-rpi4-appliance
+
+# Bootstrap the RPi4 builder image inside the native arm64 Podman Linux VM
+nix-rpi4-builder-bootstrap:
+    ./scripts/build-nix-linux.sh .#nixosConfigurations.rpi4-builder.config.system.build.sdImage result-rpi4-builder
+
+# Inspect the completed RPi4 builder image and print its digest/size metadata
+nix-rpi4-builder-inspect:
+    ./scripts/rpi4_image.py inspect "$(find -L result-rpi4-builder/sd-image -type f -name '*.img.zst' -print -quit)"
+
+# Print guarded flash metadata and required confirmation token; does not write
+nix-rpi4-builder-flash-plan device:
+    ./scripts/rpi4_image.py flash "$(find -L result-rpi4-builder/sd-image -type f -name '*.img.zst' -print -quit)" --device "{{device}}"
+
+# Flash only after explicit whole-disk target and exact digest-bound token
+nix-rpi4-builder-flash device confirm:
+    ./scripts/rpi4_image.py flash "$(find -L result-rpi4-builder/sd-image -type f -name '*.img.zst' -print -quit)" --device "{{device}}" --confirm "{{confirm}}" --execute

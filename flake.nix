@@ -245,10 +245,20 @@
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
         # The canonical product binary used by installation and Ghost checks
-        styrene = craneLib.buildPackage (commonArgs // {
+        styreneRaw = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
           cargoExtraArgs = "-p styrene --all-features";
         });
+
+        # NixOS services invoke the product through a closure-complete wrapper.
+        styrene = pkgs.runCommand "styrene-product" {
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+        } ''
+          mkdir -p $out/bin
+          cp ${styreneRaw}/bin/styrene $out/bin/styrene-unwrapped
+          makeWrapper $out/bin/styrene-unwrapped $out/bin/styrene \
+            --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.openssl pkgs.sqlite pkgs.stdenv.cc.cc.lib ]}
+        '';
 
         # The daemon binary
         styrened = craneLib.buildPackage (commonArgs // {
