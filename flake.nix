@@ -199,6 +199,9 @@
             ];
           };
         };
+      rg35xxspBootChain = import ./nix/hardware/rg35xxsp/boot-chain.nix {
+        pkgs = import nixpkgs { system = "aarch64-linux"; };
+      };
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -308,6 +311,10 @@
       in {
         packages = {
           inherit styrene styrened styrened-i2p styrene-i2p styrene-tui oci oci-i2p;
+          rg35xxsp-boot-chain = rg35xxspBootChain.bundle;
+          rg35xxsp-trusted-firmware-a = rg35xxspBootChain.tfA;
+          rg35xxsp-u-boot = rg35xxspBootChain.uBoot;
+          rg35xxsp-linux = rg35xxspBootChain.kernel;
           rg35xxsp-qemu = let
             qemuSystem = nixpkgs.lib.nixosSystem {
               inherit system;
