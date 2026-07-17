@@ -44,7 +44,8 @@ case "$(uname -s)" in
     info=$(diskutil info "/dev/$disk")
     internal=$(awk -F: '/^[[:space:]]*Internal:/ {gsub(/[[:space:]]/,"",$2); print $2}' <<<"$info")
     virtual=$(awk -F: '/^[[:space:]]*Virtual:/ {gsub(/[[:space:]]/,"",$2); print $2}' <<<"$info")
-    [[ $internal == No ]] || { echo "refusing internal disk: /dev/$disk" >&2; exit 2; }
+    removable=$(awk -F: '/^[[:space:]]*Removable Media:/ {gsub(/[[:space:]]/,"",$2); print $2}' <<<"$info")
+    [[ $internal == No || $removable == Removable ]] || { echo "refusing internal non-removable disk: /dev/$disk" >&2; exit 2; }
     [[ $virtual != Yes ]] || { echo "refusing virtual disk: /dev/$disk" >&2; exit 2; }
     device="/dev/r$disk"
     inspect="$(diskutil info /dev/$disk | grep -E 'Device Node|Media Name|Disk Size|Internal|Removable Media|Protocol' || true)"
