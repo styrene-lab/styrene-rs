@@ -17,6 +17,21 @@ def run(image: Path, command: str) -> None:
     subprocess.run(["debugfs", "-w", "-R", command, str(image)], check=True)
 
 
+def run_batch(image: Path, commands: list[str]) -> None:
+    """Apply many debugfs mutations in one process.
+
+    Spawning debugfs once per inode turns image construction into millions of
+    process starts. A command file preserves the same semantics while keeping
+    the build bounded.
+    """
+    batch = image.parent / "debugfs.commands"
+    batch.write_text("\n".join(commands) + "\n")
+    try:
+        subprocess.run(["debugfs", "-w", "-f", str(batch), str(image)], check=True)
+    finally:
+        batch.unlink(missing_ok=True)
+
+
 def quote(value: str) -> str:
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
@@ -53,6 +68,7 @@ def main() -> int:
             else:
                 raise RuntimeError(f"unsupported staged file type: {path}")
 
+    metadata_commands: list[str] = []
     for root, dirs, files in os.walk(source, topdown=False, followlinks=False):
         root_path = Path(root)
         for name in files + dirs:
@@ -60,11 +76,20 @@ def main() -> int:
             if path.is_symlink():
                 continue
             mode = path.lstat().st_mode
+            stat = path.lstat()
             relative = path.relative_to(source).as_posix()
-            # debugfs replaces the complete inode mode field. Preserve the file
-            # type bits as well as permissions; writing only 0755 turns a
-            # directory inode into an invalid untyped inode.
-            run(image, f"set_inode_field {quote('/' + relative)} mode 0{mode:o}")
+            # debugfs replaces complete inode fields. Preserve file type,
+            # permissions, and ownership. NAR hashes do not include uid/gid or
+            # timestamps, so timestamps remain deterministic from image creation.
+            destination = quote('/' + relative)
+            metadata_commands.extend(
+                [
+                    f"set_inode_field {destination} mode 0{mode:o}",
+                    f"set_inode_field {destination} uid {stat.st_uid}",
+                    f"set_inode_field {destination} gid {stat.st_gid}",
+                ]
+            )
+    run_batch(image, metadata_commands)
     return 0
 
 

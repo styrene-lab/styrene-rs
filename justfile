@@ -408,6 +408,10 @@ nix-rpi4-builder-eval:
 nix-rpi4-builder-build:
     STYRENE_BUILDER_SSH_KEY="${STYRENE_BUILDER_SSH_KEY:?set operator public key}" ./scripts/build-nix-linux.sh .#nixosConfigurations.rpi4-builder.config.system.build.sdImage result-rpi4-builder
 
+# Verify partition filesystems and all registered Nix store contents offline
+nix-rpi4-builder-verify image="result-rpi4-builder/sd-image/nixos-image-sd-card-26.11.20260713.6cdc7fc-aarch64-linux.img.zst":
+    ./scripts/verify-rpi4-image.sh "{{image}}"
+
 # Exercise all non-destructive RPi 4 flash guards
 nix-rpi4-flash-test:
     ./scripts/test-flash-rpi4-image.sh
