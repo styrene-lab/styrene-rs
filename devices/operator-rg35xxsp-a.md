@@ -93,6 +93,65 @@ Unresolved:
 - audio devices and routing;
 - battery, charging, and power-supply interfaces.
 
+## Device report collector
+
+The repository includes a portable, read-only collector:
+
+```text
+scripts/device-report.sh
+```
+
+It is POSIX `sh`, tolerates missing utilities, writes only to its selected
+output directory, and does not install packages, alter services, mount media, or
+write firmware. By default it omits IP addresses, the device-tree serial number,
+and unredacted `dmesg` identifiers.
+
+Once a shell is available on the handheld:
+
+```bash
+sh device-report.sh --output /mnt/mmc/device-report
+```
+
+Or through SSH without permanently installing the script:
+
+```bash
+cat scripts/device-report.sh | \
+  ssh root@HANDHELD 'sh -s -- --output /tmp/device-report'
+scp root@HANDHELD:/tmp/device-report.tar.gz .
+```
+
+Review the archive locally before committing or sharing it. Use
+`--include-sensitive` only for a private capture when IP addresses, serials, and
+unredacted kernel logs are actually needed.
+
+The collector records system, CPU, memory, device tree, storage, mounts, input,
+USB role/gadget, display, audio, clocks, thermal, power, network-device,
+firmware-file, kernel-config, and boot-file hash evidence where the stock image
+exposes it. It deliberately does not dump whole block devices; OEM media
+preservation remains a separate host-side operation.
+
+## Upstream evidence already available
+
+The board is no longer an entirely opaque vendor target:
+
+- mainline Linux contains
+  `arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-sp.dts` with
+  `compatible = "anbernic,rg35xx-sp", "allwinner,sun50i-h700"`, the PE7 lid
+  switch, and PCF8563 RTC;
+- postmarketOS documents an RG35XX SP port on a 6.15-series kernel, although its
+  page still marks important functionality such as USB networking as broken;
+- KNULLI, muOS, ROCKNIX, and modified-stock projects provide existing H700
+  system images and substantial device support evidence;
+- the stock image already contains an SSH service. Community scripts enable it
+  by setting `global.ssh=1` in `/mnt/mod/ctrl/configs/system.cfg` and starting
+  `ssh.service`.
+
+Do not use the commonly published community SSH script unchanged: it resets the
+root password to the public value `root`. Prefer a temporary SSH launcher or a
+reviewed variant that installs an operator public key and disables password
+login. If stock SSH is enabled temporarily, isolate the handheld on a trusted
+network and disable the service after capture.
+
 ## Next safe evidence
 
 1. Shut down normally and photograph the OEM TF1 card front/back.
