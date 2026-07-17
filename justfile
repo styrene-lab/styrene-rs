@@ -417,6 +417,14 @@ nix-rpi4-builder-discover:
 nix-rpi4-remote-build attr out="result-rpi-build":
     ./scripts/build-on-rpi4-builder.sh "{{attr}}" "{{out}}"
 
+# Validate selected immutable H700 boot-chain sources
+rg35xxsp-provenance:
+    ./scripts/validate-rg35xxsp-provenance.py
+
+# Require every image component to have at least a selected source
+rg35xxsp-provenance-build-ready:
+    ./scripts/validate-rg35xxsp-provenance.py --require-build-ready
+
 # Validate bounded OEM evidence; full preservation is still required for delivery approval
 rg35xxsp-oem-evidence bundle="target/device-evidence/operator-rg35xxsp-a/oem-tf1-bounded":
     ./scripts/validate-rg35xxsp-oem-evidence.py "{{bundle}}"
@@ -428,6 +436,7 @@ rg35xxsp-oem-evidence-full bundle="target/device-evidence/operator-rg35xxsp-a/oe
 # RG35XXSP source-first image build remains unavailable until the flake output exists
 nix-rg35xxsp-bringup-build:
     python3 scripts/validate_flashers.py product/flashers/rg35xxsp-bringup-v1.toml
+    ./scripts/validate-rg35xxsp-provenance.py --require-build-ready
     ./scripts/build-on-rpi4-builder.sh .#packages.aarch64-linux.rg35xxsp-bringup-image result-rg35xxsp-bringup
 
 # Re-run physical builder acceptance; optionally pass a native derivation
