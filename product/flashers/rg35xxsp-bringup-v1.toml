@@ -19,6 +19,7 @@ required_contract_status = "hardware-validated"
 required_artifacts = [
   "nix/hardware/rg35xxsp/provenance.toml",
   "docs/rg35xxsp-nixos-bringup.md",
+  "docs/rg35xxsp-build-evidence.md",
 ]
 required_checks = [
   "generic-aarch64-qemu-smoke",

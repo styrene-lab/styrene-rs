@@ -10,6 +10,9 @@ BOOT_COMPONENTS = ("u-boot", "trusted-firmware-a", "linux", "device-tree")
 IMMUTABLE_FIELDS = ("repository", "revision", "license")
 
 
+SOURCE_STATUSES = {"selected", "pinned", "built", "validated"}
+
+
 def validate(path: Path, require_build_ready: bool = False) -> None:
     data = tomllib.loads(path.read_text())
     errors: list[str] = []
@@ -19,7 +22,7 @@ def validate(path: Path, require_build_ready: bool = False) -> None:
         if entry is None:
             errors.append(f"missing component: {name}")
             continue
-        if entry.get("status") not in {"selected", "pinned", "validated"}:
+        if entry.get("status") not in SOURCE_STATUSES:
             errors.append(f"{name}: source is not selected")
         for field in IMMUTABLE_FIELDS:
             if not entry.get(field):
@@ -35,7 +38,7 @@ def validate(path: Path, require_build_ready: bool = False) -> None:
     if require_build_ready:
         unresolved = [
             entry["name"] for entry in components.values()
-            if entry.get("status") not in {"selected", "pinned", "validated"}
+            if entry.get("status") not in SOURCE_STATUSES
         ]
         if unresolved:
             errors.append("build-ready provenance has unresolved components: " + ", ".join(unresolved))
