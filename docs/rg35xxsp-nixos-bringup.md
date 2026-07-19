@@ -22,6 +22,27 @@ open_questions = [
 ]
 +++
 
+## Build-evidence checkpoint — 2026-07-19
+
+The source-selection and native compilation questions are now resolved for the
+current candidate baseline. See [`rg35xxsp-build-evidence.md`](./rg35xxsp-build-evidence.md)
+for exact revisions, derivations, store outputs, local recovery NARs, hashes,
+resolved failures, and the no-rework handoff.
+
+Proven on the hardware-validated RPi4 builder:
+
+- TF-A `bl31.bin` builds from pinned upstream source;
+- upstream H700 U-Boot builds with SPL and integrated BL31;
+- Linux 7.0.9 builds `Image`, modules, and development outputs;
+- the exact `sun50i-h700-anbernic-rg35xx-sp.dtb` is present upstream;
+- all long-running Linux outputs are protected by Pi GC roots and copied back
+  to the Mac as checksum-verified, restorable NAR archives.
+
+This resolves the earlier assumptions that an upstream H700 defconfig and exact
+SP DTB might be unavailable. It does not resolve physical display, input,
+power, networking, audio, or boot-layout behavior. The flasher contract remains
+planned and delivery remains disabled.
+
 ## Overview
 
 The first physical constrained-device milestone is a **minimal NixOS SD image that boots on the ANBERNIC RG35XXSP from a new TF1 card without modifying the device or its original media**. The image will use NixOS for the complete root userspace and service model. It may import proven board-support source, patches, device trees, and redistributable firmware from upstream Linux/U-Boot and handheld projects such as ROCKNIX. It will not use ArkOS, KNULLI, or ANBERNIC stock as the root filesystem.

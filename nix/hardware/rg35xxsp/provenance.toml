@@ -1,10 +1,12 @@
 schema_version = 1
 hardware_profile = "anbernic-rg35xxsp"
-status = "source-selected"
-last_reviewed = "2026-07-17"
+status = "source-built"
+last_reviewed = "2026-07-19"
 
-# Selected source baseline. "source-selected" means immutable revisions and
-# licenses are known; it does not mean the image has booted this physical unit.
+# "source-built" means the selected TF-A, U-Boot, Linux kernel/modules, and
+# exact RG35XXSP DTB built successfully on the hardware-validated RPi4 builder.
+# It does not mean an SD image or physical handheld boot has been validated.
+build_evidence = "docs/rg35xxsp-build-evidence.md"
 
 [source_baseline]
 research_repository = "https://github.com/hsyysy/rg35xxsp"
@@ -19,7 +21,7 @@ notes = [
 [[components]]
 name = "u-boot"
 role = "SPL and second-stage bootloader"
-status = "selected"
+status = "built"
 preferred_provenance = "upstream-source"
 repository = "https://github.com/u-boot/u-boot"
 tag = "v2026.04"
@@ -32,7 +34,7 @@ required_evidence = ["source build on RPi4 builder", "SPL at 8 KiB offset", "ser
 [[components]]
 name = "trusted-firmware-a"
 role = "EL3 firmware where required by selected U-Boot build"
-status = "selected"
+status = "built"
 preferred_provenance = "upstream-source"
 repository = "https://github.com/ARM-software/arm-trusted-firmware"
 tag = "lts-v2.14.2"
@@ -44,7 +46,7 @@ required_evidence = ["source build on RPi4 builder", "BL31 integrated into U-Boo
 [[components]]
 name = "linux"
 role = "kernel and modules"
-status = "selected"
+status = "built"
 preferred_provenance = "upstream-stable-source"
 repository = "https://github.com/gregkh/linux"
 tag = "v7.0.9"
@@ -56,7 +58,7 @@ required_evidence = ["source build on RPi4 builder", "H700 DTB built", "NixOS st
 [[components]]
 name = "device-tree"
 role = "RG35XXSP hardware description"
-status = "selected"
+status = "built"
 preferred_provenance = "upstream-stable-source"
 repository = "https://github.com/gregkh/linux"
 tag = "v7.0.9"
