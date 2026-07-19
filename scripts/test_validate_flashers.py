@@ -17,9 +17,10 @@ class FlasherContractTests(unittest.TestCase):
 
     def test_non_delivery_target_cannot_enable_delivery(self) -> None:
         source = (ROOT / "product/flashers/rg35xxsp-bringup-v1.toml").read_text()
+        source = source.replace('status = "delivery-approved"', 'status = "artifact-validated"')
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "bad.toml"
-            path.write_text(source.replace("enabled = false", "enabled = true"))
+            path.write_text(source)
             with self.assertRaisesRegex(ValueError, "target must disable delivery"):
                 validate(path, ROOT)
 
