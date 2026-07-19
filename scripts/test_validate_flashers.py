@@ -15,12 +15,12 @@ class FlasherContractTests(unittest.TestCase):
         for name in ("rpi4b-builder-v1.toml", "rg35xxsp-bringup-v1.toml"):
             validate(ROOT / "product/flashers" / name, ROOT)
 
-    def test_planned_target_cannot_enable_delivery(self) -> None:
+    def test_non_delivery_target_cannot_enable_delivery(self) -> None:
         source = (ROOT / "product/flashers/rg35xxsp-bringup-v1.toml").read_text()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "bad.toml"
             path.write_text(source.replace("enabled = false", "enabled = true"))
-            with self.assertRaisesRegex(ValueError, "planned target must disable delivery"):
+            with self.assertRaisesRegex(ValueError, "materializable target must disable delivery"):
                 validate(path, ROOT)
 
     def test_hardware_validated_builder_still_requires_native_build(self) -> None:

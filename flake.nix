@@ -202,6 +202,26 @@
       rg35xxspBootChain = import ./nix/hardware/rg35xxsp/boot-chain.nix {
         pkgs = import nixpkgs { system = "aarch64-linux"; };
       };
+      rg35xxspBringupImage = let
+        pkgs = import nixpkgs { system = "aarch64-linux"; };
+        rootSystem = nixpkgs.lib.nixosSystem {
+          system = "aarch64-linux";
+          modules = [
+            ./nix/modules/minimal-appliance.nix
+            "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
+            ./nix/modules/sd-image-no-host-xattrs.nix
+            ({ ... }: {
+              boot.kernelPackages = pkgs.linuxPackagesFor rg35xxspBootChain.kernel;
+              hardware.deviceTree.name = "allwinner/sun50i-h700-anbernic-rg35xx-sp.dtb";
+              sdImage.compressImage = false;
+              sdImage.firmwareSize = 256;
+            })
+          ];
+        };
+      in pkgs.callPackage ./nix/make-rg35xxsp-image.nix {
+        rootFilesystemImage = rootSystem.config.sdImage.rootFilesystemImage;
+        bootChain = rg35xxspBootChain.bundle;
+      };
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -312,6 +332,7 @@
         packages = {
           inherit styrene styrened styrened-i2p styrene-i2p styrene-tui oci oci-i2p;
           rg35xxsp-boot-chain = rg35xxspBootChain.bundle;
+          rg35xxsp-bringup-image = rg35xxspBringupImage;
           rg35xxsp-trusted-firmware-a = rg35xxspBootChain.tfA;
           rg35xxsp-u-boot = rg35xxspBootChain.uBoot;
           rg35xxsp-linux = rg35xxspBootChain.kernel;

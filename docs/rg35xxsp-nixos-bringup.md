@@ -40,8 +40,10 @@ Proven on the hardware-validated RPi4 builder:
 
 This resolves the earlier assumptions that an upstream H700 defconfig and exact
 SP DTB might be unavailable. It does not resolve physical display, input,
-power, networking, audio, or boot-layout behavior. The flasher contract remains
-planned and delivery remains disabled.
+power, networking, audio, or boot-layout behavior. The flasher contract is now
+`materializable`: candidate construction and structural validation are allowed,
+but delivery remains disabled pending complete OEM recovery coverage and an
+explicit promotion to `delivery-approved`.
 
 ## Overview
 

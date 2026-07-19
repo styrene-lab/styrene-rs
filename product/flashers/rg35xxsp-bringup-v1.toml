@@ -1,7 +1,7 @@
 schema_version = 1
 id = "rg35xxsp-bringup"
 version = 1
-status = "planned"
+status = "materializable"
 purpose = "minimal-h700-hardware-bringup"
 hardware_profile = "anbernic-rg35xxsp-h700"
 deployment_tier = "constrained-linux"
