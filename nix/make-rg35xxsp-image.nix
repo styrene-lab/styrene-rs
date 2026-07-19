@@ -31,8 +31,12 @@ stdenv.mkDerivation {
 
     root_fs=${rootFilesystemImage}
     ${lib.optionalString compressImage ''
-      root_fs="$work/root-fs.img"
-      zstd -d --no-progress ${rootFilesystemImage} -o "$root_fs"
+      case ${rootFilesystemImage} in
+        *.zst)
+          root_fs="$work/root-fs.img"
+          zstd -d --no-progress ${rootFilesystemImage} -o "$root_fs"
+          ;;
+      esac
     ''}
 
     cp ${bootChain}/boot/Image boot/Image
