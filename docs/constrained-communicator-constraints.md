@@ -329,6 +329,7 @@ Also record:
 - photographs of labels, ports, card-slot labels, and board/revision markings available without destructive disassembly;
 - SHA-256 hashes plus partition tables and full images of both original cards;
 - exact current firmware name/version and download source;
+- a hardware-interface evidence bundle following `docs/hardware-interface-observation.md`, including adapter identity, measured electrical profile, photographed wiring, raw captures, and control-versus-experiment sessions;
 - boot behavior with each card removed independently;
 - input events for every button, lid close/open, short power press, and long power press;
 - RG35XXSP HDMI hotplug, mode, audio, and lid behavior while HDMI is connected;
@@ -342,7 +343,7 @@ Do not publish serial numbers, Wi-Fi credentials, private keys, identities, or f
 
 **Inputs:** one physical reference unit and its currently bootable recovery media.
 
-**Outputs:** hardware revision record, raw probe bundle, photographed/recorded control labels, evdev map, display measurements, recovery procedure.
+**Outputs:** hardware revision record, raw probe bundle, photographed/recorded control labels, evdev map, display measurements, recovery procedure. UART/USB-serial and other electrical probe evidence must use the adapter/connection/session/interpretation separation and observe-only default defined in `docs/hardware-interface-observation.md`; a known-good control capture is required before treating silence from an experimental image as boot evidence.
 
 **Stop condition:** if hardware identity or recovery is unreliable, do not establish a product baseline from that unit.
 
