@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # T09-T12: Send LXMF messages between peers and verify delivery.
 
-source /harness/harness.sh
+source "${HARNESS_ROOT:-/harness}/harness.sh"
 
 echo "  Suite: Messaging"
 

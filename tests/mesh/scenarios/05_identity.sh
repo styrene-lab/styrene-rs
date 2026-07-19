@@ -2,7 +2,7 @@
 # T17-T19: Identity operations via styrene CLI.
 # T20 (nex profile signing) is skipped — nex is not available in this container.
 
-source /harness/harness.sh
+source "${HARNESS_ROOT:-/harness}/harness.sh"
 
 echo "  Suite: Identity"
 

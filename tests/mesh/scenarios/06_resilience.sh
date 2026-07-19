@@ -1,29 +1,26 @@
 #!/usr/bin/env bash
-# T21-T24: Resilience tests — kill and restart containers, verify recovery.
-#
-# NOTE: These tests require the Docker socket to be mounted into the operator
-# container, or they must be run from the host. When run inside the operator
-# container without Docker access, they will be skipped.
+# execution: host
+# T21-T24: Resilience tests — host-controlled stop/restart and recovery checks.
 
-source /harness/harness.sh
+source "${HARNESS_ROOT:-/harness}/harness.sh"
 
-echo "  Suite: Resilience"
-
-# Check if we have docker CLI access
-if ! command -v docker &>/dev/null; then
-    echo "  WARNING: T21-T24: docker CLI not available in container"
-    echo "  WARNING: Resilience tests SKIPPED — results are incomplete"
-    echo "  NOTE: Run resilience tests from the host or mount the Docker socket"
-    # Report skipped tests as failures so CI does not silently pass
-    _FAIL_COUNT=4
-    echo "RESULTS: $_PASS_COUNT $_FAIL_COUNT"
-    exit 1
-fi
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-styrene-mesh}
+STYRENE_MESH_COMPOSE=${STYRENE_MESH_COMPOSE:-docker}
+case "$STYRENE_MESH_COMPOSE" in
+    docker) compose=(docker compose -p "$COMPOSE_PROJECT_NAME" -f "${HARNESS_ROOT:-/harness}/docker-compose.yml") ;;
+    podman)
+        compose_bin=${STYRENE_MESH_COMPOSE_BIN:-podman-compose}
+        compose=("$compose_bin" -p "$COMPOSE_PROJECT_NAME" -f "${HARNESS_ROOT:-/harness}/docker-compose.yml")
+        ;;
+    *) echo "unsupported STYRENE_MESH_COMPOSE=$STYRENE_MESH_COMPOSE" >&2; exit 2 ;;
+esac
 
 RECOVERY_TIMEOUT=60
 
+echo "  Suite: Resilience"
+
 # T21: Stop alpha, verify hub notices
-docker stop mesh-alpha >/dev/null 2>&1 && RC=0 || RC=$?
+"${compose[@]}" stop alpha >/dev/null 2>&1 && RC=0 || RC=$?
 if [ "$RC" -eq 0 ]; then
     pass "T21a: stopped alpha container"
 else
@@ -43,7 +40,7 @@ else
 fi
 
 # T22: Restart alpha, verify it reconnects
-docker start mesh-alpha >/dev/null 2>&1 && RC=0 || RC=$?
+"${compose[@]}" start alpha >/dev/null 2>&1 && RC=0 || RC=$?
 if [ "$RC" -eq 0 ]; then
     pass "T22a: restarted alpha container"
 else
@@ -58,7 +55,7 @@ else
 fi
 
 # T23: Stop hub, verify peers handle gracefully
-docker stop mesh-hub >/dev/null 2>&1 && RC=0 || RC=$?
+"${compose[@]}" stop hub >/dev/null 2>&1 && RC=0 || RC=$?
 if [ "$RC" -eq 0 ]; then
     pass "T23a: stopped hub container"
 else
@@ -78,7 +75,7 @@ else
 fi
 
 # T24: Restart hub, verify full mesh recovery
-docker start mesh-hub >/dev/null 2>&1 && RC=0 || RC=$?
+"${compose[@]}" start hub >/dev/null 2>&1 && RC=0 || RC=$?
 if [ "$RC" -eq 0 ]; then
     pass "T24a: restarted hub container"
 else
