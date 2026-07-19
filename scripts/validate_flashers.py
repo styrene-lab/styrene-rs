@@ -62,8 +62,8 @@ def validate(path: Path, root: Path) -> None:
 
     delivery = data.get("delivery", {})
     delivery_enabled = delivery.get("enabled", True)
-    if status == "planned" and delivery_enabled is not False:
-        errors.append("planned target must disable delivery")
+    if status in {"planned", "materializable", "artifact-validated"} and delivery_enabled is not False:
+        errors.append(f"{status} target must disable delivery")
     delivery_command = delivery.get("command")
     if not isinstance(delivery_command, str) or not (root / delivery_command).is_file():
         errors.append("delivery.command must name an existing repository file")
