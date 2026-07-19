@@ -38,7 +38,7 @@ else
   rm -f '$dir/output-paths.tmp'
   printf 'failed\\n' > '$dir/status'
 fi
-printf '%s\n' "$rc" > '$dir/exit-code'
+printf '%s\n' "\$rc" > '$dir/exit-code'
 exit \$rc
 EOF
 chmod 0700 "$dir/run.sh"
