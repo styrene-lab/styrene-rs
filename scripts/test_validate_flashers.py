@@ -20,7 +20,7 @@ class FlasherContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "bad.toml"
             path.write_text(source.replace("enabled = false", "enabled = true"))
-            with self.assertRaisesRegex(ValueError, "materializable target must disable delivery"):
+            with self.assertRaisesRegex(ValueError, "target must disable delivery"):
                 validate(path, ROOT)
 
     def test_hardware_validated_builder_still_requires_native_build(self) -> None:

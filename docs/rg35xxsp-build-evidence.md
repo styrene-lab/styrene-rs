@@ -17,6 +17,10 @@ b4039d37 feat(product): scaffold RG35XXSP bring-up contract
 0a4c3602 feat(nix): select RG35XXSP boot-chain sources
 fc446ff3 feat(nix): pin RG35XXSP open boot-chain sources
 1901f251 feat(nix): archive RPi4 build outputs locally
+d7abcf03 feat(nix): materialize RG35XXSP structural image
+09965fec fix(nix): resume detached handheld image builds
+0683ea2f fix(nix): use valid handheld boot label
+d419980a fix(nix): install handheld image manifest in place
 ```
 
 Current status:
@@ -29,13 +33,51 @@ Linux kernel                       source-built successfully
 Linux modules                      source-built successfully
 RG35XXSP-specific DTB              source-built and present
 Mac recovery archives              complete and checksum-verified
-aggregate boot-chain bundle        next build gate
-bring-up SD image                  not implemented
+aggregate boot-chain bundle        built into structural image
+bring-up SD image                  artifact-validated
 physical delivery                  disabled
 physical RG35XXSP boot             not attempted
 ```
 
-A successful source build is not evidence that the physical handheld boots. `product/flashers/rg35xxsp-bringup-v1.toml` remains `planned` with delivery disabled.
+The structural image completed natively on `styrene-builder-a` and passed the
+repository validator. This is not evidence that the physical handheld boots.
+`product/flashers/rg35xxsp-bringup-v1.toml` is `artifact-validated` with
+delivery disabled.
+
+## Structural SD image
+
+The materialized image completed on the physical builder:
+
+```text
+derivation: /nix/store/p9xhkkwmx1jds4sgv8rlg7skkb7asb79-styrene-rg35xxsp-bringup-image.drv
+output:     /nix/store/l07rryc5k5aabpv65gjp5gydhr4iqcf1-styrene-rg35xxsp-bringup-image
+raw size:   3,900,620,800 bytes
+compressed: 1,442,242,492 bytes
+```
+
+Hashes:
+
+```text
+raw image:        87783ed17f6764a573b00383c001af09c89af8e1c08c276d3bfbe7ee66ed5c71
+compressed image: c3424cfebbf9cba33a5bc58cc0a5f69e47769b3d70a4f4818dd874bc86187ab4
+recovery NAR:     b43ba0a7ccbc6db55fcb4fac5e2a0d11a7a7a74db1964347b7792391919d8336
+```
+
+The structural validator confirmed the MBR, expected partition offsets,
+Allwinner `eGON` SPL marker at 8 KiB, complete decompression, and exact raw-image
+checksum. The artifact remains explicitly marked `delivery_authorized=false`.
+
+Local presentation artifact:
+
+```text
+result-rg35xxsp-bringup/
+```
+
+Restorable Nix archive:
+
+```text
+.builder-artifacts/rpi4b/l07rryc5k5aabpv65gjp5gydhr4iqcf1-styrene-rg35xxsp-bringup-image.nar.zst
+```
 
 ## Builder used
 

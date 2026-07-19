@@ -1,7 +1,7 @@
 schema_version = 1
 id = "rg35xxsp-bringup"
 version = 1
-status = "materializable"
+status = "artifact-validated"
 purpose = "minimal-h700-hardware-bringup"
 hardware_profile = "anbernic-rg35xxsp-h700"
 deployment_tier = "constrained-linux"
@@ -38,6 +38,17 @@ requires = [
   "provenance-manifest",
 ]
 
+[artifact_evidence]
+date = "2026-07-19"
+builder = "styrene-builder-a"
+derivation = "/nix/store/p9xhkkwmx1jds4sgv8rlg7skkb7asb79-styrene-rg35xxsp-bringup-image.drv"
+output = "/nix/store/l07rryc5k5aabpv65gjp5gydhr4iqcf1-styrene-rg35xxsp-bringup-image"
+image_sha256 = "87783ed17f6764a573b00383c001af09c89af8e1c08c276d3bfbe7ee66ed5c71"
+compressed_sha256 = "c3424cfebbf9cba33a5bc58cc0a5f69e47769b3d70a4f4818dd874bc86187ab4"
+nar_sha256 = "b43ba0a7ccbc6db55fcb4fac5e2a0d11a7a7a74db1964347b7792391919d8336"
+structural_validation = "passed"
+delivery_authorized = false
+
 [delivery]
 enabled = false
 command = "scripts/flash-rpi4-image.sh"
@@ -68,7 +79,7 @@ required_checks = [
 
 [boundaries]
 notes = [
-  "This planned contract MUST NOT authorize flashing.",
+  "This artifact-validated contract MUST NOT authorize flashing.",
   "OEM binary evidence is local and must not be committed or redistributed.",
   "A source-pinned bootloader, kernel, device tree, and firmware set is required before delivery approval.",
   "Styrene communicator enablement follows board bring-up and is not part of the first boot claim.",
