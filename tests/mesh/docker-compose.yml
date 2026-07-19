@@ -18,7 +18,6 @@ services:
       context: ../..
       dockerfile: tests/mesh/Dockerfile.styrened
     image: styrened-mesh:latest
-    container_name: mesh-hub
     hostname: hub
     command:
       - styrened
@@ -51,7 +50,6 @@ services:
       context: ../..
       dockerfile: tests/mesh/Dockerfile.styrened
     image: styrened-mesh:latest
-    container_name: mesh-alpha
     hostname: alpha
     entrypoint: ["bash", "-c"]
     command:
@@ -81,7 +79,6 @@ services:
       context: ../..
       dockerfile: tests/mesh/Dockerfile.styrened
     image: styrened-mesh:latest
-    container_name: mesh-beta
     hostname: beta
     entrypoint: ["bash", "-c"]
     command:
@@ -111,7 +108,6 @@ services:
       context: ../..
       dockerfile: tests/mesh/Dockerfile.styrened
     image: styrened-mesh:latest
-    container_name: mesh-gamma
     hostname: gamma
     entrypoint: ["bash", "-c"]
     command:
@@ -141,13 +137,9 @@ services:
       context: ../..
       dockerfile: tests/mesh/Dockerfile.operator
     image: styrene-operator:latest
-    container_name: mesh-operator
     hostname: operator
-    entrypoint: ["bash", "-c"]
-    command:
-      - |
-        sleep 15
-        /harness/run_tests.sh
+    entrypoint: ["bash", "/harness/run_tests.sh"]
+    command: []
     depends_on:
       hub:
         condition: service_healthy

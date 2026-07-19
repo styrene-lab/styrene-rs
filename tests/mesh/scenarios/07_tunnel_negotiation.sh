@@ -10,7 +10,7 @@
 # T27: (SKIP) Actual WireGuard tunnel establishment — requires NET_ADMIN
 # T28: (SKIP) Tunnel data plane connectivity — requires NET_ADMIN + wireguard
 
-source /harness/harness.sh
+source "${HARNESS_ROOT:-/harness}/harness.sh"
 
 echo "  Suite: Tunnel Negotiation"
 

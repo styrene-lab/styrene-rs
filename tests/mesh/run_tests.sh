@@ -6,7 +6,8 @@
 
 set -euo pipefail
 
-SCENARIO_DIR="/harness/scenarios"
+HARNESS_ROOT=${HARNESS_ROOT:-/harness}
+SCENARIO_DIR="$HARNESS_ROOT/scenarios"
 TOTAL_PASS=0
 TOTAL_FAIL=0
 
@@ -50,6 +51,14 @@ echo ""
 for scenario in "$SCENARIO_DIR"/*.sh; do
     [ -f "$scenario" ] || continue
     scenario_name="$(basename "$scenario")"
+
+    # Host-only scenarios require container lifecycle authority. The operator
+    # container intentionally has neither a daemon socket nor a container CLI.
+    if grep -q '^# execution: host$' "$scenario"; then
+        echo "Skipping host-controlled scenario: $scenario_name"
+        echo ""
+        continue
+    fi
 
     echo "----------------------------------------"
     echo "Running: $scenario_name"
