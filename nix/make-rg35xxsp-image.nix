@@ -78,7 +78,7 @@ stdenv.mkDerivation {
     dd if="$uboot" of="$img" bs=1024 seek=8 conv=notrunc status=none
 
     truncate -s $((boot_sectors * 512)) boot.img
-    mkfs.vfat --invariant -i 3500A11E -n STYRENE_BOOT boot.img
+    mkfs.vfat --invariant -i 3500A11E -n STY_BOOT boot.img
     cd boot
     while IFS= read -r d; do faketime '2000-01-01' mmd -i ../boot.img "::/$d"; done < <(find . -mindepth 1 -type d -printf '%P\n' | sort)
     while IFS= read -r f; do mcopy -pvm -i ../boot.img "$f" "::/$f"; done < <(find . -type f -printf '%P\n' | sort)
