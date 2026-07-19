@@ -18,11 +18,20 @@
     openssh.authorizedKeys.keys = lib.optionals
       (builtins.getEnv "STYRENE_BUILDER_SSH_KEY" != "")
       [ (builtins.getEnv "STYRENE_BUILDER_SSH_KEY") ];
+    linger = true;
   };
   users.groups.nix-builder = { };
   nix.settings.trusted-users = [ "root" "nix-builder" ];
   nix.settings.max-jobs = 1;
   nix.settings.cores = 3;
+
+  # Build logs, detached job metadata, and GC roots must survive reboots and
+  # transport failures. /home is on the persistent root filesystem.
+  systemd.tmpfiles.rules = [
+    "d /home/nix-builder/.local/state/styrene 0700 nix-builder nix-builder -"
+    "d /home/nix-builder/.local/state/styrene/build-jobs 0700 nix-builder nix-builder -"
+    "d /home/nix-builder/.local/state/styrene/gcroots 0700 nix-builder nix-builder -"
+  ];
 
   systemd.services.styrene-builder-state = {
     description = "Prepare writable Nix builder runtime state";
