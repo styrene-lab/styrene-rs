@@ -100,7 +100,6 @@ stdenv.mkDerivation {
     root_label=NIXOS_ROOT
     EOF
     sha256sum "$img" > manifest/image.sha256
-    cp -r manifest "$work/"
 
     ${lib.optionalString compressImage ''zstd -T$NIX_BUILD_CORES --rm "$img"''}
     runHook postBuild
