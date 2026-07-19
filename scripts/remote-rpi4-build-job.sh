@@ -21,28 +21,22 @@ if [[ -f $dir/status ]] && grep -qxE 'running|succeeded' "$dir/status"; then
   printf 'job=%s\nstatus=%s\n' "$job" "$(cat "$dir/status")"
   exit 0
 fi
-rm -f "$dir/exit-code" "$dir/output-paths" "$dir/pid"
+rm -f "$dir/exit-code" "$dir/output-paths" "$dir/pid" "$dir/run.sh"
 printf 'running\n' > "$dir/status"
-cat > "$dir/run.sh" <<EOF
-#!/usr/bin/env bash
-set +e
-if nix-store -r '$drv' > '$dir/output-paths.tmp' 2>> '$dir/build.log'; then
-  rc=0
-else
-  rc=\$?
-fi
-if ((rc == 0)); then
-  mv '$dir/output-paths.tmp' '$dir/output-paths'
-  printf 'succeeded\\n' > '$dir/status'
-else
-  rm -f '$dir/output-paths.tmp'
-  printf 'failed\\n' > '$dir/status'
-fi
-printf '%s\n' "\$rc" > '$dir/exit-code'
-exit \$rc
-EOF
-chmod 0700 "$dir/run.sh"
-setsid "$dir/run.sh" </dev/null >>"$dir/build.log" 2>&1 &
+nohup setsid bash -c '
+  set +e
+  drv=$1; dir=$2
+  if nix-store -r "$drv" > "$dir/output-paths.tmp" 2>> "$dir/build.log"; then rc=0; else rc=$?; fi
+  if ((rc == 0)); then
+    mv "$dir/output-paths.tmp" "$dir/output-paths"
+    printf "succeeded\\n" > "$dir/status"
+  else
+    rm -f "$dir/output-paths.tmp"
+    printf "failed\\n" > "$dir/status"
+  fi
+  printf "%s\\n" "$rc" > "$dir/exit-code"
+  exit "$rc"
+' styrene-detached-build "$drv" "$dir" </dev/null >>"$dir/build.log" 2>&1 &
 pid=$!
 printf '%s\n' "$pid" > "$dir/pid"
 printf 'job=%s\nstatus=running\npid=%s\n' "$job" "$pid"
