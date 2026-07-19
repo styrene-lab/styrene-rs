@@ -14,12 +14,17 @@ drv=$(nix --extra-experimental-features 'nix-command flakes' path-info --derivat
 [[ $drv =~ ^/nix/store/[a-z0-9]{32}-[^/]+\.drv$ ]] || { echo "unexpected derivation: $drv" >&2; exit 1; }
 
 nix --extra-experimental-features 'nix-command flakes' copy --to "$store_uri" "$drv"
-output=$(ssh -o BatchMode=yes "$host" nix-store -r "$drv")
+./scripts/remote-rpi4-build-job.sh start "$host" "$drv"
+./scripts/remote-rpi4-build-job.sh wait "$host" "$drv"
+report=$(./scripts/remote-rpi4-build-job.sh status "$host" "$drv")
+outputs=()
+while IFS= read -r line; do outputs+=("$line"); done < <(sed -n 's/^output=//p' <<<"$report")
+((${#outputs[@]} > 0)) || { echo "remote build succeeded without outputs" >&2; exit 1; }
+output=${outputs[0]}
 [[ $output == /nix/store/* ]] || { echo "remote build returned invalid output: $output" >&2; exit 1; }
 
 # Preserve every completed output as a restorable NAR before exporting its
 # presentation files. This retains Nix metadata and the transitive closure.
-read -r -a outputs <<< "$(ssh -o BatchMode=yes "$host" nix-store -q --outputs "$drv")"
 ./scripts/archive-rpi4-outputs.sh "${outputs[@]}"
 
 rm -rf "$out"

@@ -189,6 +189,43 @@ stable access contract.
    still execute them; historical acceptance does not prove a newly built or
    newly flashed artifact.
 
+The remote build transport is **detached and reconnectable**. The workstation
+copies the derivation closure, starts a `setsid` job under
+`~/.local/state/styrene/build-jobs/<drv>/`, and then polls status over independent
+SSH connections. A Wi-Fi reset, laptop sleep, terminal closure, or transient SSH
+timeout no longer terminates the native build. Re-running the same command
+reattaches to a `running` job or consumes a `succeeded` job instead of starting
+duplicate work. Explicit cancellation is a separate operation.
+
+Job state includes:
+
+```text
+status
+pid
+build.log
+exit-code
+output-paths
+```
+
+Inspect or wait manually:
+
+```bash
+scripts/remote-rpi4-build-job.sh status nix-builder@styrene-builder-a.local /nix/store/NAME.drv
+scripts/remote-rpi4-build-job.sh wait   nix-builder@styrene-builder-a.local /nix/store/NAME.drv
+```
+
+Cancel only when deliberate:
+
+```bash
+scripts/remote-rpi4-build-job.sh cancel nix-builder@styrene-builder-a.local /nix/store/NAME.drv
+```
+
+The declarative builder profile enables user lingering and creates persistent
+job/GC-root directories under the builder user's home. Existing flashed builders
+can use the detached runner immediately because it depends only on `setsid`,
+SSH, and `nix-store`; reflashing the current profile also makes the persistence
+policy declarative.
+
 The builder is operationally validated when SSH succeeds with the injected key
 and a native, non-substituted `aarch64-linux` derivation completes.
 
