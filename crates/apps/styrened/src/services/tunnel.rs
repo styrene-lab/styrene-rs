@@ -595,13 +595,33 @@ impl TunnelService {
         )
         .map_err(|e| format!("wire encode: {e}"))?;
 
+        crate::daemon_diagnostic!(
+            "[tunnel] outbound {:?} peer_identity={} delivery_destination={}",
+            msg_type,
+            peer_identity,
+            hex::encode(delivery_addr.as_slice())
+        );
+
         crate::services::MessagingService::deliver(
             self.transport.as_ref(),
             delivery_addr,
             &lxmf_payload,
         )
         .await
-        .map_err(|e| format!("deliver: {e}"))?;
+        .map_err(|e| {
+            crate::daemon_diagnostic!(
+                "[tunnel] outbound {:?} delivery failed peer_identity={} error={e}",
+                msg_type,
+                peer_identity
+            );
+            format!("deliver: {e}")
+        })?;
+
+        crate::daemon_diagnostic!(
+            "[tunnel] outbound {:?} accepted peer_identity={}",
+            msg_type,
+            peer_identity
+        );
 
         Ok(())
     }
