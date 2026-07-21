@@ -125,7 +125,9 @@ spec:
           image: $RUNTIME_IMAGE
           command: [/artifacts/bin/styrened]
           args: [--socket, /run/styrene/daemon.sock, --config, /configs/$name.toml, --transport, 0.0.0.0:$port, --announce-interval-secs, "15"]
-          env: [{name: LXMF_DISPLAY_NAME, value: $name}]
+          env:
+            - {name: STYRENED_DIAGNOSTICS, value: "1"}
+            - {name: LXMF_DISPLAY_NAME, value: $name}
           readinessProbe:
             exec: {command: [test, -S, /run/styrene/daemon.sock]}
             periodSeconds: 3

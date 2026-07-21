@@ -34,6 +34,7 @@ services:
       - ./configs/hub.toml:/etc/styrene/config.toml:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
+      - STYRENED_DIAGNOSTICS=1
       - LXMF_DISPLAY_NAME=hub
     healthcheck:
       test: ["CMD", "test", "-S", "/run/styrene/daemon.sock"]
@@ -64,6 +65,7 @@ services:
       - ./configs/alpha.toml:/etc/styrene/config.toml:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
+      - STYRENED_DIAGNOSTICS=1
       - LXMF_DISPLAY_NAME=alpha
     healthcheck:
       test: ["CMD", "test", "-S", "/run/styrene/daemon.sock"]
@@ -93,6 +95,7 @@ services:
       - ./configs/beta.toml:/etc/styrene/config.toml:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
+      - STYRENED_DIAGNOSTICS=1
       - LXMF_DISPLAY_NAME=beta
     healthcheck:
       test: ["CMD", "test", "-S", "/run/styrene/daemon.sock"]
@@ -122,6 +125,7 @@ services:
       - ./configs/gamma.toml:/etc/styrene/config.toml:ro
     environment:
       - STYRENE_CONFIG=/etc/styrene/config.toml
+      - STYRENED_DIAGNOSTICS=1
       - LXMF_DISPLAY_NAME=gamma
     healthcheck:
       test: ["CMD", "test", "-S", "/run/styrene/daemon.sock"]
