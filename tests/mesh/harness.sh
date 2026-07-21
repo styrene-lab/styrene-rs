@@ -71,8 +71,10 @@ wait_for_peer() {
     local elapsed=0
     local interval
 
+    local peers
     while [ "$elapsed" -lt "$timeout" ]; do
-        if styrene --socket "$socket_url" peers 2>&1 | grep -qiF "$peer_name"; then
+        peers=$(styrene --socket "$socket_url" peers 2>&1) || peers=""
+        if grep -qiF -- "$peer_name" <<<"$peers"; then
             return 0
         fi
         # Poll faster initially (1s), then back off to 3s after 30s
