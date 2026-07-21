@@ -286,8 +286,9 @@ pub(crate) async fn tunnel_offer(socket: Option<&Path>, peer: &str) -> anyhow::R
     let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
     if success {
         let nonce = result.get("nonce").and_then(|v| v.as_str()).unwrap_or("?");
+        let state = result.get("state").and_then(|v| v.as_str()).unwrap_or("queued");
         eprintln!(
-            "  {} tunnel offer sent (nonce: {})",
+            "  {} tunnel operation accepted (id: {}, state: {state})",
             style("✓").green().bold(),
             truncate(nonce, 8)
         );
