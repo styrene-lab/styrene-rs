@@ -13,6 +13,7 @@ use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use styrene_ipc::types::TunnelOperationInfo;
 use styrene_mesh::tunnel_payloads::{
     self, TunnelAccept, TunnelOffer, TunnelReject, TunnelTeardown,
 };
@@ -58,6 +59,8 @@ pub struct TunnelService {
     seen_nonces: Mutex<HashMap<String, i64>>,
     /// Active tunnels: peer_identity → peer state.
     active_tunnels: Mutex<HashMap<String, TunnelPeerState>>,
+    /// Latest establish operation by peer identity.
+    operations: Mutex<HashMap<String, TunnelOperationInfo>>,
     /// Allowed peer identities (empty = allow all).
     allowed_peers: Mutex<Option<Vec<String>>>,
     /// Optional event service for emitting tunnel state changes.
@@ -102,6 +105,7 @@ impl TunnelService {
             pending_offers: Mutex::new(HashMap::new()),
             seen_nonces: Mutex::new(HashMap::new()),
             active_tunnels: Mutex::new(HashMap::new()),
+            operations: Mutex::new(HashMap::new()),
             allowed_peers: Mutex::new(None),
             events: Mutex::new(None),
             #[cfg(feature = "wireguard")]
@@ -130,6 +134,7 @@ impl TunnelService {
             pending_offers: Mutex::new(HashMap::new()),
             seen_nonces: Mutex::new(HashMap::new()),
             active_tunnels: Mutex::new(HashMap::new()),
+            operations: Mutex::new(HashMap::new()),
             allowed_peers: Mutex::new(None),
             events: Mutex::new(None),
             #[cfg(feature = "wireguard")]
@@ -151,6 +156,31 @@ impl TunnelService {
         if let Some(events) = self.events.lock().expect("lock").as_ref() {
             events.emit_tunnel_state(peer_hash, state, "wireguard");
         }
+    }
+
+    fn set_operation_state(
+        &self,
+        peer_hash: &str,
+        operation_id: &str,
+        state: &str,
+        error: Option<(&str, &str)>,
+    ) {
+        self.operations.lock().expect("lock").insert(
+            peer_hash.to_string(),
+            TunnelOperationInfo {
+                operation_id: operation_id.to_string(),
+                peer_hash: peer_hash.to_string(),
+                kind: "establish".to_string(),
+                state: state.to_string(),
+                error_code: error.map(|(code, _)| code.to_string()),
+                error_message: error.map(|(_, message)| message.to_string()),
+            },
+        );
+        self.emit_state(peer_hash, state);
+    }
+
+    pub fn latest_operation(&self, peer_hash: &str) -> Option<TunnelOperationInfo> {
+        self.operations.lock().expect("lock").get(peer_hash).cloned()
     }
 
     /// Set allowed peers. None = allow all. Some(vec) = only these identities.
@@ -347,13 +377,21 @@ impl TunnelService {
         Ok(())
     }
 
-    /// Initiate a tunnel to a peer. Sends TUNNEL_OFFER via LXMF.
-    pub async fn initiate_tunnel(&self, peer_identity: &str) -> Result<String, String> {
+    /// Queue tunnel establishment and return before mesh delivery completes.
+    ///
+    /// The returned nonce is the operation correlation ID for this first slice.
+    /// Delivery remains daemon-owned if the IPC client disconnects.
+    pub fn queue_tunnel(self: &Arc<Self>, peer_identity: &str) -> Result<String, String> {
         if !self.wired {
             return Err("tunnel service not wired to transport".into());
         }
         if !self.transport.is_connected() {
             return Err("transport not connected".into());
+        }
+        if let Some(existing) = self.latest_operation(peer_identity) {
+            if matches!(existing.state.as_str(), "queued" | "sending_offer" | "offer_sent") {
+                return Ok(existing.operation_id);
+            }
         }
 
         let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash);
@@ -378,15 +416,73 @@ impl TunnelService {
             nonce.clone(),
             PendingOffer { peer_identity: peer_identity.to_string(), psk: psk_b64, mtu: 1420 },
         );
+        self.set_operation_state(peer_identity, &nonce, "queued", None);
 
         let payload = rmp_serde::to_vec(&offer).map_err(|e| format!("encode: {e}"))?;
-        self.send_tunnel_message(peer_identity, StyreneMessageType::TunnelOffer, &payload).await?;
+        let service = Arc::clone(self);
+        let peer = peer_identity.to_string();
+        let operation = nonce.clone();
+        tokio::spawn(async move {
+            service.set_operation_state(&peer, &operation, "sending_offer", None);
+            match service
+                .send_tunnel_message(&peer, StyreneMessageType::TunnelOffer, &payload)
+                .await
+            {
+                Ok(()) => {
+                    service.set_operation_state(&peer, &operation, "offer_sent", None);
+                    crate::daemon_diagnostic!(
+                        "[tunnel] operation={} sent TUNNEL_OFFER to {}",
+                        operation,
+                        &peer[..12.min(peer.len())]
+                    );
+                }
+                Err(error) => {
+                    service.pending_offers.lock().expect("lock").remove(&operation);
+                    service.set_operation_state(&peer, &operation, "failed", Some(("DeliveryFailed", &error)));
+                    crate::daemon_diagnostic!(
+                        "[tunnel] operation={} TUNNEL_OFFER delivery failed peer={} error={error}",
+                        operation,
+                        peer
+                    );
+                }
+            }
+        });
 
-        crate::daemon_diagnostic!(
-            "[tunnel] sent TUNNEL_OFFER to {} nonce={}",
-            &peer_identity[..12.min(peer_identity.len())],
-            &nonce[..8]
+        Ok(nonce)
+    }
+
+    /// Initiate a tunnel and wait for offer delivery.
+    ///
+    /// Retained for internal callers that explicitly need delivery completion.
+    pub async fn initiate_tunnel(&self, peer_identity: &str) -> Result<String, String> {
+        if !self.wired {
+            return Err("tunnel service not wired to transport".into());
+        }
+        if !self.transport.is_connected() {
+            return Err("transport not connected".into());
+        }
+
+        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash);
+        let endpoint = self.local_endpoint.lock().expect("lock").clone().unwrap_or_default();
+        let mut psk = [0u8; 32];
+        rand_core::OsRng.fill_bytes(&mut psk);
+        let psk_b64 = base64::engine::general_purpose::STANDARD.encode(psk);
+        let nonce = tunnel_payloads::generate_nonce();
+        let offer = TunnelOffer {
+            wg_pubkey: self.local_wg_pubkey.clone(),
+            endpoint,
+            mesh_ip,
+            psk: psk_b64.clone(),
+            mtu: 1420,
+            nonce: nonce.clone(),
+            timestamp: tunnel_payloads::now_ts(),
+        };
+        self.pending_offers.lock().expect("lock").insert(
+            nonce.clone(),
+            PendingOffer { peer_identity: peer_identity.to_string(), psk: psk_b64, mtu: 1420 },
         );
+        let payload = rmp_serde::to_vec(&offer).map_err(|e| format!("encode: {e}"))?;
+        self.send_tunnel_message(peer_identity, StyreneMessageType::TunnelOffer, &payload).await?;
         Ok(nonce)
     }
 

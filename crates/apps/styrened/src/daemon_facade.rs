@@ -844,18 +844,23 @@ impl DaemonTunnel for DaemonFacade {
 
     async fn tunnel_status(&self, peer_hash: &str) -> Result<TunnelInfo, IpcError> {
         self.require(Capability::TUNNEL_STATUS)?;
-        let state = self
-            .ctx
-            .tunnel()
-            .get_peer_state(peer_hash)
-            .ok_or_else(|| IpcError::not_found("tunnel", peer_hash))?;
-        let mut info = TunnelInfo::default();
-        info.peer_hash = peer_hash.to_string();
-        info.backend = String::from("wireguard");
-        info.state = String::from("established");
-        info.remote_endpoint = Some(state.endpoint.clone());
-        info.established_at = Some(state.established_at);
-        Ok(info)
+        if let Some(state) = self.ctx.tunnel().get_peer_state(peer_hash) {
+            let mut info = TunnelInfo::default();
+            info.peer_hash = peer_hash.to_string();
+            info.backend = String::from("wireguard");
+            info.state = String::from("established");
+            info.remote_endpoint = Some(state.endpoint.clone());
+            info.established_at = Some(state.established_at);
+            return Ok(info);
+        }
+        if let Some(operation) = self.ctx.tunnel().latest_operation(peer_hash) {
+            let mut info = TunnelInfo::default();
+            info.peer_hash = peer_hash.to_string();
+            info.backend = String::from("wireguard");
+            info.state = operation.state;
+            return Ok(info);
+        }
+        Err(IpcError::not_found("tunnel", peer_hash))
     }
 
     async fn tunnel_rekey(&self, peer_hash: &str) -> Result<bool, IpcError> {
@@ -893,10 +898,17 @@ impl DaemonTunnel for DaemonFacade {
     async fn tunnel_establish(&self, peer_hash: &str) -> Result<String, IpcError> {
         self.require(Capability::TUNNEL_ESTABLISH)?;
         self.ctx
-            .tunnel()
-            .initiate_tunnel(peer_hash)
-            .await
+            .tunnel_arc()
+            .queue_tunnel(peer_hash)
             .map_err(|e| IpcError::Internal { message: e })
+    }
+
+    async fn tunnel_operation(&self, peer_hash: &str) -> Result<TunnelOperationInfo, IpcError> {
+        self.require(Capability::TUNNEL_STATUS)?;
+        self.ctx
+            .tunnel()
+            .latest_operation(peer_hash)
+            .ok_or_else(|| IpcError::not_found("tunnel operation", peer_hash))
     }
 }
 
