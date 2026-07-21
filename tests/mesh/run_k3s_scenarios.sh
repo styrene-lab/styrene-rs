@@ -13,6 +13,7 @@ NAMESPACE=${STYRENE_MESH_NAMESPACE:-styrene-mesh-test}
 NODE=${STYRENE_MESH_NODE:-}
 REMOTE_ROOT=${STYRENE_MESH_REMOTE_ROOT:-/var/lib/styrene-mesh-test}
 RUN_ID=${STYRENE_MESH_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}
+export STYRENE_MESH_RUN_ID="$RUN_ID"
 RESULT_DIR=${STYRENE_MESH_RESULT_DIR:-$ROOT/target/mesh-scenarios/$RUN_ID}
 KEEP=${STYRENE_MESH_KEEP:-0}
 RUNTIME_IMAGE=${STYRENE_MESH_RUNTIME_IMAGE:-rust:1.85-slim}
@@ -179,6 +180,7 @@ spec:
             - {name: ALPHA_SOCK, value: /run/alpha/daemon.sock}
             - {name: BETA_SOCK, value: /run/beta/daemon.sock}
             - {name: GAMMA_SOCK, value: /run/gamma/daemon.sock}
+            - {name: STYRENE_MESH_RUN_ID, value: "$RUN_ID"}
           volumeMounts:
             - {name: artifacts, mountPath: /artifacts, readOnly: true}
             - {name: harness, mountPath: /harness, readOnly: true}
