@@ -896,11 +896,20 @@ impl DaemonTunnel for DaemonFacade {
     }
 
     async fn tunnel_establish(&self, peer_hash: &str) -> Result<String, IpcError> {
+        crate::daemon_diagnostic!("[tunnel-ipc] dispatch entered peer={peer_hash}");
         self.require(Capability::TUNNEL_ESTABLISH)?;
-        self.ctx
+        crate::daemon_diagnostic!("[tunnel-ipc] capability check completed peer={peer_hash}");
+        let operation_id = self
+            .ctx
             .tunnel_arc()
             .queue_tunnel(peer_hash)
-            .map_err(|e| IpcError::Internal { message: e })
+            .map_err(|e| IpcError::Internal { message: e })?;
+        crate::daemon_diagnostic!(
+            "[tunnel-ipc] queue_tunnel returned peer={} operation={}",
+            peer_hash,
+            operation_id
+        );
+        Ok(operation_id)
     }
 
     async fn tunnel_operation(&self, peer_hash: &str) -> Result<TunnelOperationInfo, IpcError> {

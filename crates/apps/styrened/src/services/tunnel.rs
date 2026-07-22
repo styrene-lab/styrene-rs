@@ -21,9 +21,9 @@ use styrene_mesh::{StyreneMessage, StyreneMessageType};
 use styrene_services::protocol_registry::{HandleResult, InboundMessage, ProtocolHandler};
 
 #[cfg(feature = "wireguard")]
-use styrene_tunnel::wireguard::WireGuardBackend;
-#[cfg(feature = "wireguard")]
 use styrene_tunnel::TunnelBackend;
+#[cfg(feature = "wireguard")]
+use styrene_tunnel::wireguard::WireGuardBackend;
 
 /// Peer state stored when a tunnel is established.
 #[derive(Debug, Clone)]
@@ -417,6 +417,11 @@ impl TunnelService {
             PendingOffer { peer_identity: peer_identity.to_string(), psk: psk_b64, mtu: 1420 },
         );
         self.set_operation_state(peer_identity, &nonce, "queued", None);
+        crate::daemon_diagnostic!(
+            "[tunnel] operation={} inserted peer={} state=queued",
+            nonce,
+            peer_identity
+        );
 
         let payload = rmp_serde::to_vec(&offer).map_err(|e| format!("encode: {e}"))?;
         let service = Arc::clone(self);
@@ -438,7 +443,12 @@ impl TunnelService {
                 }
                 Err(error) => {
                     service.pending_offers.lock().expect("lock").remove(&operation);
-                    service.set_operation_state(&peer, &operation, "failed", Some(("DeliveryFailed", &error)));
+                    service.set_operation_state(
+                        &peer,
+                        &operation,
+                        "failed",
+                        Some(("DeliveryFailed", &error)),
+                    );
                     crate::daemon_diagnostic!(
                         "[tunnel] operation={} TUNNEL_OFFER delivery failed peer={} error={error}",
                         operation,
