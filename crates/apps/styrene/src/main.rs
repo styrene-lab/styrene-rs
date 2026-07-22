@@ -97,6 +97,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Identity) => commands::identity(socket).await,
 
         #[cfg(feature = "cli")]
+        Some(Command::Path { ref destination }) => commands::path_info(socket, destination).await,
+
+        #[cfg(feature = "cli")]
         Some(Command::Announce) => commands::announce(socket).await,
 
         #[cfg(feature = "cli")]

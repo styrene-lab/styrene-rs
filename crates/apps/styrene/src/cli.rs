@@ -108,6 +108,13 @@ pub enum Command {
     #[cfg(feature = "cli")]
     Identity,
 
+    /// Show transport path readiness for a destination hash
+    #[cfg(feature = "cli")]
+    Path {
+        /// Destination hash
+        destination: String,
+    },
+
     /// Trigger a mesh announce
     #[cfg(feature = "cli")]
     Announce,
