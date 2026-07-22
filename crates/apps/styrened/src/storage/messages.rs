@@ -83,8 +83,16 @@ pub struct MessagesStore {
 impl MessagesStore {
     const SDK_DOMAIN_SNAPSHOT_KEY: &'static str = "sdk_domains.v1";
 
+    fn configure_connection(conn: &Connection) -> rusqlite::Result<()> {
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        conn.pragma_update(None, "journal_mode", "wal")?;
+        conn.pragma_update(None, "synchronous", "normal")?;
+        Ok(())
+    }
+
     pub fn in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
@@ -92,9 +100,9 @@ impl MessagesStore {
 
     pub fn open(path: &std::path::Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
-        // WAL mode is required for concurrent readers (RpcDaemon + AppContext
-        // hold separate connections to the same database file).
-        conn.pragma_update(None, "journal_mode", "wal")?;
+        // WAL permits concurrent readers while the busy timeout absorbs brief
+        // writer contention between daemon workers and compatibility paths.
+        Self::configure_connection(&conn)?;
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
@@ -907,6 +915,25 @@ mod tests {
             receipt_status: receipt_status.map(ToString::to_string),
             read: false,
         }
+    }
+
+    #[test]
+    fn concurrent_connections_wait_for_brief_writer_contention() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("messages.db");
+        let first = MessagesStore::open(&path).unwrap();
+        let second = MessagesStore::open(&path).unwrap();
+
+        first.conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            first.conn.execute_batch("COMMIT").unwrap();
+        });
+
+        let record = outbound_message("contended", 1, Some("sending"));
+        second.insert_message(&record).expect("busy timeout should permit retry");
+        releaser.join().unwrap();
+        assert!(second.get_message("contended").unwrap().is_some());
     }
 
     #[test]
