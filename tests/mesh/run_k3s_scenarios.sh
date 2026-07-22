@@ -17,6 +17,9 @@ export STYRENE_MESH_RUN_ID="$RUN_ID"
 RESULT_DIR=${STYRENE_MESH_RESULT_DIR:-$ROOT/target/mesh-scenarios/$RUN_ID}
 KEEP=${STYRENE_MESH_KEEP:-0}
 RUNTIME_IMAGE=${STYRENE_MESH_RUNTIME_IMAGE:-rust:1.85-slim}
+BUILD_TIMEOUT=${STYRENE_MESH_BUILD_TIMEOUT:-45m}
+BUILD_STALL_TIMEOUT_SECONDS=${STYRENE_MESH_BUILD_STALL_TIMEOUT_SECONDS:-600}
+BUILD_POLL_SECONDS=${STYRENE_MESH_BUILD_POLL_SECONDS:-10}
 
 mkdir -p "$RESULT_DIR"
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -93,10 +96,39 @@ spec:
           hostPath: {path: $REMOTE_ROOT/artifacts, type: DirectoryOrCreate}
 EOF
 
-if ! k wait --for=condition=complete job/build --timeout=30m; then
-  k logs job/build >"$RESULT_DIR/build.log" 2>&1 || true
-  exit 1
-fi
+build_started=$(date +%s)
+build_last_progress=$build_started
+build_last_size=-1
+while :; do
+  if k get job/build -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' | grep -q True; then
+    break
+  fi
+  if k get job/build -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' | grep -q True; then
+    k logs job/build >"$RESULT_DIR/build.log" 2>&1 || true
+    echo "build job failed; see $RESULT_DIR/build.log" >&2
+    exit 1
+  fi
+
+  now=$(date +%s)
+  if [ "$((now - build_started))" -ge "$((${BUILD_TIMEOUT%m} * 60))" ]; then
+    k logs job/build >"$RESULT_DIR/build.log" 2>&1 || true
+    echo "build job exceeded $BUILD_TIMEOUT; see $RESULT_DIR/build.log" >&2
+    exit 1
+  fi
+
+  build_log=$(k logs job/build 2>&1 || true)
+  build_size=${#build_log}
+  if [ "$build_size" -gt "$build_last_size" ]; then
+    build_last_size=$build_size
+    build_last_progress=$now
+    printf '%s\n' "$build_log" >"$RESULT_DIR/build.log"
+  elif [ "$((now - build_last_progress))" -ge "$BUILD_STALL_TIMEOUT_SECONDS" ]; then
+    printf '%s\n' "$build_log" >"$RESULT_DIR/build.log"
+    echo "build job made no log progress for ${BUILD_STALL_TIMEOUT_SECONDS}s; see $RESULT_DIR/build.log" >&2
+    exit 1
+  fi
+  sleep "$BUILD_POLL_SECONDS"
+done
 k logs job/build >"$RESULT_DIR/build.log" 2>&1 || true
 
 $KUBECTL create configmap styrene-mesh-configs -n "$NAMESPACE" \
