@@ -320,6 +320,13 @@ impl DaemonTunnel for StubDaemon {
     async fn tunnel_establish(&self, _peer_hash: &str) -> Result<String, IpcError> {
         Err(IpcError::not_implemented("tunnel_establish"))
     }
+
+    async fn tunnel_operation(
+        &self,
+        _peer_hash: &str,
+    ) -> Result<TunnelOperationInfo, IpcError> {
+        Err(IpcError::not_implemented("tunnel_operation"))
+    }
 }
 
 #[async_trait]
