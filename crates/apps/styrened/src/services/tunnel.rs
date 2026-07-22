@@ -44,15 +44,15 @@ pub struct TunnelPeerState {
 
 /// Tunnel lifecycle management and protocol handler.
 pub struct TunnelService {
-    transport: Arc<dyn MeshTransport>,
-    signer: Arc<PrivateIdentity>,
-    identity_hash: String,
+    transport: Mutex<Arc<dyn MeshTransport>>,
+    signer: Mutex<Arc<PrivateIdentity>>,
+    identity_hash: Mutex<String>,
     local_wg_pubkey: String,
     #[allow(dead_code)]
     local_wg_privkey: [u8; 32],
     local_endpoint: Mutex<Option<String>>,
-    /// Whether transport is wired (prevents sends on NullTransport).
-    wired: bool,
+    /// Whether transport and signer are wired for outbound negotiation.
+    wired: Mutex<bool>,
     /// Pending outbound offers: nonce → (peer_identity, offer details).
     pending_offers: Mutex<HashMap<String, PendingOffer>>,
     /// Seen nonces: nonce → timestamp (time-windowed replay protection).
@@ -95,13 +95,13 @@ impl TunnelService {
     /// Tunnel operations will fail gracefully until `with_transport()` is used.
     pub fn new() -> Self {
         Self {
-            transport: Arc::new(crate::transport::null_transport::NullTransport::new()),
-            signer: Arc::new(PrivateIdentity::new_from_rand(rand_core::OsRng)),
-            identity_hash: String::new(),
+            transport: Mutex::new(Arc::new(crate::transport::null_transport::NullTransport::new())),
+            signer: Mutex::new(Arc::new(PrivateIdentity::new_from_rand(rand_core::OsRng))),
+            identity_hash: Mutex::new(String::new()),
             local_wg_pubkey: String::new(),
             local_wg_privkey: [0u8; 32],
             local_endpoint: Mutex::new(None),
-            wired: false,
+            wired: Mutex::new(false),
             pending_offers: Mutex::new(HashMap::new()),
             seen_nonces: Mutex::new(HashMap::new()),
             active_tunnels: Mutex::new(HashMap::new()),
@@ -124,13 +124,13 @@ impl TunnelService {
         let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(pubkey.as_bytes());
 
         Self {
-            transport,
-            signer,
-            identity_hash,
+            transport: Mutex::new(transport),
+            signer: Mutex::new(signer),
+            identity_hash: Mutex::new(identity_hash),
             local_wg_pubkey: pubkey_b64,
             local_wg_privkey: wg_privkey,
             local_endpoint: Mutex::new(None),
-            wired: true,
+            wired: Mutex::new(true),
             pending_offers: Mutex::new(HashMap::new()),
             seen_nonces: Mutex::new(HashMap::new()),
             active_tunnels: Mutex::new(HashMap::new()),
@@ -140,6 +140,24 @@ impl TunnelService {
             #[cfg(feature = "wireguard")]
             backend: Mutex::new(None),
         }
+    }
+
+    /// Wire the production transport and signing identity used for negotiation.
+    pub fn set_signer(
+        &self,
+        transport: Arc<dyn MeshTransport>,
+        signer: Arc<PrivateIdentity>,
+        identity_hash: String,
+    ) {
+        *self.transport.lock().expect("lock") = transport;
+        *self.signer.lock().expect("lock") = signer;
+        *self.identity_hash.lock().expect("lock") = identity_hash;
+        *self.wired.lock().expect("lock") = true;
+    }
+
+    /// Whether outbound tunnel negotiation dependencies have been wired.
+    pub fn is_wired(&self) -> bool {
+        *self.wired.lock().expect("lock")
     }
 
     pub fn set_endpoint(&self, endpoint: String) {
@@ -351,9 +369,9 @@ impl TunnelService {
         self.teardown_wireguard(peer_identity).await;
 
         // Send TUNNEL_TEARDOWN to the remote peer
-        if self.wired && self.transport.is_connected() {
+        if self.is_wired() && self.transport.lock().expect("lock").is_connected() {
             let teardown = TunnelTeardown {
-                peer_identity: self.identity_hash.clone(),
+                peer_identity: self.identity_hash.lock().expect("lock").clone(),
                 nonce: tunnel_payloads::generate_nonce(),
             };
             if let Ok(payload) = rmp_serde::to_vec(&teardown) {
@@ -382,10 +400,10 @@ impl TunnelService {
     /// The returned nonce is the operation correlation ID for this first slice.
     /// Delivery remains daemon-owned if the IPC client disconnects.
     pub fn queue_tunnel(self: &Arc<Self>, peer_identity: &str) -> Result<String, String> {
-        if !self.wired {
+        if !self.is_wired() {
             return Err("tunnel service not wired to transport".into());
         }
-        if !self.transport.is_connected() {
+        if !self.transport.lock().expect("lock").is_connected() {
             return Err("transport not connected".into());
         }
         if let Some(existing) = self.latest_operation(peer_identity) {
@@ -394,7 +412,7 @@ impl TunnelService {
             }
         }
 
-        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash);
+        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash.lock().expect("lock"));
         let endpoint = self.local_endpoint.lock().expect("lock").clone().unwrap_or_default();
 
         let mut psk = [0u8; 32];
@@ -465,14 +483,14 @@ impl TunnelService {
     ///
     /// Retained for internal callers that explicitly need delivery completion.
     pub async fn initiate_tunnel(&self, peer_identity: &str) -> Result<String, String> {
-        if !self.wired {
+        if !self.is_wired() {
             return Err("tunnel service not wired to transport".into());
         }
-        if !self.transport.is_connected() {
+        if !self.transport.lock().expect("lock").is_connected() {
             return Err("transport not connected".into());
         }
 
-        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash);
+        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash.lock().expect("lock"));
         let endpoint = self.local_endpoint.lock().expect("lock").clone().unwrap_or_default();
         let mut psk = [0u8; 32];
         rand_core::OsRng.fill_bytes(&mut psk);
@@ -531,7 +549,7 @@ impl TunnelService {
             offer.endpoint
         );
 
-        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash);
+        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash.lock().expect("lock"));
         let endpoint = self.local_endpoint.lock().expect("lock").clone().unwrap_or_default();
 
         let accept = TunnelAccept {
@@ -685,7 +703,9 @@ impl TunnelService {
             AddressHash::new(truncated)
         };
 
-        let source_hash = self.transport.identity_hash();
+        let transport = self.transport.lock().expect("lock").clone();
+        let signer = self.signer.lock().expect("lock").clone();
+        let source_hash = transport.identity_hash();
         let mut source_bytes = [0u8; 16];
         source_bytes.copy_from_slice(source_hash.as_slice());
         let mut dest_bytes = [0u8; 16];
@@ -697,7 +717,7 @@ impl TunnelService {
             "",
             "",
             Some(serde_json::json!({"protocol": "tunnel", "custom_data": wire_hex})),
-            &self.signer,
+            signer.as_ref(),
         )
         .map_err(|e| format!("wire encode: {e}"))?;
 
@@ -709,7 +729,7 @@ impl TunnelService {
         );
 
         crate::services::MessagingService::deliver(
-            self.transport.as_ref(),
+            transport.as_ref(),
             delivery_addr,
             &lxmf_payload,
         )
