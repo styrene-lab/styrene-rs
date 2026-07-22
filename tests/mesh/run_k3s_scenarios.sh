@@ -31,9 +31,10 @@ k() { "$KUBECTL" -n "$NAMESPACE" "$@"; }
 
 collect() {
   k get pods,deployments,jobs -o wide >"$RESULT_DIR/kubernetes.txt" 2>&1 || true
-  for component in hub alpha beta gamma operator; do
+  for component in hub alpha beta gamma; do
     k logs "deployment/$component" --all-containers >"$RESULT_DIR/$component.log" 2>&1 || true
   done
+  k logs deployment/operator --all-containers >"$RESULT_DIR/operator-container.log" 2>&1 || true
   k logs job/build --all-containers >"$RESULT_DIR/build.log" 2>&1 || true
   cat >"$RESULT_DIR/result.json" <<EOF
 {
@@ -44,7 +45,7 @@ collect() {
   "result": "$status",
   "operator_exit_code": $operator_rc,
   "resilience_exit_code": $resilience_rc,
-  "artifacts": ["kubernetes.txt", "operator.log", "resilience.log", "hub.log", "alpha.log", "beta.log", "gamma.log", "build.log"]
+  "artifacts": ["kubernetes.txt", "operator.log", "operator-container.log", "resilience.log", "hub.log", "alpha.log", "beta.log", "gamma.log", "build.log"]
 }
 EOF
   if [[ $KEEP != 1 ]]; then "$KUBECTL" delete namespace "$NAMESPACE" --wait=false >/dev/null 2>&1 || true; fi
@@ -244,7 +245,8 @@ done
 
 operator_pod=$(k get pod -l app=styrene-mesh-operator -o jsonpath='{.items[0].metadata.name}')
 k exec "$operator_pod" -- env PATH="/artifacts/bin:$PATH" bash /harness/run_tests.sh \
-  >"$RESULT_DIR/operator.log" 2>&1 && operator_rc=0 || operator_rc=$?
+  >"$RESULT_DIR/operator.log.tmp" 2>&1 && operator_rc=0 || operator_rc=$?
+mv "$RESULT_DIR/operator.log.tmp" "$RESULT_DIR/operator.log"
 if ((operator_rc != 0)); then
   echo "operator scenarios reported failures; continuing to exercise resilience" >&2
 fi
