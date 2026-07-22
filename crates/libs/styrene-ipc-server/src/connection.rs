@@ -10,13 +10,13 @@ use std::sync::Arc;
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{Mutex, broadcast, mpsc};
 
 use styrene_ipc::traits::Daemon;
 use styrene_ipc::types::DaemonEvent;
 
 use crate::dispatch;
-use crate::wire::{self, MessageType, WireError, REQUEST_ID_SIZE};
+use crate::wire::{self, MessageType, REQUEST_ID_SIZE, WireError};
 
 /// Subscription topics a client can subscribe to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -52,6 +52,11 @@ pub async fn handle_client(
     loop {
         match wire::read_frame_async(&mut reader).await {
             Ok(frame) => {
+                log::info!(
+                    "IPC frame received type={:?} request_id={:?}",
+                    frame.msg_type,
+                    frame.request_id
+                );
                 let response_bytes = handle_frame(
                     &daemon,
                     frame.msg_type,
@@ -62,9 +67,16 @@ pub async fn handle_client(
                 .await;
 
                 if let Some(bytes) = response_bytes {
+                    log::info!(
+                        "IPC response encoded request_id={:?} bytes={}",
+                        frame.request_id,
+                        bytes.len()
+                    );
                     if frame_tx.send(bytes).await.is_err() {
+                        log::warn!("IPC response queue closed request_id={:?}", frame.request_id);
                         break; // Writer gone
                     }
+                    log::info!("IPC response queued request_id={:?}", frame.request_id);
                 }
             }
             Err(WireError::Io(ref e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
