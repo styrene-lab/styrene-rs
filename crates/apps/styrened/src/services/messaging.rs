@@ -245,7 +245,15 @@ impl MessagingService {
         payload: &[u8],
     ) -> Result<String, TransportError> {
         // Step 1: Request path
+        crate::daemon_diagnostic!(
+            "[messaging-flow] stage=path_request_started destination={}",
+            hex::encode(dest_hash.as_slice())
+        );
         transport.request_path(&dest_hash).await;
+        crate::daemon_diagnostic!(
+            "[messaging-flow] stage=path_request_completed destination={}",
+            hex::encode(dest_hash.as_slice())
+        );
 
         // Step 2: Poll for peer identity (12s timeout)
         let mut identity = None;
@@ -259,8 +267,16 @@ impl MessagingService {
         }
 
         let identity = identity.ok_or_else(|| {
+            crate::daemon_diagnostic!(
+                "[messaging-flow] stage=identity_resolution_failed destination={}",
+                hex::encode(dest_hash.as_slice())
+            );
             TransportError::SendFailed("peer not announced — identity not resolved".into())
         })?;
+        crate::daemon_diagnostic!(
+            "[messaging-flow] stage=identity_resolved destination={}",
+            hex::encode(dest_hash.as_slice())
+        );
 
         // Step 3: Build destination descriptor
         let dest_desc = DestinationDesc {
@@ -270,7 +286,25 @@ impl MessagingService {
         };
 
         // Step 4: Send via link
-        let result = transport.send_via_link(dest_desc, payload, Duration::from_secs(20)).await?;
+        crate::daemon_diagnostic!(
+            "[messaging-flow] stage=link_send_started destination={} bytes={}",
+            hex::encode(dest_hash.as_slice()),
+            payload.len()
+        );
+        let result = match transport
+            .send_via_link(dest_desc, payload, Duration::from_secs(20))
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                crate::daemon_diagnostic!(
+                    "[messaging-flow] stage=link_send_failed destination={} error={}",
+                    hex::encode(dest_hash.as_slice()),
+                    error
+                );
+                return Err(error);
+            }
+        };
 
         // Extract packet hash for receipt tracking
         match result {
