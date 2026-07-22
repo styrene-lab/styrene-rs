@@ -122,6 +122,7 @@ pub async fn run_hdlc_rx_loop<R>(
                     }
                     Err(e) => {
                         log::warn!("stream_iface: read error on {}: {}", iface_address, e);
+                        stop.cancel();
                         break;
                     }
                 }
@@ -179,15 +180,19 @@ pub async fn run_hdlc_tx_loop<W>(
                         if let Err(e) = writer.write_all(hdlc_output.as_slice()).await {
                             log::warn!(
                                 "stream_iface: write_all failed on {}: {}",
-                                iface_address, e
+                                iface_address,
+                                e
                             );
+                            stop.cancel();
                             break;
                         }
                         if let Err(e) = writer.flush().await {
                             log::warn!(
                                 "stream_iface: flush failed on {}: {}",
-                                iface_address, e
+                                iface_address,
+                                e
                             );
+                            stop.cancel();
                             break;
                         }
                     } else {

@@ -83,7 +83,10 @@ impl TcpClient {
 
             log::info!("tcp_client connected to <{}>", addr);
             if tx_diag_enabled() {
-                crate::transport_diagnostic!("[tp-diag] tcp_client connected iface={}", iface_address);
+                crate::transport_diagnostic!(
+                    "[tp-diag] tcp_client connected iface={}",
+                    iface_address
+                );
             }
 
             let rx_task = {
@@ -115,8 +118,19 @@ impl TcpClient {
                 ))
             };
 
-            tx_task.await.unwrap();
-            rx_task.await.unwrap();
+            tokio::select! {
+                result = rx_task => {
+                    if let Err(error) = result {
+                        log::warn!("tcp_client: receive task failed for <{}>: {}", addr, error);
+                    }
+                }
+                result = tx_task => {
+                    if let Err(error) = result {
+                        log::warn!("tcp_client: transmit task failed for <{}>: {}", addr, error);
+                    }
+                }
+            }
+            stop.cancel();
 
             log::info!("tcp_client: disconnected from <{}>", addr);
         }
