@@ -182,6 +182,16 @@ impl DaemonClient {
         Ok(frame.payload)
     }
 
+    pub async fn path_info(
+        &mut self,
+        destination: &str,
+    ) -> Result<HashMap<String, MpValue>, String> {
+        let mut p = HashMap::new();
+        p.insert("destination_hash".into(), MpValue::String(destination.into()));
+        let frame = self.rpc(MessageType::QueryPathInfo, &p).await?;
+        Ok(frame.payload)
+    }
+
     // ── Tunnel operations ───────────────────────────────────────────────
 
     pub async fn list_tunnels(&mut self) -> Result<Vec<HashMap<String, MpValue>>, String> {

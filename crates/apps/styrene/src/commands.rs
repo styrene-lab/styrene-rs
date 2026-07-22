@@ -188,6 +188,23 @@ pub(crate) async fn config(socket: Option<&Path>) -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Transport paths ─────────────────────────────────────────────────────────
+
+pub(crate) async fn path_info(socket: Option<&Path>, destination: &str) -> anyhow::Result<()> {
+    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let info = client.path_info(destination).await.map_err(anyhow::Error::msg)?;
+    let found = info.get("found").and_then(|value| value.as_bool()).unwrap_or(false);
+    println!("destination={destination}");
+    println!("found={found}");
+    if let Some(hops) = info.get("hops").and_then(|value| value.as_i64()) {
+        println!("hops={hops}");
+    }
+    if let Some(interface) = info.get("interface").and_then(|value| value.as_str()) {
+        println!("interface={interface}");
+    }
+    Ok(())
+}
+
 // ── Tunnel operations ───────────────────────────────────────────────────────
 
 pub(crate) async fn tunnel_list(socket: Option<&Path>) -> anyhow::Result<()> {
