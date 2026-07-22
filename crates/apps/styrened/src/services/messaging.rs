@@ -166,6 +166,13 @@ impl MessagingService {
             read: true, // Outgoing messages are always "read"
         };
         self.store.lock().unwrap().insert_message(&record).map_err(std::io::Error::other)?;
+        crate::daemon_diagnostic!(
+            "[messaging-flow] stage=outbound_persisted id={} source={} destination={} bytes={}",
+            msg_id,
+            record.source,
+            peer_hash,
+            payload.len()
+        );
 
         // Run delivery
         let store = self.store.clone();
@@ -174,6 +181,12 @@ impl MessagingService {
 
         match &delivery_result {
             Ok(packet_hash) => {
+                crate::daemon_diagnostic!(
+                    "[messaging-flow] stage=link_delivery_completed id={} destination={} packet={}",
+                    msg_id,
+                    peer_hash,
+                    packet_hash
+                );
                 // Track receipt
                 self.receipt_map.lock().unwrap().insert(packet_hash.clone(), msg_id.clone());
                 // Update status
