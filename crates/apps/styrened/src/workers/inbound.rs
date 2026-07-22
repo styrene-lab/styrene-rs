@@ -166,6 +166,13 @@ pub fn spawn_inbound_worker_with_auto_reply(
                         payload_mode
                     );
 
+                    crate::daemon_diagnostic!(
+                        "[messaging-flow] stage=inbound_event destination={} bytes={} mode={:?}",
+                        dest_hex,
+                        data.len(),
+                        payload_mode
+                    );
+
                     // Hub propagation: if destination is not local, store for later delivery
                     let is_local =
                         local_delivery_hash.as_ref().is_some_and(|local| *local == dest_hex);
@@ -287,6 +294,13 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     match messaging.accept_inbound(destination, data, payload_mode) {
                         InboundAcceptOutcome::Accepted(record) => {
                             crate::daemon_diagnostic!(
+                                "[messaging-flow] stage=durable_insert id={} source={} destination={} bytes={}",
+                                record.id,
+                                record.source,
+                                record.destination,
+                                data.len()
+                            );
+                            crate::daemon_diagnostic!(
                                 "[worker] inbound message: id={} src={} content_len={}",
                                 record.id,
                                 record.source,
@@ -380,6 +394,12 @@ pub fn spawn_inbound_worker_with_auto_reply(
                             );
                         }
                         InboundAcceptOutcome::StorageError { message_id, error } => {
+                            crate::daemon_diagnostic!(
+                                "[messaging-flow] stage=durable_insert_failed id={} destination={} error={}",
+                                message_id,
+                                dest_hex,
+                                error
+                            );
                             events.emit_inbound_drop(
                                 "direct_packet",
                                 "storage_error",
