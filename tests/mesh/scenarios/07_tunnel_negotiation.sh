@@ -37,7 +37,8 @@ if [ -z "$BETA_ID" ]; then
     echo "  SKIP: T25b: beta identity not available"
 else
     STATUS_OUTPUT=$(styrene --socket "$ALPHA_SOCK" tunnel status "$BETA_ID" 2>&1) && STATUS_RC=0 || STATUS_RC=$?
-    if [ "$STATUS_RC" -eq 0 ] && grep -qiE 'styrene tunnel status|status|not found' <<<"$STATUS_OUTPUT"; then
+    if { [ "$STATUS_RC" -eq 0 ] && grep -qiE 'styrene tunnel status|status' <<<"$STATUS_OUTPUT"; } ||
+       { [ "$STATUS_RC" -ne 0 ] && grep -qiE "not found: tunnel" <<<"$STATUS_OUTPUT"; }; then
         pass "T25b: tunnel status IPC accepts peer identity"
     else
         fail "T25b: tunnel status IPC accepts peer identity (exit $STATUS_RC)"
