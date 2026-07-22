@@ -260,7 +260,7 @@ impl MessageType {
 
     /// Whether this type is a request (needs a response).
     pub fn is_request(self) -> bool {
-        (self as u8) < 0x80
+        matches!(self as u8, 0x01..=0x7F | 0x90..=0x9F)
     }
 
     /// Whether this type is a response.
@@ -497,6 +497,8 @@ mod tests {
     #[test]
     fn message_type_classification() {
         assert!(MessageType::QueryStatus.is_request());
+        assert!(MessageType::CmdTunnelEstablish.is_request());
+        assert!(MessageType::QueryTunnelStatus.is_request());
         assert!(!MessageType::QueryStatus.is_response());
         assert!(!MessageType::QueryStatus.is_event());
 
