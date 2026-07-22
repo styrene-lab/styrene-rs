@@ -175,6 +175,11 @@ impl AppContext {
     pub fn set_signer(&self, signer: Arc<PrivateIdentity>) {
         self.messaging.set_signer(self.transport.clone(), signer.clone());
         self.fleet.set_signer(self.transport.clone(), signer.clone());
+        self.tunnel.set_signer(
+            self.transport.clone(),
+            signer.clone(),
+            self.identity.identity_hash().to_string(),
+        );
         #[cfg(feature = "i2p-proxy")]
         self.i2p_proxy.set_signer(
             self.transport.clone(),
