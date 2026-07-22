@@ -246,25 +246,31 @@ pub(crate) async fn tunnel_list(socket: Option<&Path>) -> anyhow::Result<()> {
 
 pub(crate) async fn tunnel_status(socket: Option<&Path>, peer: &str) -> anyhow::Result<()> {
     let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
-    let devices = client.devices(true).await.map_err(anyhow::Error::msg)?;
+    let status = client.tunnel_status_rpc(peer).await.map_err(anyhow::Error::msg)?;
 
     let peer_short = truncate(peer, 12);
+    let state = status.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
     eprintln!();
     eprintln!("  {} ({peer_short}…)", style("styrene tunnel status").cyan().bold(),);
     eprintln!();
-
-    let found = devices
-        .iter()
-        .find(|d| d.destination_hash.starts_with(peer) || d.identity_hash.starts_with(peer));
-
-    if let Some(dev) = found {
-        let name = if dev.name.is_empty() { "(unnamed)".to_string() } else { dev.name.clone() };
-        eprintln!("  peer    {}", dev.destination_hash);
-        eprintln!("  name    {name}");
-        eprintln!("  status  {}", dev.status);
-        eprintln!("  tunnel  {}", style("not yet available").dim());
-    } else {
-        eprintln!("  {} peer {peer_short}… not found", style("✗").red().bold());
+    eprintln!("  peer       {}", status.get("peer_hash").and_then(|v| v.as_str()).unwrap_or(peer));
+    if let Some(operation_id) = status.get("operation_id").and_then(|v| v.as_str()) {
+        eprintln!("  operation  {operation_id}");
+    }
+    if let Some(kind) = status.get("kind").and_then(|v| v.as_str()) {
+        eprintln!("  kind       {kind}");
+    }
+    eprintln!("  state      {state}");
+    if let Some(backend) = status.get("backend").and_then(|v| v.as_str()) {
+        eprintln!("  backend    {backend}");
+    }
+    if let Some(endpoint) = status.get("remote_endpoint").and_then(|v| v.as_str()) {
+        if !endpoint.is_empty() {
+            eprintln!("  endpoint   {endpoint}");
+        }
+    }
+    if let Some(message) = status.get("error_message").and_then(|v| v.as_str()) {
+        eprintln!("  error      {message}");
     }
     eprintln!();
 
