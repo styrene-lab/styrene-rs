@@ -269,8 +269,11 @@ fi
   k scale deployment/hub --replicas=1
   k rollout status deployment/hub --timeout=3m
   sleep 15
-  k exec "$operator_pod" -- env PATH="/artifacts/bin:$PATH" bash -ceu \
-    'source /harness/harness.sh; wait_for_peer "$HUB_SOCK" alpha 60; wait_for_peer "$HUB_SOCK" beta 60'
+  if ! k exec "$operator_pod" -- env PATH="/artifacts/bin:$PATH" bash -ceu \
+    'source /harness/harness.sh; wait_for_peer "$HUB_SOCK" alpha 60; wait_for_peer "$HUB_SOCK" beta 60'; then
+    echo "FAIL: T24 mesh did not recover after hub recreation" >&2
+    exit 1
+  fi
   echo "PASS: T24 mesh recovered after hub recreation"
 } >"$RESULT_DIR/resilience.log" 2>&1 && resilience_rc=0 || resilience_rc=$?
 if ((resilience_rc != 0)); then

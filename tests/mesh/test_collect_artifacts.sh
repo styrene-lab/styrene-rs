@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+RUN_K3S_SOURCE=${RUN_K3S_SOURCE:-}
+if [[ -n $RUN_K3S_SOURCE ]]; then
+  # Extract only the resilience block so tests exercise the production shell.
+  eval "$(sed -n '/^# Kubernetes owns fault injection:/,/^if ((resilience_rc != 0)); then/p' "$RUN_K3S_SOURCE" | sed '$d')"
+  exit 0
+fi
+
 run_dir=/tmp/styrene-collect-contract
 rm -rf /tmp/styrene-collect-contract
 mkdir -p "$run_dir/bin" "$run_dir/result"
