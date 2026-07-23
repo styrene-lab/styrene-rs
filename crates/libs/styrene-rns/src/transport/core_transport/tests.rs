@@ -62,6 +62,14 @@ async fn link_out_payload_is_forwarded_to_received_data() {
     assert_eq!(received.payload_mode, ReceivedPayloadMode::FullWire);
 }
 
+#[test]
+fn only_data_uses_generic_rebroadcast_path() {
+    assert!(super::jobs::should_rebroadcast(PacketType::Data));
+    assert!(!super::jobs::should_rebroadcast(PacketType::Announce));
+    assert!(!super::jobs::should_rebroadcast(PacketType::LinkRequest));
+    assert!(!super::jobs::should_rebroadcast(PacketType::Proof));
+}
+
 #[tokio::test]
 async fn drop_duplicates() {
     let mut config: TransportConfig = Default::default();
