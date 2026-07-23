@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "theme": "default",
+  "grid": {
+    "cols": 12,
+    "rows": 8,
+    "gap": 8
+  },
+  "cells": [
+    {
+      "id": "cross-network-flow",
+      "x": 0,
+      "y": 0,
+      "w": 12,
+      "h": 7,
+      "content": {
+        "kind": "html",
+        "html": "<main class=\"h-full flex flex-col gap-4 bg-background p-6 text-foreground\"><header><div class=\"flex items-center justify-between\"><div><p class=\"text-sm font-semibold uppercase tracking-wide text-primary\">Release gate · passed</p><h1 class=\"text-3xl font-bold tracking-tight\">Cross-network delivery</h1></div><div class=\"rounded-lg border border-border bg-card px-4 py-3 text-right\"><p class=\"text-2xl font-bold text-primary\">200 / 200</p><p class=\"text-sm text-muted-foreground\">durably delivered</p></div></div><p class=\"mt-2 text-sm text-muted-foreground\">Explicit route readiness, correlated batches, deterministic newest-first storage order, and bounded recovery evidence.</p></header><section class=\"grid flex-1 grid-cols-2 gap-4\"><article class=\"h-full rounded-lg border border-border bg-card p-4\"><h2 class=\"text-lg font-semibold\">Alpha → Gamma</h2><div class=\"mt-4 flex flex-col gap-2 text-sm\"><p><span class=\"text-primary\">100</span> sends accepted</p><p><span class=\"text-primary\">100</span> durable inserts</p><p><span class=\"text-primary\">0</span> duplicates</p><p><span class=\"text-primary\">0</span> order failures</p><p><span class=\"text-primary\">3s</span> batch elapsed</p></div></article><article class=\"h-full rounded-lg border border-border bg-card p-4\"><h2 class=\"text-lg font-semibold\">Gamma → Alpha</h2><div class=\"mt-4 flex flex-col gap-2 text-sm\"><p><span class=\"text-primary\">100</span> sends accepted</p><p><span class=\"text-primary\">100</span> durable inserts</p><p><span class=\"text-primary\">0</span> duplicates</p><p><span class=\"text-primary\">0</span> order failures</p><p><span class=\"text-primary\">3s</span> batch elapsed</p></div></article></section><footer class=\"rounded-lg border border-border bg-card p-4 text-sm\"><span class=\"font-semibold text-primary\">Broad matrix:</span> 35 passed · 0 failed &nbsp; <span class=\"font-semibold text-primary\">Recovery:</span> T24 passed after hub recreation</footer></main>",
+        "css": "",
+        "js": null
+      }
+    }
+  ]
+}
