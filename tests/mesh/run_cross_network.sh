@@ -10,5 +10,6 @@ export HARNESS_ROOT=${HARNESS_ROOT:-$ROOT/tests/mesh}
 export ALPHA_SOCK=${ALPHA_SOCK:-/run/alpha/daemon.sock}
 export GAMMA_SOCK=${GAMMA_SOCK:-/run/gamma/daemon.sock}
 export STYRENE_MESH_RUN_ID=${STYRENE_MESH_RUN_ID:-cross-network-$(date -u +%Y%m%dT%H%M%SZ)}
+export STYRENE_CROSS_NETWORK_BATCH_COUNT=${STYRENE_CROSS_NETWORK_BATCH_COUNT:-100}
 
 exec bash "$ROOT/tests/mesh/scenarios/08_cross_network.sh"
