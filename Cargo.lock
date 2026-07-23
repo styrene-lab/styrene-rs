@@ -7239,6 +7239,7 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2",
+ "socket2 0.6.2",
  "tempfile",
  "tokio",
  "tokio-serial",
