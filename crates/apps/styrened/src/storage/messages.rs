@@ -146,7 +146,7 @@ impl MessagesStore {
         let mut records = Vec::new();
         if let Some(ts) = before_ts {
             let mut stmt = self.conn.prepare(
-                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE timestamp < ?1 ORDER BY timestamp DESC LIMIT ?2",
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE timestamp < ?1 ORDER BY timestamp DESC, rowid DESC LIMIT ?2",
             )?;
             let mut rows = stmt.query(params![ts, limit as i64])?;
             while let Some(row) = rows.next()? {
@@ -154,7 +154,7 @@ impl MessagesStore {
             }
         } else {
             let mut stmt = self.conn.prepare(
-                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages ORDER BY timestamp DESC LIMIT ?1",
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages ORDER BY timestamp DESC, rowid DESC LIMIT ?1",
             )?;
             let mut rows = stmt.query(params![limit as i64])?;
             while let Some(row) = rows.next()? {
@@ -181,7 +181,7 @@ impl MessagesStore {
         let mut records = Vec::new();
         if let Some(ts) = before_ts {
             let mut stmt = self.conn.prepare(
-                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE (source = ?1 OR destination = ?1) AND timestamp < ?2 ORDER BY timestamp DESC LIMIT ?3",
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE (source = ?1 OR destination = ?1) AND timestamp < ?2 ORDER BY timestamp DESC, rowid DESC LIMIT ?3",
             )?;
             let mut rows = stmt.query(params![peer_hash, ts, limit as i64])?;
             while let Some(row) = rows.next()? {
@@ -189,7 +189,7 @@ impl MessagesStore {
             }
         } else {
             let mut stmt = self.conn.prepare(
-                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE (source = ?1 OR destination = ?1) ORDER BY timestamp DESC LIMIT ?2",
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE (source = ?1 OR destination = ?1) ORDER BY timestamp DESC, rowid DESC LIMIT ?2",
             )?;
             let mut rows = stmt.query(params![peer_hash, limit as i64])?;
             while let Some(row) = rows.next()? {
@@ -1164,6 +1164,27 @@ mod tests {
         // Most recent first
         assert_eq!(msgs[0].id, "m2");
         assert_eq!(msgs[1].id, "m1");
+    }
+
+    #[test]
+    fn list_messages_for_peer_orders_equal_timestamps_deterministically() {
+        let store = MessagesStore::in_memory().expect("store");
+        for index in 1..=100 {
+            store
+                .insert_message(&chat_message(
+                    &format!("m{index:03}"),
+                    "alice",
+                    "me",
+                    42,
+                ))
+                .expect("insert");
+        }
+
+        let msgs = store.list_messages_for_peer("alice", 100, None).expect("list");
+        let ids: Vec<_> = msgs.iter().map(|message| message.id.as_str()).collect();
+        assert_eq!(ids.first(), Some(&"m100"));
+        assert_eq!(ids.last(), Some(&"m001"));
+        assert_eq!(ids.len(), 100);
     }
 
     // ── Blocklist tests ─────────────────────────────────────────────────
