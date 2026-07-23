@@ -16,14 +16,19 @@ use super::stream_iface::{run_hdlc_rx_loop, run_hdlc_tx_loop};
 use super::{Interface, InterfaceContext};
 
 const CONNECT_RETRY_DELAY: Duration = Duration::from_secs(5);
-const SOCKET_KEEPALIVE_SECS: u32 = 15;
+const SOCKET_KEEPALIVE_IDLE: Duration = Duration::from_secs(10);
+const SOCKET_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
+const SOCKET_KEEPALIVE_RETRIES: u32 = 3;
+
+fn socket_keepalive() -> socket2::TcpKeepalive {
+    socket2::TcpKeepalive::new()
+        .with_time(SOCKET_KEEPALIVE_IDLE)
+        .with_interval(SOCKET_KEEPALIVE_INTERVAL)
+        .with_retries(SOCKET_KEEPALIVE_RETRIES)
+}
 
 fn configure_socket_liveness(stream: &TcpStream) -> std::io::Result<()> {
-    let socket = socket2::SockRef::from(stream);
-    let keepalive = socket2::TcpKeepalive::new()
-        .with_time(Duration::from_secs(SOCKET_KEEPALIVE_SECS.into()))
-        .with_interval(Duration::from_secs(SOCKET_KEEPALIVE_SECS.into()));
-    socket.set_tcp_keepalive(&keepalive)
+    socket2::SockRef::from(stream).set_tcp_keepalive(&socket_keepalive())
 }
 
 fn tx_diag_enabled() -> bool {
@@ -78,12 +83,26 @@ impl TcpClient {
                     Ok(s)
                 }
                 None => {
+                    if tx_diag_enabled() {
+                        crate::transport_diagnostic!(
+                            "[tp-diag] tcp_client connect_attempt iface={} addr={}",
+                            iface_address,
+                            addr
+                        );
+                    }
                     TcpStream::connect(addr.clone()).await.map_err(|_| RnsError::ConnectionError)
                 }
             };
 
             if stream.is_err() {
                 log::info!("tcp_client: couldn't connect to <{}>", addr);
+                if tx_diag_enabled() {
+                    crate::transport_diagnostic!(
+                        "[tp-diag] tcp_client connect_failed iface={} addr={}",
+                        iface_address,
+                        addr
+                    );
+                }
                 tokio::time::sleep(CONNECT_RETRY_DELAY).await;
                 continue;
             }
@@ -135,11 +154,25 @@ impl TcpClient {
 
             tokio::select! {
                 result = rx_task => {
+                    if tx_diag_enabled() {
+                        crate::transport_diagnostic!(
+                            "[tp-diag] tcp_client stream_ended iface={} half=rx join_ok={}",
+                            iface_address,
+                            result.is_ok()
+                        );
+                    }
                     if let Err(error) = result {
                         log::warn!("tcp_client: receive task failed for <{}>: {}", addr, error);
                     }
                 }
                 result = tx_task => {
+                    if tx_diag_enabled() {
+                        crate::transport_diagnostic!(
+                            "[tp-diag] tcp_client stream_ended iface={} half=tx join_ok={}",
+                            iface_address,
+                            result.is_ok()
+                        );
+                    }
                     if let Err(error) = result {
                         log::warn!("tcp_client: transmit task failed for <{}>: {}", addr, error);
                     }
@@ -148,6 +181,13 @@ impl TcpClient {
             stop.cancel();
 
             log::info!("tcp_client: disconnected from <{}>", addr);
+            if tx_diag_enabled() {
+                crate::transport_diagnostic!(
+                    "[tp-diag] tcp_client reconnect_scheduled iface={} delay_ms={}",
+                    iface_address,
+                    CONNECT_RETRY_DELAY.as_millis()
+                );
+            }
         }
 
         iface_stop.cancel();
@@ -157,5 +197,19 @@ impl TcpClient {
 impl Interface for TcpClient {
     fn mtu() -> usize {
         2048
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keepalive_failure_window_fits_recovery_deadline() {
+        let failure_window =
+            SOCKET_KEEPALIVE_IDLE + SOCKET_KEEPALIVE_INTERVAL * SOCKET_KEEPALIVE_RETRIES;
+
+        assert!(failure_window < Duration::from_secs(60));
+        assert_eq!(failure_window, Duration::from_secs(25));
     }
 }
