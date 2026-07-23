@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use tokio::net::TcpStream;
 use tokio_util::sync::CancellationToken;
@@ -13,6 +14,17 @@ use alloc::string::String;
 
 use super::stream_iface::{run_hdlc_rx_loop, run_hdlc_tx_loop};
 use super::{Interface, InterfaceContext};
+
+const CONNECT_RETRY_DELAY: Duration = Duration::from_secs(5);
+const SOCKET_KEEPALIVE_SECS: u32 = 15;
+
+fn configure_socket_liveness(stream: &TcpStream) -> std::io::Result<()> {
+    let socket = socket2::SockRef::from(stream);
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(Duration::from_secs(SOCKET_KEEPALIVE_SECS.into()))
+        .with_interval(Duration::from_secs(SOCKET_KEEPALIVE_SECS.into()));
+    socket.set_tcp_keepalive(&keepalive)
+}
 
 fn tx_diag_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -72,13 +84,16 @@ impl TcpClient {
 
             if stream.is_err() {
                 log::info!("tcp_client: couldn't connect to <{}>", addr);
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                tokio::time::sleep(CONNECT_RETRY_DELAY).await;
                 continue;
             }
 
             let cancel = context.cancel.clone();
             let stop = CancellationToken::new();
             let stream = stream.unwrap();
+            if let Err(error) = configure_socket_liveness(&stream) {
+                log::warn!("tcp_client: failed to configure keepalive for <{}>: {}", addr, error);
+            }
             let (read_half, write_half) = stream.into_split();
 
             log::info!("tcp_client connected to <{}>", addr);
