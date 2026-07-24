@@ -1,7 +1,7 @@
 use rns_core::transport::core_transport::{DeliveryReceipt, ReceiptHandler};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use styrened::receipt_bridge::ReceiptBridge;
+use styrened::receipt_bridge::{register_receipt_waiter, ReceiptBridge, ReceiptWaiters};
 use tokio::sync::mpsc::unbounded_channel;
 
 #[tokio::test]
@@ -12,10 +12,13 @@ async fn receipt_bridge_emits_event_for_known_packet() {
     let packet_hex = hex::encode(packet_id);
     map.lock().unwrap().insert(packet_hex, "msg-1".to_string());
 
-    let bridge = ReceiptBridge::new(map.clone(), tx);
+    let waiters: ReceiptWaiters = Arc::new(Mutex::new(HashMap::new()));
+    let waiter = register_receipt_waiter(&waiters, "msg-1");
+    let bridge = ReceiptBridge::new(map.clone(), waiters, tx);
     bridge.on_receipt(&DeliveryReceipt::new(packet_id));
 
     let event = rx.recv().await.expect("receipt event");
     assert_eq!(event.message_id, "msg-1");
     assert_eq!(event.status, "delivered");
+    assert_eq!(waiter.await.expect("waiter notified"), "delivered");
 }

@@ -6,7 +6,7 @@ use rns_core::transport::receipt::{
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 #[derive(Debug, Clone)]
 pub struct ReceiptEvent {
@@ -14,18 +14,31 @@ pub struct ReceiptEvent {
     pub status: String,
 }
 
+pub type ReceiptWaiters = Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>;
+
+pub fn register_receipt_waiter(
+    waiters: &ReceiptWaiters,
+    message_id: &str,
+) -> oneshot::Receiver<String> {
+    let (tx, rx) = oneshot::channel();
+    waiters.lock().expect("receipt waiters").insert(message_id.to_string(), tx);
+    rx
+}
+
 #[derive(Clone)]
 pub struct ReceiptBridge {
     map: Arc<Mutex<HashMap<String, String>>>,
+    waiters: ReceiptWaiters,
     tx: UnboundedSender<ReceiptEvent>,
 }
 
 impl ReceiptBridge {
     pub fn new(
         map: Arc<Mutex<HashMap<String, String>>>,
+        waiters: ReceiptWaiters,
         tx: UnboundedSender<ReceiptEvent>,
     ) -> Self {
-        Self { map, tx }
+        Self { map, waiters, tx }
     }
 }
 
@@ -33,6 +46,11 @@ impl ReceiptHandler for ReceiptBridge {
     fn on_receipt(&self, receipt: &DeliveryReceipt) {
         let message_id = resolve_receipt_message_id(&self.map, receipt);
         if let Some(message_id) = message_id {
+            if let Some(waiter) =
+                self.waiters.lock().ok().and_then(|mut guard| guard.remove(&message_id))
+            {
+                let _ = waiter.send("delivered".to_string());
+            }
             let _ = self.tx.send(ReceiptEvent { message_id, status: "delivered".into() });
         }
     }
