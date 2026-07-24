@@ -212,6 +212,7 @@ mod tests {
     #[test]
     fn single_sent_segment_renders() {
         let segs = vec![Segment::SentMessage {
+            message_id: None,
             dest_hash: "aabbccdd".into(),
             dest_name: Some("Node A".into()),
             text: "hello".into(),

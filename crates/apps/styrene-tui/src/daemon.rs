@@ -930,7 +930,13 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
             // Push to per-peer conversation
             let conv = app.peer_conversation(&peer_hash);
             if msg.is_outgoing {
-                conv.push_sent(&peer_hash, name.as_deref(), &msg.content, DeliveryStatus::Sent);
+                conv.push_sent(
+                    Some(&msg.id),
+                    &peer_hash,
+                    name.as_deref(),
+                    &msg.content,
+                    DeliveryStatus::Sent,
+                );
             } else {
                 conv.push_received(
                     &peer_hash,
@@ -968,15 +974,16 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
             // trigger_flash removed — effects system handles visuals
         }
 
-        TuiEvent::MessageStatus { id: _, status } => {
-            // Map daemon status string to DeliveryStatus and update last sent
+        TuiEvent::MessageStatus { id, status } => {
+            // Status events are correlated to the daemon message ID so concurrent
+            // sends cannot update the wrong conversation row.
             let ds = match status.as_str() {
                 "delivered" => DeliveryStatus::Delivered,
                 s if s.starts_with("failed") => DeliveryStatus::Failed(s.to_string()),
                 s if s.starts_with("sending") => DeliveryStatus::Sending,
                 _ => DeliveryStatus::Sent,
             };
-            app.conversation.update_last_sent_status(ds);
+            app.conversation.update_sent_status(&id, ds);
         }
 
         TuiEvent::LinkUpdate { link_id, peer_hash, peer_name, status, rtt_ms } => {
@@ -1252,6 +1259,50 @@ mod tests {
     fn parse_message_from_empty_payload_is_none() {
         let p = HashMap::new();
         assert!(parse_message_from_payload(&p).is_none());
+    }
+
+    #[test]
+    fn message_status_updates_matching_conversation_row() {
+        let mut app = crate::app::App::new();
+        app.conversation.push_sent(
+            Some("msg-1"),
+            "peer",
+            None,
+            "hello",
+            crate::tui::segments::DeliveryStatus::Pending,
+        );
+
+        apply_event(
+            &mut app,
+            TuiEvent::MessageStatus { id: "msg-1".into(), status: "delivered".into() },
+        );
+
+        assert_eq!(
+            app.conversation.last_sent_status(),
+            Some(&crate::tui::segments::DeliveryStatus::Delivered)
+        );
+    }
+
+    #[test]
+    fn message_status_does_not_update_unrelated_row() {
+        let mut app = crate::app::App::new();
+        app.conversation.push_sent(
+            Some("msg-1"),
+            "peer",
+            None,
+            "hello",
+            crate::tui::segments::DeliveryStatus::Pending,
+        );
+
+        apply_event(
+            &mut app,
+            TuiEvent::MessageStatus { id: "msg-2".into(), status: "failed: timeout".into() },
+        );
+
+        assert_eq!(
+            app.conversation.last_sent_status(),
+            Some(&crate::tui::segments::DeliveryStatus::Pending)
+        );
     }
 
     #[test]
