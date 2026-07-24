@@ -26,6 +26,7 @@ use super::widgets;
 pub enum Segment {
     /// Outbound LXMF message we sent.
     SentMessage {
+        message_id: Option<String>,
         dest_hash: String,
         dest_name: Option<String>,
         text: String,
@@ -138,7 +139,7 @@ impl Segment {
     /// Render this segment into the given area.
     pub fn render(&self, area: Rect, buf: &mut Buffer, t: &dyn Theme) {
         match self {
-            Segment::SentMessage { dest_hash, dest_name, text, delivery_status } => {
+            Segment::SentMessage { dest_hash, dest_name, text, delivery_status, .. } => {
                 render_sent(area, buf, t, dest_hash, dest_name.as_deref(), text, delivery_status)
             }
             Segment::ReceivedMessage { source_hash, source_name, title, text, timestamp } => {

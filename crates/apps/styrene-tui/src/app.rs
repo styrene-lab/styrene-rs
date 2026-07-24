@@ -1715,7 +1715,7 @@ impl App {
 
         // Push to per-peer conversation (optimistic UI)
         let conv = self.peer_conversation(&dest);
-        conv.push_sent(&dest, Some(&name), &text, DeliveryStatus::Sending);
+        conv.push_sent(None, &dest, Some(&name), &text, DeliveryStatus::Sending);
 
         // Activity log
         let activity_summary = crate::tui::widgets::truncate_str(&text, 32, "…");
