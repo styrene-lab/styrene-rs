@@ -3,7 +3,6 @@
 //! Tests the fleet apply flow: push profile bytes to a remote node,
 //! remote node processes and applies, returns result.
 
-use std::time::Duration;
 use styrene_e2e::helpers::{two_connected_nodes, with_timeout};
 use styrene_rbac::{Role, RosterEntry};
 

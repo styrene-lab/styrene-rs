@@ -9,7 +9,6 @@ use std::time::Duration;
 use styrene_e2e::helpers::{await_identity_resolved, await_inbound_count, with_timeout, SETTLE};
 use styrene_e2e::node::TestNodeBuilder;
 use styrene_ipc::traits::*;
-use styrene_ipc::types::*;
 use styrened::daemon_facade::DaemonFacade;
 
 /// Build a DaemonFacade for a TestNode, using the node's own identity as caller.

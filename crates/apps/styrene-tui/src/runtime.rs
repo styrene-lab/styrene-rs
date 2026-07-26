@@ -94,10 +94,10 @@ impl RuntimeContext {
             None
         };
 
-        if let Some(mode) = environment_mode {
-            if !matches!(mode, "standard" | "portable" | "ghost" | "portable-ghost") {
-                return Err(format!("invalid STYRENE_MODE {mode:?}"));
-            }
+        if let Some(mode) = environment_mode
+            && !matches!(mode, "standard" | "portable" | "ghost" | "portable-ghost")
+        {
+            return Err(format!("invalid STYRENE_MODE {mode:?}"));
         }
 
         let ghost = overrides.ghost || environment_ghost;

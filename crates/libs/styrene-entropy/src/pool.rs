@@ -143,7 +143,7 @@ impl EntropyPool {
         for i in 0..POOL_COUNT {
             // Pool i participates if 2^i divides the reseed count
             let threshold = 1u64 << i;
-            if reseed % threshold == 0 {
+            if reseed.is_multiple_of(threshold) {
                 let pool_digest = self.pools[i].drain();
                 outer.update(pool_digest);
             }

@@ -870,11 +870,12 @@ async fn dispatch_query_interface_stats(daemon: &Arc<dyn Daemon>) -> Result<Payl
     let ifaces: Vec<rmpv::Value> = interfaces
         .iter()
         .map(|iface| {
-            let mut m = Vec::new();
-            m.push((rmpv::Value::from("name"), rmpv::Value::from(iface.name.as_str())));
-            m.push((rmpv::Value::from("hash"), rmpv::Value::from(iface.hash.as_str())));
-            m.push((rmpv::Value::from("type"), rmpv::Value::from(iface.kind.as_str())));
-            m.push((rmpv::Value::from("status"), rmpv::Value::from(iface.status.as_str())));
+            let mut m = vec![
+                (rmpv::Value::from("name"), rmpv::Value::from(iface.name.as_str())),
+                (rmpv::Value::from("hash"), rmpv::Value::from(iface.hash.as_str())),
+                (rmpv::Value::from("type"), rmpv::Value::from(iface.kind.as_str())),
+                (rmpv::Value::from("status"), rmpv::Value::from(iface.status.as_str())),
+            ];
             if let Some(host) = &iface.host {
                 m.push((rmpv::Value::from("host"), rmpv::Value::from(host.as_str())));
             }
@@ -1159,9 +1160,10 @@ async fn dispatch_list_pages(
     let arr: Vec<rmpv::Value> = pages
         .into_iter()
         .map(|page| {
-            let mut m = Vec::new();
-            m.push((rmpv::Value::from("path"), rmpv::Value::from(page.path.as_str())));
-            m.push((rmpv::Value::from("host_hash"), rmpv::Value::from(page.host_hash.as_str())));
+            let m = vec![
+                (rmpv::Value::from("path"), rmpv::Value::from(page.path.as_str())),
+                (rmpv::Value::from("host_hash"), rmpv::Value::from(page.host_hash.as_str())),
+            ];
             rmpv::Value::Map(m)
         })
         .collect();

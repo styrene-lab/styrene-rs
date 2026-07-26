@@ -21,11 +21,11 @@ fn fixture_dir() -> PathBuf {
     // Go up 3 levels to workspace root, then into tests/interop/fixtures
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent() // crates/libs
-        .unwrap()
+        .expect("styrene-mesh crate has crates/libs parent")
         .parent() // crates
-        .unwrap()
+        .expect("libs directory has crates parent")
         .parent() // workspace root
-        .unwrap()
+        .expect("crates directory has workspace parent")
         .join("tests/interop/fixtures")
 }
 

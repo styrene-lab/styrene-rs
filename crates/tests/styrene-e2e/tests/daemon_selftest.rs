@@ -122,7 +122,7 @@ async fn daemon_ipc_events_bridge_works() {
             .expect("write subscribe");
         let frame = wire::read_frame_async(&mut read).await.expect("read response");
         assert_eq!(frame.msg_type, MessageType::Result);
-        drop((read, write));
+        let _ = (read, write);
 
         // Emit a device event through the daemon's EventService
         handle.app_context.events().emit_device_update("test-peer-hash");

@@ -887,7 +887,7 @@ impl Link {
         let mut buf = Vec::new();
         {
             buf.reserve(4);
-            rmp::encode::write_f32(&mut buf, rtt).unwrap();
+            rmp::encode::write_f32(&mut buf, rtt).expect("encode RTT");
         }
 
         let mut packet_data = PacketDataBuffer::new();

@@ -464,6 +464,7 @@ impl RpcDaemon {
         let mut event_rows = Vec::new();
         let mut batch_bytes = 0_usize;
 
+        #[allow(clippy::result_large_err)]
         let append_event_row =
             |row: JsonValue, event_rows: &mut Vec<JsonValue>, batch_bytes: &mut usize| {
                 let payload_bytes =

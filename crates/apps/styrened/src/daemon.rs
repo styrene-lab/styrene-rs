@@ -47,6 +47,7 @@ pub struct DaemonHandle {
 
 impl DaemonHandle {
     /// Stop background work and await IPC socket cleanup.
+    #[allow(unused_mut)]
     pub async fn shutdown(mut self) {
         self.cancel.cancel();
         #[cfg(feature = "ipc-server")]

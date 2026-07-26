@@ -108,12 +108,12 @@ impl ConversationView {
     /// Update delivery status on the sent message with the matching daemon ID.
     pub fn update_sent_status(&mut self, message_id: &str, status: DeliveryStatus) -> bool {
         for seg in self.segments.iter_mut().rev() {
-            if let Segment::SentMessage { message_id: Some(candidate), delivery_status, .. } = seg {
-                if candidate == message_id {
-                    *delivery_status = status;
-                    self.conv_state.invalidate();
-                    return true;
-                }
+            if let Segment::SentMessage { message_id: Some(candidate), delivery_status, .. } = seg
+                && candidate == message_id
+            {
+                *delivery_status = status;
+                self.conv_state.invalidate();
+                return true;
             }
         }
         false

@@ -12,7 +12,7 @@ use tokio::net::UnixStream;
 use styrene_e2e::helpers::{with_timeout, SETTLE};
 use styrene_e2e::node::TestNodeBuilder;
 use styrene_ipc::traits::Daemon;
-use styrene_ipc_server::wire::{self, encode_frame, MessageType, REQUEST_ID_SIZE};
+use styrene_ipc_server::wire::{self, MessageType, REQUEST_ID_SIZE};
 use styrened::daemon_facade::DaemonFacade;
 use tokio::io::AsyncWriteExt;
 

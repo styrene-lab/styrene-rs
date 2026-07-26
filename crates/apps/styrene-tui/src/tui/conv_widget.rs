@@ -182,10 +182,10 @@ impl<'a> StatefulWidget for ConversationWidget<'a> {
                         break;
                     }
                     for x in 0..area.width {
-                        if src_y < seg_height {
-                            if let Some(cell) = buf.cell_mut((area.x + x, dst_y)) {
-                                *cell = temp_buf[(x, src_y)].clone();
-                            }
+                        if src_y < seg_height
+                            && let Some(cell) = buf.cell_mut((area.x + x, dst_y))
+                        {
+                            *cell = temp_buf[(x, src_y)].clone();
                         }
                     }
                 }

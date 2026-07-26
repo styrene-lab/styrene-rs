@@ -33,7 +33,7 @@ fn pinned_vectors_all_flat_purposes() {
 
     // Signing = old RnsSigning (must match for backwards compat)
     let signing = d.derive(KeyPurpose::Signing);
-    let signing_hex = hex::encode(&signing);
+    let signing_hex = hex::encode(signing);
 
     // Pin all current vectors (generated from this run, frozen forever after)
     let vectors: Vec<(KeyPurpose, &str)> = vec![
@@ -305,8 +305,8 @@ fn tor_onion_address_deterministic() {
     use sha3::{Digest as Sha3Digest, Sha3_256};
     let mut hasher = Sha3_256::new();
     hasher.update(b".onion checksum");
-    hasher.update(&pubkey);
-    hasher.update(&[0x03]);
+    hasher.update(pubkey);
+    hasher.update([0x03]);
     let checksum = hasher.finalize();
 
     let mut onion_bytes = Vec::with_capacity(35);
@@ -946,7 +946,7 @@ fn generate_reference_vectors_json() {
     let mut flat = serde_json::Map::new();
     for purpose in KeyPurpose::all() {
         let seed = d.derive(*purpose);
-        let seed_hex = hex::encode(&seed);
+        let seed_hex = hex::encode(seed);
 
         let mut entry = serde_json::Map::new();
         entry.insert(
@@ -998,23 +998,23 @@ fn generate_reference_vectors_json() {
     // Parameterized
     let mut parameterized = serde_json::Map::new();
     let ssh_gh = d.derive_ssh_user_key("github").unwrap();
-    parameterized.insert("ssh_user/github".into(), serde_json::Value::String(hex::encode(&ssh_gh)));
+    parameterized.insert("ssh_user/github".into(), serde_json::Value::String(hex::encode(ssh_gh)));
     let agent = d.derive_agent_key("omegon-primary").unwrap();
     parameterized
-        .insert("agent/omegon-primary".into(), serde_json::Value::String(hex::encode(&agent)));
+        .insert("agent/omegon-primary".into(), serde_json::Value::String(hex::encode(agent)));
     let (i2p_s, i2p_e) = d.derive_i2p_service("forge").unwrap();
     parameterized
-        .insert("i2p_service/forge/signing".into(), serde_json::Value::String(hex::encode(&i2p_s)));
+        .insert("i2p_service/forge/signing".into(), serde_json::Value::String(hex::encode(i2p_s)));
     parameterized.insert(
         "i2p_service/forge/encryption".into(),
-        serde_json::Value::String(hex::encode(&i2p_e)),
+        serde_json::Value::String(hex::encode(i2p_e)),
     );
     let onion = d.derive_onion_service("forge").unwrap();
     parameterized
-        .insert("onion_service/forge".into(), serde_json::Value::String(hex::encode(&onion)));
+        .insert("onion_service/forge".into(), serde_json::Value::String(hex::encode(onion)));
 
     let vectors = serde_json::json!({
-        "root_secret_hex": hex::encode(&TEST_ROOT),
+        "root_secret_hex": hex::encode(TEST_ROOT),
         "hkdf_salt": "styrene-identity-v1",
         "identity_hash": identity_hash,
         "flat_purposes": flat,

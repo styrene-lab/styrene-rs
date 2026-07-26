@@ -64,6 +64,7 @@ pub fn draw(state: &WizardState, f: &mut Frame, theme: &dyn Theme) {
 
 // ─── Individual screens ─────────────────────────────────────────────────────
 
+#[allow(clippy::vec_init_then_push)]
 fn draw_welcome(state: &WizardState, f: &mut Frame, area: Rect, theme: &dyn Theme) {
     let mut lines: Vec<Line> = Vec::new();
 
@@ -101,6 +102,7 @@ fn draw_welcome(state: &WizardState, f: &mut Frame, area: Rect, theme: &dyn Them
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
+#[allow(clippy::vec_init_then_push)]
 fn draw_identity(state: &WizardState, f: &mut Frame, area: Rect, theme: &dyn Theme) {
     let mut lines: Vec<Line> = Vec::new();
 
@@ -284,6 +286,7 @@ fn draw_import_contacts(state: &WizardState, f: &mut Frame, area: Rect, theme: &
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
+#[allow(clippy::vec_init_then_push)]
 fn draw_daemon_start(state: &WizardState, f: &mut Frame, area: Rect, theme: &dyn Theme) {
     let mut lines: Vec<Line> = Vec::new();
 

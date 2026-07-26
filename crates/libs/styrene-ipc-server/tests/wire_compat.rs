@@ -28,7 +28,7 @@ fn load_vector(name: &str) -> (Vec<u8>, serde_json::Value) {
         .unwrap_or_else(|e| panic!("missing test vector {name}.bin: {e}"));
     let json_str = fs::read_to_string(dir.join(format!("{name}.json")))
         .unwrap_or_else(|e| panic!("missing test vector {name}.json: {e}"));
-    let meta: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    let meta: serde_json::Value = serde_json::from_str(&json_str).expect("parse protocol metadata");
     (bin, meta)
 }
 
@@ -70,9 +70,9 @@ fn reencode_frame(
 ) -> Vec<u8> {
     let payload_bytes = if payload.is_empty() {
         // Python msgpack.packb({}) produces 0x80 (fixmap of 0 elements)
-        rmp_serde::to_vec(payload).unwrap()
+        rmp_serde::to_vec(payload).expect("encode wire payload")
     } else {
-        rmp_serde::to_vec(payload).unwrap()
+        rmp_serde::to_vec(payload).expect("encode wire payload")
     };
 
     let total_length = 1 + 16 + payload_bytes.len();
