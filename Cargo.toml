@@ -22,6 +22,7 @@ members = [
   "crates/bindings/styrene-mobile-ffi",
   "crates/libs/styrene-services",
   "crates/libs/styrene-mqtt",
+  "crates/libs/styrene-a2a",
   "crates/libs/styrene-forge",
   "crates/libs/styrene-amcp",
   "crates/tests/styrene-e2e",
