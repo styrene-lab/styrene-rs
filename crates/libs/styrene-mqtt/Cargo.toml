@@ -1,11 +1,12 @@
 [package]
 name = "styrene-mqtt"
 version = "0.1.0"
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/styrene-lab/styrene-rs"
 description = "MQTT 5.0 infrastructure for the Aether event fabric"
+readme = "README.md"
 keywords = ["styrene", "mqtt", "aether", "event-bus"]
 categories = ["network-programming"]
 
@@ -13,27 +14,24 @@ categories = ["network-programming"]
 name = "styrene_mqtt"
 
 [dependencies]
-tokio = { workspace = true, features = ["sync", "rt", "macros"] }
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
-thiserror.workspace = true
-async-trait.workspace = true
-rumqttc = { workspace = true }
-chrono = { workspace = true }
-futures-core = { workspace = true }
-pin-project-lite = { workspace = true }
-tracing = { workspace = true }
+tokio = { version = "1.44.2", features = ["sync", "rt", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+async-trait = "0.1"
+rumqttc = "0.25"
+chrono = { version = "0.4", features = ["serde"] }
+futures-core = "0.3"
+pin-project-lite = "0.2"
+tracing = "0.1"
 bytes = "1"
 
 # Feature-gated
-rumqttd = { workspace = true, optional = true }
+rumqttd = { version = "0.20", optional = true }
 
 [features]
 default = []
 embedded-broker = ["dep:rumqttd"]
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["full"] }
-
-[lints]
-workspace = true
+tokio = { version = "1.44.2", features = ["full"] }

@@ -65,7 +65,7 @@ cargo test -p styrene-mqtt
 cargo test -p styrene-mqtt --features embedded-broker
 ```
 
-`cargo test -p styrene-mqtt` (without features) will fail to compile the integration test `tests/embedded_roundtrip.rs` because it imports `EmbeddedBrokerBuilder` unconditionally. The test only compiles with `--features embedded-broker`.
+`tests/embedded_roundtrip.rs` is feature-gated and only compiles when `--features embedded-broker` is enabled.
 
 ## Build Notes
 
