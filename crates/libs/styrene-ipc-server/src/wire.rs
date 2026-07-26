@@ -513,8 +513,7 @@ mod tests {
             let Ok(msg_type) = MessageType::from_byte(byte) else {
                 continue;
             };
-            let classes =
-                [msg_type.is_request(), msg_type.is_response(), msg_type.is_event()];
+            let classes = [msg_type.is_request(), msg_type.is_response(), msg_type.is_event()];
             assert_eq!(
                 classes.into_iter().filter(|classified| *classified).count(),
                 1,

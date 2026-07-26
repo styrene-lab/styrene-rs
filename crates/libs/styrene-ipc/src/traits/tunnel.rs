@@ -28,8 +28,5 @@ pub trait DaemonTunnel: Send + Sync {
     async fn tunnel_establish(&self, peer_hash: &str) -> Result<String, IpcError>;
 
     /// Return the latest asynchronous tunnel operation for a peer.
-    async fn tunnel_operation(
-        &self,
-        peer_hash: &str,
-    ) -> Result<TunnelOperationInfo, IpcError>;
+    async fn tunnel_operation(&self, peer_hash: &str) -> Result<TunnelOperationInfo, IpcError>;
 }

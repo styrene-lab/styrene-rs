@@ -19,7 +19,9 @@ macro_rules! string_id {
                 Ok(Self(value))
             }
 
-            pub fn as_str(&self) -> &str { &self.0 }
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
         }
     };
 }
@@ -32,12 +34,18 @@ string_id!(RootOperationId);
 pub struct RuntimeId(Uuid);
 
 impl RuntimeId {
-    pub fn new() -> Self { Self(Uuid::new_v4()) }
-    pub fn into_bytes(self) -> [u8; 16] { self.0.into_bytes() }
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+    pub fn into_bytes(self) -> [u8; 16] {
+        self.0.into_bytes()
+    }
 }
 
 impl Default for RuntimeId {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

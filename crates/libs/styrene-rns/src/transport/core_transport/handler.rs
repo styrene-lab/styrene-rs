@@ -32,11 +32,16 @@ impl TransportHandler {
         if packet.header.packet_type == PacketType::Proof {
             crate::transport_diagnostic!(
                 "[tp] send_proof dst={} ctx={:02x}",
-                packet.destination, packet.context as u8
+                packet.destination,
+                packet.context as u8
             );
             if packet.context == PacketContext::LinkRequestProof {
                 if let Ok(raw) = packet.to_bytes() {
-                    crate::transport_diagnostic!("[tp] lrproof_raw len={} hex={}", raw.len(), bytes_to_hex(&raw));
+                    crate::transport_diagnostic!(
+                        "[tp] lrproof_raw len={} hex={}",
+                        raw.len(),
+                        bytes_to_hex(&raw)
+                    );
                 }
             }
         }
@@ -99,7 +104,10 @@ impl TransportHandler {
             if let Some(entry) = self.path_table.get(&packet.destination) {
                 crate::transport_diagnostic!(
                     "[tp-diag] route_lookup dst={} hops={} via_next_hop={} via_iface={}",
-                    packet.destination, entry.hops, entry.received_from, entry.iface
+                    packet.destination,
+                    entry.hops,
+                    entry.received_from,
+                    entry.iface
                 );
                 log::info!(
                     "[tp-diag] route_lookup dst={} hops={} via_next_hop={} via_iface={}",
@@ -109,7 +117,10 @@ impl TransportHandler {
                     entry.iface
                 );
             } else {
-                crate::transport_diagnostic!("[tp-diag] route_lookup dst={} missing", packet.destination);
+                crate::transport_diagnostic!(
+                    "[tp-diag] route_lookup dst={} missing",
+                    packet.destination
+                );
                 log::info!("[tp-diag] route_lookup dst={} missing", packet.destination);
             }
         }
@@ -153,7 +164,10 @@ impl TransportHandler {
             if transport_diag_enabled() {
                 crate::transport_diagnostic!(
                     "[tp-diag] broadcast_send outcome={:?} matched={} sent={} failed={}",
-                    outcome, dispatch.matched_ifaces, dispatch.sent_ifaces, dispatch.failed_ifaces
+                    outcome,
+                    dispatch.matched_ifaces,
+                    dispatch.sent_ifaces,
+                    dispatch.failed_ifaces
                 );
                 log::info!(
                     "[tp-diag] broadcast_send outcome={:?} matched={} sent={} failed={}",

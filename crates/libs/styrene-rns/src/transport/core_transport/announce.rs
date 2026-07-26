@@ -86,7 +86,8 @@ pub(super) async fn handle_announce<'a>(
         Err(err) => {
             crate::transport_diagnostic!(
                 "[transport] announce validate failed dst={} err={:?}",
-                packet.destination, err
+                packet.destination,
+                err
             );
             return;
         }

@@ -20,7 +20,11 @@ pub(super) async fn handle_path_request<'a>(
     iface: AddressHash,
 ) {
     if let Some(request) = handler.path_requests.decode(packet.data.as_slice()) {
-        crate::transport_diagnostic!("[tp] path_request dest={} iface={}", request.destination, iface);
+        crate::transport_diagnostic!(
+            "[tp] path_request dest={} iface={}",
+            request.destination,
+            iface
+        );
         if let Some(dest) = handler.single_in_destinations.get(&request.destination) {
             let response = dest
                 .lock()
@@ -31,7 +35,11 @@ pub(super) async fn handle_path_request<'a>(
             handler
                 .send(TxMessage { tx_type: TxMessageType::Direct(iface), packet: response })
                 .await;
-            crate::transport_diagnostic!("[tp] path_response dest={} iface={}", request.destination, iface);
+            crate::transport_diagnostic!(
+                "[tp] path_response dest={} iface={}",
+                request.destination,
+                iface
+            );
 
             log::trace!("tp({}): send direct path response over {}", handler.config.name, iface);
 
@@ -164,7 +172,9 @@ pub(super) async fn handle_link_request<'a>(
 ) {
     crate::transport_diagnostic!(
         "[tp] link_request dst={} ctx={:02x} hops={}",
-        packet.destination, packet.context as u8, packet.header.hops
+        packet.destination,
+        packet.context as u8,
+        packet.header.hops
     );
     if let Some(destination) = handler.single_in_destinations.get(&packet.destination).cloned() {
         log::trace!("tp({}): handle link request for {}", handler.config.name, packet.destination);

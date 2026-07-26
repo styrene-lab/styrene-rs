@@ -21,9 +21,9 @@ use styrene_mesh::{StyreneMessage, StyreneMessageType};
 use styrene_services::protocol_registry::{HandleResult, InboundMessage, ProtocolHandler};
 
 #[cfg(feature = "wireguard")]
-use styrene_tunnel::TunnelBackend;
-#[cfg(feature = "wireguard")]
 use styrene_tunnel::wireguard::WireGuardBackend;
+#[cfg(feature = "wireguard")]
+use styrene_tunnel::TunnelBackend;
 
 /// Peer state stored when a tunnel is established.
 #[derive(Debug, Clone)]
