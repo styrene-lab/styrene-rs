@@ -56,16 +56,16 @@ impl EnvironmentReport {
 
     /// Whether importable contacts exist anywhere.
     pub fn has_importable_contacts(&self) -> bool {
-        if let Some(ref rns) = self.reticulum {
-            if !rns.known_destinations.is_empty() {
-                return true;
-            }
+        if let Some(ref rns) = self.reticulum
+            && !rns.known_destinations.is_empty()
+        {
+            return true;
         }
         // NomadNet conversations directory contains peer hashes as subdirs
-        if let Some(ref dir) = self.nomadnet_dir {
-            if dir.join("storage").join("conversations").is_dir() {
-                return true;
-            }
+        if let Some(ref dir) = self.nomadnet_dir
+            && dir.join("storage").join("conversations").is_dir()
+        {
+            return true;
         }
         false
     }
@@ -126,6 +126,7 @@ impl EnvironmentReport {
 /// before any wizard UI. Detection is rooted entirely in `paths`; it never
 /// mutates process-global HOME/XDG state. The `daemon_responsive` field is left
 /// false; the caller should set it after an async ping attempt.
+#[allow(clippy::field_reassign_with_default)]
 pub fn scan_environment(paths: &StyrenePaths) -> EnvironmentReport {
     let mut report = EnvironmentReport::default();
 
@@ -161,15 +162,14 @@ pub fn scan_environment(paths: &StyrenePaths) -> EnvironmentReport {
         }
     }
     // Also check if yggdrasil binary is on PATH
-    if report.yggdrasil_config.is_none() {
-        if let Ok(output) = std::process::Command::new("which").arg("yggdrasil").output() {
-            if output.status.success() {
-                // Binary exists but no config found — still note it
-                let bin = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !bin.is_empty() {
-                    report.yggdrasil_config = Some(PathBuf::from(bin));
-                }
-            }
+    if report.yggdrasil_config.is_none()
+        && let Ok(output) = std::process::Command::new("which").arg("yggdrasil").output()
+        && output.status.success()
+    {
+        // Binary exists but no config found — still note it
+        let bin = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !bin.is_empty() {
+            report.yggdrasil_config = Some(PathBuf::from(bin));
         }
     }
 

@@ -18,7 +18,7 @@ use std::time::Instant;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
 
-use crate::action::{Action, contextual_hints};
+use crate::action::Action;
 use crate::mesh_state::{ActivityLog, LinkRecord, PeerRecord, PeerStatus, epoch_secs};
 use crate::tui::conv_widget::ConversationWidget;
 use crate::tui::conversation::ConversationView;
@@ -288,11 +288,9 @@ fn strip_ansi_escapes(s: &str) -> String {
                         if c == '\x07' {
                             break;
                         }
-                        if c == '\x1b' {
-                            if chars.peek() == Some(&'\\') {
-                                chars.next();
-                                break;
-                            }
+                        if c == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
                         }
                     }
                 }
@@ -307,16 +305,11 @@ fn strip_ansi_escapes(s: &str) -> String {
     out
 }
 
+#[derive(Default)]
 pub struct CommandTabState {
     pub selected: usize,
     pub result_text: String,
     pub is_executing: bool,
-}
-
-impl Default for CommandTabState {
-    fn default() -> Self {
-        Self { selected: 0, result_text: String::new(), is_executing: false }
-    }
 }
 
 impl PeerTab {
@@ -889,10 +882,10 @@ impl App {
                 Span::styled(truncate_to(name, (SIDEBAR_WIDTH - 4) as usize), name_style),
             ];
 
-            if let Some(count) = unread {
-                if *count > 0 {
-                    spans.push(Span::styled(format!(" {count}"), Style::default().fg(t.accent())));
-                }
+            if let Some(count) = unread
+                && *count > 0
+            {
+                spans.push(Span::styled(format!(" {count}"), Style::default().fg(t.accent())));
             }
 
             let line_area = Rect { x: inner.x, y, width: inner.width, height: 1 };

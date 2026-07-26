@@ -49,7 +49,7 @@ pub fn run_default() -> Result<()> {
 }
 
 /// Launch the Styrene terminal application with explicit installation options.
-pub async fn run(mut options: TuiOptions) -> Result<()> {
+pub async fn run(options: TuiOptions) -> Result<()> {
     styrened::diagnostics::set_enabled(false);
     rns_core::diagnostics::set_enabled(false);
     if options.runtime_profile.is_ephemeral() {
@@ -124,15 +124,12 @@ async fn run_terminal(
         loop {
             terminal.draw(|f| splash.draw(f, app.theme.as_ref()))?;
             let interval = splash::SplashScreen::frame_interval();
-            if event::poll(interval)? {
-                if let Event::Key(k) = event::read()? {
-                    if k.kind == KeyEventKind::Press
-                        && (splash.ready_to_dismiss()
-                            || start.elapsed() > Duration::from_millis(300))
-                    {
-                        break;
-                    }
-                }
+            if event::poll(interval)?
+                && let Event::Key(k) = event::read()?
+                && k.kind == KeyEventKind::Press
+                && (splash.ready_to_dismiss() || start.elapsed() > Duration::from_millis(300))
+            {
+                break;
             }
             splash.tick();
             if splash.ready_to_dismiss() && splash.hold_count > splash::HOLD_FRAMES + 30 {
@@ -152,22 +149,21 @@ async fn run_terminal(
         let mut wizard = onboarding::WizardState::new(env);
         loop {
             terminal.draw(|f| wizard.draw(f, app.theme.as_ref()))?;
-            if event::poll(Duration::from_millis(16))? {
-                if let Event::Key(k) = event::read()? {
-                    if k.kind == KeyEventKind::Press {
-                        match wizard.handle_key(k) {
-                            onboarding::WizardAction::Complete(result) => {
-                                if let Err(e) = result.apply(&options.paths) {
-                                    app.conversation.push_system(&format!(
-                                        "⬡ setup error: {e} — continuing with defaults"
-                                    ));
-                                }
-                                break result.daemon_mode;
-                            }
-                            onboarding::WizardAction::Quit => return Ok(()),
-                            onboarding::WizardAction::Continue => {}
+            if event::poll(Duration::from_millis(16))?
+                && let Event::Key(k) = event::read()?
+                && k.kind == KeyEventKind::Press
+            {
+                match wizard.handle_key(k) {
+                    onboarding::WizardAction::Complete(result) => {
+                        if let Err(e) = result.apply(&options.paths) {
+                            app.conversation.push_system(&format!(
+                                "⬡ setup error: {e} — continuing with defaults"
+                            ));
                         }
+                        break result.daemon_mode;
                     }
+                    onboarding::WizardAction::Quit => return Ok(()),
+                    onboarding::WizardAction::Continue => {}
                 }
             }
         }
@@ -263,11 +259,8 @@ async fn run_terminal(
     // ── Main event loop — 60fps ──────────────────────────────────────────────
     loop {
         // Drain daemon events
-        loop {
-            match daemon_rx.try_recv() {
-                Ok(ev) => daemon::apply_event(&mut app, ev),
-                Err(_) => break,
-            }
+        while let Ok(ev) = daemon_rx.try_recv() {
+            daemon::apply_event(&mut app, ev);
         }
 
         terminal.draw(|f| app.draw(f))?;
@@ -282,10 +275,8 @@ async fn run_terminal(
                         _ => {}
                     }
                 }
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    if handle_key(&mut app, key) {
-                        break;
-                    }
+                Event::Key(key) if key.kind == KeyEventKind::Press && handle_key(&mut app, key) => {
+                    break;
                 }
                 _ => {}
             }
@@ -310,10 +301,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if let Some(action) = action_for_key(app, key) {
         if action == Action::Quit {
             let now = std::time::Instant::now();
-            if let Some(last) = app.last_ctrl_c {
-                if now.duration_since(last) < Duration::from_secs(1) {
-                    return true;
-                }
+            if let Some(last) = app.last_ctrl_c
+                && now.duration_since(last) < Duration::from_secs(1)
+            {
+                return true;
             }
             app.last_ctrl_c = Some(now);
             app.conversation.push_system("Press Ctrl+C again to quit");

@@ -421,6 +421,7 @@ fn key_pair_from_derived_seed(root: &RootSecret, label: &str) -> Result<KeyPair,
     Ok(KeyPair::try_from(pkcs8.as_slice())?)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn material_from_cert(
     role: CertificateRole,
     identity_hash: String,
@@ -444,6 +445,7 @@ fn material_from_cert(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn material_from_raw(
     role: CertificateRole,
     identity_hash: String,

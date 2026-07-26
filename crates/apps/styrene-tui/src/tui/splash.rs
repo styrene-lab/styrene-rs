@@ -210,12 +210,12 @@ impl SplashScreen {
             if hint_y < area.bottom() {
                 for (i, ch) in hint.chars().enumerate() {
                     let cx = hint_x + i as u16;
-                    if cx < area.right() {
-                        if let Some(cell) = buf.cell_mut((cx, hint_y)) {
-                            cell.set_symbol(&ch.to_string());
-                            cell.set_fg(t.muted());
-                            cell.set_bg(t.bg());
-                        }
+                    if cx < area.right()
+                        && let Some(cell) = buf.cell_mut((cx, hint_y))
+                    {
+                        cell.set_symbol(&ch.to_string());
+                        cell.set_fg(t.muted());
+                        cell.set_bg(t.bg());
                     }
                 }
             }

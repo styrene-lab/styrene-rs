@@ -12,10 +12,8 @@
 mod sa;
 mod vici;
 
-use std::net::IpAddr;
-
 use crate::error::TunnelError;
-use crate::traits::{TunnelBackend, TunnelId, TunnelInfo, TunnelParams, TunnelState};
+use crate::traits::{TunnelBackend, TunnelId, TunnelInfo, TunnelParams};
 
 /// strongSwan tunnel backend.
 ///
@@ -23,6 +21,12 @@ use crate::traits::{TunnelBackend, TunnelId, TunnelInfo, TunnelParams, TunnelSta
 pub struct StrongSwanBackend {
     /// Path to the VICI socket (default: /var/run/charon.vici).
     vici_socket: String,
+}
+
+impl Default for StrongSwanBackend {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StrongSwanBackend {

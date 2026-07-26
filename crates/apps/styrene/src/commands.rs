@@ -460,7 +460,7 @@ pub(crate) async fn fleet_apply(
     timeout: u64,
 ) -> anyhow::Result<()> {
     // Issue 8: Clamp timeout to reasonable bounds (10s to 1h)
-    let timeout = timeout.min(3600).max(10);
+    let timeout = timeout.clamp(10, 3600);
 
     // Read and validate profile
     let profile_bytes =
@@ -474,7 +474,7 @@ pub(crate) async fn fleet_apply(
 
     // Warn if unsigned and verify enabled
     if verify {
-        let parsed: toml::Value = toml::from_str(profile_str).unwrap();
+        let parsed: toml::Value = toml::from_str(profile_str).expect("valid test profile TOML");
         let has_sig = parsed.get("meta").and_then(|m| m.get("signature")).is_some();
         if !has_sig {
             eprintln!(

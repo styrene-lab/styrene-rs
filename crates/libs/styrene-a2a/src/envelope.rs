@@ -52,6 +52,7 @@ pub struct AgentEnvelope {
 }
 
 impl AgentEnvelope {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         kind: AgentEnvelopeKind,
         source_agent_id: &AgentId,

@@ -117,7 +117,7 @@ pub fn run_clean_room_check(paths: &StyrenePaths) -> io::Result<()> {
 
     let identity_bytes = fs::read(paths.identity_path())?;
     validate_identity_bytes(&identity_bytes)?;
-    styrened::config::DaemonConfig::from_path(&paths.config_path())
+    styrened::config::DaemonConfig::from_path(paths.config_path())
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
 
     let report = super::detect::scan_environment(paths);
@@ -295,7 +295,7 @@ mod tests {
         result(IdentitySource::CreateNew).apply(&paths).unwrap();
         assert!(paths.identity_path().is_file());
         assert!(paths.setup_complete_path().is_file());
-        styrened::config::DaemonConfig::from_path(&paths.config_path()).unwrap();
+        styrened::config::DaemonConfig::from_path(paths.config_path()).unwrap();
         let _ = styrened::identity_store::load_or_create_identity(&paths.identity_path()).unwrap();
         fs::remove_dir_all(root).unwrap();
     }

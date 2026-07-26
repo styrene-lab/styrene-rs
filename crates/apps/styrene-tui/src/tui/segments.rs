@@ -214,6 +214,7 @@ fn render_sent(
         .render(inner, buf);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_received(
     area: Rect,
     buf: &mut Buffer,
@@ -226,7 +227,6 @@ fn render_received(
 ) {
     let label = source_name.unwrap_or(source_hash);
     let short = &source_hash[..source_hash.len().min(8)];
-    let ts = ts;
     let title_line = Line::from(vec![
         Span::styled(" ← ", Style::default().fg(t.success())),
         Span::styled(label, Style::default().fg(t.fg()).add_modifier(Modifier::BOLD)),

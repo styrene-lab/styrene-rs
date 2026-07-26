@@ -34,6 +34,12 @@ pub struct WireGuardBackend {
     interface_initialized: tokio::sync::OnceCell<()>,
 }
 
+impl Default for WireGuardBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WireGuardBackend {
     pub fn new() -> Self {
         Self {

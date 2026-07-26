@@ -66,19 +66,14 @@ pub enum InlineNode {
 }
 
 /// Text alignment. `Default` means "document default" (reset by `` `a ``).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Alignment {
     /// Document default alignment (what `` `a `` and `` `` `` reset to).
+    #[default]
     Default,
     Left,
     Center,
     Right,
-}
-
-impl Default for Alignment {
-    fn default() -> Self {
-        Alignment::Default
-    }
 }
 
 /// Accumulated inline styles.

@@ -85,7 +85,7 @@ struct Frame {
 /// let src = HardwareSource::open("/dev/ttyUSB0").expect("failed to open serial port");
 /// ```
 pub struct HardwareSource {
-    port: Box<dyn SerialPort>,
+    port: std::sync::Mutex<Box<dyn SerialPort>>,
     health: SourceHealth,
     checker: HealthChecker,
     port_path: String,
@@ -109,7 +109,7 @@ impl HardwareSource {
             serialport::new(port_path, 1_000_000).timeout(Duration::from_millis(500)).open()?;
 
         Ok(Self {
-            port,
+            port: std::sync::Mutex::new(port),
             health: SourceHealth::Ok,
             checker: HealthChecker::default(),
             port_path: port_path.to_owned(),
@@ -121,22 +121,22 @@ impl HardwareSource {
         // Scan for sync byte
         let mut sync = [0u8; 1];
         loop {
-            self.port.read_exact(&mut sync)?;
+            self.port.get_mut().expect("serial port lock").read_exact(&mut sync)?;
             if sync[0] == SYNC_BYTE {
                 break;
             }
         }
 
         let mut header = [0u8; 2]; // [LEN, TYPE]
-        self.port.read_exact(&mut header)?;
+        self.port.get_mut().expect("serial port lock").read_exact(&mut header)?;
         let len = header[0] as usize;
         let type_byte = header[1];
 
         let mut payload = vec![0u8; len];
-        self.port.read_exact(&mut payload)?;
+        self.port.get_mut().expect("serial port lock").read_exact(&mut payload)?;
 
         let mut crc_buf = [0u8; 1];
-        self.port.read_exact(&mut crc_buf)?;
+        self.port.get_mut().expect("serial port lock").read_exact(&mut crc_buf)?;
         let received_crc = crc_buf[0];
 
         // Verify CRC over TYPE || PAYLOAD
@@ -167,7 +167,7 @@ impl HardwareSource {
         let type_byte = MsgType::Request as u8;
         let crc = crc8(&[type_byte, payload[0], payload[1]]);
         let frame = [SYNC_BYTE, 2, type_byte, payload[0], payload[1], crc];
-        self.port.write_all(&frame)?;
+        self.port.get_mut().expect("serial port lock").write_all(&frame)?;
         Ok(())
     }
 
@@ -176,7 +176,7 @@ impl HardwareSource {
         let type_byte = MsgType::Reset as u8;
         let crc = crc8(&[type_byte]);
         let frame = [SYNC_BYTE, 0, type_byte, crc];
-        self.port.write_all(&frame)?;
+        self.port.get_mut().expect("serial port lock").write_all(&frame)?;
         Ok(())
     }
 
@@ -281,9 +281,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn crc8_known_value() {
-        // CRC-8/MAXIM of [0x01] = 0x2F
-        assert_eq!(crc8(&[0x01]), 0x2f);
+    fn crc8_known_values() {
+        // CRC-8/MAXIM-DOW uses the reflected 0x31 polynomial (0x8C).
+        assert_eq!(crc8(&[0x01]), 0x5e);
+        // Standard check vector from the CRC catalogue.
+        assert_eq!(crc8(b"123456789"), 0xa1);
     }
 
     #[test]

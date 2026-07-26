@@ -726,10 +726,10 @@ async fn event_reader(stream: Arc<Mutex<UnixStream>>, tx: mpsc::Sender<TuiEvent>
 
         match frame_result {
             Ok(Ok(frame)) => {
-                if let Some(ev) = frame_to_tui_event(frame) {
-                    if tx.send(ev).await.is_err() {
-                        break; // receiver dropped — TUI exited
-                    }
+                if let Some(ev) = frame_to_tui_event(frame)
+                    && tx.send(ev).await.is_err()
+                {
+                    break; // receiver dropped — TUI exited
                 }
             }
             Ok(Err(e)) => {
@@ -1011,11 +1011,11 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
                     }
                 }
                 "rtt_updated" => {
-                    if let Some(link) = app.links.iter_mut().find(|l| l.id == link_id) {
-                        if let Some(rtt) = rtt_ms {
-                            link.rtt_ms = rtt;
-                            link.pluck();
-                        }
+                    if let Some(link) = app.links.iter_mut().find(|l| l.id == link_id)
+                        && let Some(rtt) = rtt_ms
+                    {
+                        link.rtt_ms = rtt;
+                        link.pluck();
                     }
                 }
                 "closed" | "stale" => {
@@ -1095,7 +1095,7 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
             app.activity.push(ActivityEntry::new(
                 ActivityKind::LinkDown,
                 "daemon",
-                &format!("disconnected: {reason}"),
+                format!("disconnected: {reason}"),
             ));
         }
     }

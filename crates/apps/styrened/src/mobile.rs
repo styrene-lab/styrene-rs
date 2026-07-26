@@ -434,7 +434,7 @@ fn load_or_create_identity(
 /// On iOS: Face ID / Touch ID protects access. Zero-interaction on create.
 /// On macOS: Keychain Access with biometric. Same behavior.
 /// Fallback: if keychain feature not compiled, falls back to plaintext file.
-fn load_or_create_keychain(paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
+fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
     #[cfg(feature = "mobile-keychain")]
     {
         use styrene_identity::keychain_signer::KeychainSigner;
@@ -473,7 +473,7 @@ fn load_or_create_keychain(paths: &PlatformPaths) -> anyhow::Result<PrivateIdent
         crate::daemon_diagnostic!(
             "[mobile] keychain feature not enabled, falling back to plaintext file"
         );
-        load_or_create_plaintext_file(paths)
+        load_or_create_plaintext_file(_paths)
     }
 }
 

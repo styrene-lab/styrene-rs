@@ -101,16 +101,17 @@ impl AnnounceCache {
             self.evict_one();
         }
 
-        if self.newer.as_ref().unwrap().len() >= self.capacity {
-            self.older = Some(self.newer.take().unwrap());
+        let newer = self.newer.get_or_insert_with(BTreeMap::new);
+        if newer.len() >= self.capacity {
+            self.older = self.newer.take();
             self.newer = Some(BTreeMap::new());
         }
 
-        self.newer.as_mut().unwrap().insert(destination, entry);
+        self.newer.get_or_insert_with(BTreeMap::new).insert(destination, entry);
     }
 
     fn get(&self, destination: &AddressHash) -> Option<AnnounceEntry> {
-        if let Some(entry) = self.newer.as_ref().unwrap().get(destination) {
+        if let Some(entry) = self.newer.as_ref().and_then(|newer| newer.get(destination)) {
             return Some(entry.clone());
         }
 
@@ -150,7 +151,7 @@ impl AnnounceCache {
     }
 
     fn clear(&mut self) {
-        self.newer.as_mut().unwrap().clear();
+        self.newer = Some(BTreeMap::new());
         self.older = None;
     }
 }
@@ -343,7 +344,7 @@ impl AnnounceTable {
 
         // Iterate over both cache generations
         for map in [self.cache.newer.as_mut(), self.cache.older.as_mut()].into_iter().flatten() {
-            for (_destination, entry) in map.iter_mut() {
+            for entry in map.values_mut() {
                 if now.duration_since(entry.timeout) < Duration::from_secs(300) {
                     continue;
                 }

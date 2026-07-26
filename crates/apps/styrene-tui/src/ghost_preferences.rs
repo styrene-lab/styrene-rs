@@ -20,6 +20,7 @@ impl GhostPreferences {
             .unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub fn save(&self, path: &Path) -> io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
