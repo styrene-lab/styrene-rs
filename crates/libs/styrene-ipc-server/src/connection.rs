@@ -10,13 +10,13 @@ use std::sync::Arc;
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 use styrene_ipc::traits::Daemon;
 use styrene_ipc::types::DaemonEvent;
 
 use crate::dispatch;
-use crate::wire::{self, MessageType, REQUEST_ID_SIZE, WireError};
+use crate::wire::{self, MessageType, WireError, REQUEST_ID_SIZE};
 
 /// Subscription topics a client can subscribe to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

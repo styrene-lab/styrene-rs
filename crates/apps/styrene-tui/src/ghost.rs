@@ -66,7 +66,10 @@ pub async fn run_ghost_lifecycle_check(parent: &Path, timeout: Duration) -> anyh
         drop(ready);
         handle.shutdown().await;
         if paths.daemon_socket.exists() {
-            anyhow::bail!("ghost runtime socket survived shutdown: {}", paths.daemon_socket.display());
+            anyhow::bail!(
+                "ghost runtime socket survived shutdown: {}",
+                paths.daemon_socket.display()
+            );
         }
         anyhow::Ok(())
     };

@@ -231,10 +231,7 @@ fn verify_private_file(path: &Path) -> io::Result<()> {
     if path.is_file() {
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("not a file: {}", path.display()),
-        ))
+        Err(io::Error::new(io::ErrorKind::InvalidData, format!("not a file: {}", path.display())))
     }
 }
 

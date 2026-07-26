@@ -1171,12 +1171,7 @@ mod tests {
         let store = MessagesStore::in_memory().expect("store");
         for index in 1..=100 {
             store
-                .insert_message(&chat_message(
-                    &format!("m{index:03}"),
-                    "alice",
-                    "me",
-                    42,
-                ))
+                .insert_message(&chat_message(&format!("m{index:03}"), "alice", "me", 42))
                 .expect("insert");
         }
 

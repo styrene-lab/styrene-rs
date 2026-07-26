@@ -18,10 +18,10 @@ mod onboarding;
 mod runtime;
 mod tui;
 
+pub use ghost::run_ghost_lifecycle_check;
 pub use onboarding::detect::{EnvironmentReport, scan_environment as onboarding_report};
 pub use onboarding::paths::{StyrenePaths, TuiOptions};
 pub use onboarding::setup::{SetupResult, run_clean_room_check};
-pub use ghost::run_ghost_lifecycle_check;
 pub use runtime::{
     RuntimeContext, RuntimeEnvironment, RuntimeHost, RuntimeOverrides, RuntimeProfile,
 };

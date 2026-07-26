@@ -142,7 +142,11 @@ pub(super) async fn handle_proof(
         }
         return;
     }
-    crate::transport_diagnostic!("[tp] proof dst={} ctx={:02x}", packet.destination, packet.context as u8);
+    crate::transport_diagnostic!(
+        "[tp] proof dst={} ctx={:02x}",
+        packet.destination,
+        packet.context as u8
+    );
     let receipt_hash = {
         let handler = handler.lock().await;
         validated_receipt_hash(&packet, &handler).await

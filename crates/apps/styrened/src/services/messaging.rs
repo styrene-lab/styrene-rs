@@ -291,20 +291,18 @@ impl MessagingService {
             hex::encode(dest_hash.as_slice()),
             payload.len()
         );
-        let result = match transport
-            .send_via_link(dest_desc, payload, Duration::from_secs(20))
-            .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                crate::daemon_diagnostic!(
-                    "[messaging-flow] stage=link_send_failed destination={} error={}",
-                    hex::encode(dest_hash.as_slice()),
-                    error
-                );
-                return Err(error);
-            }
-        };
+        let result =
+            match transport.send_via_link(dest_desc, payload, Duration::from_secs(20)).await {
+                Ok(result) => result,
+                Err(error) => {
+                    crate::daemon_diagnostic!(
+                        "[messaging-flow] stage=link_send_failed destination={} error={}",
+                        hex::encode(dest_hash.as_slice()),
+                        error
+                    );
+                    return Err(error);
+                }
+            };
 
         // Extract packet hash for receipt tracking
         match result {
