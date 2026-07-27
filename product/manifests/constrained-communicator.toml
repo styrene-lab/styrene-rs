@@ -1,0 +1,40 @@
+schema_version = 1
+id = "constrained-communicator"
+deployment_tier = "constrained-linux"
+streams = ["conversations", "device-communicator"]
+
+required = [
+  "identity.persistent",
+  "messaging.lxmf.direct",
+  "messaging.history",
+  "messaging.receipts",
+  "contacts.manage",
+  "ui.semantic-actions",
+  "runtime.portable",
+]
+
+experimental = [
+  "runtime.ghost",
+]
+
+planned = [
+  "ui.compact.gamepad",
+]
+
+excluded = [
+  "browse.nomadnet.micron",
+  "browse.i2p.proxy",
+  "browse.semantic-web",
+  "media.voice.signaling",
+  "network.topology.observe",
+  "network.tunnel.control",
+  "fleet.remote-command",
+  "sdk.embedded-alloc",
+]
+
+[requirements]
+process_model = true
+allocator = true
+interactive_display = "compact"
+min_memory_bytes = 67108864
+min_storage_bytes = 268435456

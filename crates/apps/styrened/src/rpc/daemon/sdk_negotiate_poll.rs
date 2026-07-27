@@ -464,6 +464,7 @@ impl RpcDaemon {
         let mut event_rows = Vec::new();
         let mut batch_bytes = 0_usize;
 
+        #[allow(clippy::result_large_err)]
         let append_event_row =
             |row: JsonValue, event_rows: &mut Vec<JsonValue>, batch_bytes: &mut usize| {
                 let payload_bytes =
@@ -512,7 +513,7 @@ impl RpcDaemon {
                 "ts_ms": (now_i64().max(0) as u64) * 1000,
                 "event_type": "StreamGap",
                 "severity": "warn",
-                "source_component": "rns-rpc",
+                "source_component": "styrened-rpc",
                 "payload": {
                         "expected_seq_no": gap_meta.expected_seq_no,
                         "observed_seq_no": gap_meta.observed_seq_no,
@@ -542,7 +543,7 @@ impl RpcDaemon {
                 "ts_ms": (now_i64().max(0) as u64) * 1000,
                 "event_type": entry.event.event_type.clone(),
                 "severity": Self::event_severity(entry.event.event_type.as_str()),
-                "source_component": "rns-rpc",
+                "source_component": "styrened-rpc",
                 "payload": entry.event.payload.clone(),
             });
             if let Err(response) = append_event_row(event_row, &mut event_rows, &mut batch_bytes) {

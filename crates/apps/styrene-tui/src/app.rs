@@ -18,6 +18,7 @@ use std::time::Instant;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Tabs};
 
+use crate::action::Action;
 use crate::mesh_state::{ActivityLog, LinkRecord, PeerRecord, PeerStatus, epoch_secs};
 use crate::tui::conv_widget::ConversationWidget;
 use crate::tui::conversation::ConversationView;
@@ -77,10 +78,18 @@ pub enum Focus {
     Input,
 }
 
+fn offset_index(current: usize, delta: isize, count: usize) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    current.saturating_add_signed(delta).min(count - 1)
+}
+
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 pub struct App {
     pub theme: Box<dyn Theme>,
+    pub runtime_profile: crate::RuntimeProfile,
 
     // Navigation
     pub workspace: Workspace,
@@ -122,6 +131,7 @@ pub struct App {
     pub page_source: Option<String>,
     pub page_path: Option<String>,
     pub page_index: Vec<String>,
+    pub page_selection: usize,
 
     // Daemon state (populated from IPC events)
     pub node_hash: String,
@@ -144,6 +154,9 @@ pub struct App {
 
     // Settings panel
     pub settings_open: bool,
+    pub help_open: bool,
+    pub palette_open: bool,
+    pub palette_selection: usize,
 
     // UI state
     pub last_ctrl_c: Option<Instant>,
@@ -275,11 +288,9 @@ fn strip_ansi_escapes(s: &str) -> String {
                         if c == '\x07' {
                             break;
                         }
-                        if c == '\x1b' {
-                            if chars.peek() == Some(&'\\') {
-                                chars.next();
-                                break;
-                            }
+                        if c == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
                         }
                     }
                 }
@@ -294,21 +305,15 @@ fn strip_ansi_escapes(s: &str) -> String {
     out
 }
 
+#[derive(Default)]
 pub struct CommandTabState {
     pub selected: usize,
     pub result_text: String,
     pub is_executing: bool,
 }
 
-impl Default for CommandTabState {
-    fn default() -> Self {
-        Self { selected: 0, result_text: String::new(), is_executing: false }
-    }
-}
-
 impl PeerTab {
-    pub const ALL: [PeerTab; 5] =
-        [PeerTab::Status, PeerTab::Chat, PeerTab::Pages, PeerTab::Terminal, PeerTab::Commands];
+    pub const ALL: [PeerTab; 3] = [PeerTab::Chat, PeerTab::Status, PeerTab::Pages];
 
     pub fn title(&self) -> &'static str {
         match self {
@@ -329,6 +334,7 @@ impl App {
 
         Self {
             theme,
+            runtime_profile: crate::RuntimeProfile::Standard,
             workspace: Workspace::Home,
             focus: Focus::Main,
             input_mode: InputMode::Normal,
@@ -352,15 +358,19 @@ impl App {
             interface_count: 0,
             sidebar_selection: 0,
             selected_peer: None,
-            peer_tab: PeerTab::Status,
+            peer_tab: PeerTab::Chat,
             selected_conversation: None,
             command_tab: CommandTabState::default(),
             terminal_tab: TerminalTabState::default(),
             page_source: None,
             page_path: None,
             page_index: Vec::new(),
+            page_selection: 0,
             cmd_tx: None,
             settings_open: false,
+            help_open: false,
+            palette_open: false,
+            palette_selection: 0,
             badge_online: 0,
             badge_stale: 0,
             badge_lost: 0,
@@ -388,6 +398,162 @@ impl App {
         self.set_workspace(Workspace::ALL[(idx + Workspace::ALL.len() - 1) % Workspace::ALL.len()]);
     }
 
+    pub fn focus_next(&mut self) {
+        self.focus = match self.focus {
+            Focus::Sidebar => Focus::Main,
+            Focus::Main => Focus::Input,
+            Focus::Input => Focus::Sidebar,
+        };
+    }
+
+    pub fn focus_previous(&mut self) {
+        self.focus = match self.focus {
+            Focus::Sidebar => Focus::Input,
+            Focus::Main => Focus::Sidebar,
+            Focus::Input => Focus::Main,
+        };
+    }
+
+    pub fn dispatch(&mut self, action: Action) -> bool {
+        match action {
+            Action::WorkspaceNext => self.next_workspace(),
+            Action::WorkspacePrevious => self.prev_workspace(),
+            Action::FocusNext => self.focus_next(),
+            Action::FocusPrevious => self.focus_previous(),
+            Action::MoveUp => self.move_selection(-1),
+            Action::MoveDown => self.move_selection(1),
+            Action::MoveLeft => {
+                if self.workspace == Workspace::Peers && self.focus == Focus::Main {
+                    self.prev_peer_tab();
+                }
+            }
+            Action::MoveRight => {
+                if self.workspace == Workspace::Peers && self.focus == Focus::Main {
+                    self.next_peer_tab();
+                }
+            }
+            Action::Toggle => {}
+            Action::PageUp => self.active_conversation_mut().scroll_up(10),
+            Action::PageDown => self.active_conversation_mut().scroll_down(10),
+            Action::Activate => self.activate_focused(),
+            Action::Back => {
+                if self.workspace == Workspace::Peers
+                    && self.peer_tab == PeerTab::Pages
+                    && self.page_source.is_some()
+                {
+                    self.page_source = None;
+                    self.page_path = None;
+                } else if self.help_open {
+                    self.help_open = false;
+                } else if self.palette_open {
+                    self.palette_open = false;
+                } else if self.focus != Focus::Sidebar {
+                    self.focus = Focus::Sidebar;
+                } else {
+                    self.selected_peer = None;
+                    self.selected_conversation = None;
+                    self.clear_page_state();
+                }
+            }
+            Action::Compose => {
+                if self.selected_peer.is_some() || self.selected_conversation.is_some() {
+                    self.input_mode = InputMode::Compose;
+                    self.focus = Focus::Input;
+                }
+            }
+            Action::Search => {
+                self.input_mode = InputMode::Search { query: String::new() };
+                self.focus = Focus::Input;
+            }
+            Action::OpenHelp => self.help_open = !self.help_open,
+            Action::OpenPalette => {
+                self.palette_open = !self.palette_open;
+                self.palette_selection = 0;
+            }
+            Action::Quit => return true,
+        }
+        false
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        if self.focus == Focus::Sidebar {
+            let count = self.sidebar_items().len();
+            self.sidebar_selection = offset_index(self.sidebar_selection, delta, count);
+        } else if self.workspace == Workspace::Peers && self.peer_tab == PeerTab::Commands {
+            self.command_tab.selected =
+                offset_index(self.command_tab.selected, delta, CommandAction::ALL.len());
+        } else if self.workspace == Workspace::Peers && self.peer_tab == PeerTab::Pages {
+            if self.page_source.is_none() && !self.page_index.is_empty() {
+                self.page_selection =
+                    offset_index(self.page_selection, delta, self.page_index.len());
+            }
+        } else if delta < 0 {
+            self.active_conversation_mut().scroll_up(3);
+        } else {
+            self.active_conversation_mut().scroll_down(3);
+        }
+    }
+
+    fn activate_focused(&mut self) {
+        if self.focus == Focus::Input {
+            self.dispatch(Action::Compose);
+            return;
+        }
+        if self.focus == Focus::Sidebar {
+            let items = self.sidebar_items();
+            if let Some((hash, _, _)) = items.get(self.sidebar_selection) {
+                let hash = hash.clone();
+                match self.workspace {
+                    Workspace::Peers | Workspace::Home => {
+                        self.select_peer(hash);
+                        if self.workspace == Workspace::Home {
+                            self.workspace = Workspace::Peers;
+                        }
+                    }
+                    Workspace::Messages => self.selected_conversation = Some(hash),
+                }
+                self.focus = Focus::Main;
+            }
+        } else if self.workspace == Workspace::Peers && self.peer_tab == PeerTab::Pages {
+            if self.page_source.is_some() {
+                self.page_source = None;
+                self.page_path = None;
+            } else if !self.page_index.is_empty() {
+                let index = self.page_selection.min(self.page_index.len() - 1);
+                let path = self.page_index[index].clone();
+                if let Some(peer_hash) = self.selected_peer.clone() {
+                    self.send_daemon_cmd(crate::daemon::DaemonCmd::BrowsePage {
+                        host: peer_hash,
+                        path,
+                    });
+                }
+            } else if let Some(peer_hash) = self.selected_peer.clone() {
+                self.send_daemon_cmd(crate::daemon::DaemonCmd::ListPages { host: peer_hash });
+            }
+        } else if self.workspace == Workspace::Messages
+            || (self.workspace == Workspace::Peers && self.peer_tab == PeerTab::Chat)
+        {
+            self.dispatch(Action::Compose);
+        }
+    }
+
+    fn clear_page_state(&mut self) {
+        self.page_index.clear();
+        self.page_selection = 0;
+        self.page_source = None;
+        self.page_path = None;
+    }
+
+    pub fn select_peer(&mut self, hash: String) {
+        let changed_peer = self.selected_peer.as_deref() != Some(hash.as_str());
+        self.selected_peer = Some(hash);
+        self.peer_tab = PeerTab::Chat;
+        if changed_peer {
+            self.clear_page_state();
+        }
+        self.focus = Focus::Main;
+    }
+
     #[allow(dead_code)] // available for keybind wiring
     pub fn toggle_sidebar(&mut self) {
         self.sidebar_visible = !self.sidebar_visible;
@@ -396,6 +562,11 @@ impl App {
     pub fn next_peer_tab(&mut self) {
         let idx = PeerTab::ALL.iter().position(|t| *t == self.peer_tab).unwrap_or(0);
         self.peer_tab = PeerTab::ALL[(idx + 1) % PeerTab::ALL.len()];
+    }
+
+    pub fn prev_peer_tab(&mut self) {
+        let idx = PeerTab::ALL.iter().position(|t| *t == self.peer_tab).unwrap_or(0);
+        self.peer_tab = PeerTab::ALL[(idx + PeerTab::ALL.len() - 1) % PeerTab::ALL.len()];
     }
 
     /// Get the currently active conversation for scrolling (workspace-aware).
@@ -600,6 +771,22 @@ impl App {
         let mut left_spans = vec![
             Span::styled("⬡ ", Style::default().fg(t.accent())),
             Span::styled("styrene", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" [{}]", self.runtime_profile.label()),
+                Style::default().fg(if self.runtime_profile.is_ephemeral() {
+                    t.warning()
+                } else {
+                    t.dim()
+                }),
+            ),
+            Span::styled(
+                format!(
+                    " v{}+{}",
+                    env!("CARGO_PKG_VERSION"),
+                    option_env!("STYRENE_BUILD_SHA").unwrap_or("unknown")
+                ),
+                Style::default().fg(t.dim()),
+            ),
             Span::styled(&hash_short, Style::default().fg(t.dim())),
             Span::styled("   ", Style::default()),
         ];
@@ -695,10 +882,10 @@ impl App {
                 Span::styled(truncate_to(name, (SIDEBAR_WIDTH - 4) as usize), name_style),
             ];
 
-            if let Some(count) = unread {
-                if *count > 0 {
-                    spans.push(Span::styled(format!(" {count}"), Style::default().fg(t.accent())));
-                }
+            if let Some(count) = unread
+                && *count > 0
+            {
+                spans.push(Span::styled(format!(" {count}"), Style::default().fg(t.accent())));
             }
 
             let line_area = Rect { x: inner.x, y, width: inner.width, height: 1 };
@@ -948,10 +1135,23 @@ impl App {
                 )),
                 Line::default(),
             ];
-            for path in &self.page_index {
+            for (index, path) in self.page_index.iter().enumerate() {
+                let selected = index == self.page_selection;
                 lines.push(Line::from(vec![
-                    Span::styled("  > ", Style::default().fg(t.accent())),
-                    Span::styled(path.as_str(), Style::default().fg(t.fg())),
+                    Span::styled(
+                        if selected { "  > " } else { "    " },
+                        Style::default().fg(t.accent()),
+                    ),
+                    Span::styled(
+                        path.as_str(),
+                        Style::default()
+                            .fg(if selected { t.accent() } else { t.fg() })
+                            .add_modifier(if selected {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
+                    ),
                 ]));
             }
             lines.push(Line::default());
@@ -1045,7 +1245,7 @@ impl App {
             f.render_stateful_widget(ConversationWidget::new(segments, t), area, state);
         } else {
             f.render_widget(
-                Paragraph::new("  No messages with this peer")
+                Paragraph::new("  No messages yet — press Enter to write the first message")
                     .style(Style::default().fg(t.dim()).bg(t.bg())),
                 area,
             );
@@ -1508,13 +1708,14 @@ impl App {
 
         // Push to per-peer conversation (optimistic UI)
         let conv = self.peer_conversation(&dest);
-        conv.push_sent(&dest, Some(&name), &text, DeliveryStatus::Sending);
+        conv.push_sent(None, &dest, Some(&name), &text, DeliveryStatus::Sending);
 
         // Activity log
+        let activity_summary = crate::tui::widgets::truncate_str(&text, 32, "…");
         self.activity.push(crate::mesh_state::ActivityEntry::new(
             crate::mesh_state::ActivityKind::OutboundMessage,
             &name,
-            &text[..text.len().min(32)],
+            &activity_summary,
         ));
 
         // Queue actual send via daemon
@@ -1525,11 +1726,25 @@ impl App {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn truncate_to(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else if max > 1 {
-        format!("{}…", &s[..max - 1])
-    } else {
-        s[..max].to_string()
+    crate::tui::widgets::truncate_str(s, max, "…")
+}
+
+#[cfg(test)]
+mod unicode_regression_tests {
+    use super::*;
+
+    #[test]
+    fn truncate_to_never_slices_inside_multibyte_text() {
+        let text = "Styrene 𝗲phemeral identity loaded";
+        let shortened = truncate_to(text, 24);
+        assert!(shortened.ends_with('…'));
+        assert!(unicode_width::UnicodeWidthStr::width(shortened.as_str()) <= 24);
+    }
+
+    #[test]
+    fn compose_activity_accepts_styled_unicode() {
+        let mut app = App::new();
+        app.handle_compose_submit("Styrene 𝗲phemeral identity loaded across the mesh".into());
+        assert!(!app.activity.is_empty());
     }
 }

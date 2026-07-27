@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # T01-T04: Verify each node is reachable via its Unix socket.
 
-source /harness/harness.sh
+source "${HARNESS_ROOT:-/harness}/harness.sh"
 
 echo "  Suite: Infrastructure"
 

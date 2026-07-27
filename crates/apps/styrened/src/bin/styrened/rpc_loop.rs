@@ -39,7 +39,7 @@ pub(super) async fn run_rpc_loop(
 
 async fn run_plain_rpc_loop(addr: SocketAddr, daemon: Arc<RpcDaemon>) {
     let listener = TcpListener::bind(addr).await.expect("bind rpc listener");
-    println!("reticulumd listening on http://{}", addr);
+    println!("styrened listening on http://{}", addr);
 
     loop {
         let (stream, peer_addr) = listener.accept().await.expect("accept rpc socket");
@@ -51,7 +51,7 @@ async fn run_tls_rpc_loop(addr: SocketAddr, daemon: Arc<RpcDaemon>, config: RpcT
     let tls_server = build_tls_server_config(&config).expect("build rpc tls server config");
     let acceptor = TlsAcceptor::from(tls_server);
     let listener = TcpListener::bind(addr).await.expect("bind tls rpc listener");
-    println!("reticulumd listening on https://{}", addr);
+    println!("styrened listening on https://{}", addr);
 
     loop {
         let (stream, peer_addr) = listener.accept().await.expect("accept tls rpc socket");

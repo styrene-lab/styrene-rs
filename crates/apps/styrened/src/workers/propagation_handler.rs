@@ -4,7 +4,8 @@
 //! Registered as a ProtocolHandler for the "styrene" protocol type.
 //! Only active on nodes with propagation enabled (Hub role).
 
-use crate::services::{MessagingService, PropagationService};
+use crate::services::messaging::InboundAcceptOutcome;
+use crate::services::{EventService, MessagingService, PropagationService};
 use crate::transport::mesh_transport::MeshTransport;
 use async_trait::async_trait;
 use lxmf::inbound_decode::InboundPayloadMode;
@@ -25,6 +26,7 @@ pub struct PropagationRequestHandler {
     signer: Arc<PrivateIdentity>,
     propagation: Arc<PropagationService>,
     messaging: Arc<MessagingService>,
+    events: Arc<EventService>,
     local_delivery_hash: Option<String>,
 }
 
@@ -34,9 +36,10 @@ impl PropagationRequestHandler {
         signer: Arc<PrivateIdentity>,
         propagation: Arc<PropagationService>,
         messaging: Arc<MessagingService>,
+        events: Arc<EventService>,
         local_delivery_hash: Option<String>,
     ) -> Self {
-        Self { transport, signer, propagation, messaging, local_delivery_hash }
+        Self { transport, signer, propagation, messaging, events, local_delivery_hash }
     }
 
     /// Build and send a response back to the source peer.
@@ -124,21 +127,46 @@ impl PropagationRequestHandler {
                 if let Ok(bytes) = hex::decode(&request.dest_hash) {
                     if bytes.len() == 16 {
                         dest.copy_from_slice(&bytes);
-                        if let Some(record) = self.messaging.accept_inbound(
+                        return match self.messaging.accept_inbound(
                             dest,
                             &request.lxmf_bytes,
                             InboundPayloadMode::FullWire,
                         ) {
-                            eprintln!(
-                                "[propagation] ingest for local dest — delivered as id={}",
-                                record.id
-                            );
-                            return Self::cbor_encode(&PropagationStatusPayload {
-                                success: true,
-                                error: None,
-                                count: Some(1),
-                            });
-                        }
+                            InboundAcceptOutcome::Accepted(record) => {
+                                crate::daemon_diagnostic!(
+                                    "[propagation] ingest for local dest — delivered as id={}",
+                                    record.id
+                                );
+                                Self::cbor_encode(&PropagationStatusPayload {
+                                    success: true,
+                                    error: None,
+                                    count: Some(1),
+                                })
+                            }
+                            InboundAcceptOutcome::Duplicate { message_id } => {
+                                crate::daemon_diagnostic!(
+                                    "[propagation] duplicate local ingest dropped: id={message_id}"
+                                );
+                                self.events.emit_inbound_drop(
+                                    "propagation_ingest",
+                                    "duplicate",
+                                    Some(&message_id),
+                                    Some(&request.dest_hash),
+                                    None,
+                                );
+                                Self::cbor_encode(&PropagationStatusPayload {
+                                    success: true,
+                                    error: None,
+                                    count: Some(0),
+                                })
+                            }
+                            InboundAcceptOutcome::Rejected { diagnostics } => Self::error_response(
+                                &format!("malformed local delivery: {}", diagnostics.summary()),
+                            ),
+                            InboundAcceptOutcome::StorageError { error, .. } => {
+                                Self::error_response(&format!("local storage error: {error}"))
+                            }
+                        };
                     }
                 }
                 return Self::error_response("failed to deliver locally");
@@ -152,17 +180,36 @@ impl PropagationRequestHandler {
         ) {
             Ok(stored) => {
                 let count = if stored { 1 } else { 0 };
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[propagation] ingested for dest={} stored={}",
-                    request.dest_hash, stored
+                    request.dest_hash,
+                    stored
                 );
+                if !stored {
+                    self.events.emit_inbound_drop(
+                        "propagation_store",
+                        "duplicate",
+                        None,
+                        Some(&request.dest_hash),
+                        None,
+                    );
+                }
                 Self::cbor_encode(&PropagationStatusPayload {
                     success: true,
                     error: None,
                     count: Some(count),
                 })
             }
-            Err(e) => Self::error_response(&format!("storage error: {e}")),
+            Err(e) => {
+                self.events.emit_inbound_drop(
+                    "propagation_store",
+                    "storage_error",
+                    None,
+                    Some(&request.dest_hash),
+                    Some(&e.to_string()),
+                );
+                Self::error_response(&format!("storage error: {e}"))
+            }
         }
     }
 
@@ -192,9 +239,11 @@ impl PropagationRequestHandler {
         };
 
         if request.dest_hash != expected_delivery {
-            eprintln!(
+            crate::daemon_diagnostic!(
                 "[propagation] DENIED fetch: caller={} requested={} expected={}",
-                caller_identity, request.dest_hash, expected_delivery
+                caller_identity,
+                request.dest_hash,
+                expected_delivery
             );
             return Self::error_response("permission denied: can only fetch your own messages");
         }
@@ -205,7 +254,7 @@ impl PropagationRequestHandler {
                     .into_iter()
                     .map(|(id, lxmf_bytes)| PropagationMessageEntry { id, lxmf_bytes })
                     .collect();
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[propagation] fetch for dest={}: {} messages",
                     request.dest_hash,
                     entries.len()
@@ -229,7 +278,7 @@ impl PropagationRequestHandler {
         let count = request.ids.len();
         match self.propagation.delete_delivered(&request.ids) {
             Ok(()) => {
-                eprintln!("[propagation] deleted {} messages", count);
+                crate::daemon_diagnostic!("[propagation] deleted {} messages", count);
                 Self::cbor_encode(&PropagationStatusPayload {
                     success: true,
                     error: None,
@@ -287,16 +336,20 @@ impl ProtocolHandler for PropagationRequestHandler {
 
         match self.send_response(&source, request_id, response_type, &response_payload).await {
             Ok(()) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[propagation] handled {:?} from {}, sent {:?}",
-                    message.message_type, source, response_type
+                    message.message_type,
+                    source,
+                    response_type
                 );
                 HandleResult::Handled
             }
             Err(e) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[propagation] failed to send response for {:?} from {}: {}",
-                    message.message_type, source, e
+                    message.message_type,
+                    source,
+                    e
                 );
                 HandleResult::Error(e)
             }

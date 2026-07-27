@@ -34,6 +34,7 @@ rmpv = { workspace = true, features = ["with-serde"], optional = true }
 rmp = { version = "0.8.14", optional = true }
 rusqlite = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+socket2 = { version = "0.6.2", optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
 tokio-util = { workspace = true, optional = true }
 tokio-serial = { version = "5.4", optional = true }
@@ -56,6 +57,7 @@ transport = [
     "dep:rmp",
     "dep:rusqlite",
     "dep:serde_json",
+    "dep:socket2",
     "dep:tokio",
     "dep:tokio-util",
 ]

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # T13-T16: Fleet operations from operator via hub.
 
-source /harness/harness.sh
+source "${HARNESS_ROOT:-/harness}/harness.sh"
 
 echo "  Suite: Fleet Operations"
 

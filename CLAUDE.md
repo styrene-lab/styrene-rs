@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Rust implementation of the RNS/LXMF protocol stack for the [Styrene](https://github.com/styrene-lab) mesh communications project. Forked from [FreeTAKTeam/LXMF-rs](https://github.com/FreeTAKTeam/LXMF-rs) — the most complete non-Python Reticulum implementation.
+Rust implementation of the RNS/LXMF protocol stack for the [Styrene](https://github.com/styrene-lab) mesh communications project. Styrene is an independent project descended from FreeTAKTeam/LXMF-rs and BeechatNetworkSystemsLtd/Reticulum-rs; those repositories are tracked as historical lineage and selective reference sources, not as merge upstreams.
 
 This is the **canonical implementation** of the Styrene daemon. The wire protocol is the shared contract with the legacy Python `styrened` — no FFI, no PyO3 bindings. Both implementations communicate over LXMF like any two Reticulum nodes.
 
@@ -92,5 +92,5 @@ crates/
 - **justfile** is the command runner (`just --list` for all recipes)
 - **Workspace lints** enforced: `unsafe_code = "forbid"`, `clippy::unwrap_used = "warn"`
 - **Boundary checks** prevent unauthorized inter-crate dependencies
-- Changes to wire protocol must be synchronized with Python `styrened`
-- All crates target `edition = "2021"`, `rust-version = "1.75"`
+- Wire protocol evolution answers to rolling-upgrade compatibility among `styrene-rs` nodes; the archived Python implementation is not a compatibility target
+- All crates inherit `rust-version` from the workspace (pinned to latest stable; see rust-toolchain.toml). Editions are per-crate (`2021` for most, `2024` for styrene-tui)

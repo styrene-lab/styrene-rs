@@ -114,6 +114,57 @@ impl DiscoveryService {
         Ok(record)
     }
 
+    /// Process an announce with aspect-derived device type.
+    pub fn accept_announce_with_type(
+        &self,
+        peer_hash: String,
+        timestamp: i64,
+        app_data: &[u8],
+        device_type: Option<&str>,
+    ) -> Result<AnnounceRecord, std::io::Error> {
+        let (name, name_source) = parse_peer_name_from_app_data(app_data)
+            .map(|(n, s)| (Some(n), Some(s.to_string())))
+            .unwrap_or((None, None));
+
+        // Persist to NodeStore with device_type from aspect classification
+        let node = self
+            .node_store
+            .accept_announce(
+                &peer_hash,
+                timestamp,
+                name.as_deref(),
+                name_source.as_deref(),
+                device_type,
+                None,
+            )
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+        let record = AnnounceRecord {
+            id: format!(
+                "announce-{}-{}-{}",
+                node.last_seen, node.identity_hash, node.announce_count
+            ),
+            peer: node.identity_hash.clone(),
+            timestamp: node.last_seen,
+            name: node.display_name.clone(),
+            name_source: node.name_source.clone(),
+            first_seen: node.first_seen,
+            seen_count: node.announce_count,
+            app_data_hex: None,
+            capabilities: Vec::new(),
+            rssi: None,
+            snr: None,
+            q: None,
+            stamp_cost: None,
+            stamp_cost_flexibility: None,
+            peering_cost: None,
+        };
+
+        self.store.lock().unwrap().insert_announce(&record).map_err(std::io::Error::other)?;
+
+        Ok(record)
+    }
+
     /// Get all known peers from persistent NodeStore.
     pub fn peers(&self) -> Vec<Node> {
         self.node_store.list(None).unwrap_or_default()

@@ -5,7 +5,8 @@ use std::sync::OnceLock;
 fn transport_diag_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("RETICULUMD_DIAGNOSTICS")
+        std::env::var("STYRENED_DIAGNOSTICS")
+            .or_else(|_| std::env::var("RETICULUMD_DIAGNOSTICS"))
             .or_else(|_| std::env::var("RETICULUM_TRANSPORT_DIAGNOSTICS"))
             .ok()
             .map(|value| {
@@ -29,13 +30,18 @@ impl TransportHandler {
 
     pub(super) async fn send_packet_with_trace(&mut self, mut packet: Packet) -> SendPacketTrace {
         if packet.header.packet_type == PacketType::Proof {
-            eprintln!(
+            crate::transport_diagnostic!(
                 "[tp] send_proof dst={} ctx={:02x}",
-                packet.destination, packet.context as u8
+                packet.destination,
+                packet.context as u8
             );
             if packet.context == PacketContext::LinkRequestProof {
                 if let Ok(raw) = packet.to_bytes() {
-                    eprintln!("[tp] lrproof_raw len={} hex={}", raw.len(), bytes_to_hex(&raw));
+                    crate::transport_diagnostic!(
+                        "[tp] lrproof_raw len={} hex={}",
+                        raw.len(),
+                        bytes_to_hex(&raw)
+                    );
                 }
             }
         }
@@ -96,9 +102,12 @@ impl TransportHandler {
 
         if transport_diag_enabled() {
             if let Some(entry) = self.path_table.get(&packet.destination) {
-                eprintln!(
+                crate::transport_diagnostic!(
                     "[tp-diag] route_lookup dst={} hops={} via_next_hop={} via_iface={}",
-                    packet.destination, entry.hops, entry.received_from, entry.iface
+                    packet.destination,
+                    entry.hops,
+                    entry.received_from,
+                    entry.iface
                 );
                 log::info!(
                     "[tp-diag] route_lookup dst={} hops={} via_next_hop={} via_iface={}",
@@ -108,7 +117,10 @@ impl TransportHandler {
                     entry.iface
                 );
             } else {
-                eprintln!("[tp-diag] route_lookup dst={} missing", packet.destination);
+                crate::transport_diagnostic!(
+                    "[tp-diag] route_lookup dst={} missing",
+                    packet.destination
+                );
                 log::info!("[tp-diag] route_lookup dst={} missing", packet.destination);
             }
         }
@@ -123,7 +135,7 @@ impl TransportHandler {
                 SendPacketOutcome::DroppedNoRoute
             };
             if transport_diag_enabled() {
-                eprintln!(
+                crate::transport_diagnostic!(
                     "[tp-diag] direct_send iface={} outcome={:?} matched={} sent={} failed={}",
                     iface,
                     outcome,
@@ -150,9 +162,12 @@ impl TransportHandler {
                 SendPacketOutcome::DroppedNoRoute
             };
             if transport_diag_enabled() {
-                eprintln!(
+                crate::transport_diagnostic!(
                     "[tp-diag] broadcast_send outcome={:?} matched={} sent={} failed={}",
-                    outcome, dispatch.matched_ifaces, dispatch.sent_ifaces, dispatch.failed_ifaces
+                    outcome,
+                    dispatch.matched_ifaces,
+                    dispatch.sent_ifaces,
+                    dispatch.failed_ifaces
                 );
                 log::info!(
                     "[tp-diag] broadcast_send outcome={:?} matched={} sent={} failed={}",

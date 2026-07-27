@@ -13,6 +13,7 @@ use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use styrene_ipc::types::TunnelOperationInfo;
 use styrene_mesh::tunnel_payloads::{
     self, TunnelAccept, TunnelOffer, TunnelReject, TunnelTeardown,
 };
@@ -43,21 +44,23 @@ pub struct TunnelPeerState {
 
 /// Tunnel lifecycle management and protocol handler.
 pub struct TunnelService {
-    transport: Arc<dyn MeshTransport>,
-    signer: Arc<PrivateIdentity>,
-    identity_hash: String,
+    transport: Mutex<Arc<dyn MeshTransport>>,
+    signer: Mutex<Arc<PrivateIdentity>>,
+    identity_hash: Mutex<String>,
     local_wg_pubkey: String,
     #[allow(dead_code)]
     local_wg_privkey: [u8; 32],
     local_endpoint: Mutex<Option<String>>,
-    /// Whether transport is wired (prevents sends on NullTransport).
-    wired: bool,
+    /// Whether transport and signer are wired for outbound negotiation.
+    wired: Mutex<bool>,
     /// Pending outbound offers: nonce → (peer_identity, offer details).
     pending_offers: Mutex<HashMap<String, PendingOffer>>,
     /// Seen nonces: nonce → timestamp (time-windowed replay protection).
     seen_nonces: Mutex<HashMap<String, i64>>,
     /// Active tunnels: peer_identity → peer state.
     active_tunnels: Mutex<HashMap<String, TunnelPeerState>>,
+    /// Latest establish operation by peer identity.
+    operations: Mutex<HashMap<String, TunnelOperationInfo>>,
     /// Allowed peer identities (empty = allow all).
     allowed_peers: Mutex<Option<Vec<String>>>,
     /// Optional event service for emitting tunnel state changes.
@@ -92,16 +95,17 @@ impl TunnelService {
     /// Tunnel operations will fail gracefully until `with_transport()` is used.
     pub fn new() -> Self {
         Self {
-            transport: Arc::new(crate::transport::null_transport::NullTransport::new()),
-            signer: Arc::new(PrivateIdentity::new_from_rand(rand_core::OsRng)),
-            identity_hash: String::new(),
+            transport: Mutex::new(Arc::new(crate::transport::null_transport::NullTransport::new())),
+            signer: Mutex::new(Arc::new(PrivateIdentity::new_from_rand(rand_core::OsRng))),
+            identity_hash: Mutex::new(String::new()),
             local_wg_pubkey: String::new(),
             local_wg_privkey: [0u8; 32],
             local_endpoint: Mutex::new(None),
-            wired: false,
+            wired: Mutex::new(false),
             pending_offers: Mutex::new(HashMap::new()),
             seen_nonces: Mutex::new(HashMap::new()),
             active_tunnels: Mutex::new(HashMap::new()),
+            operations: Mutex::new(HashMap::new()),
             allowed_peers: Mutex::new(None),
             events: Mutex::new(None),
             #[cfg(feature = "wireguard")]
@@ -120,21 +124,40 @@ impl TunnelService {
         let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(pubkey.as_bytes());
 
         Self {
-            transport,
-            signer,
-            identity_hash,
+            transport: Mutex::new(transport),
+            signer: Mutex::new(signer),
+            identity_hash: Mutex::new(identity_hash),
             local_wg_pubkey: pubkey_b64,
             local_wg_privkey: wg_privkey,
             local_endpoint: Mutex::new(None),
-            wired: true,
+            wired: Mutex::new(true),
             pending_offers: Mutex::new(HashMap::new()),
             seen_nonces: Mutex::new(HashMap::new()),
             active_tunnels: Mutex::new(HashMap::new()),
+            operations: Mutex::new(HashMap::new()),
             allowed_peers: Mutex::new(None),
             events: Mutex::new(None),
             #[cfg(feature = "wireguard")]
             backend: Mutex::new(None),
         }
+    }
+
+    /// Wire the production transport and signing identity used for negotiation.
+    pub fn set_signer(
+        &self,
+        transport: Arc<dyn MeshTransport>,
+        signer: Arc<PrivateIdentity>,
+        identity_hash: String,
+    ) {
+        *self.transport.lock().expect("lock") = transport;
+        *self.signer.lock().expect("lock") = signer;
+        *self.identity_hash.lock().expect("lock") = identity_hash;
+        *self.wired.lock().expect("lock") = true;
+    }
+
+    /// Whether outbound tunnel negotiation dependencies have been wired.
+    pub fn is_wired(&self) -> bool {
+        *self.wired.lock().expect("lock")
     }
 
     pub fn set_endpoint(&self, endpoint: String) {
@@ -151,6 +174,31 @@ impl TunnelService {
         if let Some(events) = self.events.lock().expect("lock").as_ref() {
             events.emit_tunnel_state(peer_hash, state, "wireguard");
         }
+    }
+
+    fn set_operation_state(
+        &self,
+        peer_hash: &str,
+        operation_id: &str,
+        state: &str,
+        error: Option<(&str, &str)>,
+    ) {
+        self.operations.lock().expect("lock").insert(
+            peer_hash.to_string(),
+            TunnelOperationInfo {
+                operation_id: operation_id.to_string(),
+                peer_hash: peer_hash.to_string(),
+                kind: "establish".to_string(),
+                state: state.to_string(),
+                error_code: error.map(|(code, _)| code.to_string()),
+                error_message: error.map(|(_, message)| message.to_string()),
+            },
+        );
+        self.emit_state(peer_hash, state);
+    }
+
+    pub fn latest_operation(&self, peer_hash: &str) -> Option<TunnelOperationInfo> {
+        self.operations.lock().expect("lock").get(peer_hash).cloned()
     }
 
     /// Set allowed peers. None = allow all. Some(vec) = only these identities.
@@ -203,11 +251,13 @@ impl TunnelService {
                 Some(arr)
             }
             Ok(_) => {
-                eprintln!("[tunnel] WireGuard: peer pubkey wrong length, skipping backend config");
+                crate::daemon_diagnostic!(
+                    "[tunnel] WireGuard: peer pubkey wrong length, skipping backend config"
+                );
                 return;
             }
             Err(e) => {
-                eprintln!("[tunnel] WireGuard: failed to decode peer pubkey: {e}");
+                crate::daemon_diagnostic!("[tunnel] WireGuard: failed to decode peer pubkey: {e}");
                 return;
             }
         };
@@ -220,11 +270,13 @@ impl TunnelService {
                 arr
             }
             Ok(_) => {
-                eprintln!("[tunnel] WireGuard: PSK wrong length, skipping backend config");
+                crate::daemon_diagnostic!(
+                    "[tunnel] WireGuard: PSK wrong length, skipping backend config"
+                );
                 return;
             }
             Err(e) => {
-                eprintln!("[tunnel] WireGuard: failed to decode PSK: {e}");
+                crate::daemon_diagnostic!("[tunnel] WireGuard: failed to decode PSK: {e}");
                 return;
             }
         };
@@ -241,13 +293,13 @@ impl TunnelService {
 
         match backend.establish(params).await {
             Ok(tunnel_id) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[tunnel] WireGuard peer configured: {}",
                     &tunnel_id[..12.min(tunnel_id.len())]
                 );
             }
             Err(e) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[tunnel] WireGuard establish failed for {}: {e} (tunnel state still valid)",
                     &peer_identity[..12.min(peer_identity.len())]
                 );
@@ -266,13 +318,13 @@ impl TunnelService {
 
         match backend.teardown(peer_identity).await {
             Ok(()) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[tunnel] WireGuard peer removed: {}",
                     &peer_identity[..12.min(peer_identity.len())]
                 );
             }
             Err(e) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[tunnel] WireGuard teardown failed for {}: {e}",
                     &peer_identity[..12.min(peer_identity.len())]
                 );
@@ -317,9 +369,9 @@ impl TunnelService {
         self.teardown_wireguard(peer_identity).await;
 
         // Send TUNNEL_TEARDOWN to the remote peer
-        if self.wired && self.transport.is_connected() {
+        if self.is_wired() && self.transport.lock().expect("lock").is_connected() {
             let teardown = TunnelTeardown {
-                peer_identity: self.identity_hash.clone(),
+                peer_identity: self.identity_hash.lock().expect("lock").clone(),
                 nonce: tunnel_payloads::generate_nonce(),
             };
             if let Ok(payload) = rmp_serde::to_vec(&teardown) {
@@ -335,7 +387,7 @@ impl TunnelService {
 
         self.emit_state(peer_identity, "torn_down");
 
-        eprintln!(
+        crate::daemon_diagnostic!(
             "[tunnel] operator-initiated teardown for {}",
             &peer_identity[..12.min(peer_identity.len())]
         );
@@ -343,16 +395,24 @@ impl TunnelService {
         Ok(())
     }
 
-    /// Initiate a tunnel to a peer. Sends TUNNEL_OFFER via LXMF.
-    pub async fn initiate_tunnel(&self, peer_identity: &str) -> Result<String, String> {
-        if !self.wired {
+    /// Queue tunnel establishment and return before mesh delivery completes.
+    ///
+    /// The returned nonce is the operation correlation ID for this first slice.
+    /// Delivery remains daemon-owned if the IPC client disconnects.
+    pub fn queue_tunnel(self: &Arc<Self>, peer_identity: &str) -> Result<String, String> {
+        if !self.is_wired() {
             return Err("tunnel service not wired to transport".into());
         }
-        if !self.transport.is_connected() {
+        if !self.transport.lock().expect("lock").is_connected() {
             return Err("transport not connected".into());
         }
+        if let Some(existing) = self.latest_operation(peer_identity) {
+            if matches!(existing.state.as_str(), "queued" | "sending_offer" | "offer_sent") {
+                return Ok(existing.operation_id);
+            }
+        }
 
-        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash);
+        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash.lock().expect("lock"));
         let endpoint = self.local_endpoint.lock().expect("lock").clone().unwrap_or_default();
 
         let mut psk = [0u8; 32];
@@ -374,32 +434,100 @@ impl TunnelService {
             nonce.clone(),
             PendingOffer { peer_identity: peer_identity.to_string(), psk: psk_b64, mtu: 1420 },
         );
+        self.set_operation_state(peer_identity, &nonce, "queued", None);
+        crate::daemon_diagnostic!(
+            "[tunnel] operation={} inserted peer={} state=queued",
+            nonce,
+            peer_identity
+        );
 
         let payload = rmp_serde::to_vec(&offer).map_err(|e| format!("encode: {e}"))?;
-        self.send_tunnel_message(peer_identity, StyreneMessageType::TunnelOffer, &payload).await?;
+        let service = Arc::clone(self);
+        let peer = peer_identity.to_string();
+        let operation = nonce.clone();
+        tokio::spawn(async move {
+            service.set_operation_state(&peer, &operation, "sending_offer", None);
+            match service
+                .send_tunnel_message(&peer, StyreneMessageType::TunnelOffer, &payload)
+                .await
+            {
+                Ok(()) => {
+                    service.set_operation_state(&peer, &operation, "offer_sent", None);
+                    crate::daemon_diagnostic!(
+                        "[tunnel] operation={} sent TUNNEL_OFFER to {}",
+                        operation,
+                        &peer[..12.min(peer.len())]
+                    );
+                }
+                Err(error) => {
+                    service.pending_offers.lock().expect("lock").remove(&operation);
+                    service.set_operation_state(
+                        &peer,
+                        &operation,
+                        "failed",
+                        Some(("DeliveryFailed", &error)),
+                    );
+                    crate::daemon_diagnostic!(
+                        "[tunnel] operation={} TUNNEL_OFFER delivery failed peer={} error={error}",
+                        operation,
+                        peer
+                    );
+                }
+            }
+        });
 
-        eprintln!(
-            "[tunnel] sent TUNNEL_OFFER to {} nonce={}",
-            &peer_identity[..12.min(peer_identity.len())],
-            &nonce[..8]
+        Ok(nonce)
+    }
+
+    /// Initiate a tunnel and wait for offer delivery.
+    ///
+    /// Retained for internal callers that explicitly need delivery completion.
+    pub async fn initiate_tunnel(&self, peer_identity: &str) -> Result<String, String> {
+        if !self.is_wired() {
+            return Err("tunnel service not wired to transport".into());
+        }
+        if !self.transport.lock().expect("lock").is_connected() {
+            return Err("transport not connected".into());
+        }
+
+        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash.lock().expect("lock"));
+        let endpoint = self.local_endpoint.lock().expect("lock").clone().unwrap_or_default();
+        let mut psk = [0u8; 32];
+        rand_core::OsRng.fill_bytes(&mut psk);
+        let psk_b64 = base64::engine::general_purpose::STANDARD.encode(psk);
+        let nonce = tunnel_payloads::generate_nonce();
+        let offer = TunnelOffer {
+            wg_pubkey: self.local_wg_pubkey.clone(),
+            endpoint,
+            mesh_ip,
+            psk: psk_b64.clone(),
+            mtu: 1420,
+            nonce: nonce.clone(),
+            timestamp: tunnel_payloads::now_ts(),
+        };
+        self.pending_offers.lock().expect("lock").insert(
+            nonce.clone(),
+            PendingOffer { peer_identity: peer_identity.to_string(), psk: psk_b64, mtu: 1420 },
         );
+        let payload = rmp_serde::to_vec(&offer).map_err(|e| format!("encode: {e}"))?;
+        self.send_tunnel_message(peer_identity, StyreneMessageType::TunnelOffer, &payload).await?;
         Ok(nonce)
     }
 
     async fn handle_offer(&self, source: &str, offer: TunnelOffer) -> HandleResult {
         if !self.check_nonce(&offer.nonce) {
-            eprintln!("[tunnel] rejected TUNNEL_OFFER: duplicate nonce");
+            crate::daemon_diagnostic!("[tunnel] rejected TUNNEL_OFFER: duplicate nonce");
             return HandleResult::Handled;
         }
 
         let now = tunnel_payloads::now_ts();
         if (now - offer.timestamp).unsigned_abs() > TIMESTAMP_TOLERANCE_SECS as u64 {
-            eprintln!("[tunnel] rejected TUNNEL_OFFER: stale timestamp");
+            crate::daemon_diagnostic!("[tunnel] rejected TUNNEL_OFFER: stale timestamp");
             return HandleResult::Handled;
         }
 
         if !self.is_peer_allowed(source) {
-            eprintln!(
+            crate::daemon_diagnostic!(
                 "[tunnel] rejected TUNNEL_OFFER from {}: not in allowlist",
                 &source[..12.min(source.len())]
             );
@@ -415,13 +543,13 @@ impl TunnelService {
             return HandleResult::Handled;
         }
 
-        eprintln!(
+        crate::daemon_diagnostic!(
             "[tunnel] received TUNNEL_OFFER from {} endpoint={}",
             &source[..12.min(source.len())],
             offer.endpoint
         );
 
-        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash);
+        let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash.lock().expect("lock"));
         let endpoint = self.local_endpoint.lock().expect("lock").clone().unwrap_or_default();
 
         let accept = TunnelAccept {
@@ -455,7 +583,10 @@ impl TunnelService {
 
         self.emit_state(source, "established");
 
-        eprintln!("[tunnel] sent TUNNEL_ACCEPT to {}", &source[..12.min(source.len())]);
+        crate::daemon_diagnostic!(
+            "[tunnel] sent TUNNEL_ACCEPT to {}",
+            &source[..12.min(source.len())]
+        );
 
         HandleResult::Handled
     }
@@ -466,14 +597,14 @@ impl TunnelService {
         let pending = match pending {
             Some(p) => p,
             None => {
-                eprintln!("[tunnel] rejected TUNNEL_ACCEPT: unknown offer_nonce");
+                crate::daemon_diagnostic!("[tunnel] rejected TUNNEL_ACCEPT: unknown offer_nonce");
                 return HandleResult::Handled;
             }
         };
 
         // Verify the accept came from the peer we sent the offer to.
         if pending.peer_identity != source {
-            eprintln!(
+            crate::daemon_diagnostic!(
                 "[tunnel] rejected TUNNEL_ACCEPT: source mismatch (expected {}, got {})",
                 &pending.peer_identity[..12.min(pending.peer_identity.len())],
                 &source[..12.min(source.len())]
@@ -481,7 +612,7 @@ impl TunnelService {
             return HandleResult::Handled;
         }
 
-        eprintln!(
+        crate::daemon_diagnostic!(
             "[tunnel] received TUNNEL_ACCEPT from {} endpoint={}",
             &source[..12.min(source.len())],
             accept.endpoint
@@ -520,7 +651,10 @@ impl TunnelService {
 
         self.emit_state(source, "torn_down");
 
-        eprintln!("[tunnel] received TUNNEL_TEARDOWN from {}", &source[..12.min(source.len())]);
+        crate::daemon_diagnostic!(
+            "[tunnel] received TUNNEL_TEARDOWN from {}",
+            &source[..12.min(source.len())]
+        );
 
         HandleResult::Handled
     }
@@ -569,7 +703,9 @@ impl TunnelService {
             AddressHash::new(truncated)
         };
 
-        let source_hash = self.transport.identity_hash();
+        let transport = self.transport.lock().expect("lock").clone();
+        let signer = self.signer.lock().expect("lock").clone();
+        let source_hash = transport.identity_hash();
         let mut source_bytes = [0u8; 16];
         source_bytes.copy_from_slice(source_hash.as_slice());
         let mut dest_bytes = [0u8; 16];
@@ -581,17 +717,37 @@ impl TunnelService {
             "",
             "",
             Some(serde_json::json!({"protocol": "tunnel", "custom_data": wire_hex})),
-            &self.signer,
+            signer.as_ref(),
         )
         .map_err(|e| format!("wire encode: {e}"))?;
 
+        crate::daemon_diagnostic!(
+            "[tunnel] outbound {:?} peer_identity={} delivery_destination={}",
+            msg_type,
+            peer_identity,
+            hex::encode(delivery_addr.as_slice())
+        );
+
         crate::services::MessagingService::deliver(
-            self.transport.as_ref(),
+            transport.as_ref(),
             delivery_addr,
             &lxmf_payload,
         )
         .await
-        .map_err(|e| format!("deliver: {e}"))?;
+        .map_err(|e| {
+            crate::daemon_diagnostic!(
+                "[tunnel] outbound {:?} delivery failed peer_identity={} error={e}",
+                msg_type,
+                peer_identity
+            );
+            format!("deliver: {e}")
+        })?;
+
+        crate::daemon_diagnostic!(
+            "[tunnel] outbound {:?} accepted peer_identity={}",
+            msg_type,
+            peer_identity
+        );
 
         Ok(())
     }
@@ -633,7 +789,7 @@ impl ProtocolHandler for TunnelService {
                 match rmp_serde::from_slice::<TunnelOffer>(&message.payload) {
                     Ok(offer) => self.handle_offer(source, offer).await,
                     Err(e) => {
-                        eprintln!("[tunnel] decode TUNNEL_OFFER failed: {e}");
+                        crate::daemon_diagnostic!("[tunnel] decode TUNNEL_OFFER failed: {e}");
                         HandleResult::Handled
                     }
                 }
@@ -642,7 +798,7 @@ impl ProtocolHandler for TunnelService {
                 match rmp_serde::from_slice::<TunnelAccept>(&message.payload) {
                     Ok(accept) => self.handle_accept(source, accept).await,
                     Err(e) => {
-                        eprintln!("[tunnel] decode TUNNEL_ACCEPT failed: {e}");
+                        crate::daemon_diagnostic!("[tunnel] decode TUNNEL_ACCEPT failed: {e}");
                         HandleResult::Handled
                     }
                 }
@@ -650,7 +806,7 @@ impl ProtocolHandler for TunnelService {
             StyreneMessageType::TunnelReject => {
                 match rmp_serde::from_slice::<TunnelReject>(&message.payload) {
                     Ok(reject) => {
-                        eprintln!(
+                        crate::daemon_diagnostic!(
                             "[tunnel] TUNNEL_REJECT from {}: {}",
                             &source[..12.min(source.len())],
                             reject.reason
@@ -660,7 +816,7 @@ impl ProtocolHandler for TunnelService {
                         HandleResult::Handled
                     }
                     Err(e) => {
-                        eprintln!("[tunnel] decode TUNNEL_REJECT failed: {e}");
+                        crate::daemon_diagnostic!("[tunnel] decode TUNNEL_REJECT failed: {e}");
                         HandleResult::Handled
                     }
                 }
@@ -669,7 +825,7 @@ impl ProtocolHandler for TunnelService {
                 match rmp_serde::from_slice::<TunnelTeardown>(&message.payload) {
                     Ok(teardown) => self.handle_teardown(source, teardown).await,
                     Err(e) => {
-                        eprintln!("[tunnel] decode TUNNEL_TEARDOWN failed: {e}");
+                        crate::daemon_diagnostic!("[tunnel] decode TUNNEL_TEARDOWN failed: {e}");
                         HandleResult::Handled
                     }
                 }

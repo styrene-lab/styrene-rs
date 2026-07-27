@@ -52,11 +52,6 @@ impl ResourceManager {
         std::mem::take(&mut self.events)
     }
 
-    #[cfg(test)]
-    pub(crate) fn has_no_outbound_state(&self) -> bool {
-        self.pending_outgoing.is_empty() && self.outgoing.is_empty()
-    }
-
     pub fn retry_requests(&mut self, now: Instant) -> Vec<(AddressHash, ResourceRequest)> {
         let mut requests = Vec::new();
         let mut failed = Vec::new();

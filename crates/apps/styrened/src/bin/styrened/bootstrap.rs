@@ -16,7 +16,7 @@ use styrened::app_context::AppContext;
 use styrened::config::DaemonConfig;
 use styrened::daemon_facade::DaemonFacade;
 use styrened::identity_store::load_or_create_identity;
-use styrened::receipt_bridge::ReceiptBridge;
+use styrened::receipt_bridge::{ReceiptBridge, ReceiptWaiters};
 use styrened::rpc::{AnnounceBridge, InterfaceRecord, OutboundBridge, RpcDaemon};
 use styrened::storage::messages::MessagesStore;
 use styrened::transport::adapter::TokioTransportAdapter;
@@ -117,6 +117,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
     let mut delivery_destination_hash_hex: Option<String> = None;
     let mut delivery_source_hash = [0u8; 16];
     let receipt_map: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let receipt_waiters: ReceiptWaiters = Arc::new(Mutex::new(HashMap::new()));
     let (receipt_tx, receipt_rx) = unbounded_channel();
 
     if let Some(addr) = args.transport.clone().filter(|_| node_role.runs_transport()) {
@@ -128,6 +129,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         transport_instance
             .set_receipt_handler(Box::new(ReceiptBridge::new(
                 receipt_map.clone(),
+                receipt_waiters.clone(),
                 receipt_tx.clone(),
             )))
             .await;
@@ -185,6 +187,7 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
                     .and_then(|display_name| encode_delivery_display_name_app_data(display_name)),
                 peer_crypto.clone(),
                 receipt_map.clone(),
+                receipt_waiters.clone(),
                 receipt_tx.clone(),
             ))
         });
@@ -462,7 +465,9 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
         }
     }
 
-    eprintln!("[daemon] service workers started (inbound + announce + rpc-request + rpc-response + tunnel)");
+    eprintln!(
+        "[daemon] service workers started (inbound + announce + rpc-request + rpc-response + tunnel)"
+    );
 
     // --- Unix socket IPC server (desktop only) ---
     #[cfg(feature = "ipc-server")]

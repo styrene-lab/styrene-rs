@@ -5,6 +5,30 @@ All notable changes to styrene-rs will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Development resumed in July 2026 with a renewed focus on a cohesive install-and-run experience.
+
+### Added
+- Canonical `styrene` product facade with an integrated Ratatui application and embedded runtime.
+- Persistent, portable, ghost, and portable-ghost runtime profiles.
+- Hermetic first-run path model and transactional setup writes.
+- Build commit SHA in CLI and TUI version displays.
+- Atomic `just install` workflow for rapid local release-build upgrades.
+- Structured runtime diagnostic boundaries that protect the TUI framebuffer.
+
+### Changed
+- Workspace toolchain policy now tracks and exactly pins the latest stable Rust release (currently 1.97.0).
+- A separately installed daemon is no longer required for interactive or ghost sessions.
+- Ghost sessions retain reusable non-secret settings while regenerating ephemeral identity and data.
+- The archived Python implementation is no longer a wire-compatibility or release target.
+
+### Fixed
+- Background daemon and transport diagnostics corrupting the alternate-screen TUI.
+- UTF-8 truncation panic when activity text contained multibyte styled glyphs.
+- Partial or falsely completed first-run state after setup errors.
+- Ghost-session state reuse, collision, and normal-exit cleanup defects.
+
 ## [0.1.0] — 2026-04-19
 
 First internal release. Rust is now the canonical Styrene distribution for new deployments.

@@ -6,9 +6,7 @@
 //! exercise the auth gate directly through DaemonFacade with explicit
 //! caller identities.
 
-use std::time::Duration;
-
-use styrene_e2e::helpers::{two_connected_nodes, with_timeout, SETTLE};
+use styrene_e2e::helpers::with_timeout;
 use styrene_e2e::node::TestNodeBuilder;
 use styrene_ipc::error::IpcError;
 use styrene_ipc::traits::*;

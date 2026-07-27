@@ -247,6 +247,7 @@ impl TestNodeBuilder {
                         Arc::new(identity.clone()),
                         app_context.propagation_arc(),
                         app_context.messaging_arc(),
+                        app_context.events_arc(),
                         Some(delivery_hash.clone()),
                     ),
                 ))

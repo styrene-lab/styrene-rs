@@ -797,7 +797,7 @@ fn color_consumes_exactly_3_chars() {
     let doc = parse("`Fabcdef");
     match &doc.blocks[0] {
         Block::Line(Line { nodes, .. }) => {
-            assert!(nodes.len() >= 1);
+            assert!(!nodes.is_empty());
             match &nodes[0] {
                 InlineNode::Text { style, text } => {
                     assert_eq!(style.fg_color(), Some("abc"));

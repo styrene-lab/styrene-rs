@@ -50,6 +50,9 @@ fn App() -> Element {
     let mut active_tab = use_signal(state::Tab::default);
     let mut path_table = use_signal(Vec::<state::PathEntry>::new);
     let mut conversations = use_signal(Vec::<state::ConversationEntry>::new);
+    let mut links = use_signal(Vec::<state::LinkInfo>::new);
+    let mut interfaces = use_signal(Vec::<state::InterfaceInfo>::new);
+    let mut announce_log = use_signal(Vec::<state::AnnounceEvent>::new);
 
     // Bridge handle — shared with UI for RPC calls (send_chat, browse_page, etc.)
     let mut bridge: Signal<Option<Arc<Mutex<daemon_bridge::DaemonBridge>>>> = use_signal(|| None);
@@ -89,6 +92,7 @@ fn App() -> Element {
                                 &mut page_content,
                                 &mut path_table,
                                 &mut conversations,
+                                &mut interfaces,
                             )
                             .await;
                         }
@@ -96,6 +100,7 @@ fn App() -> Element {
 
                     // Initial data fetch
                     let _ = tx_init.send(daemon_bridge::DaemonCommand::RefreshPathTable);
+                    let _ = tx_init.send(daemon_bridge::DaemonCommand::RefreshInterfaces);
                     let _ = tx_init.send(daemon_bridge::DaemonCommand::LoadConversations);
 
                     // Process daemon events
@@ -109,6 +114,8 @@ fn App() -> Element {
                             &mut connected,
                             &mut connection_mode,
                             &mut path_table,
+                            &mut links,
+                            &mut announce_log,
                         );
                     }
                 }
@@ -191,6 +198,17 @@ fn App() -> Element {
                                 });
                                 active_tab.set(state::Tab::Conversations);
                             },
+                            links: links.read().clone(),
+                            interfaces: interfaces.read().clone(),
+                            announce_log: announce_log.read().clone(),
+                            path_entries: path_table.read().clone(),
+                            on_browse_page: move |host_hash: String| {
+                                send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
+                                    host: host_hash,
+                                    path: "/".into(),
+                                });
+                                active_tab.set(state::Tab::Pages);
+                            },
                         }
                     },
 
@@ -265,7 +283,18 @@ fn App() -> Element {
                                                         class: if msg.is_outgoing { "message sent" } else { "message received" },
                                                         div { class: "message-content", "{msg.content}" }
                                                         div { class: "message-meta",
-                                                            {format_timestamp(msg.timestamp)}
+                                                            span { {format_timestamp(msg.timestamp)} }
+                                                            if msg.is_outgoing {
+                                                                span { class: "message-status",
+                                                                    {match msg.status.as_str() {
+                                                                        "delivered" => " ✓✓",
+                                                                        "read" => " ✓✓",
+                                                                        "failed" => " ✗",
+                                                                        "pending" | "" => " ✓",
+                                                                        _ => "",
+                                                                    }}
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -288,6 +317,7 @@ fn App() -> Element {
                                                                         peer_hash: ph2.clone(),
                                                                         content,
                                                                     });
+                                                                    send_cmd(daemon_bridge::DaemonCommand::LoadConversations);
                                                                     chat_input.set(String::new());
                                                                 }
                                                             }
@@ -306,6 +336,7 @@ fn App() -> Element {
                                                                     peer_hash: ph3.clone(),
                                                                     content,
                                                                 });
+                                                                send_cmd(daemon_bridge::DaemonCommand::LoadConversations);
                                                                 chat_input.set(String::new());
                                                             }
                                                         }
@@ -325,6 +356,43 @@ fn App() -> Element {
                     },
 
                     state::Tab::Pages => rsx! {
+                        // Page host sidebar
+                        div { class: "sidebar",
+                            div { class: "sidebar-header", "Page Hosts" }
+                            div {
+                                class: "peer-item",
+                                onclick: move |_| {
+                                    send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
+                                        host: String::new(),
+                                        path: "/".into(),
+                                    });
+                                },
+                                span { class: "peer-icon", style: "color: var(--accent);", "●" }
+                                span { class: "peer-name", "Local Node" }
+                            }
+                            for peer in peers.read().iter().filter(|p|
+                                p.node_role == state::PeerRole::PageHost || p.node_role == state::PeerRole::Hub
+                            ) {
+                                {
+                                    let hash = peer.hash.clone();
+                                    let name = peer.name.clone().unwrap_or_else(|| hash[..8.min(hash.len())].to_string());
+                                    rsx! {
+                                        div {
+                                            class: "peer-item",
+                                            onclick: move |_| {
+                                                send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
+                                                    host: hash.clone(),
+                                                    path: "/".into(),
+                                                });
+                                            },
+                                            span { class: "peer-icon", style: "color: var(--green);", "●" }
+                                            span { class: "peer-name", "{name}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         components::PageBrowser {
                             page: page_content.read().clone(),
                             on_navigate: move |url: String| {
@@ -353,6 +421,8 @@ fn handle_daemon_event(
     connected: &mut Signal<bool>,
     connection_mode: &mut Signal<String>,
     path_table: &mut Signal<Vec<state::PathEntry>>,
+    links: &mut Signal<Vec<state::LinkInfo>>,
+    announce_log: &mut Signal<Vec<state::AnnounceEvent>>,
 ) {
     match ev {
         daemon_bridge::DaemonEvent::Identity(info) => {
@@ -389,6 +459,9 @@ fn handle_daemon_event(
                 };
                 let display =
                     if parsed.display_name.is_empty() { None } else { Some(parsed.display_name) };
+                let peer_hash = dev.destination_hash.clone();
+                let peer_name = display.clone();
+                let peer_role = role.clone();
                 p.push(state::PeerEntry {
                     hash: dev.destination_hash,
                     name: display,
@@ -396,7 +469,26 @@ fn handle_daemon_event(
                     node_role: role,
                     capabilities: parsed.capabilities,
                     version: parsed.version,
+                    last_announce: dev.last_announce,
+                    announce_count: dev.announce_count,
                 });
+                // Push to announce log
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let mut log = announce_log.write();
+                log.push(state::AnnounceEvent {
+                    peer_hash,
+                    peer_name: peer_name,
+                    timestamp: dev.last_announce.unwrap_or(now),
+                    node_role: peer_role,
+                });
+                // Cap at 200 entries
+                if log.len() > 200 {
+                    let excess = log.len() - 200;
+                    log.drain(..excess);
+                }
             }
         }
         daemon_bridge::DaemonEvent::MessageReceived(msg) => {
@@ -407,7 +499,14 @@ fn handle_daemon_event(
                 content: msg.content,
                 timestamp: msg.timestamp,
                 is_outgoing: msg.is_outgoing,
+                status: msg.status,
             });
+        }
+        daemon_bridge::DaemonEvent::MessageStatusChanged { id, status: new_status } => {
+            let mut msgs = messages.write();
+            if let Some(msg) = msgs.iter_mut().find(|m| m.id == id) {
+                msg.status = new_status;
+            }
         }
         daemon_bridge::DaemonEvent::PathTable(entries) => {
             let multi_hop = entries.iter().filter(|e| e.next_hop != e.destination_hash).count();
@@ -426,6 +525,20 @@ fn handle_daemon_event(
                     .collect(),
             );
         }
+        daemon_bridge::DaemonEvent::LinkUpdate { peer_hash, status: link_status, rtt_ms } => {
+            let mut l = links.write();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            if let Some(existing) = l.iter_mut().find(|li| li.peer_hash == peer_hash) {
+                existing.status = link_status;
+                existing.rtt_ms = rtt_ms;
+                existing.timestamp = now;
+            } else {
+                l.push(state::LinkInfo { peer_hash, status: link_status, rtt_ms, timestamp: now });
+            }
+        }
         daemon_bridge::DaemonEvent::Disconnected(reason) => {
             connected.set(false);
             connection_mode.set(format!("disconnected: {reason}"));
@@ -441,6 +554,7 @@ async fn handle_ui_command(
     page_content: &mut Signal<Option<state::PageView>>,
     path_table: &mut Signal<Vec<state::PathEntry>>,
     conversations: &mut Signal<Vec<state::ConversationEntry>>,
+    interfaces: &mut Signal<Vec<state::InterfaceInfo>>,
 ) {
     match cmd {
         daemon_bridge::DaemonCommand::SendChat { peer_hash, content } => {
@@ -457,6 +571,7 @@ async fn handle_ui_command(
                             .map(|d| d.as_secs() as i64)
                             .unwrap_or(0),
                         is_outgoing: true,
+                        status: "pending".into(),
                     });
                 }
                 Err(e) => eprintln!("[dx] send_chat failed: {e}"),
@@ -509,6 +624,26 @@ async fn handle_ui_command(
                     );
                 }
                 Err(e) => eprintln!("[dx] path_table failed: {e}"),
+            }
+        }
+        daemon_bridge::DaemonCommand::RefreshInterfaces => {
+            let mut br = bridge.lock().await;
+            match br.interface_stats().await {
+                Ok(ifaces) => {
+                    interfaces.set(
+                        ifaces
+                            .into_iter()
+                            .map(|i| state::InterfaceInfo {
+                                name: i.name,
+                                hash: i.hash,
+                                status: i.status,
+                                tx_bytes: i.tx_bytes,
+                                rx_bytes: i.rx_bytes,
+                            })
+                            .collect(),
+                    );
+                }
+                Err(e) => tracing::warn!(target: "dx::iface", %e, "interface stats failed"),
             }
         }
         daemon_bridge::DaemonCommand::LoadConversations => {
@@ -568,6 +703,7 @@ async fn handle_ui_command(
                             content: msg.content,
                             timestamp: msg.timestamp,
                             is_outgoing: msg.is_outgoing,
+                            status: msg.status,
                         });
                     }
                     all.sort_by_key(|m| m.timestamp);

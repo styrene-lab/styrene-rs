@@ -258,9 +258,12 @@ impl MessageType {
         }
     }
 
-    /// Whether this type is a request (needs a response).
+    /// Whether this type is a request that needs a response.
+    ///
+    /// Classification is semantic rather than range-based: request opcodes are
+    /// not contiguous (`0x90..=0x96` follows the response range).
     pub fn is_request(self) -> bool {
-        (self as u8) < 0x80
+        !self.is_response() && !self.is_event()
     }
 
     /// Whether this type is a response.
@@ -270,7 +273,17 @@ impl MessageType {
 
     /// Whether this type is a pushed event.
     pub fn is_event(self) -> bool {
-        (self as u8) >= 0xC0
+        matches!(
+            self,
+            Self::EventDevice
+                | Self::EventMessage
+                | Self::EventTerminalOutput
+                | Self::EventTerminalExited
+                | Self::EventTerminalError
+                | Self::EventTerminalReady
+                | Self::EventActivity
+                | Self::EventLink
+        )
     }
 }
 
@@ -495,16 +508,31 @@ mod tests {
     }
 
     #[test]
-    fn message_type_classification() {
-        assert!(MessageType::QueryStatus.is_request());
-        assert!(!MessageType::QueryStatus.is_response());
-        assert!(!MessageType::QueryStatus.is_event());
+    fn message_type_classification_is_exhaustive_and_disjoint() {
+        for byte in u8::MIN..=u8::MAX {
+            let Ok(msg_type) = MessageType::from_byte(byte) else {
+                continue;
+            };
+            let classes = [msg_type.is_request(), msg_type.is_response(), msg_type.is_event()];
+            assert_eq!(
+                classes.into_iter().filter(|classified| *classified).count(),
+                1,
+                "message type {msg_type:?} (0x{byte:02x}) must have exactly one class"
+            );
+        }
 
+        assert!(MessageType::Ping.is_request());
+        assert!(MessageType::QueryStatus.is_request());
+        assert!(MessageType::CmdTerminalClose.is_request());
+        assert!(MessageType::CmdTunnelEstablish.is_request());
+        assert!(MessageType::QueryTunnelStatus.is_request());
+
+        assert!(MessageType::Pong.is_response());
         assert!(MessageType::Result.is_response());
-        assert!(!MessageType::Result.is_request());
+        assert!(MessageType::Error.is_response());
 
         assert!(MessageType::EventDevice.is_event());
-        assert!(!MessageType::EventDevice.is_request());
+        assert!(MessageType::EventLink.is_event());
     }
 
     #[tokio::test]

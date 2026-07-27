@@ -157,7 +157,8 @@ const IFACE_TX_ENQUEUE_TIMEOUT_MS: u64 = 200;
 fn tx_diag_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("RETICULUMD_DIAGNOSTICS")
+        std::env::var("STYRENED_DIAGNOSTICS")
+            .or_else(|_| std::env::var("RETICULUMD_DIAGNOSTICS"))
             .or_else(|_| std::env::var("RETICULUM_TRANSPORT_DIAGNOSTICS"))
             .ok()
             .map(|value| {
@@ -198,7 +199,7 @@ impl InterfaceManager {
         let stop = CancellationToken::new();
         let stats = Arc::new(InterfaceStats::new());
 
-        self.stats_map.lock().unwrap().insert(address, stats.clone());
+        self.stats_map.lock().expect("interface stats lock").insert(address, stats.clone());
         self.ifaces.push(LocalInterface { address, tx_send, stop: stop.clone(), stats });
 
         InterfaceChannel { rx_channel: self.rx_send.clone(), tx_channel: tx_recv, address, stop }
@@ -261,7 +262,7 @@ impl InterfaceManager {
     }
 
     pub fn cleanup(&mut self) {
-        let mut map = self.stats_map.lock().unwrap();
+        let mut map = self.stats_map.lock().expect("interface stats lock");
         self.ifaces.retain(|iface| {
             let alive = !iface.stop.is_cancelled();
             if !alive {
@@ -348,7 +349,7 @@ impl InterfaceManager {
     /// Record received bytes for an interface (called from the transport loop
     /// when an `RxMessage` arrives).
     pub fn record_rx(&self, address: &AddressHash, bytes: u64) {
-        if let Some(stats) = self.stats_map.lock().unwrap().get(address) {
+        if let Some(stats) = self.stats_map.lock().expect("interface stats lock").get(address) {
             stats.rx_bytes.fetch_add(bytes, Ordering::Relaxed);
         }
     }
@@ -357,7 +358,7 @@ impl InterfaceManager {
     pub fn interface_stats(&self) -> HashMap<AddressHash, InterfaceStatsSnapshot> {
         self.stats_map
             .lock()
-            .unwrap()
+            .expect("interface stats lock")
             .iter()
             .map(|(addr, stats)| {
                 (

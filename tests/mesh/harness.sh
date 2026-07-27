@@ -71,8 +71,10 @@ wait_for_peer() {
     local elapsed=0
     local interval
 
+    local peers
     while [ "$elapsed" -lt "$timeout" ]; do
-        if styrene --socket "$socket_url" peers 2>&1 | grep -qiF "$peer_name"; then
+        peers=$(styrene --socket "$socket_url" peers 2>&1) || peers=""
+        if grep -qiF -- "$peer_name" <<<"$peers"; then
             return 0
         fi
         # Poll faster initially (1s), then back off to 3s after 30s
@@ -89,6 +91,61 @@ wait_for_peer() {
     echo "    visible peers:" >&2
     styrene --socket "$socket_url" peers 2>&1 | head -10 >&2
     return 1
+}
+
+wait_for_route() {
+    local socket_url="$1"
+    local destination="$2"
+    local timeout="${3:-60}"
+    local elapsed=0
+    local interval=1
+    local path_info=""
+
+    while [ "$elapsed" -lt "$timeout" ]; do
+        path_info=$(styrene --socket "$socket_url" path "$destination" 2>&1) || path_info=""
+        if grep -q '^found=true$' <<<"$path_info"; then
+            printf '%s\n' "$path_info"
+            return 0
+        fi
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+        if [ "$elapsed" -ge 30 ]; then interval=3; fi
+    done
+
+    echo "    wait_for_route timeout: destination=$destination socket=$socket_url after ${timeout}s" >&2
+    printf '%s\n' "$path_info" >&2
+    return 1
+}
+
+wait_for_message() {
+    local socket_url="$1"
+    local source_identity="$2"
+    local correlation="$3"
+    local timeout="${4:-90}"
+    local elapsed=0
+    local messages=""
+
+    while [ "$elapsed" -lt "$timeout" ]; do
+        messages=$(styrene --socket "$socket_url" messages "$source_identity" --limit 100 2>&1) || messages=""
+        if grep -qF -- "$correlation" <<<"$messages"; then
+            printf '%s\n' "$messages"
+            return 0
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+
+    printf '%s\n' "$messages"
+    return 1
+}
+
+emit_correlation() {
+    local stage="$1"
+    local correlation="$2"
+    shift 2
+    printf '    evidence stage=%s correlation=%s' "$stage" "$correlation"
+    printf ' %s' "$@"
+    printf '\n'
 }
 
 # Print summary and exit with appropriate code.

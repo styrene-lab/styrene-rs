@@ -231,6 +231,16 @@ pub struct TunnelInfo {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct TunnelOperationInfo {
+    pub operation_id: String,
+    pub peer_hash: String,
+    pub kind: String,
+    pub state: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
 pub struct TunnelSaInfo {
     pub sa_id: String,

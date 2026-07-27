@@ -19,10 +19,10 @@ members = [
   "crates/apps/styrene-dx",
   "crates/apps/styrene-i2p",
   "crates/apps/styrene-tui",
-  "crates/bindings/styrene-native",
   "crates/bindings/styrene-mobile-ffi",
   "crates/libs/styrene-services",
   "crates/libs/styrene-mqtt",
+  "crates/libs/styrene-a2a",
   "crates/libs/styrene-forge",
   "crates/libs/styrene-amcp",
   "crates/tests/styrene-e2e",
@@ -50,7 +50,7 @@ default-members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.97"
 license = "MIT"
 repository = "https://github.com/styrene-lab/styrene-rs"
 authors = ["Styrene Labs"]

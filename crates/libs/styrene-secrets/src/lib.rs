@@ -407,7 +407,7 @@ mod tests {
         let fallback = "TEST_RESOLVE_FALLBACK_SRC_TOKEN";
 
         // Neither set — should fail.
-        std::env::remove_var(&to_env_key(key));
+        std::env::remove_var(to_env_key(key));
         std::env::remove_var(fallback);
         assert!(resolve_or_env(key, fallback).is_err());
 

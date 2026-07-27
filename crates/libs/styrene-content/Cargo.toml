@@ -2,7 +2,7 @@
 name = "styrene-content"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version.workspace = true
 license = "MIT"
 description = "Styrene mesh content distribution — P2P file sharing over RNS/Yggdrasil"
 repository = "https://github.com/styrene-lab/styrene-rs"

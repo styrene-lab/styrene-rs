@@ -9,7 +9,7 @@ set -euo pipefail
 # Usage:
 #   ./scripts/upstream-review.sh              # Review both upstreams
 #   ./scripts/upstream-review.sh beechat      # Review Beechat only
-#   ./scripts/upstream-review.sh upstream     # Review FreeTAKTeam only
+#   ./scripts/upstream-review.sh freetakteam     # Review FreeTAKTeam only
 #   ./scripts/upstream-review.sh --advance    # Advance tracking to current upstream HEADs
 #   ./scripts/upstream-review.sh --status     # Show current tracking state
 
@@ -45,7 +45,7 @@ ensure_tracking_file() {
 # --- Remote management ---
 
 ensure_remotes() {
-    for key in beechat upstream; do
+    for key in beechat freetakteam; do
         local remote branch
         remote=$(read_remote "$key")
         branch=$(read_branch "$key")
@@ -58,8 +58,8 @@ ensure_remotes() {
                     echo "Adding beechat remote..."
                     git remote add "$remote" https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs.git
                     ;;
-                upstream)
-                    echo "Adding upstream remote..."
+                freetakteam)
+                    echo "Adding FreeTAKTeam lineage remote..."
                     git remote add "$remote" https://github.com/FreeTAKTeam/LXMF-rs.git
                     ;;
             esac
@@ -70,7 +70,7 @@ ensure_remotes() {
 
 fetch_remotes() {
     local target="${1:-all}"
-    for key in beechat upstream; do
+    for key in beechat freetakteam; do
         if [[ "$target" != "all" && "$target" != "$key" ]]; then
             continue
         fi
@@ -95,7 +95,7 @@ review_remote() {
     local display_name
     case "$key" in
         beechat)  display_name="Beechat / Reticulum-rs" ;;
-        upstream) display_name="FreeTAKTeam / LXMF-rs" ;;
+        freetakteam) display_name="FreeTAKTeam / LXMF-rs" ;;
         *)        display_name="$key" ;;
     esac
 
@@ -167,7 +167,7 @@ advance_tags() {
 
     local target="${1:-all}"
 
-    for key in beechat upstream; do
+    for key in beechat freetakteam; do
         if [[ "$target" != "all" && "$target" != "$key" ]]; then
             continue
         fi
@@ -197,7 +197,7 @@ show_status() {
     echo -e "${BOLD}Tracking file:${RESET} $TRACKING_FILE"
     echo ""
 
-    for key in beechat upstream; do
+    for key in beechat freetakteam; do
         local remote branch last_reviewed
         remote=$(read_remote "$key")
         branch=$(read_branch "$key")
@@ -210,7 +210,7 @@ show_status() {
     done
     echo ""
     echo "Remotes:"
-    git remote -v | grep -E "^(beechat|upstream|origin)" | sort
+    git remote -v | grep -E "^(beechat|freetakteam|origin)" | sort
 }
 
 # --- Main ---
@@ -235,21 +235,21 @@ case "${1:-all}" in
         fetch_remotes beechat
         review_remote beechat
         ;;
-    upstream)
-        fetch_remotes upstream
-        review_remote upstream
+    freetakteam)
+        fetch_remotes freetakteam
+        review_remote freetakteam
         ;;
     all)
         fetch_remotes all
         review_remote beechat
-        review_remote upstream
+        review_remote freetakteam
         ;;
     -h|--help)
-        echo "Usage: $0 [beechat|upstream|all|--advance|--status]"
+        echo "Usage: $0 [beechat|freetakteam|all|--advance|--status]"
         echo ""
         echo "  all (default)   Review pending changes from both upstreams"
         echo "  beechat         Review Beechat/Reticulum-rs only"
-        echo "  upstream        Review FreeTAKTeam/LXMF-rs only"
+        echo "  freetakteam     Review FreeTAKTeam/LXMF-rs lineage only"
         echo "  --advance       Mark current upstream HEADs as reviewed"
         echo "  --status        Show current tracking state"
         echo ""

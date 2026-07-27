@@ -22,9 +22,9 @@ jobs:
       - name: Configure upstream remotes
         run: |
           git remote add beechat https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs.git 2>/dev/null || true
-          git remote add upstream https://github.com/FreeTAKTeam/LXMF-rs.git 2>/dev/null || true
+          git remote add freetakteam https://github.com/FreeTAKTeam/LXMF-rs.git 2>/dev/null || true
           git fetch beechat --quiet
-          git fetch upstream --quiet
+          git fetch freetakteam --quiet
 
       - name: Check for drift
         id: drift

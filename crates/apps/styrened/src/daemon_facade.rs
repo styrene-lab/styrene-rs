@@ -371,11 +371,17 @@ impl DaemonStatus for DaemonFacade {
             .map(|a| {
                 let mut d = DeviceInfo::default();
                 d.destination_hash = a.peer.clone();
-                d.identity_hash = a.peer;
+                d.identity_hash = a.peer.clone();
                 d.name = a.name.unwrap_or_default();
-                d.device_type = "unknown".into();
+                // Get device_type from NodeStore (set by announce worker aspect classification)
+                d.device_type = self
+                    .ctx
+                    .discovery()
+                    .peer(&a.peer)
+                    .and_then(|n| n.device_type)
+                    .unwrap_or_else(|| "unknown".to_string());
                 d.status = "announced".into();
-                d.is_styrene_node = !a.capabilities.is_empty();
+                d.is_styrene_node = !a.capabilities.is_empty() || d.device_type == "page_host";
                 d.last_announce = Some(a.timestamp);
                 d.announce_count = a.seen_count as u32;
                 d
@@ -768,7 +774,7 @@ impl DaemonFleet for DaemonFacade {
         self.require(Capability::RPC_EXEC)?; // Admin-level operation
 
         // Prevent self-revocation: revoking the daemon's own Admin would lock out local IPC.
-        if identity_hash.to_ascii_lowercase() == self.caller_identity.to_ascii_lowercase() {
+        if identity_hash.eq_ignore_ascii_case(&self.caller_identity) {
             return Err(IpcError::invalid_request(
                 "cannot revoke the daemon's own role (self-lockout protection)",
             ));
@@ -838,18 +844,23 @@ impl DaemonTunnel for DaemonFacade {
 
     async fn tunnel_status(&self, peer_hash: &str) -> Result<TunnelInfo, IpcError> {
         self.require(Capability::TUNNEL_STATUS)?;
-        let state = self
-            .ctx
-            .tunnel()
-            .get_peer_state(peer_hash)
-            .ok_or_else(|| IpcError::not_found("tunnel", peer_hash))?;
-        let mut info = TunnelInfo::default();
-        info.peer_hash = peer_hash.to_string();
-        info.backend = String::from("wireguard");
-        info.state = String::from("established");
-        info.remote_endpoint = Some(state.endpoint.clone());
-        info.established_at = Some(state.established_at);
-        Ok(info)
+        if let Some(state) = self.ctx.tunnel().get_peer_state(peer_hash) {
+            let mut info = TunnelInfo::default();
+            info.peer_hash = peer_hash.to_string();
+            info.backend = String::from("wireguard");
+            info.state = String::from("established");
+            info.remote_endpoint = Some(state.endpoint.clone());
+            info.established_at = Some(state.established_at);
+            return Ok(info);
+        }
+        if let Some(operation) = self.ctx.tunnel().latest_operation(peer_hash) {
+            let mut info = TunnelInfo::default();
+            info.peer_hash = peer_hash.to_string();
+            info.backend = String::from("wireguard");
+            info.state = operation.state;
+            return Ok(info);
+        }
+        Err(IpcError::not_found("tunnel", peer_hash))
     }
 
     async fn tunnel_rekey(&self, peer_hash: &str) -> Result<bool, IpcError> {
@@ -885,12 +896,28 @@ impl DaemonTunnel for DaemonFacade {
     }
 
     async fn tunnel_establish(&self, peer_hash: &str) -> Result<String, IpcError> {
+        crate::daemon_diagnostic!("[tunnel-ipc] dispatch entered peer={peer_hash}");
         self.require(Capability::TUNNEL_ESTABLISH)?;
+        crate::daemon_diagnostic!("[tunnel-ipc] capability check completed peer={peer_hash}");
+        let operation_id = self
+            .ctx
+            .tunnel_arc()
+            .queue_tunnel(peer_hash)
+            .map_err(|e| IpcError::Internal { message: e })?;
+        crate::daemon_diagnostic!(
+            "[tunnel-ipc] queue_tunnel returned peer={} operation={}",
+            peer_hash,
+            operation_id
+        );
+        Ok(operation_id)
+    }
+
+    async fn tunnel_operation(&self, peer_hash: &str) -> Result<TunnelOperationInfo, IpcError> {
+        self.require(Capability::TUNNEL_STATUS)?;
         self.ctx
             .tunnel()
-            .initiate_tunnel(peer_hash)
-            .await
-            .map_err(|e| IpcError::Internal { message: e })
+            .latest_operation(peer_hash)
+            .ok_or_else(|| IpcError::not_found("tunnel operation", peer_hash))
     }
 }
 

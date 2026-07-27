@@ -30,6 +30,8 @@
 //!         → Expand(master_PRK, label)                 → per-host SSH key
 //!     → Expand(PRK, "styrene-agent-master-v1")        → agent master
 //!         → Expand(master_PRK, agent_name)            → per-agent signing key
+//!     → Expand(PRK, "styrene-tls-cert-master-v1")     → TLS cert master
+//!         → Expand(master_PRK, cert_label)            → per-cert Ed25519 key
 //!     → Expand(PRK, "styrene-i2p-service-master-v1")  → I2P service master
 //!         → Expand(master_PRK, service_name)          → per-service destination keys
 //!     → Expand(PRK, "styrene-onion-master-v1")        → Tor service master
@@ -65,6 +67,8 @@ pub fn validate_label(label: &str) -> Result<(), DeriveError> {
 const HKDF_SALT: &[u8] = b"styrene-identity-v1";
 /// Level-2 salt for the agent key derivation tree.
 const HKDF_SALT_AGENT: &[u8] = b"styrene-identity-agent-v1";
+/// Level-2 salt for the TLS certificate derivation tree.
+const HKDF_SALT_TLS_CERT: &[u8] = b"styrene-identity-tls-cert-v1";
 /// Level-2 salt for the SSH user key derivation tree.
 const HKDF_SALT_SSH_USER: &[u8] = b"styrene-identity-ssh-user-v1";
 /// Level-2 salt for the I2P per-service derivation tree.
@@ -257,6 +261,11 @@ impl KeyDeriver {
     /// Derive a per-agent Ed25519 signing seed via two-level HKDF.
     pub fn derive_agent_key(&self, agent_name: &str) -> Result<[u8; 32], DeriveError> {
         self.derive_parameterized(b"styrene-agent-master-v1", HKDF_SALT_AGENT, agent_name)
+    }
+
+    /// Derive a per-certificate Ed25519 seed via a TLS-only key family.
+    pub fn derive_tls_certificate_key(&self, cert_label: &str) -> Result<[u8; 32], DeriveError> {
+        self.derive_parameterized(b"styrene-tls-cert-master-v1", HKDF_SALT_TLS_CERT, cert_label)
     }
 
     /// Derive a per-label SSH user Ed25519 seed via two-level HKDF.
@@ -564,6 +573,22 @@ mod tests {
         let ssh = d.derive_ssh_user_key("github").unwrap();
         let agent = d.derive_agent_key("github").unwrap();
         assert_ne!(ssh, agent);
+    }
+
+    #[test]
+    fn tls_certificate_key_differs_from_agent_same_label() {
+        let d = KeyDeriver::new(&[42u8; 32]);
+        let label = "styrene/tls/server/omegon-primary";
+        let tls = d.derive_tls_certificate_key(label).unwrap();
+        let agent = d.derive_agent_key(label).unwrap();
+
+        assert_ne!(tls, agent);
+    }
+
+    #[test]
+    fn tls_certificate_key_empty_label_rejected() {
+        let d = KeyDeriver::new(&[42u8; 32]);
+        assert!(d.derive_tls_certificate_key("").is_err());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::error::IpcError;
-use crate::types::{TunnelInfo, TunnelSaInfo};
+use crate::types::{TunnelInfo, TunnelOperationInfo, TunnelSaInfo};
 
 /// Tunnel management operations.
 ///
@@ -26,4 +26,7 @@ pub trait DaemonTunnel: Send + Sync {
 
     /// Initiate tunnel establishment to a peer. Returns a negotiation nonce.
     async fn tunnel_establish(&self, peer_hash: &str) -> Result<String, IpcError>;
+
+    /// Return the latest asynchronous tunnel operation for a peer.
+    async fn tunnel_operation(&self, peer_hash: &str) -> Result<TunnelOperationInfo, IpcError>;
 }

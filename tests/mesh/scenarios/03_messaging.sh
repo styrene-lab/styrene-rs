@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # T09-T12: Send LXMF messages between peers and verify delivery.
 
-source /harness/harness.sh
+source "${HARNESS_ROOT:-/harness}/harness.sh"
 
 echo "  Suite: Messaging"
 
 MSG_TIMEOUT=90
+RUN_MARKER=${STYRENE_MESH_RUN_ID:-manual-$$}
+DIRECT_MESSAGE="mesh-T09-${RUN_MARKER}"
+CROSS_MESSAGE="mesh-T12-${RUN_MARKER}"
 
 # Get each node's LXMF destination hash (for addressing messages)
 # and identity hash (for querying received messages — the store uses identity hash)
@@ -30,7 +33,7 @@ else
         echo "  WARNING: alpha may not see beta yet, attempting send anyway"
     fi
     sleep 5
-    OUTPUT=$(styrene --socket "$ALPHA_SOCK" send "$BETA_DEST" "hello from alpha" 2>&1) && RC=0 || RC=$?
+    OUTPUT=$(styrene --socket "$ALPHA_SOCK" send "$BETA_DEST" "$DIRECT_MESSAGE" 2>&1) && RC=0 || RC=$?
     if [ "$RC" -eq 0 ]; then
         pass "T09: alpha sends message to beta"
     else
@@ -45,7 +48,7 @@ else
     RECEIVED=false
     while [ "$ELAPSED" -lt "$MSG_TIMEOUT" ]; do
         MSGS=$(styrene --socket "$BETA_SOCK" messages "$ALPHA_IDHASH" 2>&1)
-        if echo "$MSGS" | grep -qF "hello from alpha"; then
+        if grep -qF -- "$DIRECT_MESSAGE" <<<"$MSGS"; then
             RECEIVED=true
             break
         fi
@@ -66,7 +69,7 @@ else
     # Wait for cross-network announce propagation (alpha→hub→gamma path is longer)
     echo "  waiting for cross-network announce propagation..."
     sleep 10
-    OUTPUT=$(styrene --socket "$ALPHA_SOCK" send "$GAMMA_DEST" "hello across networks" 2>&1) && RC=0 || RC=$?
+    OUTPUT=$(styrene --socket "$ALPHA_SOCK" send "$GAMMA_DEST" "$CROSS_MESSAGE" 2>&1) && RC=0 || RC=$?
     if [ "$RC" -eq 0 ]; then
         pass "T11: alpha sends message to gamma (cross-network)"
     else
@@ -81,7 +84,7 @@ else
     RECEIVED=false
     while [ "$ELAPSED" -lt "$MSG_TIMEOUT" ]; do
         MSGS=$(styrene --socket "$GAMMA_SOCK" messages "$ALPHA_IDHASH" 2>&1)
-        if echo "$MSGS" | grep -qF "hello across networks"; then
+        if grep -qF -- "$CROSS_MESSAGE" <<<"$MSGS"; then
             RECEIVED=true
             break
         fi
@@ -94,7 +97,7 @@ else
         # Debug: check if gamma has ANY messages
         ALL_MSGS=$(styrene --socket "$GAMMA_SOCK" messages "$ALPHA_IDHASH" --limit 10 2>&1)
         fail "T12: gamma received cross-network message from alpha (timeout ${MSG_TIMEOUT}s)"
-        echo "    query hash: $ALPHA_IDHASH"
+        echo "    correlation: run=$RUN_MARKER payload=$CROSS_MESSAGE source_identity=$ALPHA_IDHASH destination_lxmf=$GAMMA_DEST"
         echo "    gamma messages: $ALL_MSGS"
     fi
 fi

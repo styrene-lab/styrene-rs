@@ -214,6 +214,7 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use crate::crypt::fernet::{Fernet, AES_BLOCK_SIZE, FERNET_OVERHEAD_SIZE};
     use core::str;

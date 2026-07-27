@@ -2,7 +2,7 @@
 name = "styrene-rbac"
 version = "0.1.0"
 edition.workspace = true
-rust-version = "1.75"
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Role-based access control for the Styrene mesh — shared by styrened and aether"

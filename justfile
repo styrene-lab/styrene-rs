@@ -6,6 +6,7 @@
 # ─── Configuration ──────────────────────────────────────────────────────────
 
 project_root := justfile_directory()
+install_dir := env_var_or_default("STYRENE_INSTALL_DIR", env_var("HOME") + "/.cargo/bin")
 
 # ─── Help ───────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,36 @@ build:
 # Build in release mode
 build-release:
     cargo build --workspace --release
+
+# Build and transactionally replace local Styrene binaries (defaults to ~/.cargo/bin)
+install destination=install_dir:
+    cargo build --release --locked -p styrene --features tui -p styrened -p styrene-tui
+    sh scripts/install-local.sh "{{ destination }}" \
+        target/release/styrene \
+        target/release/styrened \
+        target/release/styrene-tui
+    @"{{ destination }}/styrene" --version
+    @"{{ destination }}/styrened" --version
+    @echo "installed {{ destination }}/styrene-tui (interactive compatibility launcher)"
+
+# Verify the local installer (preflight, success, rollback, and state preservation)
+test-install:
+    sh scripts/test-install-local.sh
+
+# Package the current native target into a versioned release archive
+package target=`rustc -vV | sed -n 's/^host: //p'`:
+    cargo build --release --locked -p styrene --features tui -p styrened -p styrene-tui
+    python3 scripts/release_artifact.py package \
+        --version "$(sed -n 's/^version = \"\([^\"]*\)\"/\1/p' crates/apps/styrene/Cargo.toml | head -1)" \
+        --target "{{ target }}" \
+        --commit "$(git rev-parse HEAD)" \
+        --rust-version "$(sed -n 's/^channel = \"\([^\"]*\)\"/\1/p' rust-toolchain.toml)" \
+        --binary-dir target/release \
+        --output-dir target/artifacts
+
+# Safely validate and execute a packaged release archive
+verify-artifact archive:
+    python3 scripts/release_artifact.py verify "{{ archive }}"
 
 # Run all validation checks (format + lint + test)
 validate: format-check lint test
@@ -248,38 +279,74 @@ test-e2e-file file:
 # Run the exact CI checks locally before tagging a release
 preflight:
     cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx --exclude styrene-native
-    cargo test --workspace --exclude styrene-dx --exclude styrene-native --exclude styrene-e2e
+    cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx
+    cargo test --workspace --exclude styrene-dx --exclude styrene-e2e
 
 # ─── Hub Deployment ───────────────────────────────────────────────────────
 
 hub_image := "ghcr.io/styrene-lab/styrened-hub"
 hub_tag := `git rev-parse --short HEAD`
 
-# Build the community hub container image
+# Build hub image via podman (cross-compile in container — slow on ARM hosts)
 hub-build:
-    docker build -f deploy/Dockerfile.hub -t {{hub_image}}:{{hub_tag}} -t {{hub_image}}:latest .
+    podman build --platform linux/amd64 -f deploy/Dockerfile.hub -t {{hub_image}}:{{hub_tag}} -t {{hub_image}}:latest .
+
+# Build hub image fast: static musl binary via zigbuild, alpine runtime
+hub-build-fast:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Cross-compiling static musl binary for x86_64-linux..."
+    rustup target add x86_64-unknown-linux-musl 2>/dev/null || true
+    cargo zigbuild --release --target x86_64-unknown-linux-musl -p styrened -p styrene
+    echo "Packaging into alpine container..."
+    CTX=$(mktemp -d)
+    cp target/x86_64-unknown-linux-musl/release/styrened "$CTX/"
+    cp target/x86_64-unknown-linux-musl/release/styrene "$CTX/"
+    cp -r deploy/pages "$CTX/pages"
+    cat > "$CTX/Dockerfile" << 'DOCKERFILE'
+    FROM alpine:3.21
+    RUN addgroup -S styrene && adduser -S -G styrene -h /var/lib/styrene styrene
+    COPY styrened /usr/local/bin/styrened
+    COPY styrene /usr/local/bin/styrene
+    COPY pages/ /etc/styrene/pages/
+    ENV STYRENE_CONFIG_DIR=/etc/styrene
+    ENV STYRENE_DATA_DIR=/var/lib/styrene
+    RUN mkdir -p /var/lib/styrene /run/styrene \
+        && chown -R styrene:styrene /var/lib/styrene /run/styrene /etc/styrene/pages
+    USER styrene
+    EXPOSE 4242
+    ENTRYPOINT ["styrened"]
+    CMD ["--transport", "0.0.0.0:4242", "--rpc", "0.0.0.0:4243"]
+    DOCKERFILE
+    podman build --platform linux/amd64 -t {{hub_image}}:{{hub_tag}} -t {{hub_image}}:latest "$CTX"
+    rm -rf "$CTX"
+    echo "Done: {{hub_image}}:latest"
 
 # Push hub image to container registry
-hub-push: hub-build
-    docker push {{hub_image}}:{{hub_tag}}
-    docker push {{hub_image}}:latest
+hub-push:
+    gh auth token | podman login ghcr.io -u styrene-lab --password-stdin
+    podman push {{hub_image}}:{{hub_tag}}
+    podman push {{hub_image}}:latest
+
+# Build and push hub in one step (fast path)
+hub-ship: hub-build-fast hub-push hub-deploy
 
 # Deploy hub to k3s cluster (applies all manifests)
 hub-deploy:
-    kubectl apply -k deploy/k3s/
+    KUBECONFIG=~/.kube/brutus.yaml kubectl apply -k deploy/k3s/
+    KUBECONFIG=~/.kube/brutus.yaml kubectl -n styrene rollout restart deployment/styrene-hub
 
 # Show hub status on the cluster
 hub-status:
-    kubectl -n styrene get pods,svc,pvc
+    KUBECONFIG=~/.kube/brutus.yaml kubectl -n styrene get pods,svc,pvc
 
 # Stream hub logs
 hub-logs:
-    kubectl -n styrene logs -f deployment/styrene-hub
+    KUBECONFIG=~/.kube/brutus.yaml kubectl -n styrene logs -f deployment/styrene-hub
 
 # Tear down hub deployment
 hub-destroy:
-    kubectl delete -k deploy/k3s/
+    KUBECONFIG=~/.kube/brutus.yaml kubectl delete -k deploy/k3s/
 
 # ─── Cleanup ───────────────────────────────────────────────────────────────
 
@@ -312,3 +379,118 @@ publish:
     cargo publish -p styrene-ipc
     sleep 30
     cargo publish -p styrene-tunnel
+
+# ─── Constrained-device simulation ────────────────────────────────────────
+
+# Build an arm64 Linux image approximating the R36S userspace envelope
+sim-r36s-build:
+    ./scripts/smoke-r36s-sim.sh build
+
+# Smoke-test version, persistent setup, and Ghost lifecycle under bounded resources
+sim-r36s-smoke:
+    ./scripts/smoke-r36s-sim.sh smoke
+
+# Open an interactive shell in the bounded arm64 simulation image
+sim-r36s-shell:
+    ./scripts/smoke-r36s-sim.sh shell
+
+# Characterize the simulated R36S userspace across descending memory ceilings
+sim-r36s-characterize:
+    ./scripts/characterize-r36s-sim.sh
+
+# ─── Raspberry Pi materialization ─────────────────────────────────────────
+
+# Validate the machine-readable repeatable-flasher contract
+nix-rpi4-builder-contract:
+    python3 scripts/validate_flashers.py product/flashers/rpi4b-builder-v1.toml
+
+# Validate all declarative flasher contracts
+nix-flasher-contracts:
+    python3 scripts/validate_flashers.py product/flashers/rpi4b-builder-v1.toml product/flashers/rg35xxsp-bringup-v1.toml
+    python3 scripts/test_validate_flashers.py
+
+# Discover the accepted RPi4 native ARM64 builder
+nix-rpi4-builder-discover:
+    ./scripts/discover-rpi4-builder.sh
+
+# Build a flake output natively on the accepted RPi4 builder
+nix-rpi4-remote-build attr out="result-rpi-build":
+    ./scripts/build-on-rpi4-builder.sh "{{attr}}" "{{out}}"
+
+# Archive completed RPi4 Nix outputs locally as restorable NARs
+nix-rpi4-archive-outputs *outputs:
+    ./scripts/archive-rpi4-outputs.sh {{ outputs }}
+
+# Restore a locally archived RPi4 output to the builder
+nix-rpi4-restore archive:
+    ./scripts/restore-rpi4-output.sh "{{archive}}"
+
+# Validate selected immutable H700 boot-chain sources
+rg35xxsp-provenance:
+    ./scripts/validate-rg35xxsp-provenance.py
+
+# Require every image component to have at least a selected source
+rg35xxsp-provenance-build-ready:
+    ./scripts/validate-rg35xxsp-provenance.py --require-build-ready
+
+# Validate bounded OEM evidence; full preservation is still required for delivery approval
+rg35xxsp-oem-evidence bundle="target/device-evidence/operator-rg35xxsp-a/oem-tf1-bounded":
+    ./scripts/validate-rg35xxsp-oem-evidence.py "{{bundle}}"
+
+# Deliberately fails until a complete OEM image and checksum exist
+rg35xxsp-oem-evidence-full bundle="target/device-evidence/operator-rg35xxsp-a/oem-tf1-bounded":
+    ./scripts/validate-rg35xxsp-oem-evidence.py --require-full "{{bundle}}"
+
+# RG35XXSP source-first image build remains unavailable until the flake output exists
+nix-rg35xxsp-bringup-build:
+    python3 scripts/validate_flashers.py product/flashers/rg35xxsp-bringup-v1.toml
+    ./scripts/validate-rg35xxsp-provenance.py --require-build-ready
+    ./scripts/build-on-rpi4-builder.sh .#packages.aarch64-linux.rg35xxsp-bringup-image result-rg35xxsp-bringup
+
+# Re-run physical builder acceptance; optionally pass a native derivation
+nix-rpi4-builder-accept host="nix-builder@styrene-builder-a.local" derivation="":
+    ./scripts/verify-rpi4-builder-host.sh --host "{{host}}" {{ if derivation != "" { "--derivation \"" + derivation + "\"" } else { "" } }}
+
+# Evaluate the Raspberry Pi 4B builder SD-image composition
+nix-rpi4-builder-eval: nix-rpi4-builder-contract
+    STYRENE_BUILDER_SSH_KEY="${STYRENE_BUILDER_SSH_KEY:?set operator public key}" nix eval --impure .#nixosConfigurations.rpi4-builder.config.system.build.sdImage.drvPath
+
+# Build the Raspberry Pi 4B builder SD image in the persistent Linux builder
+nix-rpi4-builder-build: nix-rpi4-builder-contract
+    STYRENE_BUILDER_SSH_KEY="${STYRENE_BUILDER_SSH_KEY:?set operator public key}" ./scripts/build-nix-linux.sh .#nixosConfigurations.rpi4-builder.config.system.build.sdImage result-rpi4-builder
+
+# Verify partition filesystems and all registered Nix store contents offline
+nix-rpi4-builder-verify image="result-rpi4-builder/sd-image/nixos-image-sd-card-26.11.20260713.6cdc7fc-aarch64-linux.img.zst":
+    ./scripts/verify-rpi4-image.sh "{{image}}"
+
+# Exercise all non-destructive RPi 4 flash guards
+nix-rpi4-flash-test:
+    ./scripts/test-flash-rpi4-image.sh
+
+# Validate a specific removable device without writing it
+nix-rpi4-flash-dry-run device image="result-rpi4-builder/sd-image/nixos-image-sd-card-26.11.20260713.6cdc7fc-aarch64-linux.img.zst":
+    ./scripts/flash-rpi4-image.sh --image "{{image}}" --device "{{device}}" --confirm ERASE --dry-run
+
+# Evaluate the Raspberry Pi 4B Styrene appliance SD-image composition
+nix-rpi4-appliance-eval:
+    STYRENE_APPLIANCE_SSH_KEY="${STYRENE_APPLIANCE_SSH_KEY:?set operator public key}" nix eval --impure .#nixosConfigurations.rpi4-appliance.config.system.build.sdImage.drvPath
+
+# Build the Raspberry Pi 4B Styrene appliance SD image (requires an aarch64-linux builder)
+nix-rpi4-appliance-build:
+    STYRENE_APPLIANCE_SSH_KEY="${STYRENE_APPLIANCE_SSH_KEY:?set operator public key}" nix build --impure .#nixosConfigurations.rpi4-appliance.config.system.build.sdImage --out-link result-rpi4-appliance
+
+# Bootstrap the RPi4 builder image inside the native arm64 Podman Linux VM
+nix-rpi4-builder-bootstrap:
+    ./scripts/build-nix-linux.sh .#nixosConfigurations.rpi4-builder.config.system.build.sdImage result-rpi4-builder
+
+# Inspect the completed RPi4 builder image and print its digest/size metadata
+nix-rpi4-builder-inspect:
+    ./scripts/rpi4_image.py inspect "$(find -L result-rpi4-builder/sd-image -type f -name '*.img.zst' -print -quit)"
+
+# Print guarded flash metadata and required confirmation token; does not write
+nix-rpi4-builder-flash-plan device:
+    ./scripts/rpi4_image.py flash "$(find -L result-rpi4-builder/sd-image -type f -name '*.img.zst' -print -quit)" --device "{{device}}"
+
+# Flash only after explicit whole-disk target and exact digest-bound token
+nix-rpi4-builder-flash device confirm:
+    ./scripts/rpi4_image.py flash "$(find -L result-rpi4-builder/sd-image -type f -name '*.img.zst' -print -quit)" --device "{{device}}" --confirm "{{confirm}}" --execute

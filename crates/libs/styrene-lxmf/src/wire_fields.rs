@@ -153,7 +153,7 @@ fn normalize_attachment_data(value: &JsonValue) -> Result<JsonValue, LxmfError> 
 }
 
 fn decode_hex_attachment_data(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 || !text.chars().all(|ch| ch.is_ascii_hexdigit()) {
+    if !text.len().is_multiple_of(2) || !text.chars().all(|ch| ch.is_ascii_hexdigit()) {
         return None;
     }
     let mut bytes = Vec::with_capacity(text.len() / 2);

@@ -1,0 +1,86 @@
+schema_version = 1
+id = "rg35xxsp-bringup"
+version = 1
+status = "delivery-approved"
+purpose = "minimal-h700-hardware-bringup"
+hardware_profile = "anbernic-rg35xxsp-h700"
+deployment_tier = "constrained-linux"
+
+[materialization]
+flake_attribute = "packages.aarch64-linux.rg35xxsp-bringup-image"
+artifact_glob = "sd-image/*.img.zst"
+builder_system = "aarch64-linux"
+builder_contract = "product/flashers/rpi4b-builder-v1.toml"
+build_recipe = "nix-rg35xxsp-bringup-build"
+contract_validator = "scripts/validate_flashers.py"
+
+[prerequisites]
+required_contract_status = "hardware-validated"
+required_artifacts = [
+  "nix/hardware/rg35xxsp/provenance.toml",
+  "docs/rg35xxsp-nixos-bringup.md",
+  "docs/rg35xxsp-build-evidence.md",
+]
+required_checks = [
+  "generic-aarch64-qemu-smoke",
+  "complete-oem-media-preservation",
+  "boot-chain-provenance-ready",
+]
+
+[artifact_validation]
+command = "scripts/verify-rg35xxsp-bringup-image.sh"
+requires = [
+  "zstd-integrity",
+  "partition-layout",
+  "boot-chain-hashes",
+  "linux-root-partition",
+  "ext4-fsck",
+  "provenance-manifest",
+]
+
+[artifact_evidence]
+date = "2026-07-19"
+builder = "styrene-builder-a"
+derivation = "/nix/store/p9xhkkwmx1jds4sgv8rlg7skkb7asb79-styrene-rg35xxsp-bringup-image.drv"
+output = "/nix/store/l07rryc5k5aabpv65gjp5gydhr4iqcf1-styrene-rg35xxsp-bringup-image"
+image_sha256 = "e4cdf79762a2a87b432acd180a55dfad3bac8a1ecfb8b857fe60eeee7dbd8147"
+compressed_sha256 = "92096bdadd181d3b025a6f5a6f21f5a578c172e2fc1f967c17e7a614d9188c50"
+nar_sha256 = "b09b953897150472eda7a228c735f949415f391a38d3b82a292be2a05e873730"
+structural_validation = "passed"
+delivery_authorized = true
+
+[delivery]
+enabled = true
+command = "scripts/flash-rpi4-image.sh"
+confirmation = "ERASE"
+whole_disk_only = true
+removable_only = true
+build_is_non_destructive = true
+supported_host_os = ["darwin", "linux"]
+supported_artifacts = ["img", "img.zst"]
+blocked_until_status = "delivery-approved"
+
+[first_boot]
+interface = "serial-or-hdmi"
+password_authentication = false
+acceptance_command = "scripts/verify-rg35xxsp-bringup-host.sh"
+required_checks = [
+  "three-cold-boots",
+  "nixos-stage2",
+  "display",
+  "evdev-controls",
+  "wifi",
+  "audio",
+  "hall-switch",
+  "controlled-reboot",
+  "controlled-shutdown",
+  "filesystem-clean",
+]
+
+[boundaries]
+notes = [
+  "This delivery approval applies only to the recorded structural artifact on a fresh sacrificial SD card.",
+  "OEM binary evidence is local and must not be committed or redistributed.",
+  "A source-pinned bootloader, kernel, device tree, and firmware set is required before delivery approval.",
+  "Styrene communicator enablement follows board bring-up and is not part of the first boot claim.",
+]

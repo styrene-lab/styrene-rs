@@ -84,7 +84,10 @@ async fn multiple_sequential_messages_all_deliver() {
         // Send 5 messages sequentially, each waiting for delivery
         for i in 0..5 {
             let content = format!("seq-msg-{}", i);
-            alice.send_chat(&bob.delivery_hash, &content).await.expect(&format!("send {}", i));
+            alice
+                .send_chat(&bob.delivery_hash, &content)
+                .await
+                .unwrap_or_else(|_| panic!("send {}", i));
             await_inbound_count(&bob.app_context, i + 1, Duration::from_secs(15)).await;
         }
 

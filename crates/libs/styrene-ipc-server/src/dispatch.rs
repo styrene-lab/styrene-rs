@@ -870,12 +870,24 @@ async fn dispatch_query_interface_stats(daemon: &Arc<dyn Daemon>) -> Result<Payl
     let ifaces: Vec<rmpv::Value> = interfaces
         .iter()
         .map(|iface| {
-            let mut m = Vec::new();
-            m.push((rmpv::Value::from("name"), rmpv::Value::from(iface.name.as_str())));
-            m.push((rmpv::Value::from("hash"), rmpv::Value::from(iface.hash.as_str())));
-            m.push((rmpv::Value::from("status"), rmpv::Value::from(iface.status.as_str())));
+            let mut m = vec![
+                (rmpv::Value::from("name"), rmpv::Value::from(iface.name.as_str())),
+                (rmpv::Value::from("hash"), rmpv::Value::from(iface.hash.as_str())),
+                (rmpv::Value::from("type"), rmpv::Value::from(iface.kind.as_str())),
+                (rmpv::Value::from("status"), rmpv::Value::from(iface.status.as_str())),
+            ];
+            if let Some(host) = &iface.host {
+                m.push((rmpv::Value::from("host"), rmpv::Value::from(host.as_str())));
+            }
+            if let Some(port) = iface.port {
+                m.push((rmpv::Value::from("port"), rmpv::Value::from(port as i64)));
+            }
             m.push((rmpv::Value::from("tx_bytes"), rmpv::Value::from(iface.tx_bytes as i64)));
             m.push((rmpv::Value::from("rx_bytes"), rmpv::Value::from(iface.rx_bytes as i64)));
+            m.push((
+                rmpv::Value::from("connected_peers"),
+                rmpv::Value::from(iface.peers_connected as i64),
+            ));
             rmpv::Value::Map(m)
         })
         .collect();
@@ -989,7 +1001,23 @@ async fn dispatch_query_tunnel_status(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let peer = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
-    let info = daemon.tunnel_status(peer).await.map_err(|e| e.to_string())?;
+    let info = match daemon.tunnel_operation(peer).await {
+        Ok(operation) => {
+            let mut p = Payload::new();
+            p.insert("operation_id".into(), rmpv::Value::from(operation.operation_id.as_str()));
+            p.insert("peer_hash".into(), rmpv::Value::from(operation.peer_hash.as_str()));
+            p.insert("kind".into(), rmpv::Value::from(operation.kind.as_str()));
+            p.insert("state".into(), rmpv::Value::from(operation.state.as_str()));
+            if let Some(code) = operation.error_code {
+                p.insert("error_code".into(), rmpv::Value::from(code));
+            }
+            if let Some(message) = operation.error_message {
+                p.insert("error_message".into(), rmpv::Value::from(message));
+            }
+            return ok_payload(p);
+        }
+        Err(_) => daemon.tunnel_status(peer).await.map_err(|e| e.to_string())?,
+    };
     let mut p = Payload::new();
     p.insert("peer_hash".into(), rmpv::Value::from(info.peer_hash.as_str()));
     p.insert("backend".into(), rmpv::Value::from(info.backend.as_str()));
@@ -1056,7 +1084,11 @@ async fn dispatch_tunnel_establish(
     let peer = validate_hash(peer)?;
     let nonce = daemon.tunnel_establish(peer).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
+    p.insert("accepted".into(), rmpv::Value::Boolean(true));
     p.insert("success".into(), rmpv::Value::Boolean(true));
+    p.insert("operation_id".into(), rmpv::Value::from(nonce.as_str()));
+    p.insert("peer_hash".into(), rmpv::Value::from(peer));
+    p.insert("state".into(), rmpv::Value::from("queued"));
     p.insert("nonce".into(), rmpv::Value::from(nonce.as_str()));
     ok_payload(p)
 }
@@ -1128,9 +1160,10 @@ async fn dispatch_list_pages(
     let arr: Vec<rmpv::Value> = pages
         .into_iter()
         .map(|page| {
-            let mut m = Vec::new();
-            m.push((rmpv::Value::from("path"), rmpv::Value::from(page.path.as_str())));
-            m.push((rmpv::Value::from("host_hash"), rmpv::Value::from(page.host_hash.as_str())));
+            let m = vec![
+                (rmpv::Value::from("path"), rmpv::Value::from(page.path.as_str())),
+                (rmpv::Value::from("host_hash"), rmpv::Value::from(page.host_hash.as_str())),
+            ];
             rmpv::Value::Map(m)
         })
         .collect();

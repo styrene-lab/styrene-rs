@@ -70,6 +70,10 @@ pub(super) async fn handle_cleanup<'a>(handler: MutexGuard<'a, TransportHandler>
     handler.iface_manager.lock().await.cleanup();
 }
 
+pub(super) fn should_rebroadcast(packet_type: PacketType) -> bool {
+    matches!(packet_type, PacketType::Data)
+}
+
 pub(super) async fn manage_transport(
     handler_arc: Arc<Mutex<TransportHandler>>,
     rx_receiver: Arc<Mutex<InterfaceRxReceiver>>,
@@ -133,8 +137,11 @@ pub(super) async fn manage_transport(
                             continue;
                         }
 
+                        // Link requests and proofs have dedicated directed forwarding paths.
+                        // Rebroadcasting them here as well creates a topology loop because
+                        // their hop-mutated copies evade packet-hash deduplication.
                         if handler.config.broadcast
-                            && packet.header.packet_type != PacketType::Announce
+                            && should_rebroadcast(packet.header.packet_type)
                         {
                             handler
                                 .send(TxMessage {

@@ -18,7 +18,9 @@ use rns_core::transport::delivery::{
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use styrened::lxmf_bridge::build_wire_message;
-use styrened::receipt_bridge::{track_receipt_mapping, ReceiptEvent};
+use styrened::receipt_bridge::{
+    register_receipt_waiter, track_receipt_mapping, ReceiptEvent, ReceiptWaiters,
+};
 use styrened::rpc::{AnnounceBridge, OutboundBridge};
 
 pub(super) struct TransportBridge {
@@ -29,6 +31,7 @@ pub(super) struct TransportBridge {
     announce_app_data: Option<Vec<u8>>,
     peer_crypto: Arc<Mutex<HashMap<String, PeerCrypto>>>,
     receipt_map: Arc<Mutex<HashMap<String, String>>>,
+    receipt_waiters: ReceiptWaiters,
     receipt_tx: tokio::sync::mpsc::UnboundedSender<ReceiptEvent>,
 }
 
@@ -47,6 +50,7 @@ impl TransportBridge {
         announce_app_data: Option<Vec<u8>>,
         peer_crypto: Arc<Mutex<HashMap<String, PeerCrypto>>>,
         receipt_map: Arc<Mutex<HashMap<String, String>>>,
+        receipt_waiters: ReceiptWaiters,
         receipt_tx: tokio::sync::mpsc::UnboundedSender<ReceiptEvent>,
     ) -> Self {
         Self {
@@ -57,6 +61,7 @@ impl TransportBridge {
             announce_app_data,
             peer_crypto,
             receipt_map,
+            receipt_waiters,
             receipt_tx,
         }
     }
@@ -66,6 +71,7 @@ struct DeliveryTask {
     transport: Arc<Transport>,
     peer_crypto: Arc<Mutex<HashMap<String, PeerCrypto>>>,
     receipt_map: Arc<Mutex<HashMap<String, String>>>,
+    receipt_waiters: ReceiptWaiters,
     receipt_tx: tokio::sync::mpsc::UnboundedSender<ReceiptEvent>,
     message_id: String,
     destination: [u8; 16],
@@ -81,6 +87,7 @@ impl DeliveryTask {
             transport,
             peer_crypto,
             receipt_map,
+            receipt_waiters,
             receipt_tx,
             message_id,
             destination,
@@ -149,6 +156,7 @@ impl DeliveryTask {
             Ok(LinkSendResult::Packet(packet)) => {
                 let packet_hash = hex::encode(packet.hash().to_bytes());
                 track_receipt_mapping(&receipt_map, &packet_hash, &message_id);
+                let receipt_rx = register_receipt_waiter(&receipt_waiters, &message_id);
                 let detail = if diagnostics_enabled() {
                     format!(
                         "packet_hash={} packet_data_len={} packet_data_prefix={}",
@@ -160,8 +168,20 @@ impl DeliveryTask {
                     format!("packet_hash={packet_hash}")
                 };
                 log_delivery_trace(&message_id, &destination_hex, "link", &detail);
-                let _ =
-                    receipt_tx.send(ReceiptEvent { message_id, status: "sent: link".to_string() });
+                let _ = receipt_tx.send(ReceiptEvent {
+                    message_id: message_id.clone(),
+                    status: "sent: link; awaiting receipt".to_string(),
+                });
+                let status = match tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    receipt_rx,
+                )
+                .await
+                {
+                    Ok(Ok(status)) => status,
+                    _ => "failed: delivery receipt timeout".to_string(),
+                };
+                let _ = receipt_tx.send(ReceiptEvent { message_id, status });
             }
             Ok(LinkSendResult::Resource(resource_hash)) => {
                 let resource_hash_hex = hex::encode(resource_hash.as_slice());
@@ -274,6 +294,7 @@ impl OutboundBridge for TransportBridge {
             transport: self.transport.clone(),
             peer_crypto: self.peer_crypto.clone(),
             receipt_map: self.receipt_map.clone(),
+            receipt_waiters: self.receipt_waiters.clone(),
             receipt_tx: self.receipt_tx.clone(),
             message_id: record.id.clone(),
             destination,

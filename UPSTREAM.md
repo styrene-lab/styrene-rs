@@ -1,29 +1,38 @@
-# Upstream Fork Attribution
+# Styrene Lineage and Compatibility References
 
-This repository is a fork of [FreeTAKTeam/LXMF-rs](https://github.com/FreeTAKTeam/LXMF-rs), which itself incorporated [BeechatNetworkSystemsLtd/Reticulum-rs](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs) — the original and most mature community Rust implementation of [RNS](https://reticulum.network/).
+Styrene is an independent Rust mesh communications project built on RNS and
+LXMF. It owns its product architecture, runtime, storage, IPC, identity model,
+interfaces, release policy, and user experience.
+
+The repository contains MIT-licensed code descended from
+[FreeTAKTeam/LXMF-rs](https://github.com/FreeTAKTeam/LXMF-rs), which incorporated
+work from [BeechatNetworkSystemsLtd/Reticulum-rs](https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs). That ancestry remains part of the project history and its attribution is preserved. These repositories are lineage and compatibility references, not Styrene's architectural upstreams.
 
 ## Lineage
 
-```
-BeechatNetworkSystemsLtd/Reticulum-rs  (RNS core, ~185 stars, multi-contributor)
+```text
+Reticulum / LXMF specifications and Python implementations (protocol authority)
         │
-        ▼  (incorporated Jan 2026)
-FreeTAKTeam/LXMF-rs                    (added LXMF layer, workspace split, daemon)
+        ▼
+BeechatNetworkSystemsLtd/Reticulum-rs   (historical Rust RNS lineage)
         │
-        ▼  (forked Feb 24 2026)
-styrene-lab/styrene-rs                  (canonical — renamed, restructured, security-hardened)
+        ▼
+FreeTAKTeam/LXMF-rs                     (historical Rust LXMF lineage)
+        │
+        ▼
+styrene-lab/styrene-rs                  (independent project)
 ```
 
-> **Canonical divergence (2026-04-19):** styrene-rs is now the primary Styrene distribution.
-> Upstream tracking continues for RNS/LXMF protocol correctness, but feature development
-> (service layer, TUI, IPC, edge hardware) happens here first. Python styrened remains
-> supported as a legacy deployment option.
+The arrows describe code ancestry, not an ongoing fork or merge hierarchy.
+Styrene became an independent distribution on 2026-04-19. Protocol and
+security review against reference implementations continues; product feature
+development happens here.
 
-## Fork Date
+## Historical Import Date
 
-2026-02-24
+The initial code import occurred on 2026-02-24.
 
-## Upstream State at Fork
+## Reference State at Import
 
 - Working: TCP/UDP transport, identity management (X25519 + Ed25519), destinations, links, resources, ratchets
 - Working (legacy location): LXMF router, propagation, stamps, delivery pipeline
@@ -31,7 +40,7 @@ styrene-lab/styrene-rs                  (canonical — renamed, restructured, se
 
 ## What Changed
 
-The fork was restructured for the [Styrene](https://github.com/styrene-lab) mesh communications project:
+The imported code was restructured for the [Styrene](https://github.com/styrene-lab) mesh communications project:
 
 - Crates renamed from `rns-*`/`lxmf-*` to `styrene-*` namespace
 - Legacy crates (`crates/internal/`) merged into main library crates
@@ -44,30 +53,35 @@ The fork was restructured for the [Styrene](https://github.com/styrene-lab) mesh
 
 ---
 
-## Upstream Tracking Strategy
+## Reference Review Strategy
 
 ### Remotes
 
-Three remotes, two fetch-only upstreams with push disabled:
+The canonical `origin` is Styrene. The two lineage remotes are fetch-only;
+their names identify the projects rather than implying governance:
 
+```text
+origin       https://github.com/styrene-lab/styrene-rs.git                 (fetch + push)
+freetakteam  https://github.com/FreeTAKTeam/LXMF-rs.git                    (fetch only)
+beechat      https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs.git  (fetch only)
 ```
-origin    https://github.com/styrene-lab/styrene-rs.git       (fetch + push)
-upstream  https://github.com/FreeTAKTeam/LXMF-rs.git          (fetch only)
-beechat   https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs.git  (fetch only)
-```
 
-### What Each Upstream Provides
+### Reference Roles
 
-| Upstream | Tracks | Relevant to |
-|----------|--------|-------------|
-| **beechat** (`beechat/main`) | Core RNS protocol: identity, destinations, links, transport, interfaces, crypto | `styrene-rns` crate |
-| **upstream** (`upstream/master`) | LXMF layer + daemon/RPC + workspace-level changes | `styrene-lxmf`, `styrened` crates |
+| Reference | Role | Relevant to |
+|-----------|------|-------------|
+| Reticulum specification + Python RNS | RNS protocol authority | `styrene-rns` |
+| Python LXMF | LXMF protocol authority | `styrene-lxmf`, `styrened` |
+| **beechat** (`beechat/main`) | Historical Rust lineage and implementation evidence | `styrene-rns` |
+| **freetakteam** (`freetakteam/main`) | Rust behavioral reference and selectively ported fixes | `styrene-rns`, `styrene-lxmf`, `styrened` |
 
-**Beechat is authoritative for RNS protocol correctness** — larger contributor base, longer history, broader review. FreeTAKTeam is relevant for LXMF-specific features and daemon patterns.
+No reference implementation controls Styrene's product architecture. Where
+implementations disagree, protocol specifications, canonical behavior,
+interoperability evidence, and security analysis decide the local behavior.
 
 ### Why Not Merge/Rebase
 
-The fork performed heavy structural changes that make `git merge` / `git rebase` produce 100% conflicts:
+Styrene's structural divergence makes direct merge/rebase unsuitable:
 
 1. **Namespace rename**: `rns-*` → `styrene-rns`, `lxmf-*` → `styrene-lxmf`
 2. **Directory restructure**: flat `src/` → feature-gated `src/transport/`
@@ -83,7 +97,7 @@ Last-reviewed commit SHAs are stored in `.upstream-tracking.json` (committed to 
 ```json
 {
   "beechat": { "last_reviewed": "<sha>" },
-  "upstream": { "last_reviewed": "<sha>" }
+  "freetakteam": { "last_reviewed": "<sha>" }
 }
 ```
 
@@ -91,7 +105,7 @@ Last-reviewed commit SHAs are stored in `.upstream-tracking.json` (committed to 
 
 A GitHub Actions workflow (`.github/workflows/upstream-sync.yml`) runs every Monday at 06:00 UTC:
 
-1. Fetches both upstreams and checks for new commits since last review
+1. Fetches both references and checks for new commits since the last review
 2. If no drift — exits silently, no PR created
 3. If drift exists:
    - Generates a structured report with per-commit triage table
@@ -105,17 +119,17 @@ The PR contains:
 - Unmerged feature branch summary
 - Reviewer checklist
 
-**Merging the PR advances the tracking markers** — the branch includes an updated `.upstream-tracking.json` pointing to the current upstream HEADs.
+**Merging the PR advances the tracking markers** — the branch includes an updated `.upstream-tracking.json` pointing to the current reference heads.
 
 ### Manual Review (Local)
 
 ```bash
-# Review new upstream changes
+# Review new reference changes
 just upstream-review           # or: ./scripts/upstream-review.sh
 
-# Review a specific upstream only
+# Review a specific reference only
 just upstream-review beechat
-just upstream-review upstream
+just upstream-review freetakteam
 
 # Generate the same report CI would create
 just upstream-sync-report
@@ -126,14 +140,14 @@ just upstream-status
 
 ### Triage Process
 
-For each batch of upstream changes (whether from the weekly PR or local review):
+For each batch of reference changes (whether from the weekly PR or local review):
 
 1. **Review** — read the commit list and diff summary
 2. **Triage** — classify each change:
    - **adopt** — apply the equivalent change to styrene-rs
    - **skip** — not relevant (CI, kaonic, naming, docs-only, etc.)
    - **defer** — relevant but not needed yet
-3. **Apply** — for adopted changes, create a commit with the equivalent fix/feature, citing the upstream commit:
+3. **Apply** — for adopted changes, create a commit with the equivalent fix/feature, citing the reference commit:
    ```
    fix(rns): correct path_request decoding hash step
 
@@ -196,10 +210,10 @@ Each sync review (automated or manual) is recorded in `docs/upstream-sync-log.md
 - Date and reviewer
 - Commit range reviewed
 - Decisions (adopt/skip/defer per commit)
-- styrene-rs commits that ported upstream changes
+- styrene-rs commits that ported reference changes
 
 ---
 
 ## License
 
-MIT — preserved from upstream.
+MIT — retained from the imported lineage. See repository history and notices for attribution.

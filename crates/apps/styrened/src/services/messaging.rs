@@ -15,7 +15,7 @@
 //! per the decided split (Option C). MessagingService orchestrates:
 //! transport.request_path → poll resolve_identity → send_via_link → fallback send_raw.
 
-use crate::inbound_delivery::decode_inbound_payload_with_diagnostics;
+use crate::inbound_delivery::{decode_inbound_payload_with_diagnostics, InboundDecodeDiagnostics};
 use crate::lxmf_bridge;
 use crate::storage::messages::{MessageRecord, MessagesStore};
 use crate::transport::mesh_transport::{MeshTransport, TransportError};
@@ -26,6 +26,15 @@ use sha2::Digest as _;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// Outcome of one inbound LXMF acceptance attempt.
+#[derive(Debug)]
+pub enum InboundAcceptOutcome {
+    Accepted(MessageRecord),
+    Duplicate { message_id: String },
+    Rejected { diagnostics: InboundDecodeDiagnostics },
+    StorageError { message_id: String, error: std::io::Error },
+}
 
 /// Service managing chat messaging, conversations, and contacts.
 pub struct MessagingService {
@@ -157,6 +166,13 @@ impl MessagingService {
             read: true, // Outgoing messages are always "read"
         };
         self.store.lock().unwrap().insert_message(&record).map_err(std::io::Error::other)?;
+        crate::daemon_diagnostic!(
+            "[messaging-flow] stage=outbound_persisted id={} source={} destination={} bytes={}",
+            msg_id,
+            record.source,
+            peer_hash,
+            payload.len()
+        );
 
         // Run delivery
         let store = self.store.clone();
@@ -165,6 +181,12 @@ impl MessagingService {
 
         match &delivery_result {
             Ok(packet_hash) => {
+                crate::daemon_diagnostic!(
+                    "[messaging-flow] stage=link_delivery_completed id={} destination={} packet={}",
+                    msg_id,
+                    peer_hash,
+                    packet_hash
+                );
                 // Track receipt
                 self.receipt_map.lock().unwrap().insert(packet_hash.clone(), msg_id.clone());
                 // Update status
@@ -176,7 +198,7 @@ impl MessagingService {
                 // try routing through the configured propagation hub.
                 if err_msg.contains("not announced") || err_msg.contains("not resolved") {
                     if let Some(hub_hash) = self.propagation_hub.get() {
-                        eprintln!(
+                        crate::daemon_diagnostic!(
                             "[messaging] direct delivery failed, routing via propagation hub {}",
                             hub_hash
                         );
@@ -223,7 +245,15 @@ impl MessagingService {
         payload: &[u8],
     ) -> Result<String, TransportError> {
         // Step 1: Request path
+        crate::daemon_diagnostic!(
+            "[messaging-flow] stage=path_request_started destination={}",
+            hex::encode(dest_hash.as_slice())
+        );
         transport.request_path(&dest_hash).await;
+        crate::daemon_diagnostic!(
+            "[messaging-flow] stage=path_request_completed destination={}",
+            hex::encode(dest_hash.as_slice())
+        );
 
         // Step 2: Poll for peer identity (12s timeout)
         let mut identity = None;
@@ -237,8 +267,16 @@ impl MessagingService {
         }
 
         let identity = identity.ok_or_else(|| {
+            crate::daemon_diagnostic!(
+                "[messaging-flow] stage=identity_resolution_failed destination={}",
+                hex::encode(dest_hash.as_slice())
+            );
             TransportError::SendFailed("peer not announced — identity not resolved".into())
         })?;
+        crate::daemon_diagnostic!(
+            "[messaging-flow] stage=identity_resolved destination={}",
+            hex::encode(dest_hash.as_slice())
+        );
 
         // Step 3: Build destination descriptor
         let dest_desc = DestinationDesc {
@@ -248,7 +286,23 @@ impl MessagingService {
         };
 
         // Step 4: Send via link
-        let result = transport.send_via_link(dest_desc, payload, Duration::from_secs(20)).await?;
+        crate::daemon_diagnostic!(
+            "[messaging-flow] stage=link_send_started destination={} bytes={}",
+            hex::encode(dest_hash.as_slice()),
+            payload.len()
+        );
+        let result =
+            match transport.send_via_link(dest_desc, payload, Duration::from_secs(20)).await {
+                Ok(result) => result,
+                Err(error) => {
+                    crate::daemon_diagnostic!(
+                        "[messaging-flow] stage=link_send_failed destination={} error={}",
+                        hex::encode(dest_hash.as_slice()),
+                        error
+                    );
+                    return Err(error);
+                }
+            };
 
         // Extract packet hash for receipt tracking
         match result {
@@ -325,35 +379,41 @@ impl MessagingService {
 
     // --- Inbound ---
 
-    /// Accept an inbound message from the transport layer.
-    ///
-    /// Decodes the LXMF wire payload and persists it to the message store.
-    /// Returns the decoded MessageRecord on success, None if decode/insert fails.
+    /// Decodes and persists an inbound LXMF wire payload while preserving a
+    /// structured distinction between accepted, duplicate, malformed, and
+    /// storage-failed outcomes.
     pub fn accept_inbound(
         &self,
         destination: [u8; 16],
         data: &[u8],
         payload_mode: InboundPayloadMode,
-    ) -> Option<MessageRecord> {
-        let (record, diag) =
+    ) -> InboundAcceptOutcome {
+        let (record, diagnostics) =
             decode_inbound_payload_with_diagnostics(destination, data, payload_mode);
-        let record = match record {
-            Some(r) => r,
-            None => {
-                eprintln!("[messaging] decode failed: {}", diag.summary());
-                return None;
-            }
+        let Some(record) = record else {
+            crate::daemon_diagnostic!("[messaging] decode failed: {}", diagnostics.summary());
+            return InboundAcceptOutcome::Rejected { diagnostics };
         };
-        if let Err(e) = self.store.lock().unwrap().insert_message(&record) {
-            eprintln!("[messaging] insert_message failed: {e}");
-            return None;
+        match self.store.lock().unwrap().insert_message_if_absent(&record) {
+            Ok(true) => InboundAcceptOutcome::Accepted(record),
+            Ok(false) => {
+                crate::daemon_diagnostic!("[messaging] duplicate inbound dropped: {}", record.id);
+                InboundAcceptOutcome::Duplicate { message_id: record.id }
+            }
+            Err(error) => {
+                crate::daemon_diagnostic!("[messaging] insert_message failed: {error}");
+                InboundAcceptOutcome::StorageError {
+                    message_id: record.id,
+                    error: std::io::Error::other(error),
+                }
+            }
         }
-        Some(record)
     }
 
-    /// Accept an already-decoded inbound message.
-    pub fn accept_inbound_record(&self, record: &MessageRecord) -> Result<(), std::io::Error> {
-        self.store.lock().unwrap().insert_message(record).map_err(std::io::Error::other)
+    /// Accept an already-decoded inbound message. Returns `true` only when this
+    /// call inserted the first copy of the LXMF message.
+    pub fn accept_inbound_record(&self, record: &MessageRecord) -> Result<bool, std::io::Error> {
+        self.store.lock().unwrap().insert_message_if_absent(record).map_err(std::io::Error::other)
     }
 
     // --- Querying ---
@@ -545,6 +605,50 @@ mod tests {
         let retrieved = svc.get_message("msg1").unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().content, "Hello");
+    }
+
+    #[test]
+    fn duplicate_inbound_record_is_not_replaced() {
+        let svc = MessagingService::new();
+        let mut original = make_test_record("duplicate-id", "src", "dst");
+        original.content = "first".into();
+        assert!(svc.accept_inbound_record(&original).unwrap());
+
+        let mut replay = original.clone();
+        replay.content = "mutated replay".into();
+        assert!(!svc.accept_inbound_record(&replay).unwrap());
+
+        let stored = svc.get_message("duplicate-id").unwrap().unwrap();
+        assert_eq!(stored.content, "first");
+    }
+
+    #[test]
+    fn duplicate_wire_delivery_has_structured_outcome() {
+        let svc = MessagingService::new();
+        let source = [0x11; 16];
+        let destination = [0x22; 16];
+        let signer = rns_core::identity::PrivateIdentity::new_from_name("inbound-outcome-test");
+        let wire = lxmf_bridge::build_wire_message(source, destination, "", "hello", None, &signer)
+            .unwrap();
+
+        let accepted_id = match svc.accept_inbound(destination, &wire, InboundPayloadMode::FullWire)
+        {
+            InboundAcceptOutcome::Accepted(record) => record.id,
+            outcome => panic!("expected accepted outcome, got {outcome:?}"),
+        };
+        assert!(matches!(
+            svc.accept_inbound(destination, &wire, InboundPayloadMode::FullWire),
+            InboundAcceptOutcome::Duplicate { message_id } if message_id == accepted_id
+        ));
+    }
+
+    #[test]
+    fn malformed_wire_delivery_has_structured_outcome() {
+        let svc = MessagingService::new();
+        assert!(matches!(
+            svc.accept_inbound([0x22; 16], b"not-lxmf", InboundPayloadMode::FullWire),
+            InboundAcceptOutcome::Rejected { diagnostics } if !diagnostics.attempts.is_empty()
+        ));
     }
 
     #[test]

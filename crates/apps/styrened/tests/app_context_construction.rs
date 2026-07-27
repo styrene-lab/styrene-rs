@@ -114,11 +114,13 @@ fn app_context_set_signer_wires_transport() {
         err.unwrap_err().to_string().contains("transport not available"),
         "should fail before set_signer"
     );
+    assert!(!ctx.tunnel().is_wired(), "tunnel should start unwired");
 
     // After set_signer, send_chat should fail with a different error (not connected)
     // because NullTransport.is_connected() returns false
     let identity = rns_core::identity::PrivateIdentity::new_from_name("test-signer");
     ctx.set_signer(Arc::new(identity));
+    assert!(ctx.tunnel().is_wired(), "set_signer must wire tunnel dependencies");
 
     let err2 =
         rt.block_on(ctx.messaging().send_chat("deadbeef01020304deadbeef01020304", "hello", None));

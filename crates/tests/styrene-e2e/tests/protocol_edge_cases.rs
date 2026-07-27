@@ -58,7 +58,10 @@ async fn ipc_events_arrive_in_send_order() {
         // Send 3 messages sequentially
         for i in 0..3 {
             let content = format!("order-{}", i);
-            alice.send_chat(&bob.delivery_hash, &content).await.expect(&format!("send {}", i));
+            alice
+                .send_chat(&bob.delivery_hash, &content)
+                .await
+                .unwrap_or_else(|_| panic!("send {}", i));
             await_inbound_count(&bob.app_context, i + 1, Duration::from_secs(15)).await;
         }
 
@@ -230,7 +233,7 @@ async fn content_distribution_multi_chunk() {
     let content: Vec<u8> = (0..10240).map(|i| (i % 256) as u8).collect();
     let profile = ChunkProfile::LoRa;
     let chunk_size = profile.chunk_size() as usize;
-    let chunk_count = ((content.len() + chunk_size - 1) / chunk_size) as u32;
+    let chunk_count = content.len().div_ceil(chunk_size) as u32;
     assert_eq!(chunk_count, 3, "10KB / 4KB = 3 chunks");
 
     let content_id = ContentId::from_bytes(&content);

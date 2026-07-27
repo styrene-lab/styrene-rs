@@ -2,8 +2,8 @@
 
 Deterministic key hierarchy for Styrene mesh nodes. One root secret derives
 all protocol-specific keys — RNS, Yggdrasil, WireGuard, SSH, age, git
-signing, and per-agent delegation keys — via HKDF-SHA256 with domain
-separation.
+signing, per-agent delegation keys, and identity-bound X.509 certificates
+via HKDF-SHA256 with domain separation.
 
 Published on [crates.io](https://crates.io/crates/styrene-identity).
 
@@ -11,7 +11,7 @@ Published on [crates.io](https://crates.io/crates/styrene-identity).
 
 ```toml
 [dependencies]
-styrene-identity = "0.1"
+styrene-identity = "0.3.2"
 ```
 
 ### Generate an identity
@@ -43,9 +43,35 @@ let ssh_seed = deriver.derive(KeyPurpose::SshHost);       // Ed25519 seed
 // Parameterized keys (two-level HKDF — structurally collision-free)
 let github_ssh = deriver.derive_ssh_user_key("github").unwrap();
 let agent_key  = deriver.derive_agent_key("omegon-primary").unwrap();
+let tls_key    = deriver.derive_tls_certificate_key("auspex/control").unwrap();
 
 // All keys are deterministic: same root → same keys, always.
 ```
+
+### Derive identity-bound certificates
+
+```rust,no_run
+use styrene_identity::pki::derive_server_certificate_chain;
+use styrene_identity::signer::RootSecret;
+
+let root = RootSecret::new([0x42u8; 32]);
+let chain = derive_server_certificate_chain(
+    &root,
+    "auspex-control/dev",
+    "omegon-primary",
+    ["omegon-primary.default.svc", "127.0.0.1"],
+)?;
+
+let cert_chain_pem = chain.cert_chain_pem();
+let private_key_pem = chain.leaf.private_key_pem();
+let ca_bundle_pem = chain.ca_bundle_pem();
+# Ok::<(), styrene_identity::pki::StyrenePkiError>(())
+```
+
+The `pki` feature issues deterministic Ed25519 X.509 material for local
+control planes, Kubernetes TLS Secrets, and mTLS client identities. It does
+not persist private keys; callers decide whether a deployment target needs
+an in-memory listener, a Kubernetes Secret, or another secret-grant path.
 
 ### Public key derivation
 
@@ -100,16 +126,51 @@ root_secret (32 bytes)
   │   ├─ "github"  → per-host SSH Ed25519
   │   └─ "work"    → per-host SSH Ed25519
   │
-  └─ Agent signing keys (two-level HKDF)
-      salt="styrene-identity-agent-v1"
-      ├─ "omegon-primary"   → agent commit signing Ed25519
-      └─ "omegon-cleave-0"  → worker commit signing Ed25519
+  ├─ Agent signing keys (two-level HKDF)
+  │   salt="styrene-identity-agent-v1"
+  │   ├─ "omegon-primary"   → agent commit signing Ed25519
+  │   └─ "omegon-cleave-0"  → worker commit signing Ed25519
+  │
+  └─ TLS certificate keys (two-level HKDF)
+      salt="styrene-identity-tls-cert-v1"
+      ├─ "auspex-control/dev/ca"         → scoped CA Ed25519 key
+      ├─ "auspex-control/dev/server/0"   → server certificate Ed25519 key
+      └─ "auspex-control/dev/client/0"   → client certificate Ed25519 key
 ```
 
 Parameterized key families use two-level HKDF with distinct salts per family.
-Collisions between flat purposes, SSH user keys, and agent keys are
-**structurally impossible** — they derive from different IKM, different salts,
-and different HKDF trees.
+Collisions between flat purposes, SSH user keys, agent keys, and TLS
+certificate keys are **structurally impossible** — they derive from different
+IKM, different salts, and different HKDF trees.
+
+## Identity-bound PKI
+
+Styrene PKI is for control-plane transport identity, not user anonymity. A
+certificate chain is bound to the canonical Styrene identity hash and a scoped
+label. The default URI SANs use the `spiffe://styrene.dev` namespace:
+
+| Role | URI shape | Intended use |
+|------|-----------|--------------|
+| CA | `spiffe://styrene.dev/identity/{hash}/ca/{scope}` | Scoped trust anchor |
+| Server | `spiffe://styrene.dev/identity/{hash}/agent/{label}` | Omegon/Auspex control plane listener |
+| Client | `spiffe://styrene.dev/identity/{hash}/client/{label}` | mTLS caller identity |
+
+Rotation is explicit:
+
+| Rotation knob | Changes | Keeps stable |
+|---------------|---------|--------------|
+| `leaf_epoch` | Server/client leaf key, cert, fingerprint | Scoped CA |
+| `ca_epoch` | Scoped CA and every issued leaf chain | Root Styrene identity |
+| Root secret | Everything | Nothing |
+
+Use different CA scopes for different trust domains, such as
+`auspex-control/dev`, `auspex-control/prod`, or a Kubernetes namespace.
+Use leaf epochs for routine certificate rollover and CA epochs for trust-anchor
+rotation.
+
+Certificate seed labels are composed with length-prefixed components under the
+`styrene/tls/v2` namespace. This keeps profiles, scopes, labels, and epochs
+unambiguous even when they contain path separators.
 
 ## Signer tiers
 
@@ -142,6 +203,7 @@ let root = chain.root_secret().await?;
 |---------|---------|---------|
 | `file-signer` | **yes** | `FileSigner`, `IdentityVault` (argon2, chacha20poly1305) |
 | `signing` | via file-signer | `pubkey` module (ed25519-dalek, x25519-dalek) |
+| `pki` | no | identity-bound X.509 CA/client/server certificates (rcgen) |
 | `yubikey` | no | `YubiKeySigner` (FIDO2 hmac-secret) |
 | `ssh-agent` | no | `StyreneAgent` SSH agent protocol |
 
@@ -150,13 +212,16 @@ what you need:
 
 ```toml
 # Just the derivation hierarchy, no file I/O or crypto
-styrene-identity = { version = "0.1", default-features = false }
+styrene-identity = { version = "0.3.2", default-features = false }
 
 # Derivation + public key helpers, no file signer
-styrene-identity = { version = "0.1", default-features = false, features = ["signing"] }
+styrene-identity = { version = "0.3.2", default-features = false, features = ["signing"] }
+
+# Deterministic X.509 issuance for control-plane TLS/mTLS
+styrene-identity = { version = "0.3.2", default-features = false, features = ["pki"] }
 
 # Full file-based identity (default)
-styrene-identity = "0.1"
+styrene-identity = "0.3.2"
 ```
 
 ## File format
@@ -242,6 +307,7 @@ RnsEncryption = aefdbd63fb6746c2edb73bba3bcb34f61909077f65fe033c9372b55f6ace0c0c
 GitSigning    = 6eb3d3ef12a2447f6de281d6f896eba20ad0b0add3bc6fce80499f36b7343842
 SSH(github)   = 3c261af80e084a637fd20e0f7274a4106702894f0d23c47e855f6c9adce20d75
 Agent(omegon) = 4dd66edcda091a5e3d15aa3fb8ec32d81e212d94760b61915b1d6f204b0672e2
+TLS(auspex/control) = bdbce0671a517c65205339d22d04adecc45b588396d8b4762ddedb71cd390ec6
 ```
 
 These are pinned in the test suite. Any implementation of the derivation
@@ -253,7 +319,7 @@ hierarchy must reproduce them.
 |------|------------|---------|
 | **nex** | `styrene-identity = "0.1"` | `nex identity init/show/link` — generate and manage identities |
 | **aether** | path dep | Mesh node identity and RBAC |
-| **auspex** | path dep (signing only) | Operator identity for monitoring agents |
+| **auspex** | path dep (`pki`) | Operator identity and scoped control-plane TLS for managed agents |
 | **vox** | path dep | LXMF mesh identity |
 | **styrened** | workspace member | Daemon identity — RNS, SSH agent, mesh signing |
 

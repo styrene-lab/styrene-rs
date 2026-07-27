@@ -37,12 +37,12 @@ impl ProtocolHandler for RpcResponseHandler {
         };
 
         let Ok(wire_bytes) = hex::decode(hex_data) else {
-            eprintln!("[rpc-handler] invalid hex in custom_data");
+            crate::daemon_diagnostic!("[rpc-handler] invalid hex in custom_data");
             return HandleResult::Error("invalid hex in custom_data".into());
         };
 
         let Ok(message) = StyreneMessage::decode(&wire_bytes) else {
-            eprintln!("[rpc-handler] failed to decode StyreneMessage");
+            crate::daemon_diagnostic!("[rpc-handler] failed to decode StyreneMessage");
             return HandleResult::Error("failed to decode StyreneMessage".into());
         };
 

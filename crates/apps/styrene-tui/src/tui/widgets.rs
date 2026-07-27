@@ -322,7 +322,7 @@ pub fn tool_card<'a>(
 
     if let Some(summary) = result_summary {
         let display = if summary.len() > 40 {
-            format!("  {}", truncate_str(&summary, 39, "…"))
+            format!("  {}", truncate_str(summary, 39, "…"))
         } else {
             format!("  {summary}")
         };

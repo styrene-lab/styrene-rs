@@ -30,11 +30,8 @@ async fn recv_event(
 /// Drain all currently buffered events from a receiver (non-blocking).
 fn drain_events(rx: &mut tokio::sync::broadcast::Receiver<DaemonEvent>) -> Vec<DaemonEvent> {
     let mut events = Vec::new();
-    loop {
-        match rx.try_recv() {
-            Ok(event) => events.push(event),
-            Err(_) => break,
-        }
+    while let Ok(event) = rx.try_recv() {
+        events.push(event);
     }
     events
 }
