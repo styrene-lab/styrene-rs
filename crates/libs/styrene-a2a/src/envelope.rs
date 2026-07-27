@@ -1,5 +1,6 @@
 use minicbor::{Decode, Encode};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{AgentId, RootOperationId, RuntimeId};
@@ -23,6 +24,62 @@ pub enum AgentEnvelopeKind {
     Receipt,
     #[n(4)]
     Snapshot,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, Serialize, Deserialize)]
+#[cbor(index_only)]
+pub enum SignatureAlgorithm {
+    #[n(0)]
+    Ed25519,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Encode)]
+#[cbor(map)]
+struct ProtectedEnvelope<'a> {
+    #[n(0)]
+    profile_version: u16,
+    #[n(1)]
+    message_id: &'a [u8; 16],
+    #[n(2)]
+    kind: AgentEnvelopeKind,
+    #[n(3)]
+    source_agent_id: &'a str,
+    #[n(4)]
+    source_runtime_id: &'a [u8; 16],
+    #[n(5)]
+    target_agent_id: &'a str,
+    #[n(6)]
+    target_runtime_id: &'a Option<[u8; 16]>,
+    #[n(7)]
+    root_operation_id: &'a str,
+    #[n(8)]
+    task_id: &'a Option<String>,
+    #[n(9)]
+    parent_task_id: &'a Option<String>,
+    #[n(10)]
+    stream_id: &'a str,
+    #[n(11)]
+    sequence: u64,
+    #[n(12)]
+    created_at_ms: u64,
+    #[n(13)]
+    expires_at_ms: &'a Option<u64>,
+    #[n(14)]
+    content_type: &'a str,
+    #[n(15)]
+    payload_encoding: &'a str,
+    #[n(16)]
+    payload_schema: &'a str,
+    #[n(17)]
+    payload_digest: &'a [u8; 32],
+    #[n(18)]
+    grant_reference: &'a Option<String>,
+    #[n(19)]
+    signature_algorithm: SignatureAlgorithm,
+    #[n(20)]
+    signing_key_id: &'a str,
+    #[n(21)]
+    traceparent: &'a Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
@@ -69,6 +126,14 @@ pub struct AgentEnvelope {
     pub grant_reference: Option<String>,
     #[n(20)]
     pub traceparent: Option<String>,
+    #[n(21)]
+    pub payload_digest: [u8; 32],
+    #[n(22)]
+    pub signature_algorithm: SignatureAlgorithm,
+    #[n(23)]
+    pub signing_key_id: String,
+    #[n(24)]
+    pub signature: Option<Vec<u8>>,
 }
 
 impl AgentEnvelope {
@@ -86,6 +151,7 @@ impl AgentEnvelope {
         payload_schema: impl Into<String>,
         a2a_payload: Vec<u8>,
     ) -> Self {
+        let payload_digest: [u8; 32] = Sha256::digest(&a2a_payload).into();
         Self {
             profile_version: AGENT_ENVELOPE_PROFILE_VERSION,
             message_id: *Uuid::new_v4().as_bytes(),
@@ -108,7 +174,44 @@ impl AgentEnvelope {
             authorization: None,
             grant_reference: None,
             traceparent: None,
+            payload_digest,
+            signature_algorithm: SignatureAlgorithm::Ed25519,
+            signing_key_id: format!("{}#default", source_agent_id.as_str()),
+            signature: None,
         }
+    }
+
+    pub fn computed_payload_digest(&self) -> [u8; 32] {
+        Sha256::digest(&self.a2a_payload).into()
+    }
+
+    pub fn canonical_signing_input(&self) -> Result<Vec<u8>, EnvelopeError> {
+        self.validate_structure()?;
+        let protected = ProtectedEnvelope {
+            profile_version: self.profile_version,
+            message_id: &self.message_id,
+            kind: self.kind,
+            source_agent_id: &self.source_agent_id,
+            source_runtime_id: &self.source_runtime_id,
+            target_agent_id: &self.target_agent_id,
+            target_runtime_id: &self.target_runtime_id,
+            root_operation_id: &self.root_operation_id,
+            task_id: &self.task_id,
+            parent_task_id: &self.parent_task_id,
+            stream_id: &self.stream_id,
+            sequence: self.sequence,
+            created_at_ms: self.created_at_ms,
+            expires_at_ms: &self.expires_at_ms,
+            content_type: &self.content_type,
+            payload_encoding: &self.payload_encoding,
+            payload_schema: &self.payload_schema,
+            payload_digest: &self.payload_digest,
+            grant_reference: &self.grant_reference,
+            signature_algorithm: self.signature_algorithm,
+            signing_key_id: &self.signing_key_id,
+            traceparent: &self.traceparent,
+        };
+        minicbor::to_vec(protected).map_err(|error| EnvelopeError::Encode(error.to_string()))
     }
 
     pub fn validate(&self, now_ms: u64) -> Result<(), EnvelopeError> {
@@ -161,6 +264,12 @@ impl AgentEnvelope {
         }
         if self.a2a_payload.len() > MAX_A2A_PAYLOAD_SIZE {
             return Err(EnvelopeError::PayloadTooLarge(self.a2a_payload.len()));
+        }
+        if self.payload_digest != self.computed_payload_digest() {
+            return Err(EnvelopeError::PayloadDigestMismatch);
+        }
+        if self.signing_key_id.trim().is_empty() {
+            return Err(EnvelopeError::MissingSigningKeyId);
         }
         serde_json::from_slice::<serde_json::Value>(&self.a2a_payload)
             .map_err(|error| EnvelopeError::InvalidJsonPayload(error.to_string()))?;
@@ -219,6 +328,10 @@ pub enum EnvelopeError {
     MissingPayloadSchema,
     #[error("unsupported A2A payload content type or encoding")]
     UnsupportedPayloadFormat,
+    #[error("A2A payload digest does not match payload bytes")]
+    PayloadDigestMismatch,
+    #[error("signing key id is required")]
+    MissingSigningKeyId,
     #[error("A2A JSON payload is invalid: {0}")]
     InvalidJsonPayload(String),
     #[error("agent envelope expiry must be later than its creation time")]
@@ -296,9 +409,11 @@ mod tests {
     fn rejects_invalid_json_and_expiry_interval() {
         let mut envelope = envelope();
         envelope.a2a_payload = b"not-json".to_vec();
+        envelope.payload_digest = envelope.computed_payload_digest();
         assert!(matches!(envelope.validate_structure(), Err(EnvelopeError::InvalidJsonPayload(_))));
 
         envelope.a2a_payload = b"{}".to_vec();
+        envelope.payload_digest = envelope.computed_payload_digest();
         envelope.expires_at_ms = Some(envelope.created_at_ms);
         assert_eq!(envelope.validate_structure(), Err(EnvelopeError::InvalidExpiry));
     }
