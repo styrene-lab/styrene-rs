@@ -78,12 +78,18 @@ Owns daemon-side behavior:
 - artifact references into `styrene-content`/resource transfer;
 - policy checks before dispatching child work.
 
+### Production persistence
+
+Production state uses the existing daemon storage ownership boundary, with an agent repository implemented over the project's durable SQLite backend. `styrene-services` owns repository interfaces and transaction semantics; `styrened` composes the concrete SQLite implementation and migrations. In-memory repositories are test-only.
+
+One acceptance transaction atomically records the deduplication entry, accepted envelope, task mutation, delegation edge, and outbound event watermark before acknowledgement. Crash recovery replays committed events, removes no committed acceptance, and reconciles tasks lacking terminal events. Retention is policy-driven: active tasks and graph edges are retained; terminal event detail and deduplication entries have explicit configurable windows no shorter than bearer replay/retry windows; referenced artifacts follow content-store retention. Schema migrations are monotonic and owned beside the existing daemon storage migrations.
+
 ### `styrene-ipc`
 
 Owns frontend-safe local contracts:
 
-- request DTOs for submit/get/cancel/resubscribe/snapshot;
-- task, event, and graph projection DTOs;
+- request DTOs for submit/get/cancel/graph/snapshot;
+- task, event, graph, and reconciliation-snapshot projection DTOs;
 - `DaemonAgents` focused trait;
 - `DaemonEvent::Agent` variant;
 - `StubDaemon` not-implemented behavior.
@@ -94,7 +100,7 @@ The composite `Daemon` trait adds `DaemonAgents` only after all application impl
 
 Owns local frame mapping only:
 
-- four generic request opcodes, not one opcode per A2A method;
+- five generic request opcodes, not one opcode per A2A method;
 - one pushed agent-event opcode;
 - MessagePack conversion to/from `styrene-ipc` DTOs;
 - subscription topic `Agents`;
@@ -181,7 +187,11 @@ The current prototype needs:
 - size limits and canonical encoding rules;
 - typed receipt and snapshot payloads.
 
-Do not stabilize the current field numbering until these additions are reviewed.
+### Envelope index freeze checklist
+
+Before assigning stable CBOR field numbers, profile v1 MUST define these protected index fields: profile version, message ID, kind, source agent ID, source runtime ID, optional target runtime ID, target agent ID, root operation ID, optional task ID, optional parent task ID, stream ID, sequence, creation/expiry timestamps, content type and encoding, payload digest, grant digest/reference, signature algorithm/key ID, and optional trace context. The review must also freeze maximum envelope/payload sizes, canonical CBOR rules, unknown-field handling, and which fields are covered by the signature.
+
+Do not stabilize the current field numbering until this checklist is resolved and represented by golden vectors.
 
 ## 6. Generic local IPC family
 
@@ -192,12 +202,13 @@ Reserve a coherent, currently unused opcode range rather than adding A2A methods
 | `0x76` | `CmdAgentSubmit` | request | Submit an A2A message/envelope |
 | `0x77` | `QueryAgentTask` | request | Fetch one task and latest state |
 | `0x78` | `CmdAgentCancel` | request | Request cancellation by task ID |
-| `0x79` | `QueryAgentGraph` | request | Fetch root-operation graph snapshot |
+| `0x79` | `QueryAgentGraph` | request | Fetch current root-operation graph projection |
+| `0x7A` | `QueryAgentSnapshot` | request | Fetch reconciliation snapshot and sequence watermarks |
 | `0xC8` | `EventAgent` | push | Task/event/receipt/snapshot notification |
 
-`0x7A..0x7E` remain reserved for future generic agent operations. `0x7F` remains untouched.
+`0x7B..0x7E` remain reserved for future generic agent operations. `0x7F` remains untouched.
 
-This is a proposal, not yet an allocation. Before implementation, update and test both Rust and any surviving Python opcode registries together.
+Before assigning any opcode, generate an exhaustive availability fixture from the Rust registry, all surviving Python registries/stubs, server dispatch tables, and compatibility tests. The fixture MUST fail on duplicate allocation or absent cross-language mapping. Until that gate passes, the values below are design placeholders and MUST NOT appear in code or published protocol documentation.
 
 ### Why not four wire-specific envelope opcodes?
 
@@ -212,7 +223,10 @@ async fn agent_submit(&self, request: AgentSubmitRequest) -> Result<AgentSubmitR
 async fn agent_task(&self, request: AgentTaskRequest) -> Result<AgentTaskView, IpcError>;
 async fn agent_cancel(&self, request: AgentCancelRequest) -> Result<AgentCancelResponse, IpcError>;
 async fn agent_graph(&self, request: AgentGraphRequest) -> Result<AgentGraphSnapshot, IpcError>;
+async fn agent_snapshot(&self, request: AgentSnapshotRequest) -> Result<AgentSnapshotResponse, IpcError>;
 ```
+
+`agent_graph` returns the current operator projection. `agent_snapshot` is explicitly for reconnect reconciliation and includes runtime incarnations and sequence watermarks; the two operations MUST NOT be aliases.
 
 Submission response acknowledges daemon acceptance, not remote execution. Remote receipts and A2A task outcomes arrive as `DaemonEvent::Agent`.
 
@@ -224,6 +238,8 @@ Every mutating request carries an idempotency/message ID. Retryable `IpcError` v
 
 - protocol registry keys: `a2a` and `styrene.a2a.v1`;
 - body contains encoded `AgentEnvelope` or a resource reference;
+- Invalid data delivered to a registered handler is terminal for that dispatch and never falls through to another handler.
+- Only an absent or wholly unregistered protocol string may use the default chat handler.
 - recognized invalid envelopes return a protocol error and never become chat;
 - envelope expiry is enforced before execution;
 - RNS delivery receipt is bearer evidence only;
@@ -251,15 +267,27 @@ Guarantee:
 
 Do not claim global ordering or exactly-once execution.
 
-- `message_id` deduplicates one command/event.
-- `sequence` is monotonic per source runtime and task stream.
-- gaps trigger snapshot reconciliation.
+- `message_id` deduplicates one command/event; it is never an ordering key.
+- `sequence` starts at `1` and is strictly monotonic per `(source_runtime_id, stream_id)`.
+- `stream_id` is the A2A task ID for task/event/result streams and the root operation ID for graph-snapshot streams.
+- a repeated `(stream_id, sequence)` with the same message ID/content is a duplicate; conflicting content is a protocol violation.
+- a forward gap is retained as incomplete state and triggers snapshot reconciliation; events after the gap are not presented as contiguous history.
+- runtime restart creates a new runtime ID, resets sequence streams to `1`, and requires snapshot reconciliation.
 - receipts distinguish bearer acceptance, daemon acceptance/deduplication, and A2A outcome.
 - snapshots include runtime incarnation, active/recent tasks, graph edges, effective grants, and sequence watermarks.
+- cancellation state is recorded independently per task as `requested`, `accepted`, and `termination_confirmed`; these flags/timestamps are not collapsed into A2A task state;
+- subtree cancellation is hop-by-hop, and ancestor acceptance MUST NOT imply descendant acceptance or termination;
 - process restart invalidates runtime-local sequence assumptions and requires a snapshot.
 
 ## 10. Security model
 
+### Trust contract
+
+- `agent_id` resolves through `styrene-identity` to a versioned verification-key record; self-declared IDs alone have no authority.
+- Runtime identity statements bind `agent_id`, `runtime_id`, key ID, validity interval, and capabilities. Key rotation accepts a new key only through an authorized identity update; revocation blocks new acceptance immediately while preserving historical verification metadata.
+- The canonical signing input is the deterministic CBOR encoding of all protected envelope index fields plus payload digest, grant digest/reference, and profile version. Mutable bearer metadata is excluded. COSE protected headers carry algorithm and key ID.
+- Authority grants are verified against the signer, target, expiry, root operation, and parent grant. Child grants MUST attenuate every constrained dimension.
+- Replay-ledger retention MUST be at least the maximum envelope lifetime plus maximum adapter retry window, and never less than 15 minutes or 4096 accepted message IDs per authenticated principal/runtime.
 - Bind `agent_id` to `styrene-identity`; do not trust self-declared IDs alone.
 - Verify authentication before deduplication disclosure.
 - Sign canonical envelope bytes or protect them with COSE; transport TLS/broker auth is not sufficient for store-and-forward.
@@ -312,6 +340,7 @@ No production adapter ships until:
 - envelope profile fields and canonical signature input are frozen;
 - authority attenuation has positive and negative tests;
 - duplicate command execution is prevented;
+- production SQLite repository, atomic acceptance transaction, migration, retention, and crash-recovery tests pass;
 - reconnect snapshot reconciliation is tested;
 - mixed-version IPC compatibility fixtures pass;
 - invalid A2A traffic cannot fall through to chat;
