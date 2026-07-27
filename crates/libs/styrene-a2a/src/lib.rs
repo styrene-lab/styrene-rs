@@ -6,6 +6,7 @@
 mod envelope;
 mod extension;
 mod protocol;
+mod snapshot;
 
 pub use a2a::agent_card::{AgentCapabilities, AgentCard, AgentSkill};
 pub use a2a::event::{
@@ -21,3 +22,7 @@ pub use extension::{
     StyreneDelegationExtension, STYRENE_DELEGATION_EXTENSION_URI,
 };
 pub use protocol::{AcceptanceDisposition, AcceptanceReceipt, ProtocolError, ProtocolErrorCode};
+pub use snapshot::{
+    AgentGraphEdge, AgentSnapshot, AgentSnapshotRequest, AgentTaskSnapshot, CancellationState,
+    GraphEdgeRelationship, SequenceWatermark, SnapshotValidationError,
+};

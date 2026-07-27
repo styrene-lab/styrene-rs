@@ -17,8 +17,8 @@ Exit: baseline tests prove no pre-A2A wire changes.
 - [ ] Add target runtime, root operation, task, and parent-task index fields to `AgentEnvelope` *(draft fields implemented; profile freeze remains).*
 - [x] Define payload content type and canonical JSON/CBOR conversion rules for profile v1.
 - [ ] Define canonical signing input and COSE/external signature representation using `styrene-identity` *(deterministic protected input, SHA-256 payload digest, signature metadata, and golden vector implemented; identity-backed signing remains).*
-- [ ] Add typed acceptance receipt, protocol error, snapshot request, and graph snapshot DTOs *(receipt and protocol error implemented).*
-- [ ] Add explicit size, expiry, sequence, cycle, and schema validation errors *(envelope size, expiry, sequence, JSON, and stream-scope validation implemented).*
+- [x] Add typed acceptance receipt, protocol error, snapshot request, and graph snapshot DTOs.
+- [ ] Add explicit size, expiry, sequence, cycle, and schema validation errors *(envelope and snapshot validation now cover size, expiry, sequence, JSON, stream scope, watermark ranges, graph references/cycles, runtimes, and cancellation ordering).*
 - [ ] Represent authority grants directly or through a cryptographically bound digest/reference.
 - [ ] Add Agent Card extension construction and required/optional negotiation helpers.
 - [ ] Add official-SDK round-trip fixtures for message, task, status event, artifact event, and Agent Card.
