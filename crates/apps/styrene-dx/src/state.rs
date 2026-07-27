@@ -31,6 +31,10 @@ pub struct PeerEntry {
     pub capabilities: Vec<String>,
     /// Version string if announced (e.g. "0.13.43").
     pub version: Option<String>,
+    /// Timestamp of last announce (Unix epoch seconds).
+    pub last_announce: Option<i64>,
+    /// Number of announces seen from this peer.
+    pub announce_count: u32,
 }
 
 /// What kind of node a peer is, derived from its announce data.
@@ -284,6 +288,34 @@ pub struct PathEntry {
     pub interface: String,
 }
 
+/// An announce event for the activity stream.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnnounceEvent {
+    pub peer_hash: String,
+    pub peer_name: Option<String>,
+    pub timestamp: i64,
+    pub node_role: PeerRole,
+}
+
+/// Per-interface stats for the interface panel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InterfaceInfo {
+    pub name: String,
+    pub hash: String,
+    pub status: String,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+}
+
+/// An active link with telemetry.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LinkInfo {
+    pub peer_hash: String,
+    pub status: String,
+    pub rtt_ms: Option<f64>,
+    pub timestamp: i64,
+}
+
 /// A conversation summary for the sidebar.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConversationEntry {
@@ -304,6 +336,8 @@ pub struct ChatMessage {
     pub content: String,
     pub timestamp: i64,
     pub is_outgoing: bool,
+    /// Delivery status: "pending", "delivered", "read", "failed", or empty.
+    pub status: String,
 }
 
 // ── Styrene announce name parser ──────────────────────────────────────────

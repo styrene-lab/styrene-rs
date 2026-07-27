@@ -19,24 +19,34 @@ spec:
         app.kubernetes.io/name: styrene-hub
         app.kubernetes.io/component: hub
     spec:
+      initContainers:
+        - name: init-config
+          image: ghcr.io/styrene-lab/styrened-hub:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /data/config/pages && cp /cfg/config.toml /data/config/config.toml && cp /etc/styrene/pages/*.mu /data/config/pages/ 2>/dev/null || true
+          volumeMounts:
+            - name: config
+              mountPath: /cfg
+              readOnly: true
+            - name: data
+              mountPath: /data
       containers:
         - name: styrened
           image: ghcr.io/styrene-lab/styrened-hub:latest
+          args: ["--transport", "0.0.0.0:4242", "--rpc", "0.0.0.0:4243"]
           ports:
             - name: transport
               containerPort: 4242
               protocol: TCP
           env:
             - name: STYRENE_CONFIG_DIR
-              value: /etc/styrene
+              value: /var/lib/styrene/config
             - name: STYRENE_DATA_DIR
               value: /var/lib/styrene
             - name: LXMF_DISPLAY_NAME
               value: "Styrene Community Hub"
           volumeMounts:
-            - name: config
-              mountPath: /etc/styrene
-              readOnly: true
             - name: data
               mountPath: /var/lib/styrene
           resources:
@@ -58,10 +68,12 @@ spec:
             periodSeconds: 30
           securityContext:
             runAsNonRoot: true
-            readOnlyRootFilesystem: true
+            runAsUser: 100
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
+      imagePullSecrets:
+        - name: ghcr-creds
       volumes:
         - name: config
           configMap:

@@ -82,7 +82,7 @@ fn test_content() -> Vec<u8> {
 fn build_manifest(content: &[u8], profile: ChunkProfile, signer_hash: [u8; 16]) -> StyreneManifest {
     let content_id = ContentId::from_bytes(content);
     let chunk_size = profile.chunk_size() as usize;
-    let chunk_count = ((content.len() + chunk_size - 1) / chunk_size) as u32;
+    let chunk_count = content.len().div_ceil(chunk_size) as u32;
 
     let mut chunk_hashes = heapless::Vec::new();
     for i in 0..chunk_count {

@@ -53,6 +53,7 @@ pub struct IdentityInfo {
     pub pubkey: [u8; 32],
 }
 
+#[allow(deprecated)]
 impl IdentityInfo {
     /// Construct from a root secret, computing both hash and pubkey.
     pub fn from_root(root: &RootSecret) -> Self {

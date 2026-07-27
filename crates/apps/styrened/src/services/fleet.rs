@@ -314,9 +314,10 @@ impl FleetService {
         // The 128-bit random request_id provides anti-forgery correlation,
         // and LXMF signature verification authenticates the sender.
         if let Some(req) = pending.remove(&message.request_id) {
-            eprintln!(
+            crate::daemon_diagnostic!(
                 "[fleet] rpc response correlated: from={} dest={}",
-                source_hash, req.dest_hash
+                source_hash,
+                req.dest_hash
             );
             let _ = req.tx.send(message);
             true

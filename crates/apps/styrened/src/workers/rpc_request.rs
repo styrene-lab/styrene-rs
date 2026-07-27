@@ -160,7 +160,7 @@ impl RpcRequestHandler {
                 }))
             }
             Err(e) => {
-                eprintln!("[rpc-request] exec failed: {e}");
+                crate::daemon_diagnostic!("[rpc-request] exec failed: {e}");
                 Self::cbor_encode(&serde_json::json!({
                     "exit_code": -1,
                     "stdout": "",
@@ -179,7 +179,7 @@ impl RpcRequestHandler {
         let request: serde_json::Value = match ciborium::from_reader(payload) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("[rpc-request] invalid CBOR payload: {e}");
+                crate::daemon_diagnostic!("[rpc-request] invalid CBOR payload: {e}");
                 return Self::cbor_encode(&serde_json::json!({
                     "success": false, "verified": false, "exit_code": -1,
                     "stdout": "", "stderr": "invalid request payload",
@@ -200,7 +200,10 @@ impl RpcRequestHandler {
 
         // Size limit on hex string (4 MB hex = 2 MB decoded, matches FleetService limit)
         if profile_hex.len() > 4 * 1024 * 1024 {
-            eprintln!("[rpc-request] rejecting oversized profile: {} bytes", profile_hex.len());
+            crate::daemon_diagnostic!(
+                "[rpc-request] rejecting oversized profile: {} bytes",
+                profile_hex.len()
+            );
             return Self::cbor_encode(&serde_json::json!({
                 "success": false, "verified": false, "exit_code": -1,
                 "stdout": "", "stderr": "profile too large",
@@ -213,7 +216,7 @@ impl RpcRequestHandler {
         let profile_bytes = match hex::decode(profile_hex) {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("[rpc-request] invalid profile hex encoding: {e}");
+                crate::daemon_diagnostic!("[rpc-request] invalid profile hex encoding: {e}");
                 return Self::cbor_encode(&serde_json::json!({
                     "success": false, "verified": false, "exit_code": -1,
                     "stdout": "", "stderr": "invalid profile encoding",
@@ -240,7 +243,7 @@ impl RpcRequestHandler {
             {
                 Ok(f) => f,
                 Err(e) => {
-                    eprintln!("[rpc-request] failed to create temp profile: {e}");
+                    crate::daemon_diagnostic!("[rpc-request] failed to create temp profile: {e}");
                     return Self::cbor_encode(&serde_json::json!({
                         "success": false, "verified": false, "exit_code": -1,
                         "stdout": "", "stderr": "failed to create temp profile",
@@ -249,7 +252,7 @@ impl RpcRequestHandler {
             };
             if let Err(e) = file.write_all(&profile_bytes) {
                 let _ = std::fs::remove_file(&tmp_path);
-                eprintln!("[rpc-request] failed to write temp profile: {e}");
+                crate::daemon_diagnostic!("[rpc-request] failed to write temp profile: {e}");
                 return Self::cbor_encode(&serde_json::json!({
                     "success": false, "verified": false, "exit_code": -1,
                     "stdout": "", "stderr": "internal error",
@@ -279,7 +282,7 @@ impl RpcRequestHandler {
                     }));
                 }
                 Err(e) => {
-                    eprintln!("[rpc-request] nex verify failed to run: {e}");
+                    crate::daemon_diagnostic!("[rpc-request] nex verify failed to run: {e}");
                     return Self::cbor_encode(&serde_json::json!({
                         "success": false, "verified": false, "exit_code": -1,
                         "stdout": "", "stderr": "profile verification unavailable",
@@ -301,7 +304,7 @@ impl RpcRequestHandler {
                 "stderr": String::from_utf8_lossy(&output.stderr),
             })),
             Err(e) => {
-                eprintln!("[rpc-request] nex apply failed to run: {e}");
+                crate::daemon_diagnostic!("[rpc-request] nex apply failed to run: {e}");
                 Self::cbor_encode(&serde_json::json!({
                     "success": false, "verified": verified, "exit_code": -1,
                     "stdout": "", "stderr": "profile apply failed",
@@ -345,7 +348,7 @@ impl ProtocolHandler for RpcRequestHandler {
             }
             StyreneMessageType::Exec => {
                 if !self.policy.has_capability(source, Capability::RPC_EXEC) {
-                    eprintln!(
+                    crate::daemon_diagnostic!(
                         "[rpc-request] DENIED exec from {} — insufficient privileges",
                         source
                     );
@@ -363,7 +366,7 @@ impl ProtocolHandler for RpcRequestHandler {
             }
             StyreneMessageType::Reboot => {
                 if !self.policy.has_capability(source, Capability::RPC_REBOOT) {
-                    eprintln!(
+                    crate::daemon_diagnostic!(
                         "[rpc-request] DENIED reboot from {} — insufficient privileges",
                         source
                     );
@@ -380,7 +383,7 @@ impl ProtocolHandler for RpcRequestHandler {
             }
             StyreneMessageType::ConfigUpdate => {
                 if !self.policy.has_capability(source, Capability::RPC_CONFIG_UPDATE) {
-                    eprintln!(
+                    crate::daemon_diagnostic!(
                         "[rpc-request] DENIED config_update from {} — insufficient privileges",
                         source
                     );
@@ -410,16 +413,20 @@ impl ProtocolHandler for RpcRequestHandler {
         // Send response asynchronously
         match self.send_response(&source, request_id, response_type, &response_payload).await {
             Ok(()) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[rpc-request] handled {:?} from {}, sent {:?}",
-                    message.message_type, source, response_type
+                    message.message_type,
+                    source,
+                    response_type
                 );
                 HandleResult::Handled
             }
             Err(e) => {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[rpc-request] failed to send response for {:?} from {}: {}",
-                    message.message_type, source, e
+                    message.message_type,
+                    source,
+                    e
                 );
                 HandleResult::Error(e)
             }

@@ -29,6 +29,16 @@ pub struct PathTableEntry {
     pub interface: String,
 }
 
+/// Per-interface statistics.
+#[derive(Debug, Clone)]
+pub struct InterfaceStats {
+    pub name: String,
+    pub hash: String,
+    pub status: String,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+}
+
 /// Events pushed from the daemon to the UI.
 #[derive(Debug, Clone)]
 pub enum DaemonEvent {
@@ -59,6 +69,7 @@ pub enum DaemonCommand {
     MarkRead { peer_hash: String },
     BrowsePage { host: String, path: String },
     RefreshPathTable,
+    RefreshInterfaces,
     LoadConversations,
     LoadMessages { peer_hash: String },
 }
@@ -104,6 +115,30 @@ impl DaemonBridge {
                 error!(target: "dx::rpc", ?msg_type, %e, "read failed");
                 format!("read: {e}")
             });
+        let elapsed_ms = start.elapsed().as_millis();
+        debug!(target: "dx::rpc", ?msg_type, elapsed_ms, "rpc complete");
+        result
+    }
+
+    /// RPC with a custom timeout (for long-running operations like remote page fetch).
+    async fn rpc_timeout(
+        &mut self,
+        msg_type: MessageType,
+        payload: &HashMap<String, MpValue>,
+        timeout_secs: u64,
+    ) -> Result<Frame, String> {
+        let req_id = self.next_request_id();
+        let start = std::time::Instant::now();
+        debug!(target: "dx::rpc", ?msg_type, timeout_secs, "acquiring stream lock (long)");
+        let mut stream = self.stream.lock().await;
+        wire::write_frame_async(&mut *stream, msg_type, &req_id, payload)
+            .await
+            .map_err(|e| format!("write: {e}"))?;
+        let result =
+            timeout(Duration::from_secs(timeout_secs), wire::read_frame_async(&mut *stream))
+                .await
+                .map_err(|_| format!("rpc timeout ({timeout_secs}s)"))?
+                .map_err(|e| format!("read: {e}"));
         let elapsed_ms = start.elapsed().as_millis();
         debug!(target: "dx::rpc", ?msg_type, elapsed_ms, "rpc complete");
         result
@@ -161,6 +196,39 @@ impl DaemonBridge {
             .collect())
     }
 
+    /// Query interface stats — per-interface name, status, TX/RX bytes, peers.
+    pub async fn interface_stats(&mut self) -> Result<Vec<InterfaceStats>, String> {
+        let frame = self.rpc(MessageType::QueryInterfaceStats, &HashMap::new()).await?;
+        let arr =
+            frame.payload.get("interfaces").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+        Ok(arr
+            .iter()
+            .filter_map(|v| {
+                let m = v.as_map()?;
+                let get = |key: &str| -> String {
+                    m.iter()
+                        .find(|(k, _)| k.as_str() == Some(key))
+                        .and_then(|(_, v)| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                };
+                let get_u64 = |key: &str| -> u64 {
+                    m.iter()
+                        .find(|(k, _)| k.as_str() == Some(key))
+                        .and_then(|(_, v)| v.as_u64())
+                        .unwrap_or(0)
+                };
+                Some(InterfaceStats {
+                    name: get("name"),
+                    hash: get("hash"),
+                    status: get("status"),
+                    tx_bytes: get_u64("tx_bytes"),
+                    rx_bytes: get_u64("rx_bytes"),
+                })
+            })
+            .collect())
+    }
+
     pub async fn send_chat(&mut self, peer_hash: &str, content: &str) -> Result<String, String> {
         let mut p = HashMap::new();
         p.insert("peer_hash".into(), MpValue::from(peer_hash));
@@ -177,7 +245,10 @@ impl DaemonBridge {
         let mut p = HashMap::new();
         p.insert("host".into(), MpValue::from(host));
         p.insert("path".into(), MpValue::from(path));
-        let frame = self.rpc(MessageType::QueryPage, &p).await?;
+        p.insert("timeout".into(), MpValue::from(25_u64));
+        // Remote page fetches need 30s — mesh link establishment + transfer
+        let timeout_secs = if host.is_empty() || host == "local" { 5 } else { 30 };
+        let frame = self.rpc_timeout(MessageType::QueryPage, &p, timeout_secs).await?;
         Ok(mp_str(&frame.payload, "source"))
     }
 
@@ -676,6 +747,15 @@ fn parse_devices(p: &HashMap<String, MpValue>) -> Result<Vec<DeviceInfo>, String
                 .find(|(k, _)| k.as_str() == Some("is_styrene_node"))
                 .and_then(|(_, v)| v.as_bool())
                 .unwrap_or(false);
+            dev.last_announce = m
+                .iter()
+                .find(|(k, _)| k.as_str() == Some("last_announce"))
+                .and_then(|(_, v)| v.as_i64());
+            dev.announce_count = m
+                .iter()
+                .find(|(k, _)| k.as_str() == Some("announce_count"))
+                .and_then(|(_, v)| v.as_u64())
+                .unwrap_or(0) as u32;
             Some(dev)
         })
         .collect())

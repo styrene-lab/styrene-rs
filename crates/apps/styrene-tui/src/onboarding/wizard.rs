@@ -411,10 +411,10 @@ impl WizardState {
 
 /// Parse "host:port" with a default port of 4242.
 fn parse_host_port(addr: &str) -> (String, u16) {
-    if let Some((host, port_str)) = addr.rsplit_once(':') {
-        if let Ok(port) = port_str.parse::<u16>() {
-            return (host.to_string(), port);
-        }
+    if let Some((host, port_str)) = addr.rsplit_once(':')
+        && let Ok(port) = port_str.parse::<u16>()
+    {
+        return (host.to_string(), port);
     }
     (addr.to_string(), 4242)
 }

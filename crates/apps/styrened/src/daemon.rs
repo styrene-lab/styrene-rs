@@ -41,8 +41,18 @@ pub struct DaemonHandle {
     pub app_context: Arc<AppContext>,
     pub daemon_facade: Arc<DaemonFacade>,
     #[cfg(feature = "ipc-server")]
-    _ipc_server: styrene_ipc_server::IpcServer,
-    _cancel: CancellationToken,
+    ipc_server: styrene_ipc_server::IpcServer,
+    cancel: CancellationToken,
+}
+
+impl DaemonHandle {
+    /// Stop background work and await IPC socket cleanup.
+    #[allow(unused_mut)]
+    pub async fn shutdown(mut self) {
+        self.cancel.cancel();
+        #[cfg(feature = "ipc-server")]
+        self.ipc_server.stop().await;
+    }
 }
 
 /// Start the daemon with the given configuration.
@@ -68,13 +78,16 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
 
     // --- Config ---
     let config_path = cfg.config.or_else(|| {
+        if cfg.ephemeral {
+            return None;
+        }
         let default = crate::config::default_config_path();
         default.exists().then_some(default)
     });
     let daemon_config = config_path.as_ref().and_then(|p| DaemonConfig::from_path(p).ok());
 
     let node_role = daemon_config.as_ref().map(|c| c.role).unwrap_or_default();
-    eprintln!("[styrene] node role: {}", node_role);
+    crate::daemon_diagnostic!("[styrene] node role: {}", node_role);
 
     // --- Transport ---
     let mesh_transport: Arc<dyn MeshTransport>;
@@ -99,7 +112,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         let iface_manager = transport_instance.iface_manager();
         let (tcp_server, _bound_rx) = TcpServer::new(bind_addr.clone(), iface_manager.clone());
         iface_manager.lock().await.spawn(tcp_server, TcpServer::spawn);
-        eprintln!("[styrene] tcp_server bind={}", bind_addr);
+        crate::daemon_diagnostic!("[styrene] tcp_server bind={}", bind_addr);
 
         // TCP clients from config
         if let Some(ref config) = daemon_config {
@@ -109,13 +122,22 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
                     .lock()
                     .await
                     .spawn(TcpClient::new(endpoint.clone()), TcpClient::spawn);
-                eprintln!("[styrene] tcp_client endpoint={}", endpoint);
+                crate::daemon_diagnostic!("[styrene] tcp_client endpoint={}", endpoint);
             }
         }
 
         // LXMF delivery destination
         let destination = transport_instance
             .add_destination(transport_identity.clone(), DestinationName::new("lxmf", "delivery"))
+            .await;
+
+        // NomadNet page hosting destination — allows us to receive announces
+        // from NomadNet-compatible page hosts and browse their pages.
+        let _nomadnet_dest = transport_instance
+            .add_destination(
+                transport_identity.clone(),
+                DestinationName::new("nomadnetwork", "node"),
+            )
             .await;
         let (dest_hash_hex, delivery_addr) = {
             let dest = destination.lock().await;
@@ -137,10 +159,10 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         .await;
 
         mesh_transport = Arc::new(adapter);
-        eprintln!("[styrene] transport enabled, delivery_hash={}", delivery_hash);
+        crate::daemon_diagnostic!("[styrene] transport enabled, delivery_hash={}", delivery_hash);
     } else {
         mesh_transport = Arc::new(NullTransport::new());
-        eprintln!("[styrene] transport disabled (node role: {})", node_role);
+        crate::daemon_diagnostic!("[styrene] transport disabled (node role: {})", node_role);
     };
 
     // --- Database ---
@@ -198,17 +220,17 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
             policy.clear_hub_entries();
             for entry in hub_entries {
                 if entry.is_expired(now) {
-                    eprintln!(
+                    crate::daemon_diagnostic!(
                         "[styrene] rbac: dropping expired hub entry for {}",
                         entry.entry.identity_hash
                     );
                 } else if !trusted.iter().any(|h| h.matches(&entry)) {
-                    eprintln!(
+                    crate::daemon_diagnostic!(
                         "[styrene] rbac: dropping hub entry for {} — hub not trusted",
                         entry.entry.identity_hash
                     );
                 } else if !entry.verify() {
-                    eprintln!(
+                    crate::daemon_diagnostic!(
                         "[styrene] rbac: dropping hub entry for {} — invalid signature",
                         entry.entry.identity_hash
                     );
@@ -217,7 +239,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
                 }
             }
             if total > 0 {
-                eprintln!(
+                crate::daemon_diagnostic!(
                     "[styrene] rbac: {}/{} hub-signed entries verified ({} trusted hubs)",
                     policy.hub_entries().len(),
                     total,
@@ -228,9 +250,9 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
 
         let warnings = policy.normalize();
         for w in &warnings {
-            eprintln!("[styrene] rbac: {w:?}");
+            crate::daemon_diagnostic!("[styrene] rbac: {w:?}");
         }
-        eprintln!(
+        crate::daemon_diagnostic!(
             "[styrene] RBAC policy loaded: {} roster entries, {} hub entries, {} blocked prefixes, default_role={:?}",
             policy.entries().len(),
             policy.hub_entries().len(),
@@ -255,13 +277,13 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
 
     if let Some(config_path) = config_path.as_ref() {
         if let Err(e) = app_context.config().load(config_path) {
-            eprintln!("[styrene] config load error: {e}");
+            crate::daemon_diagnostic!("[styrene] config load error: {e}");
         }
     }
 
     if node_role == crate::config::NodeRole::Hub {
         app_context.propagation().set_enabled(true);
-        eprintln!("[styrene] propagation enabled (hub mode)");
+        crate::daemon_diagnostic!("[styrene] propagation enabled (hub mode)");
     }
 
     // --- DaemonFacade ---
@@ -304,7 +326,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
 
     crate::services::propagation::spawn_expiry_task(app_context.propagation_arc());
 
-    eprintln!("[styrene] workers started");
+    crate::daemon_diagnostic!("[styrene] workers started");
 
     // --- IPC Server (desktop only) ---
     #[cfg(feature = "ipc-server")]
@@ -336,20 +358,20 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
                 }
             });
         }
-        eprintln!("[styrene] IPC server listening on {}", socket_path.display());
+        crate::daemon_diagnostic!("[styrene] IPC server listening on {}", socket_path.display());
         server
     };
 
     // Initial announce
     app_context.transport().announce(None).await;
-    eprintln!("[styrene] identity={} ready", identity_hash);
+    crate::daemon_diagnostic!("[styrene] identity={} ready", identity_hash);
 
     Ok(DaemonHandle {
         app_context,
         daemon_facade,
         #[cfg(feature = "ipc-server")]
-        _ipc_server: ipc_server,
-        _cancel: cancel,
+        ipc_server,
+        cancel,
     })
 }
 
@@ -359,6 +381,6 @@ pub async fn run(cfg: DaemonConfig2) -> anyhow::Result<()> {
 
     // Wait for shutdown signal
     tokio::signal::ctrl_c().await?;
-    eprintln!("\n[styrene] shutting down...");
+    crate::daemon_diagnostic!("\n[styrene] shutting down...");
     Ok(())
 }

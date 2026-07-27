@@ -55,28 +55,28 @@ pub fn scan_reticulum(rns_dir: &Path) -> ReticulumState {
     // ── Identity ────────────────────────────────────────────────────────────
     let identity_path = rns_dir.join("identity");
     state.identity_path = identity_path.clone();
-    if identity_path.is_file() {
-        if let Ok(bytes) = fs::read(&identity_path) {
-            // RNS identity is 64 bytes: 32 X25519 private + 32 Ed25519 seed.
-            // The address hash is derived from the public keys, not stored directly.
-            // We compute a display hash from the first 16 bytes of SHA-256(pub_keys).
-            // For display purposes, just show the file size to confirm it's valid.
-            if bytes.len() == 64 {
-                // Compute a simple fingerprint for display — use the last 8 bytes
-                // of the raw file as a recognizable snippet (not cryptographically
-                // meaningful, just for the user to verify "that's my key").
-                let tail = &bytes[bytes.len() - 8..];
-                state.identity_hash = Some(hex::encode(tail));
-            }
+    if identity_path.is_file()
+        && let Ok(bytes) = fs::read(&identity_path)
+    {
+        // RNS identity is 64 bytes: 32 X25519 private + 32 Ed25519 seed.
+        // The address hash is derived from the public keys, not stored directly.
+        // We compute a display hash from the first 16 bytes of SHA-256(pub_keys).
+        // For display purposes, just show the file size to confirm it's valid.
+        if bytes.len() == 64 {
+            // Compute a simple fingerprint for display — use the last 8 bytes
+            // of the raw file as a recognizable snippet (not cryptographically
+            // meaningful, just for the user to verify "that's my key").
+            let tail = &bytes[bytes.len() - 8..];
+            state.identity_hash = Some(hex::encode(tail));
         }
     }
 
     // ── Config ──────────────────────────────────────────────────────────────
     let config_path = rns_dir.join("config");
-    if config_path.is_file() {
-        if let Ok(contents) = fs::read_to_string(&config_path) {
-            state.interfaces = parse_interfaces(&contents);
-        }
+    if config_path.is_file()
+        && let Ok(contents) = fs::read_to_string(&config_path)
+    {
+        state.interfaces = parse_interfaces(&contents);
     }
 
     // ── Known destinations ──────────────────────────────────────────────────
@@ -107,10 +107,10 @@ fn parse_interfaces(config: &str) -> Vec<ReticulumInterface> {
         // Top-level section header: [name]
         if trimmed.starts_with('[') && !trimmed.starts_with("[[") {
             // Flush current interface if any
-            if let Some(builder) = current.take() {
-                if let Some(iface) = builder.build() {
-                    interfaces.push(iface);
-                }
+            if let Some(builder) = current.take()
+                && let Some(iface) = builder.build()
+            {
+                interfaces.push(iface);
             }
             in_interfaces_section = trimmed.eq_ignore_ascii_case("[interfaces]");
             continue;
@@ -119,10 +119,10 @@ fn parse_interfaces(config: &str) -> Vec<ReticulumInterface> {
         // Nested section header: [[Name]]
         if trimmed.starts_with("[[") && trimmed.ends_with("]]") && in_interfaces_section {
             // Flush previous
-            if let Some(builder) = current.take() {
-                if let Some(iface) = builder.build() {
-                    interfaces.push(iface);
-                }
+            if let Some(builder) = current.take()
+                && let Some(iface) = builder.build()
+            {
+                interfaces.push(iface);
             }
             let name = trimmed.trim_start_matches('[').trim_end_matches(']').trim().to_string();
             current = Some(InterfaceBuilder::new(name));
@@ -130,20 +130,19 @@ fn parse_interfaces(config: &str) -> Vec<ReticulumInterface> {
         }
 
         // Key = value inside a [[subsection]]
-        if in_interfaces_section {
-            if let Some(ref mut builder) = current {
-                if let Some((key, value)) = parse_kv(trimmed) {
-                    builder.set(&key, &value);
-                }
-            }
+        if in_interfaces_section
+            && let Some(ref mut builder) = current
+            && let Some((key, value)) = parse_kv(trimmed)
+        {
+            builder.set(&key, &value);
         }
     }
 
     // Flush final interface
-    if let Some(builder) = current.take() {
-        if let Some(iface) = builder.build() {
-            interfaces.push(iface);
-        }
+    if let Some(builder) = current.take()
+        && let Some(iface) = builder.build()
+    {
+        interfaces.push(iface);
     }
 
     interfaces
@@ -244,14 +243,14 @@ fn scan_known_destinations(storage_dir: &Path) -> Vec<(String, String)> {
 
     // Check for known_destinations directory
     let dest_dir = storage_dir.join("known_destinations");
-    if dest_dir.is_dir() {
-        if let Ok(entries) = fs::read_dir(&dest_dir) {
-            for entry in entries.flatten() {
-                let filename = entry.file_name().to_string_lossy().to_string();
-                // Filenames are hex hashes of destination addresses
-                if filename.len() >= 20 && filename.chars().all(|c| c.is_ascii_hexdigit()) {
-                    contacts.push((filename, String::new()));
-                }
+    if dest_dir.is_dir()
+        && let Ok(entries) = fs::read_dir(&dest_dir)
+    {
+        for entry in entries.flatten() {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            // Filenames are hex hashes of destination addresses
+            if filename.len() >= 20 && filename.chars().all(|c| c.is_ascii_hexdigit()) {
+                contacts.push((filename, String::new()));
             }
         }
     }

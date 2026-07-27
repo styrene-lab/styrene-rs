@@ -37,7 +37,7 @@ has_drift_for() {
 }
 
 has_any_drift() {
-    has_drift_for "beechat" || has_drift_for "upstream"
+    has_drift_for "beechat" || has_drift_for "freetakteam"
 }
 
 # --- Report helpers ---
@@ -146,7 +146,7 @@ generate_report() {
     echo ""
 
     generate_report_section "beechat" "Beechat / Reticulum-rs"
-    generate_report_section "upstream" "FreeTAKTeam / LXMF-rs"
+    generate_report_section "freetakteam" "FreeTAKTeam / LXMF-rs"
 
     echo "---"
     echo ""
@@ -205,13 +205,13 @@ generate_sync_log_entry() {
     echo "**Reviewer:** (pending)"
     echo ""
     generate_sync_log_section "beechat" "Beechat / Reticulum-rs"
-    generate_sync_log_section "upstream" "FreeTAKTeam / LXMF-rs"
+    generate_sync_log_section "freetakteam" "FreeTAKTeam / LXMF-rs"
 }
 
 # --- Update tracking ---
 
 update_tracking() {
-    for key in beechat upstream; do
+    for key in beechat freetakteam; do
         local remote branch remote_head
         remote=$(read_remote "$key")
         branch=$(read_branch "$key")

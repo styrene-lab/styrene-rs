@@ -1,11 +1,12 @@
 [package]
 name = "styrene-tui"
-version = "0.0.1"
+version = "0.3.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Styrene terminal UI spike — Ratatui mesh status display"
+build = "build.rs"
 publish = false
 
 [[bin]]
@@ -25,12 +26,13 @@ unicode-width = "0.2"
 
 # Protocol crates (no transport — pure data types)
 styrene-rns = { workspace = true }
+rns-core = { package = "styrene-rns", path = "../../libs/styrene-rns" }
 styrene-micron = { workspace = true }
 
 # Daemon integration
 styrene-ipc = { path = "../../libs/styrene-ipc", version = "0.1.0" }
 styrene-ipc-server = { path = "../../libs/styrene-ipc-server", version = "0.1.0" }
-styrened = { path = "../styrened", version = "0.1.0" }
+styrened = { path = "../styrened", version = "0.3.0" }
 
 # Utilities
 hex.workspace = true

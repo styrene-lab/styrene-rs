@@ -45,10 +45,10 @@ pub fn spawn_link_worker(
                 // Connected/Disconnected/Reconnected — not link events, ignore
                 Ok(_) => continue,
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    eprintln!("[link-worker] lagged, skipped {n} events");
+                    crate::daemon_diagnostic!("[link-worker] lagged, skipped {n} events");
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    eprintln!("[link-worker] lifecycle channel closed, stopping");
+                    crate::daemon_diagnostic!("[link-worker] lifecycle channel closed, stopping");
                     break;
                 }
             }

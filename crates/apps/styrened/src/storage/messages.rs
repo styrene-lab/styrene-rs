@@ -83,8 +83,16 @@ pub struct MessagesStore {
 impl MessagesStore {
     const SDK_DOMAIN_SNAPSHOT_KEY: &'static str = "sdk_domains.v1";
 
+    fn configure_connection(conn: &Connection) -> rusqlite::Result<()> {
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        conn.pragma_update(None, "journal_mode", "wal")?;
+        conn.pragma_update(None, "synchronous", "normal")?;
+        Ok(())
+    }
+
     pub fn in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
@@ -92,19 +100,29 @@ impl MessagesStore {
 
     pub fn open(path: &std::path::Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
-        // WAL mode is required for concurrent readers (RpcDaemon + AppContext
-        // hold separate connections to the same database file).
-        conn.pragma_update(None, "journal_mode", "wal")?;
+        // WAL permits concurrent readers while the busy timeout absorbs brief
+        // writer contention between daemon workers and compatibility paths.
+        Self::configure_connection(&conn)?;
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
     }
 
     pub fn insert_message(&self, record: &MessageRecord) -> rusqlite::Result<()> {
+        self.write_message(record, "INSERT OR REPLACE").map(|_| ())
+    }
+
+    /// Insert an inbound message without replacing an existing immutable LXMF
+    /// record. Returns `true` only for the first accepted delivery.
+    pub fn insert_message_if_absent(&self, record: &MessageRecord) -> rusqlite::Result<bool> {
+        self.write_message(record, "INSERT OR IGNORE").map(|changed| changed > 0)
+    }
+
+    fn write_message(&self, record: &MessageRecord, insert: &str) -> rusqlite::Result<usize> {
         let fields_json =
             record.fields.as_ref().map(|value| serde_json::to_string(value).unwrap_or_default());
         self.conn.execute(
-            "INSERT OR REPLACE INTO messages (id, source, destination, title, content, timestamp, direction, fields, receipt_status, read) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            &format!("{insert} INTO messages (id, source, destination, title, content, timestamp, direction, fields, receipt_status, read) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"),
             params![
                 &record.id,
                 &record.source,
@@ -117,8 +135,7 @@ impl MessagesStore {
                 &record.receipt_status,
                 record.read as i64,
             ],
-        )?;
-        Ok(())
+        )
     }
 
     pub fn list_messages(
@@ -129,7 +146,7 @@ impl MessagesStore {
         let mut records = Vec::new();
         if let Some(ts) = before_ts {
             let mut stmt = self.conn.prepare(
-                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE timestamp < ?1 ORDER BY timestamp DESC LIMIT ?2",
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE timestamp < ?1 ORDER BY timestamp DESC, rowid DESC LIMIT ?2",
             )?;
             let mut rows = stmt.query(params![ts, limit as i64])?;
             while let Some(row) = rows.next()? {
@@ -137,7 +154,7 @@ impl MessagesStore {
             }
         } else {
             let mut stmt = self.conn.prepare(
-                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages ORDER BY timestamp DESC LIMIT ?1",
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages ORDER BY timestamp DESC, rowid DESC LIMIT ?1",
             )?;
             let mut rows = stmt.query(params![limit as i64])?;
             while let Some(row) = rows.next()? {
@@ -164,7 +181,7 @@ impl MessagesStore {
         let mut records = Vec::new();
         if let Some(ts) = before_ts {
             let mut stmt = self.conn.prepare(
-                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE (source = ?1 OR destination = ?1) AND timestamp < ?2 ORDER BY timestamp DESC LIMIT ?3",
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE (source = ?1 OR destination = ?1) AND timestamp < ?2 ORDER BY timestamp DESC, rowid DESC LIMIT ?3",
             )?;
             let mut rows = stmt.query(params![peer_hash, ts, limit as i64])?;
             while let Some(row) = rows.next()? {
@@ -172,7 +189,7 @@ impl MessagesStore {
             }
         } else {
             let mut stmt = self.conn.prepare(
-                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE (source = ?1 OR destination = ?1) ORDER BY timestamp DESC LIMIT ?2",
+                "SELECT id, source, destination, title, content, timestamp, direction, fields, receipt_status, COALESCE(read, 0) FROM messages WHERE (source = ?1 OR destination = ?1) ORDER BY timestamp DESC, rowid DESC LIMIT ?2",
             )?;
             let mut rows = stmt.query(params![peer_hash, limit as i64])?;
             while let Some(row) = rows.next()? {
@@ -901,6 +918,25 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_connections_wait_for_brief_writer_contention() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("messages.db");
+        let first = MessagesStore::open(&path).unwrap();
+        let second = MessagesStore::open(&path).unwrap();
+
+        first.conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            first.conn.execute_batch("COMMIT").unwrap();
+        });
+
+        let record = outbound_message("contended", 1, Some("sending"));
+        second.insert_message(&record).expect("busy timeout should permit retry");
+        releaser.join().unwrap();
+        assert!(second.get_message("contended").unwrap().is_some());
+    }
+
+    #[test]
     fn sdk_domain_snapshot_roundtrip() {
         let store = MessagesStore::in_memory().expect("in-memory store");
         let initial = store.get_sdk_domain_snapshot().expect("query snapshot");
@@ -1128,6 +1164,22 @@ mod tests {
         // Most recent first
         assert_eq!(msgs[0].id, "m2");
         assert_eq!(msgs[1].id, "m1");
+    }
+
+    #[test]
+    fn list_messages_for_peer_orders_equal_timestamps_deterministically() {
+        let store = MessagesStore::in_memory().expect("store");
+        for index in 1..=100 {
+            store
+                .insert_message(&chat_message(&format!("m{index:03}"), "alice", "me", 42))
+                .expect("insert");
+        }
+
+        let msgs = store.list_messages_for_peer("alice", 100, None).expect("list");
+        let ids: Vec<_> = msgs.iter().map(|message| message.id.as_str()).collect();
+        assert_eq!(ids.first(), Some(&"m100"));
+        assert_eq!(ids.last(), Some(&"m001"));
+        assert_eq!(ids.len(), 100);
     }
 
     // ── Blocklist tests ─────────────────────────────────────────────────

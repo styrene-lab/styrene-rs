@@ -26,6 +26,60 @@ fn build_lxmf_wire(destination: [u8; 16], source: [u8; 16], content: &str) -> Ve
 }
 
 #[tokio::test]
+async fn duplicate_inbound_is_stored_and_dispatched_once_with_drop_event() {
+    let transport = Arc::new(MockTransport::new_default());
+    let messaging = Arc::new(MessagingService::new());
+    let protocol = Arc::new(ProtocolService::new());
+    let events = Arc::new(EventService::new());
+    let mut event_rx = events.subscribe();
+    let prop_store = Arc::new(std::sync::Mutex::new(MessagesStore::in_memory().unwrap()));
+    let propagation = Arc::new(PropagationService::new(prop_store));
+
+    let handle = spawn_inbound_worker(
+        transport.clone(),
+        messaging.clone(),
+        protocol,
+        events,
+        propagation,
+        None,
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+
+    let dest = [0x41; 16];
+    let source = [0x42; 16];
+    let wire_data = build_lxmf_wire(dest, source, "deliver once");
+    let inbound = || ReceivedData {
+        destination: AddressHash::new(dest),
+        data: rns_core::packet::PacketDataBuffer::new_from_slice(&wire_data),
+        payload_mode: ReceivedPayloadMode::FullWire,
+        ratchet_used: false,
+        context: None,
+        request_id: None,
+        hops: None,
+        interface: None,
+    };
+
+    transport.inject_inbound(inbound());
+    transport.inject_inbound(inbound());
+
+    let first = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
+        .await
+        .expect("new-message event timeout")
+        .expect("new-message event");
+    let second = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
+        .await
+        .expect("drop event timeout")
+        .expect("drop event");
+
+    assert_eq!(first.event_type, "message_received");
+    assert_eq!(second.event_type, "inbound_dropped");
+    assert_eq!(second.payload["path"], "direct_packet");
+    assert_eq!(second.payload["reason"], "duplicate");
+    assert_eq!(messaging.list_messages(10, None).unwrap().len(), 1);
+    handle.abort();
+}
+
+#[tokio::test]
 async fn inbound_worker_decodes_and_persists_message() {
     let transport = Arc::new(MockTransport::new_default());
     let messaging = Arc::new(MessagingService::new());

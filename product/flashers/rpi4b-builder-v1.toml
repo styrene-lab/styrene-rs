@@ -1,0 +1,67 @@
+schema_version = 1
+id = "rpi4b-builder"
+version = 1
+status = "hardware-validated"
+purpose = "native-aarch64-builder"
+hardware_profile = "raspberry-pi-4b"
+deployment_tier = "headless-edge"
+
+[materialization]
+flake_attribute = "nixosConfigurations.rpi4-builder.config.system.build.sdImage"
+artifact_glob = "sd-image/*.img.zst"
+builder_system = "aarch64-linux"
+build_recipe = "nix-rpi4-builder-build"
+required_environment = ["STYRENE_BUILDER_SSH_KEY"]
+contract_validator = "scripts/validate_flashers.py"
+
+[artifact_validation]
+command = "scripts/verify-rpi4-image.sh"
+requires = [
+  "zstd-integrity",
+  "mbr-signature",
+  "linux-root-partition",
+  "ext4-fsck",
+  "nix-store-registration",
+  "nix-store-content-verification",
+]
+
+[delivery]
+command = "scripts/flash-rpi4-image.sh"
+confirmation = "ERASE"
+whole_disk_only = true
+removable_only = true
+build_is_non_destructive = true
+supported_host_os = ["darwin", "linux"]
+supported_artifacts = ["img", "img.zst"]
+
+[first_boot]
+hostname = "styrene-builder-a"
+ssh_user = "nix-builder"
+ssh_port = 22
+password_authentication = false
+acceptance_command = "scripts/verify-rpi4-builder-host.sh"
+required_checks = [
+  "ssh-public-key",
+  "aarch64-linux",
+  "nix-daemon-active",
+  "nix-sandbox-enabled",
+  "native-derivation-build",
+]
+
+[evidence.reference_run]
+date = "2026-07-17"
+address = "192.168.8.149"
+kernel = "6.12.75"
+nix = "2.34.8"
+cores = 4
+memory_bytes_approx = 7900000000
+native_derivation = "/nix/store/z190p4xcqkd19n9p40p0lp2pj0za0j2p-rg35xxsp-provenance-check.drv"
+native_output = "/nix/store/qgvr9s605wl72ws33fd1p0x9lmhannxk-rg35xxsp-provenance-check"
+
+[boundaries]
+notes = [
+  "Materialization, artifact validation, destructive delivery, and hardware validation are separate phases.",
+  "The Raspberry Pi is the native ARM64 builder; removable-media writing currently runs on an explicitly selected Darwin or Linux delivery host.",
+  "A successful image build does not imply a successful flash or boot.",
+  "DHCP addresses are observations, not stable identity; hostname and injected SSH key are the stable access contract.",
+]

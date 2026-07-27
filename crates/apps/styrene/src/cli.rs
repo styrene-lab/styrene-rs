@@ -4,11 +4,23 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+fn build_version() -> &'static str {
+    concat!(env!("CARGO_PKG_VERSION"), "+", env!("STYRENE_BUILD_SHA"))
+}
+
 #[derive(Parser)]
-#[command(name = "styrene", about = "Styrene mesh node — daemon, TUI, and CLI", version)]
+#[command(name = "styrene", about = "Styrene mesh node — daemon, TUI, and CLI", version = build_version())]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
+
+    /// Run with an ephemeral identity and isolated storage (interactive mode only)
+    #[arg(long)]
+    pub ghost: bool,
+
+    /// Keep all state beneath this portable root (interactive mode only)
+    #[arg(long, value_name = "DIR")]
+    pub portable: Option<PathBuf>,
 
     /// Path to the daemon IPC socket
     #[arg(long, global = true, env = "STYRENE_SOCKET")]
@@ -35,6 +47,25 @@ pub enum Command {
         /// Use ephemeral identity (no persistence, for containers)
         #[arg(long)]
         ephemeral: bool,
+    },
+
+    /// Validate a fresh persistent installation without entering the TUI
+    #[cfg(feature = "tui")]
+    Doctor {
+        /// Keep all generated state beneath this root
+        #[arg(long, value_name = "DIR")]
+        root: PathBuf,
+    },
+
+    /// Validate a bounded ephemeral Ghost runtime lifecycle without entering the TUI
+    #[cfg(feature = "tui")]
+    GhostCheck {
+        /// Parent directory beneath which the disposable session is created
+        #[arg(long, value_name = "DIR")]
+        root: PathBuf,
+        /// Maximum seconds allowed for startup and shutdown
+        #[arg(long, default_value = "10")]
+        timeout: u64,
     },
 
     /// Show daemon and mesh status
@@ -76,6 +107,13 @@ pub enum Command {
     /// Show daemon identity
     #[cfg(feature = "cli")]
     Identity,
+
+    /// Show transport path readiness for a destination hash
+    #[cfg(feature = "cli")]
+    Path {
+        /// Destination hash
+        destination: String,
+    },
 
     /// Trigger a mesh announce
     #[cfg(feature = "cli")]

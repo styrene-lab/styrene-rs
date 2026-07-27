@@ -199,6 +199,29 @@
             ];
           };
         };
+      rg35xxspBootChain = import ./nix/hardware/rg35xxsp/boot-chain.nix {
+        pkgs = import nixpkgs { system = "aarch64-linux"; };
+      };
+      rg35xxspBringupImage = let
+        pkgs = import nixpkgs { system = "aarch64-linux"; };
+        rootSystem = nixpkgs.lib.nixosSystem {
+          system = "aarch64-linux";
+          modules = [
+            ./nix/modules/minimal-appliance.nix
+            "${nixpkgs}/nixos/modules/installer/sd-card/sd-image-aarch64.nix"
+            ./nix/modules/sd-image-no-host-xattrs.nix
+            ({ ... }: {
+              boot.kernelPackages = pkgs.linuxPackagesFor rg35xxspBootChain.kernel;
+              hardware.deviceTree.name = "allwinner/sun50i-h700-anbernic-rg35xx-sp.dtb";
+              sdImage.compressImage = false;
+              sdImage.firmwareSize = 256;
+            })
+          ];
+        };
+      in pkgs.callPackage ./nix/make-rg35xxsp-image.nix {
+        rootFilesystemImage = rootSystem.config.sdImage.rootFilesystemImage;
+        bootChain = rg35xxspBootChain.bundle;
+      };
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -243,6 +266,22 @@
 
         # Build deps once, reuse for all packages
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+
+        # The canonical product binary used by installation and Ghost checks
+        styreneRaw = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
+          cargoExtraArgs = "-p styrene --all-features";
+        });
+
+        # NixOS services invoke the product through a closure-complete wrapper.
+        styrene = pkgs.runCommand "styrene-product" {
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+        } ''
+          mkdir -p $out/bin
+          cp ${styreneRaw}/bin/styrene $out/bin/styrene-unwrapped
+          makeWrapper $out/bin/styrene-unwrapped $out/bin/styrene \
+            --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.openssl pkgs.sqlite pkgs.stdenv.cc.cc.lib ]}
+        '';
 
         # The daemon binary
         styrened = craneLib.buildPackage (commonArgs // {
@@ -291,7 +330,54 @@
 
       in {
         packages = {
-          inherit styrened styrened-i2p styrene-i2p styrene-tui oci oci-i2p;
+          inherit styrene styrened styrened-i2p styrene-i2p styrene-tui oci oci-i2p;
+          rg35xxsp-boot-chain = rg35xxspBootChain.bundle;
+          rg35xxsp-bringup-image = rg35xxspBringupImage;
+          rg35xxsp-trusted-firmware-a = rg35xxspBootChain.tfA;
+          rg35xxsp-u-boot = rg35xxspBootChain.uBoot;
+          rg35xxsp-linux = rg35xxspBootChain.kernel;
+          rg35xxsp-qemu = let
+            qemuSystem = nixpkgs.lib.nixosSystem {
+              inherit system;
+              specialArgs = { styrenePackage = self.packages.${system}.styrene; };
+              modules = [
+                ./nix/modules/minimal-appliance.nix
+                ./nix/modules/styrene-qemu-smoke.nix
+                ({ modulesPath, styrenePackage, ... }: {
+                  imports = [
+                    "${modulesPath}/profiles/qemu-guest.nix"
+                    "${modulesPath}/virtualisation/qemu-vm.nix"
+                  ];
+                  virtualisation.graphics = false;
+                  services.styrene-qemu-smoke = {
+                    enable = true;
+                    package = styrenePackage;
+                  };
+                })
+              ];
+            };
+          in qemuSystem.config.system.build.vm;
+          rg35xxsp-qemu-system = let
+            qemuSystem = nixpkgs.lib.nixosSystem {
+              inherit system;
+              specialArgs = { styrenePackage = self.packages.${system}.styrene; };
+              modules = [
+                ./nix/modules/minimal-appliance.nix
+                ./nix/modules/styrene-qemu-smoke.nix
+                ({ modulesPath, styrenePackage, ... }: {
+                  imports = [
+                    "${modulesPath}/profiles/qemu-guest.nix"
+                    "${modulesPath}/virtualisation/qemu-vm.nix"
+                  ];
+                  virtualisation.graphics = false;
+                  services.styrene-qemu-smoke = {
+                    enable = true;
+                    package = styrenePackage;
+                  };
+                })
+              ];
+            };
+          in qemuSystem.config.system.build.toplevel;
           default = styrened;
         };
 
@@ -306,6 +392,25 @@
             inherit cargoArtifacts;
             cargoClippyExtraArgs = "-- -D warnings";
           });
+
+          rg35xxsp-provenance = pkgs.runCommand "rg35xxsp-provenance-check" {
+            nativeBuildInputs = [ pkgs.python3 ];
+          } ''
+            python3 - <<'PY'
+            import pathlib, tomllib
+            data = tomllib.loads(pathlib.Path("${./nix/hardware/rg35xxsp/provenance.toml}").read_text())
+            assert data["schema_version"] == 1
+            assert data["hardware_profile"] == "anbernic-rg35xxsp"
+            names = [entry["name"] for entry in data["components"]]
+            assert len(names) == len(set(names))
+            assert {"u-boot", "trusted-firmware-a", "linux", "device-tree", "firmware", "nixos-userspace"} <= set(names)
+            for entry in data["components"]:
+                assert entry["status"] in {"unresolved", "selected", "pinned", "validated"}
+                assert entry["preferred_provenance"]
+                assert entry["required_evidence"]
+            PY
+            touch "$out"
+          '';
         };
 
         devShells.default = craneLib.devShell {
@@ -319,5 +424,47 @@
     ) // {
       # NixOS module (system-independent)
       nixosModules.default = nixosModule;
+      nixosModules.rg35xxsp-hardware = import ./nix/hardware/rg35xxsp;
+      nixosModules.rpi4b-hardware = import ./nix/hardware/rpi4b;
+
+      nixosConfigurations.rpi4-builder = nixpkgs.lib.nixosSystem {
+        system = "aarch64-linux";
+        modules = [
+          ./nix/hardware/rpi4b
+          ./nix/hosts/rpi4-builder.nix
+          ({ ... }: { system.stateVersion = "26.05"; })
+        ];
+      };
+
+      nixosConfigurations.rpi4-appliance = nixpkgs.lib.nixosSystem {
+        system = "aarch64-linux";
+        specialArgs = { styrenePackage = self.packages.aarch64-linux.styrene; };
+        modules = [
+          ./nix/hardware/rpi4b
+          ./nix/modules/minimal-appliance.nix
+          ./nix/modules/styrene-qemu-smoke.nix
+          ./nix/hosts/rpi4-appliance.nix
+        ];
+      };
+
+      nixosConfigurations.rg35xxsp-qemu = nixpkgs.lib.nixosSystem {
+        system = "aarch64-linux";
+        specialArgs = { styrenePackage = self.packages.aarch64-linux.styrene; };
+        modules = [
+          ./nix/modules/minimal-appliance.nix
+          ./nix/modules/styrene-qemu-smoke.nix
+          ({ modulesPath, styrenePackage, ... }: {
+            imports = [
+              "${modulesPath}/profiles/qemu-guest.nix"
+              "${modulesPath}/virtualisation/qemu-vm.nix"
+            ];
+            virtualisation.graphics = false;
+            services.styrene-qemu-smoke = {
+              enable = true;
+              package = styrenePackage;
+            };
+          })
+        ];
+      };
     };
 }

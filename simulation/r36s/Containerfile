@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+# R36S-class simulation target: arm64 Linux userspace with bounded resources.
+# This is not a board emulator: it does not model RK3326 peripherals, panel DTBs,
+# evdev mappings, power management, or removable-media failure behavior.
+
+FROM rust:1.97-bookworm AS builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates/ crates/
+RUN cargo build --locked --release -p styrene --all-features
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system styrene \
+    && useradd --system --gid styrene --create-home --home-dir /home/styrene styrene \
+    && mkdir -p /state /run/styrene \
+    && chown styrene:styrene /state /run/styrene
+
+COPY simulation/r36s/evidence-scenarios.sh /usr/local/bin/styrene-evidence-scenarios
+COPY --from=builder /build/target/release/styrene /usr/local/bin/styrene
+RUN chmod 0755 /usr/local/bin/styrene-evidence-scenarios
+
+ENV HOME=/home/styrene \
+    XDG_CONFIG_HOME=/state/config \
+    XDG_DATA_HOME=/state/data \
+    XDG_CACHE_HOME=/state/cache \
+    XDG_RUNTIME_DIR=/run/styrene \
+    STYRENE_CONFIG_DIR=/state/config/styrene \
+    STYRENE_DATA_DIR=/state/data/styrene
+
+USER styrene
+WORKDIR /state
+ENTRYPOINT ["/usr/local/bin/styrene"]
+CMD ["--help"]

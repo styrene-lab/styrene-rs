@@ -4,8 +4,8 @@
     "branch": "main",
     "last_reviewed": "20bb433d9934071ff9652a5ee3b9ddf92ef51aea"
   },
-  "upstream": {
-    "remote": "upstream",
+  "freetakteam": {
+    "remote": "freetakteam",
     "branch": "main",
     "last_reviewed": "3a2d46bbea174a1049d5d3e06f00c6ea20254085"
   }

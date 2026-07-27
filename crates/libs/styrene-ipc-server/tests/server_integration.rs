@@ -330,6 +330,9 @@ impl DaemonTunnel for TestDaemon {
     async fn tunnel_establish(&self, _peer: &str) -> Result<String, IpcError> {
         Err(IpcError::not_implemented("tunnel"))
     }
+    async fn tunnel_operation(&self, _peer: &str) -> Result<TunnelOperationInfo, IpcError> {
+        Err(IpcError::not_implemented("tunnel operation"))
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────

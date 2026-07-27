@@ -153,15 +153,31 @@ impl RpcDaemon {
         update(&mut guard);
     }
 
-    fn store_inbound_record(&self, record: MessageRecord) -> Result<(), std::io::Error> {
-        self.messages().insert_message(&record).map_err(std::io::Error::other)?;
+    fn store_inbound_record(&self, record: MessageRecord) -> Result<bool, std::io::Error> {
+        let message_id = record.id.clone();
+        if !self
+            .messages()
+            .insert_message_if_absent(&record)
+            .map_err(std::io::Error::other)?
+        {
+            self.publish_event(RpcEvent {
+                event_type: "inbound_dropped".into(),
+                payload: json!({
+                    "path": "rpc_direct",
+                    "reason": "duplicate",
+                    "message_id": message_id,
+                    "destination": record.destination,
+                }),
+            });
+            return Ok(false);
+        }
         let event =
             RpcEvent { event_type: "inbound".into(), payload: json!({ "message": record }) };
         self.publish_event(event);
-        Ok(())
+        Ok(true)
     }
 
-    pub fn accept_inbound(&self, record: MessageRecord) -> Result<(), std::io::Error> {
+    pub fn accept_inbound(&self, record: MessageRecord) -> Result<bool, std::io::Error> {
         self.store_inbound_record(record)
     }
 
@@ -319,7 +335,7 @@ impl RpcDaemon {
         &self,
         record: MessageRecord,
     ) -> Result<(), std::io::Error> {
-        self.store_inbound_record(record)
+        self.store_inbound_record(record).map(|_| ())
     }
 
 }

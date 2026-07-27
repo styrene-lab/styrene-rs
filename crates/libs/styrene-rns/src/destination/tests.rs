@@ -224,7 +224,7 @@ fn announce_destination_hash_mismatch_is_rejected() {
     );
 
     let mut announce = destination.announce(OsRng, None).expect("valid announce packet");
-    announce.destination = AddressHash::new_from_slice(&[0xAAu8; 16]).into();
+    announce.destination = AddressHash::new_from_slice(&[0xAAu8; 16]);
 
     match DestinationAnnounce::validate(&announce) {
         Ok(_) => panic!("mismatched destination hash must fail validation"),
@@ -250,8 +250,7 @@ fn announce_with_ratchet_bytes_but_unset_flag_is_rejected() {
     // Flip the ratchet context flag off after the announce was built with ratchets
     announce.header.context_flag = ContextFlag::Unset;
 
-    match DestinationAnnounce::validate(&announce) {
-        Ok(_) => panic!("ratchet bytes without ratchet flag must fail validation"),
-        Err(_) => {} // Any error is acceptable — sig mismatch or parse failure
+    if DestinationAnnounce::validate(&announce).is_ok() {
+        panic!("ratchet bytes without ratchet flag must fail validation");
     }
 }

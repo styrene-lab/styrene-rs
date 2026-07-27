@@ -1,0 +1,193 @@
+schema_version = 1
+
+[[tiers]]
+id = "desktop-full"
+process_model = true
+allocator = true
+interactive_display = "full"
+min_memory_bytes = 268435456
+min_storage_bytes = 1073741824
+
+[[tiers]]
+id = "linux-appliance"
+process_model = true
+allocator = true
+interactive_display = "optional"
+min_memory_bytes = 134217728
+min_storage_bytes = 536870912
+
+[[tiers]]
+id = "constrained-linux"
+process_model = true
+allocator = true
+interactive_display = "compact"
+min_memory_bytes = 67108864
+min_storage_bytes = 268435456
+
+[[tiers]]
+id = "headless-edge"
+process_model = true
+allocator = true
+interactive_display = "none"
+min_memory_bytes = 67108864
+min_storage_bytes = 268435456
+
+[[tiers]]
+id = "embedded-alloc"
+process_model = false
+allocator = true
+interactive_display = "none"
+min_memory_bytes = 8388608
+min_storage_bytes = 16777216
+
+[[tiers]]
+id = "embedded-core"
+process_model = false
+allocator = false
+interactive_display = "none"
+status = "planned"
+
+[[capabilities]]
+id = "identity.persistent"
+stream = "conversations"
+status = "implemented"
+evidence = ["crates/apps/styrene-tui/src/onboarding/setup.rs", "crates/apps/styrened/src/identity_store.rs"]
+
+[[capabilities]]
+id = "messaging.lxmf.direct"
+stream = "conversations"
+status = "implemented"
+evidence = ["crates/apps/styrened/src/services/messaging.rs", "crates/apps/styrene/src/commands.rs"]
+
+[[capabilities]]
+id = "messaging.history"
+stream = "conversations"
+status = "implemented"
+evidence = ["crates/apps/styrened/src/storage/messages.rs", "crates/apps/styrene-dx/src/main.rs"]
+
+[[capabilities]]
+id = "messaging.receipts"
+stream = "conversations"
+status = "implemented"
+evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs", "crates/apps/styrene-dx/src/daemon_bridge.rs"]
+
+[[capabilities]]
+id = "contacts.manage"
+stream = "conversations"
+status = "implemented"
+evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs"]
+
+[[capabilities]]
+id = "browse.nomadnet.micron"
+stream = "information-access"
+status = "implemented"
+evidence = ["crates/apps/styrene-dx/src/components/page_browser.rs", "crates/libs/styrene-micron/src/lib.rs"]
+
+[[capabilities]]
+id = "browse.i2p.proxy"
+stream = "information-access"
+status = "experimental"
+evidence = ["crates/apps/styrene-i2p/src/main.rs", "crates/apps/styrene-i2p/src/proxy.rs"]
+notes = "Direct and explicit mesh proxy modes exist; automatic mesh discovery is not implemented."
+
+[[capabilities]]
+id = "browse.semantic-web"
+stream = "information-access"
+status = "planned"
+evidence = ["docs/lightpanda-semantic-browser-notes.md"]
+
+[[capabilities]]
+id = "media.voice.signaling"
+stream = "live-media"
+status = "experimental"
+evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs", "docs/styrene-voice-overlay-addressing.md"]
+notes = "Capability contract exists; complete product session and media path are not release-proven."
+
+[[capabilities]]
+id = "network.node.embedded"
+stream = "mesh-operations"
+status = "implemented"
+evidence = ["crates/apps/styrene-tui/src/lib.rs", "crates/apps/styrene-dx/src/daemon_bridge.rs"]
+
+[[capabilities]]
+id = "network.topology.observe"
+stream = "mesh-operations"
+status = "implemented"
+evidence = ["crates/apps/styrene-dx/src/components/network_graph.rs", "crates/apps/styrene-dx/src/daemon_bridge.rs"]
+
+[[capabilities]]
+id = "network.i2p.adapter"
+stream = "mesh-operations"
+status = "experimental"
+evidence = ["crates/apps/styrened/src/services/i2p_proxy.rs", "crates/apps/styrene-i2p/src/main.rs"]
+notes = "The daemon service contains placeholder transport wiring."
+
+[[capabilities]]
+id = "network.tunnel.control"
+stream = "mesh-operations"
+status = "experimental"
+evidence = ["crates/apps/styrene/src/cli.rs", "crates/libs/styrene-tunnel/src/strongswan/mod.rs"]
+notes = "CLI and contracts exist; StrongSwan VICI operations remain TODO."
+
+[[capabilities]]
+id = "fleet.status"
+stream = "fleet-operations"
+status = "implemented"
+evidence = ["crates/apps/styrene/src/cli.rs", "crates/apps/styrened/src/services/fleet.rs"]
+
+[[capabilities]]
+id = "fleet.remote-command"
+stream = "fleet-operations"
+status = "experimental"
+evidence = ["crates/apps/styrene/src/cli.rs", "crates/apps/styrened/src/workers/rpc_request.rs"]
+notes = "RPC path exists, while service test constructors and some TUI command UX remain stubbed."
+
+[[capabilities]]
+id = "installation.clean-room-doctor"
+stream = "fleet-operations"
+status = "implemented"
+evidence = ["crates/apps/styrene/src/main.rs", "crates/apps/styrene-tui/src/onboarding/setup.rs"]
+
+[[capabilities]]
+id = "ui.semantic-actions"
+stream = "device-communicator"
+status = "implemented"
+evidence = ["crates/apps/styrene-tui/src/action.rs"]
+
+[[capabilities]]
+id = "ui.compact.gamepad"
+stream = "device-communicator"
+status = "planned"
+evidence = ["docs/product-capability-streams.md"]
+
+[[capabilities]]
+id = "runtime.portable"
+stream = "device-communicator"
+status = "implemented"
+evidence = ["crates/apps/styrene-tui/src/runtime.rs", "crates/apps/styrene-tui/src/onboarding/paths.rs"]
+
+[[capabilities]]
+id = "runtime.ghost"
+stream = "device-communicator"
+status = "experimental"
+evidence = ["crates/apps/styrene-tui/src/ghost.rs", "crates/apps/styrene-tui/src/runtime.rs"]
+notes = "Interactive runtime exists; bounded artifact-level lifecycle validation is pending."
+
+[[capabilities]]
+id = "sdk.embedded-alloc"
+stream = "embedded-substrate"
+status = "experimental"
+evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs"]
+notes = "Profile and budgets exist; target crate-graph and hardware conformance remain unproven."
+
+[[capabilities]]
+id = "sdk.manual-tick"
+stream = "embedded-substrate"
+status = "implemented"
+evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs"]
+
+[[capabilities]]
+id = "sdk.telemetry"
+stream = "embedded-substrate"
+status = "implemented"
+evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs", "crates/libs/styrene-telemetry/src/lib.rs"]

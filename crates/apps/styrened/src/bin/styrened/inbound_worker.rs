@@ -59,7 +59,30 @@ pub(super) fn spawn_inbound_worker(daemon: Arc<RpcDaemon>, transport: Arc<Transp
                     decode_inbound_payload(destination, data, payload_mode)
                 };
                 if let Some(record) = record {
-                    let _ = daemon_inbound.accept_inbound(record);
+                    match daemon_inbound.accept_inbound(record) {
+                        Ok(true) => {}
+                        Ok(false) => {}
+                        Err(error) => {
+                            daemon_inbound.emit_event(styrened::rpc::RpcEvent {
+                                event_type: "inbound_dropped".into(),
+                                payload: serde_json::json!({
+                                    "path": "legacy_direct_packet",
+                                    "reason": "storage_error",
+                                    "destination": destination_hex,
+                                    "detail": error.to_string(),
+                                }),
+                            });
+                        }
+                    }
+                } else {
+                    daemon_inbound.emit_event(styrened::rpc::RpcEvent {
+                        event_type: "inbound_dropped".into(),
+                        payload: serde_json::json!({
+                            "path": "legacy_direct_packet",
+                            "reason": "malformed",
+                            "destination": destination_hex,
+                        }),
+                    });
                 }
             }
         }

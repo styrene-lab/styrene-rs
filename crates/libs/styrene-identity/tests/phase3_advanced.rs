@@ -273,7 +273,7 @@ fn export_test_vectors_to_file() {
     let d = KeyDeriver::new(&root);
 
     let mut vectors = serde_json::Map::new();
-    vectors.insert("root_secret_hex".into(), hex::encode(&root).into());
+    vectors.insert("root_secret_hex".into(), hex::encode(root).into());
     vectors.insert("hkdf_salt".into(), "styrene-identity-v1".into());
 
     // Flat purposes
@@ -282,7 +282,7 @@ fn export_test_vectors_to_file() {
         let seed = d.derive(*purpose);
         let mut entry = serde_json::Map::new();
         entry.insert("info".into(), String::from_utf8_lossy(purpose.info()).to_string().into());
-        entry.insert("seed_hex".into(), hex::encode(&seed).into());
+        entry.insert("seed_hex".into(), hex::encode(seed).into());
 
         match purpose {
             KeyPurpose::Signing
@@ -321,20 +321,20 @@ fn export_test_vectors_to_file() {
     let labels = ["github", "work", "forge", "wiki", "omegon-primary", "auspex-deploy"];
     for label in &labels {
         let ssh = d.derive_ssh_user_key(label).unwrap();
-        param.insert(format!("ssh_user/{label}"), hex::encode(&ssh).into());
+        param.insert(format!("ssh_user/{label}"), hex::encode(ssh).into());
 
         let agent = d.derive_agent_key(label).unwrap();
-        param.insert(format!("agent/{label}"), hex::encode(&agent).into());
+        param.insert(format!("agent/{label}"), hex::encode(agent).into());
     }
 
     let services = ["forge", "wiki", "chat"];
     for svc in &services {
         let (s, e) = d.derive_i2p_service(svc).unwrap();
-        param.insert(format!("i2p/{svc}/signing"), hex::encode(&s).into());
-        param.insert(format!("i2p/{svc}/encryption"), hex::encode(&e).into());
+        param.insert(format!("i2p/{svc}/signing"), hex::encode(s).into());
+        param.insert(format!("i2p/{svc}/encryption"), hex::encode(e).into());
 
         let onion = d.derive_onion_service(svc).unwrap();
-        param.insert(format!("onion/{svc}"), hex::encode(&onion).into());
+        param.insert(format!("onion/{svc}"), hex::encode(onion).into());
     }
     vectors.insert("parameterized".into(), param.into());
 

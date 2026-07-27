@@ -26,6 +26,7 @@ use super::widgets;
 pub enum Segment {
     /// Outbound LXMF message we sent.
     SentMessage {
+        message_id: Option<String>,
         dest_hash: String,
         dest_name: Option<String>,
         text: String,
@@ -138,7 +139,7 @@ impl Segment {
     /// Render this segment into the given area.
     pub fn render(&self, area: Rect, buf: &mut Buffer, t: &dyn Theme) {
         match self {
-            Segment::SentMessage { dest_hash, dest_name, text, delivery_status } => {
+            Segment::SentMessage { dest_hash, dest_name, text, delivery_status, .. } => {
                 render_sent(area, buf, t, dest_hash, dest_name.as_deref(), text, delivery_status)
             }
             Segment::ReceivedMessage { source_hash, source_name, title, text, timestamp } => {
@@ -213,6 +214,7 @@ fn render_sent(
         .render(inner, buf);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_received(
     area: Rect,
     buf: &mut Buffer,
@@ -225,7 +227,6 @@ fn render_received(
 ) {
     let label = source_name.unwrap_or(source_hash);
     let short = &source_hash[..source_hash.len().min(8)];
-    let ts = ts;
     let title_line = Line::from(vec![
         Span::styled(" ← ", Style::default().fg(t.success())),
         Span::styled(label, Style::default().fg(t.fg()).add_modifier(Modifier::BOLD)),

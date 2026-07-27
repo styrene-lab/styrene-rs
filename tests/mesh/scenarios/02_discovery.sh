@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # T05-T08: Verify each node discovers its peers via the hub.
 
-source /harness/harness.sh
+source "${HARNESS_ROOT:-/harness}/harness.sh"
 
 echo "  Suite: Discovery"
 

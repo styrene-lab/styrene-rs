@@ -3,6 +3,7 @@ pub mod app_context;
 pub mod config;
 pub mod daemon;
 pub mod daemon_facade;
+pub mod diagnostics;
 pub mod e2e_harness;
 pub mod identity_store;
 pub mod inbound_delivery;

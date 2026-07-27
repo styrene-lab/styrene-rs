@@ -45,6 +45,7 @@ use std::sync::{Arc, Mutex};
 use crate::app_context::AppContext;
 use crate::config::PlatformPaths;
 use crate::daemon_facade::DaemonFacade;
+use crate::services::messaging::InboundAcceptOutcome;
 use crate::storage::messages::MessagesStore;
 use crate::transport::mesh_transport::MeshTransport;
 
@@ -222,19 +223,49 @@ impl MobileNode {
 
         let mut poll_messages = Vec::new();
 
-        // Decode and persist each message
+        // Decode and persist each message. Duplicate imports are ACKed at the
+        // hub but do not produce another notification.
         for (_id, lxmf_bytes) in &messages {
-            // Try to decode for notification preview
-            if let Some(record) = self.app_context.messaging().accept_inbound(
+            match self.app_context.messaging().accept_inbound(
                 [0u8; 16], // destination filled by decoder from wire
                 lxmf_bytes,
                 lxmf::inbound_decode::InboundPayloadMode::FullWire,
             ) {
-                poll_messages.push(PollMessage {
-                    source_hash: record.source.clone(),
-                    content_preview: record.content[..record.content.len().min(100)].to_string(),
-                    timestamp: record.timestamp,
-                });
+                InboundAcceptOutcome::Accepted(record) => {
+                    poll_messages.push(PollMessage {
+                        source_hash: record.source.clone(),
+                        content_preview: record.content[..record.content.len().min(100)]
+                            .to_string(),
+                        timestamp: record.timestamp,
+                    });
+                }
+                InboundAcceptOutcome::Duplicate { message_id } => {
+                    self.app_context.events().emit_inbound_drop(
+                        "mobile_poll",
+                        "duplicate",
+                        Some(&message_id),
+                        None,
+                        None,
+                    );
+                }
+                InboundAcceptOutcome::Rejected { diagnostics } => {
+                    self.app_context.events().emit_inbound_drop(
+                        "mobile_poll",
+                        "malformed",
+                        None,
+                        None,
+                        Some(&diagnostics.summary()),
+                    );
+                }
+                InboundAcceptOutcome::StorageError { message_id, error } => {
+                    self.app_context.events().emit_inbound_drop(
+                        "mobile_poll",
+                        "storage_error",
+                        Some(&message_id),
+                        None,
+                        Some(&error.to_string()),
+                    );
+                }
             }
         }
 
@@ -403,8 +434,8 @@ fn load_or_create_identity(
 /// On iOS: Face ID / Touch ID protects access. Zero-interaction on create.
 /// On macOS: Keychain Access with biometric. Same behavior.
 /// Fallback: if keychain feature not compiled, falls back to plaintext file.
-fn load_or_create_keychain(paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
-    #[cfg(feature = "mobile-keychain")]
+fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
+    #[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
     {
         use styrene_identity::keychain_signer::KeychainSigner;
         use styrene_identity::{IdentitySigner, KeyDeriver, KeyPurpose};
@@ -415,7 +446,7 @@ fn load_or_create_keychain(paths: &PlatformPaths) -> anyhow::Result<PrivateIdent
         // No passphrase prompt, no user interaction. Biometric required on read.
         if !signer.exists() {
             signer.create().map_err(|e| anyhow::anyhow!("keychain create: {e}"))?;
-            eprintln!("[mobile] created new identity in platform keychain");
+            crate::daemon_diagnostic!("[mobile] created new identity in platform keychain");
         }
 
         // Retrieve root secret (triggers biometric on iOS)
@@ -437,10 +468,12 @@ fn load_or_create_keychain(paths: &PlatformPaths) -> anyhow::Result<PrivateIdent
             .map_err(|e| anyhow::anyhow!("key derivation: {e:?}"))
     }
 
-    #[cfg(not(feature = "mobile-keychain"))]
+    #[cfg(not(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios"))))]
     {
-        eprintln!("[mobile] keychain feature not enabled, falling back to plaintext file");
-        load_or_create_plaintext_file(paths)
+        crate::daemon_diagnostic!(
+            "[mobile] keychain feature not enabled, falling back to plaintext file"
+        );
+        load_or_create_plaintext_file(_paths)
     }
 }
 
@@ -466,7 +499,10 @@ fn load_or_create_encrypted_file(paths: &PlatformPaths) -> anyhow::Result<Privat
             .map_err(|e| anyhow::anyhow!("encrypted file access: {e}"))?;
 
         if !identity_path.exists() {
-            eprintln!("[mobile] created new encrypted identity at {}", identity_path.display());
+            crate::daemon_diagnostic!(
+                "[mobile] created new encrypted identity at {}",
+                identity_path.display()
+            );
         }
 
         let deriver = KeyDeriver::new(root.as_bytes());
@@ -483,7 +519,9 @@ fn load_or_create_encrypted_file(paths: &PlatformPaths) -> anyhow::Result<Privat
 
     #[cfg(not(feature = "mobile-identity"))]
     {
-        eprintln!("[mobile] file-signer feature not enabled, falling back to plaintext");
+        crate::daemon_diagnostic!(
+            "[mobile] file-signer feature not enabled, falling back to plaintext"
+        );
         load_or_create_plaintext_file(paths)
     }
 }
@@ -508,7 +546,10 @@ fn load_or_create_plaintext_file(paths: &PlatformPaths) -> anyhow::Result<Privat
                 .as_nanos()
         ));
         std::fs::write(&identity_path, id.to_private_key_bytes())?;
-        eprintln!("[mobile] created new plaintext identity at {}", identity_path.display());
+        crate::daemon_diagnostic!(
+            "[mobile] created new plaintext identity at {}",
+            identity_path.display()
+        );
         Ok(id)
     }
 }

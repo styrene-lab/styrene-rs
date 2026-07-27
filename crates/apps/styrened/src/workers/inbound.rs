@@ -5,6 +5,7 @@
 //! In hub mode with propagation enabled, messages for non-local destinations
 //! are stored for later retrieval rather than decoded locally.
 
+use crate::services::messaging::InboundAcceptOutcome;
 use crate::services::{
     AutoReplyService, EventService, MessagingService, PropagationService, ProtocolService,
 };
@@ -73,7 +74,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     Ok(event) => {
                         if let ResourceEventKind::Complete(complete) = event.kind {
                             let data = &complete.data;
-                            eprintln!(
+                            crate::daemon_diagnostic!(
                                 "[worker] resource complete: len={} link={}",
                                 data.len(),
                                 event.link_id
@@ -82,7 +83,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                             // Resource data is the full LXMF wire payload.
                             // Determine destination from the first 16 bytes.
                             if data.len() < 32 {
-                                eprintln!("[worker] resource too short to decode");
+                                crate::daemon_diagnostic!("[worker] resource too short to decode");
                                 continue;
                             }
                             let mut destination = [0u8; 16];
@@ -98,22 +99,49 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                 continue; // not for us
                             }
 
-                            if let Some(record) =
-                                messaging.accept_inbound(destination, data, payload_mode)
-                            {
-                                eprintln!(
-                                    "[worker] resource message: id={} src={} content_len={}",
-                                    record.id,
-                                    record.source,
-                                    record.content.len()
-                                );
-                                protocol.dispatch_inbound(&record).await;
-                                events.emit_message_new(&record);
+                            match messaging.accept_inbound(destination, data, payload_mode) {
+                                InboundAcceptOutcome::Accepted(record) => {
+                                    crate::daemon_diagnostic!(
+                                        "[worker] resource message: id={} src={} content_len={}",
+                                        record.id,
+                                        record.source,
+                                        record.content.len()
+                                    );
+                                    protocol.dispatch_inbound(&record).await;
+                                    events.emit_message_new(&record);
+                                }
+                                InboundAcceptOutcome::Duplicate { message_id } => {
+                                    events.emit_inbound_drop(
+                                        "direct_resource",
+                                        "duplicate",
+                                        Some(&message_id),
+                                        Some(&dest_hex),
+                                        None,
+                                    );
+                                }
+                                InboundAcceptOutcome::Rejected { diagnostics } => {
+                                    events.emit_inbound_drop(
+                                        "direct_resource",
+                                        "malformed",
+                                        None,
+                                        Some(&dest_hex),
+                                        Some(&diagnostics.summary()),
+                                    );
+                                }
+                                InboundAcceptOutcome::StorageError { message_id, error } => {
+                                    events.emit_inbound_drop(
+                                        "direct_resource",
+                                        "storage_error",
+                                        Some(&message_id),
+                                        Some(&dest_hex),
+                                        Some(&error.to_string()),
+                                    );
+                                }
                             }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        eprintln!("[worker] resource worker lagged, skipped {n}");
+                        crate::daemon_diagnostic!("[worker] resource worker lagged, skipped {n}");
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
@@ -131,8 +159,15 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     let dest_hex = hex::encode(destination);
                     let payload_mode = to_lxmf_mode(event.payload_mode);
 
-                    eprintln!(
+                    crate::daemon_diagnostic!(
                         "[worker] inbound: dst={} len={} mode={:?}",
+                        dest_hex,
+                        data.len(),
+                        payload_mode
+                    );
+
+                    crate::daemon_diagnostic!(
+                        "[messaging-flow] stage=inbound_event destination={} bytes={} mode={:?}",
                         dest_hex,
                         data.len(),
                         payload_mode
@@ -143,7 +178,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                         local_delivery_hash.as_ref().is_some_and(|local| *local == dest_hex);
 
                     if !is_local {
-                        eprintln!(
+                        crate::daemon_diagnostic!(
                             "[worker] non-local message: dest={} local={:?}",
                             dest_hex,
                             local_delivery_hash.as_deref().unwrap_or("none")
@@ -153,19 +188,36 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     if !is_local && propagation.is_enabled() {
                         match propagation.store_for_propagation(&dest_hex, data, None) {
                             Ok(true) => {
-                                eprintln!(
+                                crate::daemon_diagnostic!(
                                     "[worker] propagation: stored message for dst={} ({} bytes)",
                                     dest_hex,
                                     data.len()
                                 );
                             }
                             Ok(false) => {
-                                eprintln!("[worker] propagation: duplicate for dst={}", dest_hex);
+                                crate::daemon_diagnostic!(
+                                    "[worker] propagation: duplicate for dst={}",
+                                    dest_hex
+                                );
+                                events.emit_inbound_drop(
+                                    "propagation_store",
+                                    "duplicate",
+                                    None,
+                                    Some(&dest_hex),
+                                    None,
+                                );
                             }
                             Err(e) => {
-                                eprintln!(
+                                crate::daemon_diagnostic!(
                                     "[worker] propagation: store error for dst={}: {e}",
                                     dest_hex
+                                );
+                                events.emit_inbound_drop(
+                                    "propagation_store",
+                                    "storage_error",
+                                    None,
+                                    Some(&dest_hex),
+                                    Some(&e.to_string()),
                                 );
                             }
                         }
@@ -217,14 +269,14 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                     match verified {
                                         Some(true) => {} // signature valid
                                         Some(false) => {
-                                            eprintln!(
+                                            crate::daemon_diagnostic!(
                                                 "[worker] REJECTED inbound message: invalid signature from {}",
                                                 hex::encode(source_bytes)
                                             );
                                             continue;
                                         }
                                         None => {
-                                            eprintln!(
+                                            crate::daemon_diagnostic!(
                                                 "[worker] WARNING: could not parse wire for signature verification from {}",
                                                 hex::encode(source_bytes)
                                             );
@@ -238,87 +290,131 @@ pub fn spawn_inbound_worker_with_auto_reply(
                         }
                     }
 
-                    // Local delivery: decode and persist
-                    if let Some(record) = messaging.accept_inbound(destination, data, payload_mode)
-                    {
-                        eprintln!(
-                            "[worker] inbound message: id={} src={} content_len={}",
-                            record.id,
-                            record.source,
-                            record.content.len()
-                        );
+                    // Local delivery: decode and persist exactly once.
+                    match messaging.accept_inbound(destination, data, payload_mode) {
+                        InboundAcceptOutcome::Accepted(record) => {
+                            crate::daemon_diagnostic!(
+                                "[messaging-flow] stage=durable_insert id={} source={} destination={} bytes={}",
+                                record.id,
+                                record.source,
+                                record.destination,
+                                data.len()
+                            );
+                            crate::daemon_diagnostic!(
+                                "[worker] inbound message: id={} src={} content_len={}",
+                                record.id,
+                                record.source,
+                                record.content.len()
+                            );
 
-                        // Route through protocol dispatch (async)
-                        protocol.dispatch_inbound(&record).await;
+                            // Route through protocol dispatch (async)
+                            protocol.dispatch_inbound(&record).await;
 
-                        // Emit event for IPC subscribers
-                        events.emit_message_new(&record);
+                            // Emit event for IPC subscribers
+                            events.emit_message_new(&record);
 
-                        // Auto-reply: if enabled and cooldown permits, send reply.
-                        // Skip auto-reply for:
-                        // - Protocol messages (e.g., Fleet RPC with fields.protocol set)
-                        // - Messages that are themselves auto-replies (title contains "[auto-reply]")
-                        let is_protocol_message =
-                            record.fields.as_ref().and_then(|f| f.get("protocol")).is_some();
-                        let is_auto_reply_message = record.title.contains("[auto-reply]");
-                        let should_auto_reply = !is_protocol_message && !is_auto_reply_message;
+                            // Auto-reply: if enabled and cooldown permits, send reply.
+                            // Skip auto-reply for:
+                            // - Protocol messages (e.g., Fleet RPC with fields.protocol set)
+                            // - Messages that are themselves auto-replies (title contains "[auto-reply]")
+                            let is_protocol_message =
+                                record.fields.as_ref().and_then(|f| f.get("protocol")).is_some();
+                            let is_auto_reply_message = record.title.contains("[auto-reply]");
+                            let should_auto_reply = !is_protocol_message && !is_auto_reply_message;
 
-                        if should_auto_reply {
-                            if let Some(ref ar) = auto_reply {
-                                if let Some(reply_text) = ar.should_reply(&record.source) {
-                                    // Determine the sender's delivery hash for reply routing.
-                                    // The record.source is the sender's identity hash; we need
-                                    // their delivery destination hash for send_chat.
-                                    // The inbound worker knows the delivery hash is what the
-                                    // transport resolved — look it up from the source identity.
-                                    let source_delivery_hash = {
-                                        let name = rns_core::destination::DestinationName::new(
-                                            "lxmf", "delivery",
-                                        );
-                                        let source_bytes: Result<[u8; 16], _> =
-                                            hex::decode(&record.source).and_then(|b| {
-                                                b.try_into().map_err(|_| {
-                                                    hex::FromHexError::InvalidStringLength
-                                                })
-                                            });
-                                        source_bytes.ok().map(|id_bytes| {
-                                            let truncated = rns_core::hash::address_hash(
-                                                &[name.as_name_hash_slice(), &id_bytes].concat(),
+                            if should_auto_reply {
+                                if let Some(ref ar) = auto_reply {
+                                    if let Some(reply_text) = ar.should_reply(&record.source) {
+                                        // Determine the sender's delivery hash for reply routing.
+                                        // The record.source is the sender's identity hash; we need
+                                        // their delivery destination hash for send_chat.
+                                        // The inbound worker knows the delivery hash is what the
+                                        // transport resolved — look it up from the source identity.
+                                        let source_delivery_hash = {
+                                            let name = rns_core::destination::DestinationName::new(
+                                                "lxmf", "delivery",
                                             );
-                                            hex::encode(truncated)
-                                        })
-                                    };
-
-                                    if let Some(dest_hash) = source_delivery_hash {
-                                        let m = messaging.clone();
-                                        tokio::spawn(async move {
-                                            if let Err(e) = m
-                                                .send_chat(
-                                                    &dest_hash,
-                                                    &reply_text,
-                                                    Some("[auto-reply]"),
-                                                )
-                                                .await
-                                            {
-                                                eprintln!("[worker] auto-reply failed: {e}");
-                                            } else {
-                                                eprintln!(
-                                                    "[worker] auto-reply sent to {}",
-                                                    dest_hash
+                                            let source_bytes: Result<[u8; 16], _> =
+                                                hex::decode(&record.source).and_then(|b| {
+                                                    b.try_into().map_err(|_| {
+                                                        hex::FromHexError::InvalidStringLength
+                                                    })
+                                                });
+                                            source_bytes.ok().map(|id_bytes| {
+                                                let truncated = rns_core::hash::address_hash(
+                                                    &[name.as_name_hash_slice(), &id_bytes]
+                                                        .concat(),
                                                 );
-                                            }
-                                        });
+                                                hex::encode(truncated)
+                                            })
+                                        };
+
+                                        if let Some(dest_hash) = source_delivery_hash {
+                                            let m = messaging.clone();
+                                            tokio::spawn(async move {
+                                                if let Err(e) = m
+                                                    .send_chat(
+                                                        &dest_hash,
+                                                        &reply_text,
+                                                        Some("[auto-reply]"),
+                                                    )
+                                                    .await
+                                                {
+                                                    crate::daemon_diagnostic!(
+                                                        "[worker] auto-reply failed: {e}"
+                                                    );
+                                                } else {
+                                                    crate::daemon_diagnostic!(
+                                                        "[worker] auto-reply sent to {}",
+                                                        dest_hash
+                                                    );
+                                                }
+                                            });
+                                        }
                                     }
                                 }
-                            }
-                        } // close should_auto_reply
+                            } // close should_auto_reply
+                        }
+                        InboundAcceptOutcome::Duplicate { message_id } => {
+                            events.emit_inbound_drop(
+                                "direct_packet",
+                                "duplicate",
+                                Some(&message_id),
+                                Some(&dest_hex),
+                                None,
+                            );
+                        }
+                        InboundAcceptOutcome::Rejected { diagnostics } => {
+                            events.emit_inbound_drop(
+                                "direct_packet",
+                                "malformed",
+                                None,
+                                Some(&dest_hex),
+                                Some(&diagnostics.summary()),
+                            );
+                        }
+                        InboundAcceptOutcome::StorageError { message_id, error } => {
+                            crate::daemon_diagnostic!(
+                                "[messaging-flow] stage=durable_insert_failed id={} destination={} error={}",
+                                message_id,
+                                dest_hex,
+                                error
+                            );
+                            events.emit_inbound_drop(
+                                "direct_packet",
+                                "storage_error",
+                                Some(&message_id),
+                                Some(&dest_hex),
+                                Some(&error.to_string()),
+                            );
+                        }
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    eprintln!("[worker] inbound worker lagged, skipped {n} events");
+                    crate::daemon_diagnostic!("[worker] inbound worker lagged, skipped {n} events");
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    eprintln!("[worker] inbound channel closed, worker stopping");
+                    crate::daemon_diagnostic!("[worker] inbound channel closed, worker stopping");
                     break;
                 }
             }

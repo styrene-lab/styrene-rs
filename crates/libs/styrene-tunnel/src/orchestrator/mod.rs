@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::TunnelError;
-use crate::traits::{TunnelBackend, TunnelId, TunnelInfo, TunnelParams, TunnelState};
+use crate::traits::{TunnelBackend, TunnelId, TunnelParams};
 use styrene_mesh::pqc::capability_flags;
 
 /// Local tunnel policy — which backends are enabled and preferred.
@@ -54,7 +54,6 @@ pub struct Orchestrator {
 struct ActiveTunnel {
     tunnel_id: TunnelId,
     backend_name: String,
-    peer_identity: String,
 }
 
 impl Orchestrator {
@@ -134,11 +133,7 @@ impl Orchestrator {
 
         self.active_tunnels.insert(
             peer_identity.clone(),
-            ActiveTunnel {
-                tunnel_id: tunnel_id.clone(),
-                backend_name: backend_name.to_string(),
-                peer_identity,
-            },
+            ActiveTunnel { tunnel_id: tunnel_id.clone(), backend_name: backend_name.to_string() },
         );
 
         Ok(tunnel_id)
@@ -147,7 +142,7 @@ impl Orchestrator {
     /// Tear down a tunnel to a specific peer.
     pub async fn teardown_tunnel(&mut self, peer_identity: &str) -> Result<(), TunnelError> {
         let tunnel =
-            self.active_tunnels.remove(peer_identity).ok_or_else(|| TunnelError::NotEstablished)?;
+            self.active_tunnels.remove(peer_identity).ok_or(TunnelError::NotEstablished)?;
 
         let selected_type = match tunnel.backend_name.as_str() {
             "strongswan" => capability_flags::TUNNEL_STRONGSWAN,

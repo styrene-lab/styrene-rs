@@ -1,0 +1,88 @@
+schema_version = 1
+hardware_profile = "anbernic-rg35xxsp"
+status = "source-built"
+last_reviewed = "2026-07-19"
+
+# "source-built" means the selected TF-A, U-Boot, Linux kernel/modules, and
+# exact RG35XXSP DTB built successfully on the hardware-validated RPi4 builder.
+# It does not mean an SD image or physical handheld boot has been validated.
+build_evidence = "docs/rg35xxsp-build-evidence.md"
+
+[source_baseline]
+research_repository = "https://github.com/hsyysy/rg35xxsp"
+research_revision = "b9f74b65ef402b9b5440df2e7ebb2faed006b0c8"
+community_reference_repository = "https://github.com/ROCKNIX/distribution"
+community_reference_revision = "909380f79cfca21ca7bd9b9d6e53ce9d1195fb3f"
+notes = [
+  "hsyysy reports a physical mainline boot through SPL, TF-A, U-Boot 2026.04, and Linux 7.0.9; this is third-party evidence, not Styrene hardware validation.",
+  "The operator OEM evidence identifies an Android/sun50i boot chain, serial ttyS0 at 115200, and mmc root partition 5.",
+]
+
+[[components]]
+name = "u-boot"
+role = "SPL and second-stage bootloader"
+status = "built"
+preferred_provenance = "upstream-source"
+repository = "https://github.com/u-boot/u-boot"
+tag = "v2026.04"
+revision = "88dc2788777babfd6322fa655df549a019aa1e69"
+license = "GPL-2.0-or-later"
+defconfig = "anbernic_rg35xx_h700_defconfig"
+device_tree_override = "allwinner/sun50i-h700-anbernic-rg35xx-sp"
+required_evidence = ["source build on RPi4 builder", "SPL at 8 KiB offset", "serial SPL and U-Boot output", "three cold boots"]
+
+[[components]]
+name = "trusted-firmware-a"
+role = "EL3 firmware where required by selected U-Boot build"
+status = "built"
+preferred_provenance = "upstream-source"
+repository = "https://github.com/ARM-software/arm-trusted-firmware"
+tag = "lts-v2.14.2"
+revision = "aa1793fff49a1b5a6a877c278a0df0a188e2b1f2"
+license = "BSD-3-Clause"
+platform = "sun50i_h616"
+required_evidence = ["source build on RPi4 builder", "BL31 integrated into U-Boot image", "serial BL31 version", "PSCI startup"]
+
+[[components]]
+name = "linux"
+role = "kernel and modules"
+status = "built"
+preferred_provenance = "upstream-stable-source"
+repository = "https://github.com/gregkh/linux"
+tag = "v7.0.9"
+revision = "9021cc14f7d98b4a1d2c932f52c5343d4d0f6b92"
+license = "GPL-2.0-only"
+config = "arm64_defconfig_with_rg35xxsp_modules"
+required_evidence = ["source build on RPi4 builder", "H700 DTB built", "NixOS stage 2", "display/input/PMIC tests", "three cold boots"]
+
+[[components]]
+name = "device-tree"
+role = "RG35XXSP hardware description"
+status = "built"
+preferred_provenance = "upstream-stable-source"
+repository = "https://github.com/gregkh/linux"
+tag = "v7.0.9"
+revision = "9021cc14f7d98b4a1d2c932f52c5343d4d0f6b92"
+license = "GPL-2.0-only OR BSD-2-Clause"
+source_path = "arch/arm64/boot/dts/allwinner/sun50i-h700-anbernic-rg35xx-sp.dts"
+compatible = ["anbernic,rg35xx-sp", "allwinner,sun50i-h700"]
+required_evidence = ["DTB source build", "model and compatible at runtime", "panel", "buttons", "Hall switch PE7/SW_LID", "Wi-Fi", "HDMI"]
+
+[[components]]
+name = "firmware"
+role = "Wi-Fi/Bluetooth and other redistributable device firmware"
+status = "selected"
+preferred_provenance = "redistributable-firmware"
+repository = "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+tag = "20260709"
+revision = "e0fc7e0d6871c5908000380e0b8a0e50b7988e49"
+license = "component-specific; verify selected files before image inclusion"
+required_evidence = ["runtime chipset and firmware request logs", "exact filenames", "per-file redistribution license", "Wi-Fi association", "Bluetooth test"]
+
+[[components]]
+name = "nixos-userspace"
+role = "minimal immutable system closure"
+status = "selected"
+preferred_provenance = "upstream-source"
+source = "repository flake input nixpkgs"
+required_evidence = ["locked revision", "aarch64 image evaluation", "QEMU userspace boot"]

@@ -15,20 +15,52 @@ async fn main() -> anyhow::Result<()> {
     let socket = cli.socket.as_deref();
 
     match cli.command {
-        // No subcommand: launch TUI if available, otherwise print help
+        // No subcommand is the canonical product entry point.
         None => {
             #[cfg(feature = "tui")]
             {
-                // TODO: launch TUI with embedded daemon
-                eprintln!("TUI not yet wired — run `styrene daemon` or `styrene status`");
-                std::process::exit(1);
+                let runtime =
+                    styrene_tui_app::RuntimeContext::resolve(styrene_tui_app::RuntimeOverrides {
+                        ghost: cli.ghost,
+                        portable: cli.portable,
+                    })
+                    .map_err(anyhow::Error::msg)?;
+                styrene_tui_app::run(styrene_tui_app::TuiOptions {
+                    paths: runtime.paths,
+                    runtime_profile: runtime.profile,
+                })
+                .await
             }
             #[cfg(not(feature = "tui"))]
             {
-                // Re-parse with --help to show usage
+                // Minimal builds deliberately omit the interactive application.
                 let _ = Cli::parse_from(["styrene", "--help"]);
                 Ok(())
             }
+        }
+
+        #[cfg(feature = "tui")]
+        Some(Command::Doctor { root }) => {
+            let paths = styrene_tui_app::StyrenePaths::new(
+                root.join("config"),
+                root.join("data"),
+                root.join("run/styrene.sock"),
+                root.join("home"),
+            );
+            styrene_tui_app::run_clean_room_check(&paths)?;
+            println!("styrene doctor: ok ({})", root.display());
+            Ok(())
+        }
+
+        #[cfg(feature = "tui")]
+        Some(Command::GhostCheck { root, timeout }) => {
+            styrene_tui_app::run_ghost_lifecycle_check(
+                &root,
+                std::time::Duration::from_secs(timeout),
+            )
+            .await?;
+            println!("styrene ghost check: ok ({})", root.display());
+            Ok(())
         }
 
         #[cfg(feature = "daemon")]
@@ -63,6 +95,9 @@ async fn main() -> anyhow::Result<()> {
 
         #[cfg(feature = "cli")]
         Some(Command::Identity) => commands::identity(socket).await,
+
+        #[cfg(feature = "cli")]
+        Some(Command::Path { ref destination }) => commands::path_info(socket, destination).await,
 
         #[cfg(feature = "cli")]
         Some(Command::Announce) => commands::announce(socket).await,
