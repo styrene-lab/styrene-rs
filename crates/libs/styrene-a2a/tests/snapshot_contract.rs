@@ -97,9 +97,33 @@ fn snapshot_validates_graph_references_and_unique_watermarks() {
     });
     assert_eq!(cyclic.validate(), Err(SnapshotValidationError::GraphCycle));
 
-    let mut unknown_runtime = valid;
+    let mut unknown_runtime = valid.clone();
     unknown_runtime.tasks[1].runtime_id = RuntimeId::from_bytes([0x44; 16]);
     assert_eq!(unknown_runtime.validate(), Err(SnapshotValidationError::UnknownRuntime));
+
+    let mut multiple_parents = valid.clone();
+    multiple_parents.tasks.push(AgentTaskSnapshot {
+        task_id: "task-other-parent".to_owned(),
+        agent_id: "styrene:agent:other".to_owned(),
+        runtime_id: RuntimeId::from_bytes([0x11; 16]),
+        state: "working".to_owned(),
+        cancellation: CancellationState::default(),
+        effective_grant_reference: None,
+    });
+    multiple_parents.edges.push(AgentGraphEdge {
+        parent_task_id: "task-other-parent".to_owned(),
+        child_task_id: "task-child".to_owned(),
+        relationship: GraphEdgeRelationship::Delegate,
+    });
+    assert_eq!(multiple_parents.validate(), Err(SnapshotValidationError::MultipleParents));
+
+    let mut duplicate_edge = valid.clone();
+    duplicate_edge.edges.push(duplicate_edge.edges[0].clone());
+    assert_eq!(duplicate_edge.validate(), Err(SnapshotValidationError::DuplicateGraphEdge));
+
+    let mut unknown_watermark_runtime = valid;
+    unknown_watermark_runtime.watermarks[0].source_runtime_id = RuntimeId::from_bytes([0x44; 16]);
+    assert_eq!(unknown_watermark_runtime.validate(), Err(SnapshotValidationError::UnknownRuntime));
 }
 
 #[test]
