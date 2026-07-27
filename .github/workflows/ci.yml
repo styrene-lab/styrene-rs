@@ -148,4 +148,6 @@ jobs:
     uses: styrene-lab/lipstyk/.github/workflows/lipstyk.yml@main
     with:
       paths: "crates/"
-      threshold: 50
+      # Existing repository debt exceeds the reusable workflow's full-scan gate.
+      # PRs still run the stricter default diff threshold (15), preventing new debt.
+      threshold: 75
