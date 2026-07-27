@@ -18,7 +18,7 @@ Exit: baseline tests prove no pre-A2A wire changes.
 - [x] Define payload content type and canonical JSON/CBOR conversion rules for profile v1.
 - [ ] Define canonical signing input and COSE/external signature representation using `styrene-identity` *(deterministic protected input, SHA-256 payload digest, signature metadata, and golden vector implemented; identity-backed signing remains).*
 - [x] Add typed acceptance receipt, protocol error, snapshot request, and graph snapshot DTOs.
-- [ ] Add explicit size, expiry, sequence, cycle, and schema validation errors *(envelope and snapshot validation now cover size, expiry, sequence, JSON, stream scope, watermark ranges, graph references/cycles, runtimes, and cancellation ordering).*
+- [ ] Add explicit size, expiry, sequence, cycle, and schema validation errors *(envelope and snapshot validation now cover size, expiry, sequence, JSON, stream scope, bounded collections, typed task states, watermark ranges, graph references/parents/cycles, runtimes, and cancellation ordering).*
 - [ ] Represent authority grants directly or through a cryptographically bound digest/reference.
 - [ ] Add Agent Card extension construction and required/optional negotiation helpers.
 - [ ] Add official-SDK round-trip fixtures for message, task, status event, artifact event, and Agent Card.

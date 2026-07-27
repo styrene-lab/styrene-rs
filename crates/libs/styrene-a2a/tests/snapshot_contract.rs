@@ -1,6 +1,7 @@
 use styrene_a2a::{
     AgentGraphEdge, AgentSnapshot, AgentSnapshotRequest, AgentTaskSnapshot, CancellationState,
     GraphEdgeRelationship, RootOperationId, RuntimeId, SequenceWatermark, SnapshotValidationError,
+    TaskState, MAX_AGENT_SNAPSHOT_TASKS,
 };
 
 fn root() -> RootOperationId {
@@ -17,7 +18,7 @@ fn snapshot() -> AgentSnapshot {
                 task_id: "task-root".to_owned(),
                 agent_id: "styrene:agent:root".to_owned(),
                 runtime_id: RuntimeId::from_bytes([0x11; 16]),
-                state: "working".to_owned(),
+                state: TaskState::Working,
                 cancellation: CancellationState::default(),
                 effective_grant_reference: Some("grant-root".to_owned()),
             },
@@ -25,7 +26,7 @@ fn snapshot() -> AgentSnapshot {
                 task_id: "task-child".to_owned(),
                 agent_id: "styrene:agent:child".to_owned(),
                 runtime_id: RuntimeId::from_bytes([0x22; 16]),
-                state: "submitted".to_owned(),
+                state: TaskState::Submitted,
                 cancellation: CancellationState::default(),
                 effective_grant_reference: Some("grant-child".to_owned()),
             },
@@ -106,7 +107,7 @@ fn snapshot_validates_graph_references_and_unique_watermarks() {
         task_id: "task-other-parent".to_owned(),
         agent_id: "styrene:agent:other".to_owned(),
         runtime_id: RuntimeId::from_bytes([0x11; 16]),
-        state: "working".to_owned(),
+        state: TaskState::Working,
         cancellation: CancellationState::default(),
         effective_grant_reference: None,
     });
@@ -124,6 +125,19 @@ fn snapshot_validates_graph_references_and_unique_watermarks() {
     let mut unknown_watermark_runtime = valid;
     unknown_watermark_runtime.watermarks[0].source_runtime_id = RuntimeId::from_bytes([0x44; 16]);
     assert_eq!(unknown_watermark_runtime.validate(), Err(SnapshotValidationError::UnknownRuntime));
+}
+
+#[test]
+fn snapshot_rejects_unspecified_task_state_and_oversized_collections() {
+    let mut unspecified = snapshot();
+    unspecified.tasks[0].state = TaskState::Unspecified;
+    assert_eq!(unspecified.validate(), Err(SnapshotValidationError::InvalidTask));
+
+    let mut oversized = snapshot();
+    oversized.tasks = std::iter::repeat_with(|| oversized.tasks[0].clone())
+        .take(MAX_AGENT_SNAPSHOT_TASKS + 1)
+        .collect();
+    assert_eq!(oversized.validate(), Err(SnapshotValidationError::CollectionLimitExceeded));
 }
 
 #[test]
