@@ -114,7 +114,9 @@ impl ProtocolRegistry {
         let handlers = self.handlers.lock().await;
         let index = self.type_index.lock().await;
 
-        // Try protocol-specific handlers
+        // Try protocol-specific handlers. Once a protocol type is claimed by a
+        // registered handler, dispatch is terminal: malformed data must never
+        // fall through to an unrelated default handler (for example, chat).
         if let Some(protocol) = &message.protocol {
             if let Some(indices) = index.get(protocol) {
                 for &idx in indices {
@@ -126,10 +128,13 @@ impl ProtocolRegistry {
                         }
                     }
                 }
+                return HandleResult::Error(format!(
+                    "registered protocol '{protocol}' was not accepted by its handlers"
+                ));
             }
         }
 
-        // Fall through to default handler
+        // Only absent or wholly unregistered protocols reach the default handler.
         drop(handlers);
         drop(index);
 
@@ -190,6 +195,21 @@ mod tests {
         }
         async fn handle(&self, _msg: &InboundMessage) -> HandleResult {
             HandleResult::Handled
+        }
+    }
+
+    struct RejectingA2aHandler;
+
+    #[async_trait]
+    impl ProtocolHandler for RejectingA2aHandler {
+        fn name(&self) -> &str {
+            "rejecting-a2a"
+        }
+        fn protocol_types(&self) -> Vec<String> {
+            vec!["a2a".to_string(), "styrene.a2a.v1".to_string()]
+        }
+        async fn handle(&self, _msg: &InboundMessage) -> HandleResult {
+            HandleResult::NotHandled
         }
     }
 
@@ -255,6 +275,19 @@ mod tests {
 
         let result = registry.dispatch(&test_message(Some("unknown"), "test")).await;
         assert!(matches!(result, HandleResult::Handled));
+    }
+
+    #[tokio::test]
+    async fn registered_protocol_rejection_never_uses_default() {
+        let registry = ProtocolRegistry::new();
+        registry.register(Arc::new(RejectingA2aHandler)).await;
+        registry.set_default(Arc::new(ChatHandler)).await;
+
+        let result = registry.dispatch(&test_message(Some("styrene.a2a.v1"), "invalid")).await;
+        assert!(matches!(
+            result,
+            HandleResult::Error(message) if message.contains("styrene.a2a.v1")
+        ));
     }
 
     #[tokio::test]
