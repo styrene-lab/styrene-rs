@@ -44,6 +44,10 @@ fn canonical_signing_input_changes_when_payload_or_protected_index_changes() {
     changed.target_agent_id = "styrene:agent:other".to_owned();
     assert_ne!(canonical, changed.canonical_signing_input().unwrap());
 
+    let mut changed = envelope.clone();
+    changed.authorization = Some(vec![0x01, 0x02, 0x03]);
+    assert_ne!(canonical, changed.canonical_signing_input().unwrap());
+
     let mut changed = envelope;
     changed.a2a_payload = br#"{"kind":"other"}"#.to_vec();
     assert!(changed.canonical_signing_input().is_err());

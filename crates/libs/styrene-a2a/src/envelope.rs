@@ -73,12 +73,14 @@ struct ProtectedEnvelope<'a> {
     #[n(17)]
     payload_digest: &'a [u8; 32],
     #[n(18)]
-    grant_reference: &'a Option<String>,
+    authorization_digest: &'a Option<[u8; 32]>,
     #[n(19)]
-    signature_algorithm: SignatureAlgorithm,
+    grant_reference: &'a Option<String>,
     #[n(20)]
-    signing_key_id: &'a str,
+    signature_algorithm: SignatureAlgorithm,
     #[n(21)]
+    signing_key_id: &'a str,
+    #[n(22)]
     traceparent: &'a Option<String>,
 }
 
@@ -187,6 +189,8 @@ impl AgentEnvelope {
 
     pub fn canonical_signing_input(&self) -> Result<Vec<u8>, EnvelopeError> {
         self.validate_structure()?;
+        let authorization_digest =
+            self.authorization.as_deref().map(|value| <[u8; 32]>::from(Sha256::digest(value)));
         let protected = ProtectedEnvelope {
             profile_version: self.profile_version,
             message_id: &self.message_id,
@@ -206,6 +210,7 @@ impl AgentEnvelope {
             payload_encoding: &self.payload_encoding,
             payload_schema: &self.payload_schema,
             payload_digest: &self.payload_digest,
+            authorization_digest: &authorization_digest,
             grant_reference: &self.grant_reference,
             signature_algorithm: self.signature_algorithm,
             signing_key_id: &self.signing_key_id,
