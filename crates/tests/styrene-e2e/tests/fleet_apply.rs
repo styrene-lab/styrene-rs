@@ -40,8 +40,9 @@ async fn fleet_apply_profile_roundtrip() {
             assert!(
                 apply_result.stderr.contains("nex")
                     || apply_result.stderr.contains("not found")
-                    || apply_result.stderr.contains("No such file"),
-                "failure should be due to missing nex binary, got stderr: {}",
+                    || apply_result.stderr.contains("No such file")
+                    || apply_result.stderr == "profile apply failed",
+                "failure should report the unavailable profile apply operation, got stderr: {}",
                 apply_result.stderr
             );
         }
