@@ -37,6 +37,9 @@ impl RuntimeId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
+    pub fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(Uuid::from_bytes(bytes))
+    }
     pub fn into_bytes(self) -> [u8; 16] {
         self.0.into_bytes()
     }
