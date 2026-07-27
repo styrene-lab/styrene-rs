@@ -112,14 +112,46 @@ impl AgentEnvelope {
     }
 
     pub fn validate(&self, now_ms: u64) -> Result<(), EnvelopeError> {
+        self.validate_structure()?;
+        if self.expires_at_ms.is_some_and(|expiry| expiry <= now_ms) {
+            return Err(EnvelopeError::Expired);
+        }
+        Ok(())
+    }
+
+    /// Validate bearer-independent invariants. This is also enforced before encoding.
+    pub fn validate_structure(&self) -> Result<(), EnvelopeError> {
         if self.profile_version != AGENT_ENVELOPE_PROFILE_VERSION {
             return Err(EnvelopeError::UnsupportedVersion(self.profile_version));
         }
+        AgentId::new(&self.source_agent_id).map_err(|_| EnvelopeError::InvalidSourceAgentId)?;
+        AgentId::new(&self.target_agent_id).map_err(|_| EnvelopeError::InvalidTargetAgentId)?;
+        RootOperationId::new(&self.root_operation_id)
+            .map_err(|_| EnvelopeError::InvalidRootOperationId)?;
         if self.sequence == 0 {
             return Err(EnvelopeError::InvalidSequence);
         }
         if self.stream_id.trim().is_empty() {
             return Err(EnvelopeError::MissingStreamId);
+        }
+        match self.kind {
+            AgentEnvelopeKind::Event | AgentEnvelopeKind::Result => {
+                let task_id = self
+                    .task_id
+                    .as_deref()
+                    .filter(|id| !id.trim().is_empty())
+                    .ok_or(EnvelopeError::MissingTaskId)?;
+                if self.stream_id != task_id {
+                    return Err(EnvelopeError::StreamIdMismatch);
+                }
+            }
+            AgentEnvelopeKind::Snapshot if self.stream_id != self.root_operation_id => {
+                return Err(EnvelopeError::StreamIdMismatch);
+            }
+            _ => {}
+        }
+        if self.parent_task_id.as_deref().is_some_and(|id| id.trim().is_empty()) {
+            return Err(EnvelopeError::InvalidParentTaskId);
         }
         if self.content_type != A2A_JSON_CONTENT_TYPE || self.payload_encoding != "json" {
             return Err(EnvelopeError::UnsupportedPayloadFormat);
@@ -130,13 +162,16 @@ impl AgentEnvelope {
         if self.a2a_payload.len() > MAX_A2A_PAYLOAD_SIZE {
             return Err(EnvelopeError::PayloadTooLarge(self.a2a_payload.len()));
         }
-        if self.expires_at_ms.is_some_and(|expiry| expiry <= now_ms) {
-            return Err(EnvelopeError::Expired);
+        serde_json::from_slice::<serde_json::Value>(&self.a2a_payload)
+            .map_err(|error| EnvelopeError::InvalidJsonPayload(error.to_string()))?;
+        if self.expires_at_ms.is_some_and(|expiry| expiry <= self.created_at_ms) {
+            return Err(EnvelopeError::InvalidExpiry);
         }
         Ok(())
     }
 
     pub fn encode_cbor(&self) -> Result<Vec<u8>, EnvelopeError> {
+        self.validate_structure()?;
         let bytes =
             minicbor::to_vec(self).map_err(|error| EnvelopeError::Encode(error.to_string()))?;
         if bytes.len() > MAX_AGENT_ENVELOPE_SIZE {
@@ -164,14 +199,30 @@ pub enum EnvelopeError {
     Decode(String),
     #[error("unsupported agent envelope profile version {0}")]
     UnsupportedVersion(u16),
+    #[error("source agent id is invalid")]
+    InvalidSourceAgentId,
+    #[error("target agent id is invalid")]
+    InvalidTargetAgentId,
+    #[error("root operation id is invalid")]
+    InvalidRootOperationId,
     #[error("agent envelope sequence must start at 1")]
     InvalidSequence,
     #[error("agent envelope stream id is required")]
     MissingStreamId,
+    #[error("task event/result envelope requires a task id")]
+    MissingTaskId,
+    #[error("stream id does not match the envelope kind's ordering scope")]
+    StreamIdMismatch,
+    #[error("parent task id cannot be empty")]
+    InvalidParentTaskId,
     #[error("agent envelope payload schema is required")]
     MissingPayloadSchema,
     #[error("unsupported A2A payload content type or encoding")]
     UnsupportedPayloadFormat,
+    #[error("A2A JSON payload is invalid: {0}")]
+    InvalidJsonPayload(String),
+    #[error("agent envelope expiry must be later than its creation time")]
+    InvalidExpiry,
     #[error("agent envelope has expired")]
     Expired,
     #[error("A2A payload is too large: {0} bytes")]
@@ -217,8 +268,39 @@ mod tests {
         assert_eq!(envelope.validate(1_000), Err(EnvelopeError::InvalidSequence));
 
         envelope.sequence = 1;
-        envelope.expires_at_ms = Some(1_000);
-        assert_eq!(envelope.validate(1_000), Err(EnvelopeError::Expired));
+        envelope.expires_at_ms = Some(1_001);
+        assert_eq!(envelope.validate(1_001), Err(EnvelopeError::Expired));
+    }
+
+    #[test]
+    fn encode_rejects_invalid_structure() {
+        let mut envelope = envelope();
+        envelope.source_agent_id.clear();
+        assert_eq!(envelope.encode_cbor(), Err(EnvelopeError::InvalidSourceAgentId));
+    }
+
+    #[test]
+    fn validates_stream_scope_by_envelope_kind() {
+        let mut envelope = envelope();
+        envelope.kind = AgentEnvelopeKind::Event;
+        envelope.stream_id = "different-task".to_owned();
+        assert_eq!(envelope.validate_structure(), Err(EnvelopeError::StreamIdMismatch));
+
+        envelope.kind = AgentEnvelopeKind::Snapshot;
+        envelope.task_id = None;
+        envelope.stream_id = envelope.root_operation_id.clone();
+        assert!(envelope.validate_structure().is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_json_and_expiry_interval() {
+        let mut envelope = envelope();
+        envelope.a2a_payload = b"not-json".to_vec();
+        assert!(matches!(envelope.validate_structure(), Err(EnvelopeError::InvalidJsonPayload(_))));
+
+        envelope.a2a_payload = b"{}".to_vec();
+        envelope.expires_at_ms = Some(envelope.created_at_ms);
+        assert_eq!(envelope.validate_structure(), Err(EnvelopeError::InvalidExpiry));
     }
 
     #[test]
