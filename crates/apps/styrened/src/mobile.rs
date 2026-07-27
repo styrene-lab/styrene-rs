@@ -435,7 +435,7 @@ fn load_or_create_identity(
 /// On macOS: Keychain Access with biometric. Same behavior.
 /// Fallback: if keychain feature not compiled, falls back to plaintext file.
 fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
-    #[cfg(feature = "mobile-keychain")]
+    #[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
     {
         use styrene_identity::keychain_signer::KeychainSigner;
         use styrene_identity::{IdentitySigner, KeyDeriver, KeyPurpose};
@@ -468,7 +468,7 @@ fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<PrivateIden
             .map_err(|e| anyhow::anyhow!("key derivation: {e:?}"))
     }
 
-    #[cfg(not(feature = "mobile-keychain"))]
+    #[cfg(not(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios"))))]
     {
         crate::daemon_diagnostic!(
             "[mobile] keychain feature not enabled, falling back to plaintext file"
