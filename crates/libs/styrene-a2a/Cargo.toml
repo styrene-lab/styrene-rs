@@ -6,6 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 description = "Styrene facade and delegation extension for the A2A protocol"
 
+[package.metadata.a2a]
+protocol-version = "1.0"
+sdk-crate = "a2a-lf"
+sdk-version = "0.3.0"
+update-policy = "explicit-review-with-official-sdk-round-trip-fixtures"
+
 [dependencies]
 a2a-lf = { version = "0.3.0", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }

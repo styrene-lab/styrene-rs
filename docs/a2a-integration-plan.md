@@ -4,10 +4,10 @@ This plan implements `docs/a2a-integration-architecture.md`. It is ordered to ke
 
 ## Phase 0 — lifecycle and compatibility fixtures
 
-- [ ] Create an OpenSpec change for A2A integration, binding this architecture document.
-- [ ] Capture current Rust IPC opcode/classification fixtures and Python compatibility fixtures.
-- [ ] Add a workspace validation target covering `styrene-a2a`, `styrene-ipc`, `styrene-ipc-server`, `styrene-services`, and `styrened`.
-- [ ] Document supported A2A protocol/SDK versions and update policy.
+- [ ] Create an OpenSpec change for A2A integration, binding this architecture document. *(OpenSpec tooling is not configured in this repository; retain as a gate.)*
+- [x] Capture current Rust IPC opcode/classification fixtures and Python compatibility fixtures (`styrene-ipc-server/tests/ipc_contract_python.rs`, `styrened/tests/python_compat_matrix.rs`).
+- [x] Add a workspace validation target covering `styrene-a2a`, `styrene-ipc`, `styrene-ipc-server`, `styrene-services`, and `styrened` (`scripts/validate-a2a.sh`).
+- [x] Document supported A2A protocol/SDK versions and update policy (`crates/libs/styrene-a2a/Cargo.toml` package metadata).
 
 Exit: baseline tests prove no pre-A2A wire changes.
 
