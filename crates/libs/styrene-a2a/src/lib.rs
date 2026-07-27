@@ -24,5 +24,6 @@ pub use extension::{
 pub use protocol::{AcceptanceDisposition, AcceptanceReceipt, ProtocolError, ProtocolErrorCode};
 pub use snapshot::{
     AgentGraphEdge, AgentSnapshot, AgentSnapshotRequest, AgentTaskSnapshot, CancellationState,
-    GraphEdgeRelationship, SequenceWatermark, SnapshotValidationError,
+    GraphEdgeRelationship, SequenceWatermark, SnapshotValidationError, MAX_AGENT_SNAPSHOT_EDGES,
+    MAX_AGENT_SNAPSHOT_RUNTIMES, MAX_AGENT_SNAPSHOT_TASKS, MAX_AGENT_SNAPSHOT_WATERMARKS,
 };

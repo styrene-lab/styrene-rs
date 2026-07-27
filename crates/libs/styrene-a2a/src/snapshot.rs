@@ -2,7 +2,12 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AgentId, RootOperationId, RuntimeId};
+use crate::{AgentId, RootOperationId, RuntimeId, TaskState};
+
+pub const MAX_AGENT_SNAPSHOT_RUNTIMES: usize = 4_096;
+pub const MAX_AGENT_SNAPSHOT_TASKS: usize = 65_536;
+pub const MAX_AGENT_SNAPSHOT_EDGES: usize = 65_535;
+pub const MAX_AGENT_SNAPSHOT_WATERMARKS: usize = 65_536;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,8 +78,8 @@ pub struct AgentTaskSnapshot {
     pub task_id: String,
     pub agent_id: String,
     pub runtime_id: RuntimeId,
-    /// A2A task state serialized using the official protocol spelling.
-    pub state: String,
+    /// A2A task state using the official protocol type and spelling.
+    pub state: TaskState,
     #[serde(default)]
     pub cancellation: CancellationState,
     pub effective_grant_reference: Option<String>,
@@ -82,7 +87,7 @@ pub struct AgentTaskSnapshot {
 
 impl AgentTaskSnapshot {
     fn validate(&self) -> Result<(), SnapshotValidationError> {
-        if self.task_id.trim().is_empty() || self.state.trim().is_empty() {
+        if self.task_id.trim().is_empty() || self.state == TaskState::Unspecified {
             return Err(SnapshotValidationError::InvalidTask);
         }
         AgentId::new(&self.agent_id).map_err(|_| SnapshotValidationError::InvalidTask)?;
@@ -124,6 +129,13 @@ pub struct AgentSnapshot {
 
 impl AgentSnapshot {
     pub fn validate(&self) -> Result<(), SnapshotValidationError> {
+        if self.runtimes.len() > MAX_AGENT_SNAPSHOT_RUNTIMES
+            || self.tasks.len() > MAX_AGENT_SNAPSHOT_TASKS
+            || self.edges.len() > MAX_AGENT_SNAPSHOT_EDGES
+            || self.watermarks.len() > MAX_AGENT_SNAPSHOT_WATERMARKS
+        {
+            return Err(SnapshotValidationError::CollectionLimitExceeded);
+        }
         let runtime_ids: HashSet<RuntimeId> = self.runtimes.iter().copied().collect();
         if runtime_ids.len() != self.runtimes.len() {
             return Err(SnapshotValidationError::DuplicateRuntime);
@@ -219,6 +231,8 @@ fn validate_watermarks(watermarks: &[SequenceWatermark]) -> Result<(), SnapshotV
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SnapshotValidationError {
+    #[error("snapshot collection exceeds its profile limit")]
+    CollectionLimitExceeded,
     #[error("sequence watermark is invalid")]
     InvalidWatermark,
     #[error("sequence watermark key is duplicated")]
