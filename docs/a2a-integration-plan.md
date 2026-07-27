@@ -14,8 +14,8 @@ Exit: baseline tests prove no pre-A2A wire changes.
 ## Phase 1 — stabilize `styrene-a2a`
 
 - [ ] Replace prototype string IDs with validated, documented identity formats.
-- [ ] Add target runtime, root operation, task, and parent-task index fields to `AgentEnvelope`.
-- [ ] Define payload content type and canonical JSON/CBOR conversion rules.
+- [ ] Add target runtime, root operation, task, and parent-task index fields to `AgentEnvelope` *(draft fields implemented; protected digests/signature metadata and golden-vector freeze remain).*
+- [ ] Define payload content type and canonical JSON/CBOR conversion rules *(JSON content validation and CBOR envelope bounds implemented; deterministic signing representation remains).*
 - [ ] Define canonical signing input and COSE/external signature representation using `styrene-identity`.
 - [ ] Add typed acceptance receipt, protocol error, snapshot request, and graph snapshot DTOs.
 - [ ] Add explicit size, expiry, sequence, cycle, and schema validation errors.
