@@ -1,142 +1,119 @@
-use crate::error::{MqttError, Result};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 
-const PREFIX: &str = "styrene";
-const EVENTS_SEGMENT: &str = "events";
+use crate::{MqttA2aError, Result};
 
-/// Components of a fully-qualified Aether topic.
-///
-/// Topic format: `styrene/{operator_id}/{service}/{instance_id}/events/{event_type}`
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TopicAddress {
-    pub operator_id: String,
-    pub service: String,
-    pub instance_id: String,
-    pub event_type: String,
+pub const A2A_TOPIC_PREFIX: &str = "styrene/v1/a2a";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum A2aTopicKind {
+    Inbox,
+    Events,
+    Snapshot,
+    Presence,
 }
 
-impl TopicAddress {
-    /// Render as an MQTT topic string.
-    pub fn to_topic_string(&self) -> String {
+impl A2aTopicKind {
+    fn segment(self) -> &'static str {
+        match self {
+            Self::Inbox => "inbox",
+            Self::Events => "events",
+            Self::Snapshot => "snapshot",
+            Self::Presence => "presence",
+        }
+    }
+
+    fn parse(segment: &str) -> Option<Self> {
+        match segment {
+            "inbox" => Some(Self::Inbox),
+            "events" => Some(Self::Events),
+            "snapshot" => Some(Self::Snapshot),
+            "presence" => Some(Self::Presence),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct A2aTopic {
+    pub tenant: String,
+    pub agent_id: String,
+    pub kind: A2aTopicKind,
+}
+
+impl A2aTopic {
+    pub fn new(
+        tenant: impl Into<String>,
+        agent_id: impl Into<String>,
+        kind: A2aTopicKind,
+    ) -> Result<Self> {
+        let tenant = tenant.into();
+        let agent_id = agent_id.into();
+        validate_tenant(&tenant)?;
+        validate_agent_id(&agent_id)?;
+        Ok(Self { tenant, agent_id, kind })
+    }
+
+    pub fn inbox(tenant: impl Into<String>, agent_id: impl Into<String>) -> Result<Self> {
+        Self::new(tenant, agent_id, A2aTopicKind::Inbox)
+    }
+
+    pub fn render(&self) -> String {
         format!(
-            "{}/{}/{}/{}/{}/{}",
-            PREFIX,
-            self.operator_id,
-            self.service,
-            self.instance_id,
-            EVENTS_SEGMENT,
-            self.event_type,
+            "{}/{}/{}/{}",
+            A2A_TOPIC_PREFIX,
+            self.tenant,
+            encode_agent_id(&self.agent_id),
+            self.kind.segment()
         )
     }
 
-    /// Parse from an MQTT topic string.
     pub fn parse(topic: &str) -> Result<Self> {
-        let parts: Vec<&str> = topic.splitn(6, '/').collect();
-
-        if parts.len() < 6 {
-            return Err(MqttError::InvalidTopic(format!(
-                "expected at least 6 segments, got {}: `{topic}`",
-                parts.len()
-            )));
+        let parts: Vec<_> = topic.split('/').collect();
+        if parts.len() != 6 || parts[..3] != ["styrene", "v1", "a2a"] {
+            return Err(MqttA2aError::InvalidTopic(topic.to_owned()));
         }
+        let tenant = parts[3].to_owned();
+        validate_tenant(&tenant)?;
+        let agent_id = decode_agent_id(parts[4])?;
+        let kind = A2aTopicKind::parse(parts[5])
+            .ok_or_else(|| MqttA2aError::InvalidTopic(topic.to_owned()))?;
+        Ok(Self { tenant, agent_id, kind })
+    }
 
-        if parts[0] != PREFIX {
-            return Err(MqttError::InvalidTopic(format!(
-                "expected prefix `{PREFIX}`, got `{}`",
-                parts[0]
-            )));
-        }
-
-        if parts[4] != EVENTS_SEGMENT {
-            return Err(MqttError::InvalidTopic(format!(
-                "expected `{EVENTS_SEGMENT}` at segment 4, got `{}`",
-                parts[4]
-            )));
-        }
-
-        Ok(Self {
-            operator_id: parts[1].to_owned(),
-            service: parts[2].to_owned(),
-            instance_id: parts[3].to_owned(),
-            event_type: parts[5].to_owned(),
-        })
+    pub fn agent_filter(tenant: &str, agent_id: &str) -> Result<String> {
+        validate_tenant(tenant)?;
+        validate_agent_id(agent_id)?;
+        Ok(format!("{}/{}/{}/+", A2A_TOPIC_PREFIX, tenant, encode_agent_id(agent_id)))
     }
 }
 
-impl std::fmt::Display for TopicAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_topic_string())
+fn validate_tenant(tenant: &str) -> Result<()> {
+    if tenant.is_empty()
+        || tenant.len() > 128
+        || tenant.bytes().any(|byte| !(byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')))
+    {
+        return Err(MqttA2aError::InvalidTenant(tenant.to_owned()));
     }
+    Ok(())
 }
 
-/// Fluent builder for constructing MQTT topic strings and subscription filters.
-///
-/// Unset fields become MQTT wildcards in subscription filters:
-/// - operator/service/instance: `+` (single-level)
-/// - event_type: `#` (multi-level, matches all sub-levels)
-#[derive(Debug, Clone, Default)]
-pub struct TopicBuilder {
-    operator_id: Option<String>,
-    service: Option<String>,
-    instance_id: Option<String>,
-    event_type: Option<String>,
+fn validate_agent_id(agent_id: &str) -> Result<()> {
+    if agent_id.trim().is_empty() || agent_id.len() > 256 {
+        return Err(MqttA2aError::InvalidAgentId);
+    }
+    Ok(())
 }
 
-impl TopicBuilder {
-    pub fn new() -> Self {
-        Self::default()
-    }
+fn encode_agent_id(agent_id: &str) -> String {
+    URL_SAFE_NO_PAD.encode(agent_id.as_bytes())
+}
 
-    pub fn operator(mut self, id: impl Into<String>) -> Self {
-        self.operator_id = Some(id.into());
-        self
-    }
-
-    pub fn service(mut self, name: impl Into<String>) -> Self {
-        self.service = Some(name.into());
-        self
-    }
-
-    pub fn instance(mut self, id: impl Into<String>) -> Self {
-        self.instance_id = Some(id.into());
-        self
-    }
-
-    pub fn event_type(mut self, ty: impl Into<String>) -> Self {
-        self.event_type = Some(ty.into());
-        self
-    }
-
-    /// Build a concrete publish topic. All fields must be set.
-    pub fn build_publish(&self) -> Result<String> {
-        let operator_id = self
-            .operator_id
-            .as_deref()
-            .ok_or_else(|| MqttError::InvalidTopic("operator_id required for publish".into()))?;
-        let service = self
-            .service
-            .as_deref()
-            .ok_or_else(|| MqttError::InvalidTopic("service required for publish".into()))?;
-        let instance_id = self
-            .instance_id
-            .as_deref()
-            .ok_or_else(|| MqttError::InvalidTopic("instance_id required for publish".into()))?;
-        let event_type = self
-            .event_type
-            .as_deref()
-            .ok_or_else(|| MqttError::InvalidTopic("event_type required for publish".into()))?;
-
-        Ok(format!("{PREFIX}/{operator_id}/{service}/{instance_id}/{EVENTS_SEGMENT}/{event_type}"))
-    }
-
-    /// Build a subscription filter. Unset fields become MQTT wildcards.
-    pub fn build_subscribe(&self) -> String {
-        let op = self.operator_id.as_deref().unwrap_or("+");
-        let svc = self.service.as_deref().unwrap_or("+");
-        let inst = self.instance_id.as_deref().unwrap_or("+");
-        let evt = self.event_type.as_deref().unwrap_or("#");
-
-        format!("{PREFIX}/{op}/{svc}/{inst}/{EVENTS_SEGMENT}/{evt}")
-    }
+fn decode_agent_id(value: &str) -> Result<String> {
+    let bytes = URL_SAFE_NO_PAD.decode(value).map_err(|_| MqttA2aError::InvalidTopicComponent)?;
+    let value = String::from_utf8(bytes).map_err(|_| MqttA2aError::InvalidTopicComponent)?;
+    validate_agent_id(&value)?;
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -144,69 +121,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn address_roundtrip() {
-        let addr = TopicAddress {
-            operator_id: "op1".into(),
-            service: "omegon".into(),
-            instance_id: "abc123".into(),
-            event_type: "turn.started".into(),
-        };
-        let topic = addr.to_topic_string();
-        assert_eq!(topic, "styrene/op1/omegon/abc123/events/turn.started");
-
-        let parsed = TopicAddress::parse(&topic).expect("parse should succeed");
-        assert_eq!(parsed, addr);
+    fn topic_round_trip_escapes_mqtt_wildcards() {
+        let topic = A2aTopic::inbox("acme", "did:styrene:agent/a+#").unwrap();
+        let rendered = topic.render();
+        assert!(!rendered.contains("agent/a+#"));
+        assert_eq!(A2aTopic::parse(&rendered).unwrap(), topic);
     }
 
     #[test]
-    fn parse_rejects_short_topic() {
-        assert!(TopicAddress::parse("styrene/op1/omegon").is_err());
-    }
-
-    #[test]
-    fn parse_rejects_wrong_prefix() {
-        assert!(TopicAddress::parse("wrong/op1/omegon/abc/events/turn.started").is_err());
-    }
-
-    #[test]
-    fn parse_rejects_missing_events_segment() {
-        assert!(TopicAddress::parse("styrene/op1/omegon/abc/other/turn.started").is_err());
-    }
-
-    #[test]
-    fn builder_publish_requires_all_fields() {
-        let b = TopicBuilder::new().operator("op1").service("omegon");
-        assert!(b.build_publish().is_err());
-    }
-
-    #[test]
-    fn builder_publish_full() {
-        let topic = TopicBuilder::new()
-            .operator("op1")
-            .service("omegon")
-            .instance("abc123")
-            .event_type("tool.ended")
-            .build_publish()
-            .expect("should succeed");
-        assert_eq!(topic, "styrene/op1/omegon/abc123/events/tool.ended");
-    }
-
-    #[test]
-    fn builder_subscribe_all_wildcards() {
-        let filter = TopicBuilder::new().build_subscribe();
-        assert_eq!(filter, "styrene/+/+/+/events/#");
-    }
-
-    #[test]
-    fn builder_subscribe_partial() {
-        let filter = TopicBuilder::new().operator("op1").service("omegon").build_subscribe();
-        assert_eq!(filter, "styrene/op1/omegon/+/events/#");
-    }
-
-    #[test]
-    fn builder_subscribe_specific_event() {
-        let filter =
-            TopicBuilder::new().operator("op1").event_type("turn.started").build_subscribe();
-        assert_eq!(filter, "styrene/op1/+/+/events/turn.started");
+    fn rejects_wildcards_in_tenant() {
+        assert!(A2aTopic::inbox("bad/+", "agent").is_err());
     }
 }
