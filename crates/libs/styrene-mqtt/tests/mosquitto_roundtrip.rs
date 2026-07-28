@@ -74,7 +74,7 @@ async fn mosquitto_roundtrip_and_reconnect() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     publisher.poll_transport().await.unwrap();
     publisher.publish(&first, now_ms()).await.unwrap();
-    publisher.poll_transport().await.unwrap();
+    publisher.flush_publish().await.unwrap();
     let received = tokio::time::timeout(Duration::from_secs(5), subscriber.recv(now_ms()))
         .await
         .unwrap()
@@ -97,7 +97,7 @@ async fn mosquitto_roundtrip_and_reconnect() {
     subscriber.poll_transport().await.unwrap();
     let second = command(&source, &target, 2);
     publisher.publish(&second, now_ms()).await.unwrap();
-    publisher.poll_transport().await.unwrap();
+    publisher.flush_publish().await.unwrap();
     let received = tokio::time::timeout(Duration::from_secs(5), subscriber.recv(now_ms()))
         .await
         .unwrap()

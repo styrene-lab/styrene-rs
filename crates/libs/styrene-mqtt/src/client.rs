@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use rumqttc::v5::mqttbytes::v5::Packet;
 use rumqttc::v5::{AsyncClient, Event, EventLoop, MqttOptions};
+use rumqttc::Outgoing;
 use styrene_a2a::AgentEnvelope;
 
 use crate::{
@@ -57,6 +58,16 @@ impl MqttA2aClient {
             .await
             .map(|_| ())
             .map_err(|error| MqttA2aError::Connection(error.to_string()))
+    }
+
+    pub async fn flush_publish(&mut self) -> Result<()> {
+        loop {
+            match self.event_loop.poll().await {
+                Ok(Event::Outgoing(Outgoing::Publish(_))) => return Ok(()),
+                Ok(_) => {}
+                Err(error) => return Err(MqttA2aError::Connection(error.to_string())),
+            }
+        }
     }
 
     pub async fn disconnect(&self) -> Result<()> {
