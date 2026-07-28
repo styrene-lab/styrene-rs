@@ -1,37 +1,25 @@
 [package]
 name = "styrene-mqtt"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT"
 repository = "https://github.com/styrene-lab/styrene-rs"
-description = "MQTT 5.0 infrastructure for the Aether event fabric"
+description = "MQTT 5 bearer adapter for canonical Styrene A2A envelopes"
 readme = "README.md"
-keywords = ["styrene", "mqtt", "aether", "event-bus"]
+keywords = ["styrene", "mqtt", "a2a", "mosquitto"]
 categories = ["network-programming"]
 
 [lib]
 name = "styrene_mqtt"
 
 [dependencies]
-tokio = { version = "1.44.2", features = ["sync", "rt", "macros"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+styrene-a2a = { path = "../styrene-a2a" }
+tokio = { version = "1.44.2", features = ["sync", "rt", "macros", "time"] }
 thiserror = "1"
-async-trait = "0.1"
 rumqttc = "0.25"
-chrono = { version = "0.4", features = ["serde"] }
-futures-core = "0.3"
-pin-project-lite = "0.2"
-tracing = "0.1"
 bytes = "1"
-
-# Feature-gated
-rumqttd = { version = "0.20", optional = true }
-
-[features]
-default = []
-embedded-broker = ["dep:rumqttd"]
+base64 = "0.22"
 
 [dev-dependencies]
 tokio = { version = "1.44.2", features = ["full"] }
