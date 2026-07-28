@@ -6821,6 +6821,8 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
+ "styrene-a2a",
  "thiserror 1.0.69",
  "tokio",
 ]
