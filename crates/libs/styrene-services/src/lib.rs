@@ -15,6 +15,7 @@
 //! | `file_transfer` | Chunked file delivery over links | Planned |
 //! | `hub_connection` | Auto-connect to hub transport | Planned |
 
+pub mod agent_acceptance;
 pub mod conversations;
 pub mod node_store;
 pub mod protocol_registry;
