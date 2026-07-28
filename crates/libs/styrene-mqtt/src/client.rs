@@ -51,6 +51,18 @@ impl MqttA2aClient {
             .map_err(|error| MqttA2aError::Subscribe(error.to_string()))
     }
 
+    pub async fn poll_transport(&mut self) -> Result<()> {
+        self.event_loop
+            .poll()
+            .await
+            .map(|_| ())
+            .map_err(|error| MqttA2aError::Connection(error.to_string()))
+    }
+
+    pub async fn disconnect(&self) -> Result<()> {
+        self.client.disconnect().await.map_err(|error| MqttA2aError::Connection(error.to_string()))
+    }
+
     pub async fn recv(&mut self, now_ms: u64) -> Result<ReceivedA2aEnvelope> {
         loop {
             match self.event_loop.poll().await {
