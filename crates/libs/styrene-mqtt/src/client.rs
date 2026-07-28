@@ -30,6 +30,25 @@ impl MqttA2aClient {
         Self { client, event_loop, tenant: tenant.into() }
     }
 
+    pub fn connect_persistent(
+        tenant: impl Into<String>,
+        client_id: impl Into<String>,
+        host: impl Into<String>,
+        port: u16,
+        keep_alive: Duration,
+        channel_capacity: usize,
+        session_expiry: Duration,
+    ) -> Self {
+        let mut options = MqttOptions::new(client_id, host, port);
+        options.set_keep_alive(keep_alive);
+        options.set_clean_start(false);
+        options.set_session_expiry_interval(Some(
+            u32::try_from(session_expiry.as_secs()).unwrap_or(u32::MAX),
+        ));
+        let (client, event_loop) = AsyncClient::new(options, channel_capacity);
+        Self { client, event_loop, tenant: tenant.into() }
+    }
+
     pub async fn publish(&self, envelope: &AgentEnvelope, now_ms: u64) -> Result<()> {
         let publication = publication_for(&self.tenant, envelope, now_ms)?;
         self.client
