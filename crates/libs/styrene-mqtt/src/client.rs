@@ -49,7 +49,7 @@ impl MqttA2aClient {
         Self { client, event_loop, tenant: tenant.into() }
     }
 
-    pub async fn publish(&self, envelope: &AgentEnvelope, now_ms: u64) -> Result<()> {
+    pub async fn publish(&mut self, envelope: &AgentEnvelope, now_ms: u64) -> Result<()> {
         let publication = publication_for(&self.tenant, envelope, now_ms)?;
         self.client
             .publish_with_properties(
@@ -63,7 +63,7 @@ impl MqttA2aClient {
             .map_err(|error| MqttA2aError::Publish(error.to_string()))
     }
 
-    pub async fn subscribe_agent(&self, agent_id: &str) -> Result<()> {
+    pub async fn subscribe_agent(&mut self, agent_id: &str) -> Result<()> {
         let filter = A2aTopic::agent_filter(&self.tenant, agent_id)?;
         self.client
             .subscribe(filter, rumqttc::v5::mqttbytes::QoS::AtLeastOnce)
