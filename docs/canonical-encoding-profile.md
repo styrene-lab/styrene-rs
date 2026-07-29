@@ -27,5 +27,4 @@ Freeze deterministic CBOR, identifier canonicalization, optional-field represent
 
 ## Open Questions
 
-- What exact field numbers and maximum encoded sizes apply to every profile-v1 signed record?
-- [assumption] Cross-language NFC libraries produce acceptable byte-identical display-field normalization for supported implementations.
+- None for the profile-v1 encoding contract. Concrete per-record schemas still assign their own field numbers and record-specific limits under this profile.
