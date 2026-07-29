@@ -1,7 +1,7 @@
 ---
 id: lifecycle-domain-graph
 title: "Lifecycle Domain Graph"
-status: exploring
+status: resolved
 parent: identity-record-profile
 tags: [lifecycle, replication, transactions]
 open_questions:
