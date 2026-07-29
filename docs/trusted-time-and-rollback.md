@@ -1,7 +1,7 @@
 ---
 id: trusted-time-and-rollback
 title: "Trusted Time and Rollback"
-status: exploring
+status: resolved
 parent: runtime-identity-issuance
 tags: [time, rollback, security]
 open_questions:
