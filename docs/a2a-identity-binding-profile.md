@@ -74,7 +74,7 @@ traceparent?
 
 The protected attachment manifest contains type, canonical digest, and byte length for every inline certificate, grant, or evidence object. Exactly one authoritative digest identifies each semantic attachment. A reference and inline bytes may coexist only when both resolve to that digest; mismatch is a terminal integrity failure.
 
-The signature bytes and attached object bytes are excluded from signing input. Their identifiers, digests, lengths, and criticality are protected. Transport route, address, topic, peer socket, and bearer receipt remain outside the signed domain payload.
+The signature bytes and attached object bytes are excluded from signing input. Their identifiers, digests, lengths, and criticality are protected. Transport route, address, topic, peer socket, and bearer receipt remain outside the signed domain payload. Omitted optional fields and explicit CBOR `null` are distinct: profile encoders MUST emit every schema field, using `null` only where the schema marks it optional; omission, default substitution, or alternate empty representations fail canonical byte comparison.
 
 Unknown attachment types or unknown critical fields fail verification. Attachments have independent count, per-item, and aggregate byte limits within the envelope ceiling and are digested before expensive parsing. Parsing rejects duplicate manifest entries, duplicate semantic objects, trailing bytes, and ambiguous encodings.
 
@@ -94,10 +94,11 @@ The current draft must add explicit runtime-certificate reference/digest and att
 Recommended conceptual input:
 
 ```text
-"styrene-a2a-envelope-signing-v1" || deterministic-cbor(protected_fields)
+u16be(30) || "styrene-a2a-envelope-signing-v1" ||
+u16be(1) || u32be(length(deterministic_cbor)) || deterministic_cbor(protected_fields)
 ```
 
-The exact encoding is frozen only after official SDK fixtures and complete signed-envelope vectors land. Profile v1 uses the identity architecture's deterministic-CBOR contract: closed schema, increasing integer keys, shortest encodings, definite lengths, no floats/tags/duplicate keys/trailing bytes, canonical ASCII protocol identifiers, and NFC-normalized human text. Verifiers decode, validate, re-encode, and byte-compare. Unknown fields fail profile-v1 verification rather than being silently ignored.
+The domain separator and framing are fixed by the profile and are not supplied by callers. The exact profile is frozen only after official SDK fixtures and complete signed-envelope vectors land. Profile v1 uses the identity architecture's deterministic-CBOR contract: closed schema, increasing integer keys, shortest encodings, definite lengths, no floats/tags/duplicate keys/trailing bytes, canonical ASCII protocol identifiers, and NFC-normalized human text. Verifiers decode, validate, re-encode, and byte-compare. Unknown fields fail profile-v1 verification rather than being silently ignored.
 
 ## 5. Command validity
 
@@ -167,12 +168,12 @@ pub trait EnvelopeSigner: Send + Sync {
     fn runtime_certificate_ref(&self) -> RuntimeCertificateRef;
     async fn sign_a2a_envelope(
         &self,
-        canonical_input: &[u8],
-    ) -> Result<EnvelopeSignature, SigningError>;
+        request: TypedEnvelopeSigningRequest<'_>,
+    ) -> Result<SignedEnvelopeBinding, SigningError>;
 }
 ```
 
-The implementation is supplied through `styrene-identity`/Signum custody providers. The API must be domain-specific rather than generic `sign(bytes)` at application call sites. Hardware implementations sign without exporting private material.
+The implementation is supplied through `styrene-identity`/Signum custody providers. The API must be domain-specific rather than generic `sign(bytes)` at application call sites. Hardware implementations sign without exporting private material. Signum, not the caller, constructs or re-derives the complete protected envelope input from typed fields, compares any caller-provided digest, and returns the signature together with the exact protected digest and certificate reference used. A raw `canonical_input: &[u8]` method may exist only as an internal crate-private custody adapter after typed authorization and cannot be exposed over Signum RPC.
 
 Before signing a command, the signer checks:
 
@@ -226,6 +227,7 @@ The verifier must reject:
 - unknown/conflicting certificate ID;
 - key/agent mismatch;
 - key/runtime mismatch;
+- target-runtime mismatch when the protected target runtime is present;
 - key version rollback/reuse;
 - invalid, expired, suspended, or revoked chain according to operation policy;
 - authority compromise affecting the leaf certificate;
@@ -233,6 +235,8 @@ The verifier must reject:
 - stale/unknown revocation state where policy requires freshness;
 - chain depth or size excess;
 - `Indeterminate` revision forks for sensitive work.
+
+Verification alone does not consume sequence or message IDs. The acceptance boundary atomically checks and persists `(source_agent_id, source_runtime_id, stream_id, sequence)` plus `message_id` in the same transaction as task mutation. The same message ID with byte-identical protected digest is idempotent; the same ID with different digest is an integrity conflict. A sequence below or equal to the committed contiguous watermark is accepted only as an exact known replay, never as new work. A sequence gap is recorded and reconciled according to envelope kind; executable commands cannot bypass unresolved predecessor requirements where service policy demands ordering. Runtime ID changes begin a new sequence namespace but do not erase retained replay tombstones before their configured horizon.
 
 ## 9. Transport channel evidence
 

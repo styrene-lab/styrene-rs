@@ -174,9 +174,17 @@ All signed profile-v1 records use deterministic CBOR with a closed schema:
 - protocol identifiers are ASCII and validate in canonical form; display labels are never security identifiers;
 - arbitrary human text is UTF-8 and NFC-normalized before signing;
 - hashes cover the exact canonical bytes produced by the owning profile encoder;
-- verifiers decode, validate, re-encode, and byte-compare before accepting a signature.
+- verifiers decode, validate, re-encode, and byte-compare before accepting a signature;
+- text normalization is allowed only for explicitly human-display fields. Security-significant names, resource selectors, host/workload identifiers, trust domains, key IDs, certificate IDs, and protocol identifiers are restricted to profile-defined canonical ASCII/byte forms and are never Unicode-normalized or case-folded.
 
-Every signed record type has a unique domain separator and immutable golden vectors for minimum, maximum, and rejection cases. Profile version selects both schema and canonicalization rules; old bytes are never reinterpreted under new rules.
+Every signed record type has a unique length-prefixed domain separator framing:
+
+```text
+u16be(domain_separator_length) || domain_separator_ascii ||
+u16be(profile_version) || u32be(canonical_cbor_length) || canonical_cbor
+```
+
+The separator is a centrally registered ASCII constant and cannot be selected by API callers. Immutable golden vectors cover minimum, maximum, and rejection cases. Profile version selects both schema and canonicalization rules; old bytes are never reinterpreted under new rules.
 
 Maximum verification chain depth is four records. Expected hierarchy is owner, optional owner continuity, agent/workload authority, runtime.
 
@@ -312,9 +320,12 @@ Attenuation is structural and decidable. A child grant is valid only when:
 - each child constraint is equal or stricter according to its registry-defined partial order;
 - validity is contained within the parent's interval;
 - remaining delegation depth strictly decreases;
-- the protected parent digest matches the exact parent grant.
+- the protected parent digest matches the exact parent grant;
+- the complete ancestor chain is supplied or resolved, and every ancestor is valid and non-revoked at processing time.
 
-Profile v1 resource selectors support only exact resource IDs, typed namespace segments, and finite unions/intersections with bounded depth and cardinality. No regex, glob, path-prefix string comparison, negation, arbitrary code, or externally defined comparator is permitted. If subset proof is unavailable, ambiguous, or exceeds complexity limits, attenuation fails. Unknown action, selector, or constraint types fail closed. Revocation targets grant digests and dominates descendant authorization.
+Grant IDs are random serials only; digest identity is authoritative. Implementations index descendants by every ancestor grant digest so revocation of an ancestor invalidates the full descendant closure without requiring graph discovery at request time. Effective authorization is the intersection of all ancestor claims, never merely the leaf claims.
+
+Profile v1 resource selectors support only exact resource IDs, typed namespace segments, and finite unions/intersections with bounded depth and cardinality. Selector and constraint values use canonical typed components, not strings requiring escaping. The subset algorithm has one normative implementation contract, deterministic normalization, and fixed complexity ceilings; implementations must not substitute heuristic solvers. No regex, glob, path-prefix string comparison, negation, arbitrary code, or externally defined comparator is permitted. If subset proof is unavailable, ambiguous, or exceeds complexity limits, attenuation fails. Unknown action, selector, or constraint types fail closed. Revocation targets grant digests and dominates descendant authorization.
 
 ## 11. First-run and delegated enrollment
 
@@ -377,7 +388,7 @@ Operational recovery uses independent recovery authorities, not owner-secret rec
 - proposal is consumed only on successful atomic commit;
 - uncertain outcome becomes `Indeterminate` pending reconciliation.
 
-Recovery policy has a monotonic `recovery_epoch`. A proposal binds to exactly one epoch and its complete authority-set and threshold digest. Epoch change immediately prevents new approvals under prior epochs but does not silently invalidate an already complete approval set: a fully approved old-epoch proposal may execute only if the new policy's transition record explicitly names its proposal digest during a bounded grace period. Otherwise it is cancelled. Approvals from different epochs or authority sets never combine. Removing or compromising an authority requires a new epoch; no authority identifier is reused within a trust domain.
+Recovery policy has a monotonic `recovery_epoch`. A proposal binds to exactly one epoch and its complete authority-set and threshold digest. Epoch change immediately prevents new approvals under prior epochs but does not silently invalidate an already complete approval set: a fully approved old-epoch proposal may execute only if the new policy's transition record explicitly names its proposal digest during a bounded grace period. That transition record itself must be authorized under the old epoch's threshold (or an already valid owner path allowed by the old policy); the new authority set cannot grandfather proposals unilaterally. Otherwise the proposal is cancelled. Approvals from different epochs or authority sets never combine. Removing or compromising an authority requires a new epoch; no authority identifier is reused within a trust domain.
 
 Shared custody among recovery authorities warns but is not universally rejected. High-assurance policy may require distinct attested devices. Recovery policy changes require the current threshold or owner authorization. Shamir secret sharing is deferred as a separate offline disaster-recovery mechanism, never the routine authorization mechanism.
 
