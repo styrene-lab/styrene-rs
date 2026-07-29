@@ -65,10 +65,18 @@ signing_key_id
 runtime_certificate_id
 runtime_certificate_digest
 attached_certificate_bundle_digest?
+authorization_digest?
+grant_reference?
+attached_authorization_digest?
+attachment_manifest_digest?
 traceparent?
 ```
 
-The signature bytes and attached bundle bytes are excluded from signing input. Their identifiers/digests are protected. Transport route, address, topic, peer socket, and bearer receipt remain outside the signed domain payload.
+The protected attachment manifest contains type, canonical digest, and byte length for every inline certificate, grant, or evidence object. Exactly one authoritative digest identifies each semantic attachment. A reference and inline bytes may coexist only when both resolve to that digest; mismatch is a terminal integrity failure.
+
+The signature bytes and attached object bytes are excluded from signing input. Their identifiers, digests, lengths, and criticality are protected. Transport route, address, topic, peer socket, and bearer receipt remain outside the signed domain payload.
+
+Unknown attachment types or unknown critical fields fail verification. Attachments have independent count, per-item, and aggregate byte limits within the envelope ceiling and are digested before expensive parsing. Parsing rejects duplicate manifest entries, duplicate semantic objects, trailing bytes, and ambiguous encodings.
 
 The current draft must add explicit runtime-certificate reference/digest and attachment digest before profile-v1 field numbers freeze.
 
@@ -105,7 +113,7 @@ Executable command envelopes require `expires_at_ms`.
 
 Non-command envelope kinds use separate retention and acceptance policy.
 
-The signer-controlled `created_at_ms` is never sufficient proof that a key was valid. For newly received executable work, the key must be trusted at processing time, certificate validity must cover the claimed creation time, and timestamp skew must fall within `acceptable_clock_drift`.
+The signer-controlled `created_at_ms` is never sufficient proof that a key was valid. For newly received executable work, the key must be trusted at processing time, certificate validity must cover the claimed creation time, and timestamp skew must fall within `acceptable_clock_drift`. Processing time comes only from a verifier-owned `TrustedClock`; production callers and transport adapters cannot supply or override it. Timestamp and duration arithmetic is checked, and overflow, underflow, unsupported epoch values, or invalid intervals fail structurally.
 
 ## 6. Runtime certificate reference and bootstrap
 
@@ -136,14 +144,15 @@ Limits inherited from the identity architecture:
 
 Verification order:
 
-1. enforce envelope and attachment byte limits before allocation where possible;
-2. validate protected structure and digests;
-3. resolve cached certificate by ID and digest, or parse attached/retrieved untrusted bundle;
-4. validate chain, lifecycle, custody, subject/host binding, and revocation evidence;
-5. verify envelope signature;
-6. evaluate transport channel evidence;
-7. pass authenticated evidence to policy;
-8. atomically persist acceptance, evidence references, and deduplication state.
+1. enforce envelope and attachment byte/count limits before allocation where possible;
+2. validate protected structure, manifest uniqueness, lengths, and digests;
+3. verify the envelope signature with the referenced key before parsing expensive signer-supplied certificate or authorization bodies when key material is already cached;
+4. resolve cached certificate by ID and digest, or parse the attached/retrieved bundle as untrusted bounded input;
+5. validate chain, lifecycle, custody, subject/host binding, and revocation evidence;
+6. if key material came from the attached bundle, verify the envelope signature immediately after the leaf key is structurally resolved and before expensive attestation/network checks;
+7. evaluate transport channel evidence;
+8. pass authenticated evidence to policy;
+9. atomically persist acceptance, evidence references, and deduplication state.
 
 A same-ID/different-digest certificate is an integrity conflict. Fetching by reference uses bounded bytes, timeout, redirects, parse depth, and negative caching. Failure to obtain a required certificate returns a specific unavailable/indeterminate result; it never falls through to chat or unauthenticated execution.
 
@@ -193,12 +202,12 @@ A2A orchestration composes identity evidence with the envelope signature:
 ```rust
 pub struct EnvelopeVerificationRequest<'a> {
     pub envelope: &'a AgentEnvelope,
-    pub processing_time_ms: u64,
-    pub acceptable_clock_drift_ms: u64,
     pub channel_evidence: Option<&'a ChannelEvidence>,
     pub operation_risk: OperationRisk,
 }
 ```
+
+The verifier obtains processing time from its injected `TrustedClock` and drift limits from local policy. Public request DTOs do not contain authoritative time, freshness, or custody fields. Tests inject clock and policy implementations at verifier construction rather than per request.
 
 Signum or the local verification store resolves:
 
