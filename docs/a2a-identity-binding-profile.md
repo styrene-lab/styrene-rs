@@ -97,7 +97,7 @@ Recommended conceptual input:
 "styrene-a2a-envelope-signing-v1" || deterministic-cbor(protected_fields)
 ```
 
-The exact encoding is frozen only after official SDK fixtures, unknown-field behavior, and complete signed-envelope vectors land.
+The exact encoding is frozen only after official SDK fixtures and complete signed-envelope vectors land. Profile v1 uses the identity architecture's deterministic-CBOR contract: closed schema, increasing integer keys, shortest encodings, definite lengths, no floats/tags/duplicate keys/trailing bytes, canonical ASCII protocol identifiers, and NFC-normalized human text. Verifiers decode, validate, re-encode, and byte-compare. Unknown fields fail profile-v1 verification rather than being silently ignored.
 
 ## 5. Command validity
 

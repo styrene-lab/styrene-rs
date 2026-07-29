@@ -161,7 +161,22 @@ Certificate identity and digest rules:
 - digest equality, not certificate ID equality, establishes content identity;
 - `(issuer_key_id, certificate_id)` MUST be unique; reuse with different bytes is a permanent integrity conflict;
 - string identifiers are normalized and validated before signing; verification compares canonical bytes, not presentation aliases;
-- unknown non-critical fields may be retained but do not affect profile-v1 semantics; unknown critical fields fail verification.
+- profile v1 is closed: unknown fields fail verification; extension requires a new profile version or a protected, separately versioned extension object declared by the base schema.
+
+### 6.1 Canonical encoding
+
+All signed profile-v1 records use deterministic CBOR with a closed schema:
+
+- integer map keys only, strictly increasing, with exactly one occurrence each;
+- shortest integer and length encodings;
+- definite-length maps, arrays, byte strings, and text strings only;
+- no floats, tags, indefinite-length items, duplicate keys, or trailing bytes;
+- protocol identifiers are ASCII and validate in canonical form; display labels are never security identifiers;
+- arbitrary human text is UTF-8 and NFC-normalized before signing;
+- hashes cover the exact canonical bytes produced by the owning profile encoder;
+- verifiers decode, validate, re-encode, and byte-compare before accepting a signature.
+
+Every signed record type has a unique domain separator and immutable golden vectors for minimum, maximum, and rejection cases. Profile version selects both schema and canonicalization rules; old bytes are never reinterpreted under new rules.
 
 Maximum verification chain depth is four records. Expected hierarchy is owner, optional owner continuity, agent/workload authority, runtime.
 
@@ -183,6 +198,8 @@ One configurable `acceptable_clock_drift`, default five minutes, governs backwar
 `processing_time` comes from a verifier-owned `TrustedClock`, never from the envelope, transport adapter, or caller-provided API field. Tests may inject a clock implementation; production API clients cannot select processing time or drift. Policy may tighten drift per operation but cannot exceed the locally configured ceiling.
 
 Persist the last trusted wall-clock observation in a crash-safe monotonic checkpoint bound to the local trust-store generation. Significant rollback blocks new executable work while preserving permitted degraded work. If rollback detection state is missing, corrupt, cloned, or cannot be durably advanced, time-sensitive verification is `Indeterminate` rather than silently resetting its baseline.
+
+Backup restore, database migration, or machine cloning cannot copy this checkpoint as ordinary data. A restore enters `rollback_recovery_required` and may verify timeless historical signatures but cannot issue certificates, sign executable commands, consume enrollment/recovery nonces, or accept new executable work. Recovery requires either: (a) unsealing a migration token bound to destination machine identity, source generation, target generation, backup digest, and expiry; or (b) a canonical recovery-threshold proposal authorizing a new checkpoint baseline. Completion rotates local store identity, advances generation, records source and destination checkpoint digests, consumes the token/proposal atomically, and revokes further use of the source clone for mutable authority. Concurrent live clones are a fork and remain `Indeterminate` until reconciled.
 
 A signer-controlled creation timestamp is never proof that a key was trusted. Newly received executable objects require current trust. Persisted acceptance records retain local observation time and evidence references.
 
@@ -215,7 +232,21 @@ issued_at
 
 `knowledge_as_of` is local synchronization metadata and MUST NOT be signed into, or ordered as part of, an authority's canonical revision record. Each replica records `observed_at`, source, and synchronization cursor separately. This prevents a distributor from rewriting the apparent freshness of authoritative records.
 
-Revision chains are per explicitly named lifecycle domain, not merely per key. Implementations must define domain ownership for owner state, each agent/workload authority, revocation state, enrollment nonce consumption, quota leases, and recovery policy. A revision is accepted only when its predecessor is present or supplied in the same bounded bundle. Gaps remain pending and cannot advance trusted head state.
+Revision chains are per explicitly named lifecycle domain, not merely per key. Profile v1 recognizes only this inventory:
+
+| Domain | Typed canonical key | Superior reconciler |
+|---|---|---|
+| owner state | trust domain | recovery threshold |
+| agent/workload authority | trust domain + authority ID | owner or recovery threshold |
+| runtime-certificate lifecycle | authority ID + subject ID | issuing authority |
+| revocation/suspension | issuing authority ID | owner; recovery threshold after compromise |
+| enrollment nonce consumption | enrollment issuer ID | same issuer; no unconsume operation |
+| replica quota leases | issuer ID + replica ID | issuing authority |
+| recovery policy | trust domain + recovery epoch | prior threshold or owner where policy permits |
+| client/API grants | granting authority + client ID | granting authority |
+| audit purge authorization | trust domain | owner plus configured recovery threshold |
+
+A record type absent from this inventory cannot mutate trusted state in profile v1. Domain keys are typed tuples, never concatenated strings. Cross-domain transactions list all expected heads and commit atomically; partial advancement is invalid. A revision is accepted only when its predecessor is present or supplied in the same bounded bundle. Gaps remain pending and cannot advance trusted head state.
 
 Revocation dominates authorization. Same-revision or same-predecessor divergent successors yield `Indeterminate`; sensitive operations fail closed. A higher numeric revision does not automatically resolve a fork. No timestamp, arrival order, replica priority, or digest-order last-writer-wins rule resolves trust conflicts. Only a canonical reconciliation record signed by a superior owner authority or the predeclared recovery threshold may name the winning branch and all rejected branch digests. Conflicting records remain in history.
 
@@ -254,7 +285,38 @@ Auspex calls Signum directly with its own scoped identity for identity managemen
 
 When Signum is unavailable, `styrened` uses cached verification, remains observable, and permits policy-approved degraded work. Issuance, rotation, and lifecycle management are unavailable unless `styrened` was explicitly provisioned as a scoped local issuer.
 
-## 10. First-run and delegated enrollment
+## 10. Authorization grant attenuation
+
+Profile v1 grants are typed claim sets, not opaque strings:
+
+```text
+grant_id and profile_version
+issuer and subject principal
+trust_domain
+allowed_actions: finite enum set
+resource_scope: typed resource selector AST
+constraints: typed key/value predicates from a closed registry
+not_before / not_after
+max_delegation_depth
+delegable
+parent_grant_digest?
+issuer_signature
+```
+
+Attenuation is structural and decidable. A child grant is valid only when:
+
+- issuer is the parent subject and the parent is delegable;
+- trust domain is unchanged;
+- child actions are a subset of parent actions;
+- child resource selector denotes a subset under the profile's typed selector algebra;
+- each child constraint is equal or stricter according to its registry-defined partial order;
+- validity is contained within the parent's interval;
+- remaining delegation depth strictly decreases;
+- the protected parent digest matches the exact parent grant.
+
+Profile v1 resource selectors support only exact resource IDs, typed namespace segments, and finite unions/intersections with bounded depth and cardinality. No regex, glob, path-prefix string comparison, negation, arbitrary code, or externally defined comparator is permitted. If subset proof is unavailable, ambiguous, or exceeds complexity limits, attenuation fails. Unknown action, selector, or constraint types fail closed. Revocation targets grant digests and dominates descendant authorization.
+
+## 11. First-run and delegated enrollment
 
 Existing Styrene onboarding becomes a UI over a reusable, resumable Signum bootstrap state machine. It must stop treating a 64-byte RNS private identity as the Styrene owner identity.
 
@@ -314,6 +376,8 @@ Operational recovery uses independent recovery authorities, not owner-secret rec
 - default proposal lifetime: 24 hours;
 - proposal is consumed only on successful atomic commit;
 - uncertain outcome becomes `Indeterminate` pending reconciliation.
+
+Recovery policy has a monotonic `recovery_epoch`. A proposal binds to exactly one epoch and its complete authority-set and threshold digest. Epoch change immediately prevents new approvals under prior epochs but does not silently invalidate an already complete approval set: a fully approved old-epoch proposal may execute only if the new policy's transition record explicitly names its proposal digest during a bounded grace period. Otherwise it is cancelled. Approvals from different epochs or authority sets never combine. Removing or compromising an authority requires a new epoch; no authority identifier is reused within a trust domain.
 
 Shared custody among recovery authorities warns but is not universally rejected. High-assurance policy may require distinct attested devices. Recovery policy changes require the current threshold or owner authorization. Shamir secret sharing is deferred as a separate offline disaster-recovery mechanism, never the routine authorization mechanism.
 
