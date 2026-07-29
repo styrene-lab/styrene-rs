@@ -20,5 +20,4 @@ Define signature/digest algorithm identifiers and parameters, key IDs and versio
 
 ## Open Questions
 
-- Does profile v1 permit only Ed25519/SHA-256, or reserve and implement additional algorithms immediately?
-- How are concurrent issuance and rollover ordered without allowing key-version reuse or downgrade?
+- None for profile-v1 primitive algorithm and key-version rules. Algorithm additions and provider-specific attestation suites require a new registry revision.
