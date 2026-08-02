@@ -172,7 +172,7 @@ All signed profile-v1 records use deterministic CBOR with a closed schema:
 - definite-length maps, arrays, byte strings, and text strings only;
 - no floats, tags, indefinite-length items, duplicate keys, or trailing bytes;
 - protocol identifiers are ASCII and validate in canonical form; display labels are never security identifiers;
-- arbitrary human text is UTF-8 and NFC-normalized before signing;
+- arbitrary human display text must already be UTF-8 NFC and is rejected rather than silently normalized before signing;
 - hashes cover the exact canonical bytes produced by the owning profile encoder;
 - verifiers decode, validate, re-encode, and byte-compare before accepting a signature;
 - text normalization is allowed only for explicitly human-display fields. Security-significant names, resource selectors, host/workload identifiers, trust domains, key IDs, certificate IDs, and protocol identifiers are restricted to profile-defined canonical ASCII/byte forms and are never Unicode-normalized or case-folded.
