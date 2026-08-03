@@ -125,11 +125,11 @@ The authority verifies custody evidence before recording a hardware claim:
 
 1. runtime submits its public key and requests certification;
 2. authority returns a random, short-lived, single-use nonce;
-3. TPM quote binds nonce and runtime public key;
+3. TPM quote or certify evidence and runtime-key proof bind the challenge digest, requested runtime identity, and runtime public key;
 4. authority verifies and consumes the challenge;
 5. authority issues the certificate.
 
-Profile v1 proves key residency and non-exportability. PCR/measured-boot policy is reserved for a future profile with deployment-specific baseline, update, and recovery rules. Failed attestation follows policy and defaults to a fresh software key in degraded mode.
+Profile v1 classifies verified hardware custody as key residency and non-exportability only. TPM evidence has a normative quote/certify minimum; TEE, HSM, secure-element, and OS-backed claims require registered evidence profiles with equivalent challenge/key binding and explicit assurance classes. PCR/measured-boot policy is reserved for a future profile with deployment-specific baseline, update, and recovery rules. Failed or indeterminate attestation follows explicit policy and defaults, when permitted, to a fresh software key and degraded certificate rather than relabeling the failed key.
 
 ### 5.2 Host binding
 
