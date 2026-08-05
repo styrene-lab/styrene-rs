@@ -114,6 +114,7 @@ pub mod keychain_signer;
 pub mod pki;
 #[cfg(feature = "signing")]
 pub mod pubkey;
+pub mod records;
 pub mod signer;
 #[cfg(feature = "ssh-agent")]
 pub mod ssh_agent;
