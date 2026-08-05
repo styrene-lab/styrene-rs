@@ -18,8 +18,8 @@ pub use envelope::{
     AGENT_ENVELOPE_PROFILE_VERSION, MAX_A2A_PAYLOAD_SIZE, MAX_AGENT_ENVELOPE_SIZE,
 };
 pub use extension::{
-    AgentId, AgentRuntimeRef, ControlClass, DelegationRelationship, RootOperationId, RuntimeId,
-    StyreneDelegationExtension, STYRENE_DELEGATION_EXTENSION_URI,
+    AgentId, AgentRuntimeRef, ControlClass, DelegationRelationship, ExtensionValidationError,
+    RootOperationId, RuntimeId, StyreneDelegationExtension, STYRENE_DELEGATION_EXTENSION_URI,
 };
 pub use protocol::{AcceptanceDisposition, AcceptanceReceipt, ProtocolError, ProtocolErrorCode};
 pub use snapshot::{
