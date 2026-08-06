@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Release packaging helpers for styrene-rs.
-
-Two responsibilities:
-1. Generate a canonical release manifest from release artifacts.
-2. Update the Homebrew formula from that manifest.
+"""Generate canonical release manifests for styrene-rs artifacts.
 
 Adapted from omegon's release_manifest.py for multi-binary archives.
 """
@@ -12,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,8 +18,6 @@ TARGETS = (
     "aarch64-unknown-linux-gnu",
     "x86_64-unknown-linux-gnu",
 )
-
-FORMULA_TARGET_ORDER = TARGETS
 
 # Binaries included per target
 BINARIES = {
@@ -114,54 +107,6 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=False) + "\n")
 
 
-def load_manifest(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
-
-
-def asset_sha_by_target(manifest: dict[str, Any]) -> dict[str, str]:
-    assets = manifest.get("assets")
-    if not isinstance(assets, list):
-        raise ValueError("Manifest missing assets array")
-    result: dict[str, str] = {}
-    for asset in assets:
-        target = asset.get("target")
-        sha256 = asset.get("sha256")
-        if isinstance(target, str) and isinstance(sha256, str):
-            result[target] = sha256
-    missing = [t for t in FORMULA_TARGET_ORDER if t not in result]
-    if missing:
-        raise ValueError(f"Manifest missing assets for targets: {', '.join(missing)}")
-    return result
-
-
-def update_homebrew_formula(*, manifest_path: Path, formula_path: Path) -> None:
-    manifest = load_manifest(manifest_path)
-    version = manifest.get("version")
-    if not isinstance(version, str) or not version:
-        raise ValueError("Manifest missing version")
-
-    sha_by_target = asset_sha_by_target(manifest)
-    content = formula_path.read_text()
-    content = re.sub(r'version ".*"', f'version "{version}"', content, count=1)
-
-    # Strip any deprecate! directive
-    content = re.sub(r'\n  deprecate! .*\n', '\n', content)
-
-    replacement_shas = [sha_by_target[t] for t in FORMULA_TARGET_ORDER]
-    sha_iter = iter(replacement_shas)
-
-    def replace_sha(match: re.Match[str]) -> str:
-        try:
-            sha = next(sha_iter)
-        except StopIteration as exc:
-            raise ValueError("Formula has more sha256 entries than expected") from exc
-        return f'sha256 "{sha}"'
-
-    updated = re.sub(r'sha256 "(?:[A-Fa-f0-9]+|PLACEHOLDER)"', replace_sha, content)
-
-    formula_path.write_text(updated)
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -173,23 +118,16 @@ def main(argv: list[str] | None = None) -> int:
     generate.add_argument("--repo", required=True)
     generate.add_argument("--commit", required=True)
 
-    homebrew = subparsers.add_parser("update-homebrew", help="Update Homebrew formula from manifest")
-    homebrew.add_argument("--manifest", type=Path, required=True)
-    homebrew.add_argument("--formula", type=Path, required=True)
-
     args = parser.parse_args(argv)
 
     try:
-        if args.command == "generate":
-            manifest = build_manifest(
-                tag=args.tag,
-                checksums_path=args.checksums,
-                repo=args.repo,
-                commit=args.commit,
-            )
-            write_json(args.output, manifest)
-        elif args.command == "update-homebrew":
-            update_homebrew_formula(manifest_path=args.manifest, formula_path=args.formula)
+        manifest = build_manifest(
+            tag=args.tag,
+            checksums_path=args.checksums,
+            repo=args.repo,
+            commit=args.commit,
+        )
+        write_json(args.output, manifest)
     except ValueError as err:
         print(f"error: {err}", file=sys.stderr)
         return 1

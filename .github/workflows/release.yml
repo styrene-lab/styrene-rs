@@ -453,15 +453,6 @@ jobs:
         with:
           subject-path: artifacts/styrene-*.tar.gz
 
-      - name: Trigger Homebrew formula update
-        if: ${{ !contains(env.RELEASE_TAG, '-nightly.') }}
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN || github.token }}
-        run: |
-          gh workflow run homebrew.yml \
-            --repo "${{ github.repository }}" \
-            -f tag_name="${RELEASE_TAG}"
-
   # ── OCI images (stable only) ─────────────────────────────────
   oci-images:
     name: OCI images
