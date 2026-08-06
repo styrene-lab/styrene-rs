@@ -261,8 +261,7 @@ impl AnnounceLimits {
 mod tests {
     use super::*;
     use crate::packet::{Header, PacketType};
-    use std::thread::sleep;
-    use std::time::Duration as StdDuration;
+    use tokio::time::{advance, Duration};
 
     fn test_rate_limit() -> AnnounceRateLimit {
         AnnounceRateLimit {
@@ -285,8 +284,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn ingress_limiting_is_scoped_per_interface() {
+    #[tokio::test(start_paused = true)]
+    async fn ingress_limiting_is_scoped_per_interface() {
         let mut limits = AnnounceLimits::with_rate_limit(test_rate_limit());
         let iface_a = AddressHash::new([0xAA; crate::hash::ADDRESS_HASH_SIZE]);
         let iface_b = AddressHash::new([0xBB; crate::hash::ADDRESS_HASH_SIZE]);
@@ -295,7 +294,7 @@ mod tests {
             limits.check(iface_a, &announce_packet(AddressHash::new([1; 16]), 1), false),
             AnnounceLimitAction::Allow
         );
-        sleep(StdDuration::from_millis(5));
+        advance(Duration::from_millis(5)).await;
         assert!(matches!(
             limits.check(iface_a, &announce_packet(AddressHash::new([2; 16]), 1), false),
             AnnounceLimitAction::Hold(_)
@@ -306,8 +305,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn held_announces_release_lowest_hops_first() {
+    #[tokio::test(start_paused = true)]
+    async fn held_announces_release_lowest_hops_first() {
         let mut limits = AnnounceLimits::with_rate_limit(test_rate_limit());
         let iface = AddressHash::new([0xCC; crate::hash::ADDRESS_HASH_SIZE]);
 
@@ -315,35 +314,35 @@ mod tests {
             limits.check(iface, &announce_packet(AddressHash::new([1; 16]), 4), false),
             AnnounceLimitAction::Allow
         );
-        sleep(StdDuration::from_millis(5));
+        advance(Duration::from_millis(5)).await;
         assert!(matches!(
             limits.check(iface, &announce_packet(AddressHash::new([2; 16]), 3), false),
             AnnounceLimitAction::Hold(_)
         ));
-        sleep(StdDuration::from_millis(5));
+        advance(Duration::from_millis(5)).await;
         assert!(matches!(
             limits.check(iface, &announce_packet(AddressHash::new([3; 16]), 1), false),
             AnnounceLimitAction::Hold(_)
         ));
 
-        sleep(StdDuration::from_millis(55));
+        advance(Duration::from_millis(55)).await;
         assert!(limits.release_ready().is_empty());
 
-        sleep(StdDuration::from_millis(25));
+        advance(Duration::from_millis(25)).await;
         let released = limits.release_ready();
         assert_eq!(released.len(), 1);
         assert_eq!(released[0].iface, iface);
         assert_eq!(released[0].packet.destination, AddressHash::new([3; 16]));
 
-        sleep(StdDuration::from_millis(15));
+        advance(Duration::from_millis(15)).await;
 
         let released = limits.release_ready();
         assert_eq!(released.len(), 1);
         assert_eq!(released[0].packet.destination, AddressHash::new([2; 16]));
     }
 
-    #[test]
-    fn held_announces_evict_worst_entry_when_capacity_is_reached() {
+    #[tokio::test(start_paused = true)]
+    async fn held_announces_evict_worst_entry_when_capacity_is_reached() {
         let mut rate_limit = test_rate_limit();
         rate_limit.max_held_announces = 1;
         let mut limits = AnnounceLimits::with_rate_limit(rate_limit);
@@ -353,21 +352,21 @@ mod tests {
             limits.check(iface, &announce_packet(AddressHash::new([1; 16]), 4), false),
             AnnounceLimitAction::Allow
         );
-        sleep(StdDuration::from_millis(5));
+        advance(Duration::from_millis(5)).await;
         assert!(matches!(
             limits.check(iface, &announce_packet(AddressHash::new([2; 16]), 5), false),
             AnnounceLimitAction::Hold(_)
         ));
-        sleep(StdDuration::from_millis(5));
+        advance(Duration::from_millis(5)).await;
         assert!(matches!(
             limits.check(iface, &announce_packet(AddressHash::new([3; 16]), 1), false),
             AnnounceLimitAction::Hold(_)
         ));
 
-        sleep(StdDuration::from_millis(55));
+        advance(Duration::from_millis(55)).await;
         assert!(limits.release_ready().is_empty());
 
-        sleep(StdDuration::from_millis(25));
+        advance(Duration::from_millis(25)).await;
         let released = limits.release_ready();
         assert_eq!(released.len(), 1);
         assert_eq!(released[0].packet.destination, AddressHash::new([3; 16]));
