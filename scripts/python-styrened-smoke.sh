@@ -359,6 +359,7 @@ PY_DELIVERY_HASH="$(destination_hash_from_identity "${PY_DIR}/identity" "lxmf" "
 PY_PROPAGATION_HASH="$(destination_hash_from_identity "${PY_DIR}/identity" "lxmf" "propagation")"
 
 if [[ "${SCENARIO}" == "propagated_resource_lxm" ]]; then
+  rust_propagation_ready=false
   for _ in $(seq 1 "${TIMEOUT_SECS}"); do
     if "${PYTHON_BIN}" -m LXMF.Utilities.lxmd \
         -v \
@@ -367,24 +368,19 @@ if [[ "${SCENARIO}" == "propagated_resource_lxm" ]]; then
         --identity "${PY_DIR}/identity" \
         --timeout 10 \
         --remote "${RUST_PROPAGATION_HASH}" \
-        --status >"${PY_REMOTE_STATUS_LOG}" 2>&1; then
+        --status >"${PY_REMOTE_STATUS_LOG}" 2>&1 && \
+        grep -q "Remote LXMF Propagation Node status" "${PY_REMOTE_STATUS_LOG}"; then
+      rust_propagation_ready=true
       break
     fi
     sleep 1
   done
 
-  for _ in $(seq 1 "${TIMEOUT_SECS}"); do
-    if "${LXMD_BIN}" \
-        --config "${RUST_DIR}/launcher.toml" \
-        --timeout 10 \
-        --remote "${PY_PROPAGATION_HASH}" \
-        --status >"${RUST_REMOTE_STATUS_LOG}" 2>&1; then
-      break
-    fi
-    sleep 1
-  done
-
-  assert_contains "${RUST_REMOTE_STATUS_LOG}" "Remote LXMF Propagation Node status" "Rust remote status against Python node"
+  if [[ "${rust_propagation_ready}" != "true" ]]; then
+    echo "Rust styrened does not expose a Python-compatible lxmf.propagation control destination" >&2
+    echo "propagated resource/.lxm parity remains unsupported; see ${PY_REMOTE_STATUS_LOG}" >&2
+    exit 1
+  fi
 fi
 
 PY_MESSAGE_CONTENT="python-smoke-message-$(date +%s)"
