@@ -24,8 +24,8 @@ have been ported in session 2026-03-23. See `docs/upstream-sync-log.md` and `doc
 
 ### 1.0 Upstream Protocol Correctness Backlog
 
-**Status:** ✅ Closed (2026-03-23) — all 28 priority adoption commits ported  
-**Source:** FreeTAKTeam upstream PRs #106–#131 — see `docs/upstream-sync-log.md` for full triage  
+**Status:** ✅ Closed (2026-03-23) — all 28 priority adoption commits ported
+**Source:** FreeTAKTeam upstream PRs #106–#131 — see `docs/upstream-sync-log.md` for full triage
 
 Upstream assembled and addressed a 41-issue Rust/Python compatibility list. The following gaps
 were ported from the upstream repo into styrene-rs:
@@ -66,7 +66,10 @@ shell smoke script — is the scaffold for our own interop gate.
 `styrened` paths are validated end to end. The harness now launches the workspace `styrened`
 binary, sends Python LXMF messages over a TCP RNS interface, and verifies the exact source,
 destination, content, and inbound direction in the daemon's SQLite store. The propagated
-resource/`.lxm` lifecycle remains a separate matrix case and is not claimed by this result.
+resource/`.lxm` lifecycle remains a separate matrix case and is not claimed by this result. A
+live 2026-08-07 probe fails before message transfer because current `styrened` does not expose the
+Python-compatible `lxmf.propagation` control destination; the harness now reports that boundary
+explicitly instead of continuing into a multi-minute delivery timeout.
 
 **All ported (2026-03-23).** Protocol correctness now matches upstream. Service-layer work is
 next in priority order. Open issues (3, 4, 18, 20–43 minus those closed above) are tracked in
