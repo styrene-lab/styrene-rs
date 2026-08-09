@@ -61,6 +61,8 @@ pub enum TuiEvent {
         status: String,
         rtt_ms: Option<f64>,
     },
+    /// Result of a chat send, correlated to its conversation and message.
+    ChatSendResult { peer_hash: String, message_id: Option<String>, success: bool, detail: String },
     /// Result of a queued daemon command.
     CommandResult { action: String, success: bool, detail: String },
     /// Page content loaded from a host.
@@ -126,17 +128,19 @@ pub fn spawn_command_executor(
                     match h.send_chat(&peer_hash, &content, None).await {
                         Ok(msg_id) => {
                             let _ = event_tx
-                                .send(TuiEvent::CommandResult {
-                                    action: "send_chat".into(),
+                                .send(TuiEvent::ChatSendResult {
+                                    peer_hash,
+                                    message_id: Some(msg_id),
                                     success: true,
-                                    detail: format!("sent: {}", &msg_id[..8.min(msg_id.len())]),
+                                    detail: "message accepted by daemon".into(),
                                 })
                                 .await;
                         }
                         Err(e) => {
                             let _ = event_tx
-                                .send(TuiEvent::CommandResult {
-                                    action: "send_chat".into(),
+                                .send(TuiEvent::ChatSendResult {
+                                    peer_hash,
+                                    message_id: None,
                                     success: false,
                                     detail: e,
                                 })
@@ -1037,6 +1041,16 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
             // trigger_flash removed — effects system handles visuals
         }
 
+        TuiEvent::ChatSendResult { peer_hash, message_id, success, detail } => {
+            let status =
+                if success { DeliveryStatus::Sent } else { DeliveryStatus::Failed(detail.clone()) };
+            let conversation = app.peer_conversation(&peer_hash);
+            conversation.acknowledge_last_sent(message_id.as_deref(), status);
+            if !success {
+                app.conversation.push_system(&format!("✗ send_chat: {detail}"));
+            }
+        }
+
         TuiEvent::CommandResult { action, success, detail } => {
             let prefix = if success { "✓" } else { "✗" };
             app.conversation.push_system(&format!("{prefix} {action}: {detail}"));
@@ -1046,12 +1060,6 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
                 "device_status" | "exec" | "reboot_device" | "fleet_apply" => {
                     app.command_tab.is_executing = false;
                     app.command_tab.result_text = format!("  {prefix} {detail}");
-                }
-                "send_chat" if !success => {
-                    // Update the last sent message status to failed
-                    app.conversation.update_last_sent_status(
-                        crate::tui::segments::DeliveryStatus::Failed(detail.clone()),
-                    );
                 }
                 _ => {}
             }
@@ -1222,6 +1230,47 @@ fn parse_message_from_payload(p: &HashMap<String, MpValue>) -> Option<MessageInf
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::segments::DeliveryStatus;
+
+    #[test]
+    fn chat_send_result_updates_the_correct_peer_conversation() {
+        let mut app = crate::app::App::new();
+        app.selected_conversation = Some("peer-a".into());
+        app.handle_compose_submit("hello a".into());
+        app.selected_conversation = Some("peer-b".into());
+        app.handle_compose_submit("hello b".into());
+
+        apply_event(
+            &mut app,
+            TuiEvent::ChatSendResult {
+                peer_hash: "peer-a".into(),
+                message_id: Some("message-a".into()),
+                success: true,
+                detail: "accepted".into(),
+            },
+        );
+        apply_event(
+            &mut app,
+            TuiEvent::ChatSendResult {
+                peer_hash: "peer-b".into(),
+                message_id: None,
+                success: false,
+                detail: "no route".into(),
+            },
+        );
+
+        assert_eq!(app.conversations["peer-a"].last_sent_status(), Some(&DeliveryStatus::Sent));
+        assert_eq!(
+            app.conversations["peer-b"].last_sent_status(),
+            Some(&DeliveryStatus::Failed("no route".into()))
+        );
+        assert!(
+            app.conversations
+                .get_mut("peer-a")
+                .expect("peer-a conversation")
+                .update_sent_status("message-a", DeliveryStatus::Delivered)
+        );
+    }
 
     #[test]
     fn parse_identity_defaults() {

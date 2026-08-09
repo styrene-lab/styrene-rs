@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
@@ -11,7 +11,7 @@ REPORT_PATH="${REPORT_PATH:-${LOG_DIR}/report.json}"
 TIMEOUT_SECS="${TIMEOUT_SECS:-45}"
 SENDER_WAIT_SECS="${SENDER_WAIT_SECS:-240}"
 SCENARIO="${SCENARIO:-direct}"
-LXMD_BIN="${LXMD_BIN:-${REPO_ROOT}/target/debug/lxmd}"
+STYRENED_BIN="${STYRENED_BIN:-${REPO_ROOT}/target/debug/styrened}"
 
 PORT_SEED="${PORT_SEED:-$$}"
 RUST_RPC_PORT="${RUST_RPC_PORT:-$((4243 + (PORT_SEED % 2000)))}"
@@ -248,48 +248,12 @@ print(RNS.hexrep(identity.hash, delimit=False).lower())
 PY
 )"
 
-cat > "${RUST_DIR}/launcher.toml" <<EOF
-[lxmd]
-rpc = "${RUST_RPC_ADDR}"
-transport = "${RUST_TRANSPORT_ADDR}"
-propagation_node = true
-service = true
+RUST_DB="${RUST_DIR}/messages.db"
+RUST_IDENTITY="${RUST_DIR}/identity"
+
+cat > "${RUST_DIR}/config.toml" <<EOF
+role = "full_node"
 EOF
-
-cat > "${RUST_DIR}/config" <<EOF
-[propagation]
-enable_node = yes
-announce_at_start = yes
-announce_interval = 1
-autopeer = yes
-autopeer_maxdepth = 6
-control_allowed = ${PY_CONTROL_IDENTITY_HASH}
-
-[lxmf]
-display_name = Rust Smoke Node
-announce_at_start = yes
-announce_interval = 1
-on_inbound = ${RUST_DIR}/on_inbound.sh
-
-[logging]
-loglevel = 4
-EOF
-
-cat > "${RUST_DIR}/on_inbound.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-message_file="${1:-}"
-state_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../hook-state && pwd)"
-mkdir -p "${state_dir}"
-{
-  printf 'message_file=%s\n' "${message_file}"
-  printf 'source=%s\n' "${LXMD_MESSAGE_SOURCE:-}"
-  printf 'destination=%s\n' "${LXMD_MESSAGE_DESTINATION:-}"
-  printf 'title=%s\n' "${LXMD_MESSAGE_TITLE:-}"
-  printf 'content=%s\n' "${LXMD_MESSAGE_CONTENT:-}"
-} >> "${state_dir}/hook.log"
-EOF
-chmod +x "${RUST_DIR}/on_inbound.sh"
 
 RUST_CONTROL_IDENTITY_HASH=""
 
@@ -331,12 +295,16 @@ cat > "${PY_SENDER_RNS_DIR}/config" <<EOF
     target_port = ${RUST_TRANSPORT_PORT}
 EOF
 
-cargo build --manifest-path "${REPO_ROOT}/crates/apps/styrened-rs/Cargo.toml" --bin styrened-rs --quiet
-cargo build --manifest-path "${REPO_ROOT}/crates/apps/lxmf-cli/Cargo.toml" --bin lxmd --quiet
+cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" --bin styrened --quiet
 
 (
-  "${LXMD_BIN}" \
-    --config "${RUST_DIR}/launcher.toml" >"${RUST_LOG}" 2>&1
+  LXMF_DISPLAY_NAME="Rust Smoke Node" "${STYRENED_BIN}" \
+    --rpc "${RUST_RPC_ADDR}" \
+    --db "${RUST_DB}" \
+    --identity "${RUST_IDENTITY}" \
+    --config "${RUST_DIR}/config.toml" \
+    --transport "${RUST_TRANSPORT_ADDR}" \
+    --announce-interval-secs 1 >"${RUST_LOG}" 2>&1
 ) &
 RUST_PID=$!
 
@@ -345,9 +313,9 @@ if ! wait_for_file_pattern "${RUST_LOG}" "listening on http://|delivery destinat
   exit 1
 fi
 
-RUST_DELIVERY_HASH="$(destination_hash_from_identity "${RUST_DIR}/identity" "lxmf" "delivery")"
-RUST_PROPAGATION_HASH="$(destination_hash_from_identity "${RUST_DIR}/identity" "lxmf" "propagation")"
-RUST_CONTROL_IDENTITY_HASH="$(identity_hash_from_file "${RUST_DIR}/identity")"
+RUST_DELIVERY_HASH="$(destination_hash_from_identity "${RUST_IDENTITY}" "lxmf" "delivery")"
+RUST_PROPAGATION_HASH="$(destination_hash_from_identity "${RUST_IDENTITY}" "lxmf" "propagation")"
+RUST_CONTROL_IDENTITY_HASH="$(identity_hash_from_file "${RUST_IDENTITY}")"
 
 cat > "${PY_DIR}/config" <<EOF
 [propagation]
@@ -527,31 +495,37 @@ PY
 )"
 
 for _ in $(seq 1 "${TIMEOUT_SECS}"); do
-  if [[ -f "${HOOK_LOG}" ]] && grep -q "${PY_MESSAGE_CONTENT}" "${HOOK_LOG}"; then
+  if "${PYTHON_BIN}" - <<'PY' "${RUST_DB}" "${PY_MESSAGE_CONTENT}" "${PY_SENDER_SOURCE_HASH}"; then
+import sqlite3
+import sys
+
+path, content, source = sys.argv[1:4]
+with sqlite3.connect(path) as db:
+    row = db.execute(
+        "SELECT 1 FROM messages WHERE content = ? AND source = ? AND direction = 'in' LIMIT 1",
+        (content, source),
+    ).fetchone()
+raise SystemExit(0 if row else 1)
+PY
     break
   fi
   sleep 1
 done
 
-assert_contains "${HOOK_LOG}" "${PY_MESSAGE_CONTENT}" "Rust lxmd on-inbound hook content"
-assert_contains "${HOOK_LOG}" "${PY_SENDER_SOURCE_HASH}" "Rust lxmd on-inbound hook source hash"
-
-HOOK_MESSAGE_FILE="$("${PYTHON_BIN}" - <<'PY' "${HOOK_LOG}"
+"${PYTHON_BIN}" - <<'PY' "${RUST_DB}" "${PY_MESSAGE_CONTENT}" "${PY_SENDER_SOURCE_HASH}"
+import sqlite3
 import sys
-from pathlib import Path
 
-for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
-    if line.startswith("message_file="):
-        print(line.split("=", 1)[1])
-        raise SystemExit(0)
-raise SystemExit(1)
+path, content, source = sys.argv[1:4]
+with sqlite3.connect(path) as db:
+    row = db.execute(
+        "SELECT id, source, destination, content, direction FROM messages "
+        "WHERE content = ? AND source = ? AND direction = 'in' LIMIT 1",
+        (content, source),
+    ).fetchone()
+if row is None:
+    raise SystemExit("Rust daemon did not persist the inbound Python LXMF message")
 PY
-)"
-
-if [[ ! -s "${HOOK_MESSAGE_FILE}" ]]; then
-  echo "expected inbound message file at ${HOOK_MESSAGE_FILE}" >&2
-  exit 1
-fi
 
 "${PYTHON_BIN}" - <<'PY' \
   "${REPORT_PATH}" \
@@ -560,13 +534,13 @@ fi
   "${PY_LOG}" \
   "${PY_REMOTE_STATUS_LOG}" \
   "${RUST_REMOTE_STATUS_LOG}" \
-  "${HOOK_LOG}" \
+  "${RUST_DB}" \
   "${RUST_DELIVERY_HASH}" \
   "${RUST_PROPAGATION_HASH}" \
   "${PY_DELIVERY_HASH}" \
   "${PY_PROPAGATION_HASH}" \
-  "${HOOK_MESSAGE_FILE}" \
   "${PY_MESSAGE_CONTENT}" \
+  "${PY_SENDER_SOURCE_HASH}" \
   "${SCENARIO}"
 import json
 import sys
@@ -578,13 +552,13 @@ import sys
     py_log,
     py_remote_status_log,
     rust_remote_status_log,
-    hook_log,
+    rust_db,
     rust_delivery_hash,
     rust_propagation_hash,
     py_delivery_hash,
     py_propagation_hash,
-    hook_message_file,
     py_message_content,
+    py_sender_source_hash,
     scenario,
 ) = sys.argv[1:15]
 
@@ -593,7 +567,8 @@ report = {
     "scenario": scenario,
     "proof": {
         "python_to_rust_inbound_content": py_message_content,
-        "rust_hook_message_file": hook_message_file,
+        "python_sender_source_hash": py_sender_source_hash,
+        "rust_message_store": rust_db,
     },
     "hashes": {
         "rust_delivery": rust_delivery_hash,
@@ -607,7 +582,6 @@ report = {
         "python_lxmd": py_log,
         "python_remote_status": py_remote_status_log,
         "rust_remote_status": rust_remote_status_log,
-        "hook": hook_log,
     },
 }
 
