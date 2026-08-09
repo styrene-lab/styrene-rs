@@ -119,6 +119,25 @@ impl ConversationView {
         false
     }
 
+    /// Correlate the most recent optimistic message with its daemon ID and status.
+    pub fn acknowledge_last_sent(
+        &mut self,
+        message_id: Option<&str>,
+        status: DeliveryStatus,
+    ) -> bool {
+        for seg in self.segments.iter_mut().rev() {
+            if let Segment::SentMessage { message_id: candidate, delivery_status, .. } = seg
+                && candidate.is_none()
+            {
+                *candidate = message_id.map(str::to_string);
+                *delivery_status = status;
+                self.conv_state.invalidate();
+                return true;
+            }
+        }
+        false
+    }
+
     /// Update the most recent optimistic message before a daemon ID is known.
     pub fn update_last_sent_status(&mut self, status: DeliveryStatus) {
         for seg in self.segments.iter_mut().rev() {

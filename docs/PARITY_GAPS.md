@@ -62,6 +62,12 @@ Additionally, these upstream fixes address issues that appear in our **Tier 2/3*
 Also new: a **complete interop test harness** (PRs #116, #127) — `python_compat_matrix.rs` +
 shell smoke script — is the scaffold for our own interop gate.
 
+**Live interop status (2026-08-07):** the direct and opportunistic Python LXMF → current Rust
+`styrened` paths are validated end to end. The harness now launches the workspace `styrened`
+binary, sends Python LXMF messages over a TCP RNS interface, and verifies the exact source,
+destination, content, and inbound direction in the daemon's SQLite store. The propagated
+resource/`.lxm` lifecycle remains a separate matrix case and is not claimed by this result.
+
 **All ported (2026-03-23).** Protocol correctness now matches upstream. Service-layer work is
 next in priority order. Open issues (3, 4, 18, 20–43 minus those closed above) are tracked in
 `docs/COMPAT_ISSUES.md`.
