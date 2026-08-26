@@ -1,11 +1,11 @@
 schema_version = 1
 profile = "styrene-repository-signing-v1"
-status = "candidate"
+status = "released"
 base_revision = "7cfa906e146684277a2cb4d3bd8623ef3e4904d5"
-generator_revision = "PENDING_CLEAN_COMMIT"
+generator_revision = "56a7ce474148e7e15cf694f867d148ad4181684e"
 generated_on = "2026-08-26"
 warning = "DANGER: All roots and private seeds in this corpus are public test material and MUST NEVER be used for real identities or repositories."
-notes = "The base revision does not contain the candidate profile. Replace generator_revision with the clean commit that contains these exact generators and artifacts before release."
+notes = "The generator revision contains the exact generators and artifacts. This provenance manifest was committed afterward so it could identify that immutable revision without a self-reference."
 
 [[generators]]
 id = "legacy-derivation"
