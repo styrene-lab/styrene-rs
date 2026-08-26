@@ -90,7 +90,10 @@ OKM = HKDF-Expand(PRK, info=purpose_string, L=32)
 | `WireGuard` | `"styrene-wireguard-v1"` | Curve25519 private key | WireGuard tunnel |
 | `SshHost` | `"styrene-ssh-host-v1"` | Ed25519 seed | SSH server host key |
 | `Age` | `"styrene-age-v1"` | X25519 private key | age file encryption |
-| `GitSigning` | `"styrene-git-signing-v1"` | Ed25519 seed | User's git commit signing |
+| `Signing` | `"styrene-rns-signing-v1"` | Ed25519 seed | Canonical identity and legacy Git commit signing |
+
+`GitSigning` is a deprecated alias for `Signing`. Git commit signatures do not
+establish repository authority.
 
 All info strings are versioned (`-v1` suffix). Version bumps produce entirely new key material, enabling non-destructive algorithm upgrades.
 
@@ -117,6 +120,7 @@ The master key is zeroized immediately after the level-2 HKDF-Extract.
 |--------|--------------------|-------------|----------------|----------------|
 | SSH user keys | `"styrene-ssh-user-master-v1"` | `"styrene-identity-ssh-user-v1"` | `"github"`, `"work"` | `styrene-ssh-user-{label}` |
 | Agent signing keys | `"styrene-agent-master-v1"` | `"styrene-identity-agent-v1"` | `"omegon-primary"`, `"omegon-cleave-0"` | `styrene-agent:{name}` |
+| Repository signing keys | `"styrene-repository-signing-master-v1"` | `"styrene-identity-repository-signing-v1"` | big-endian epochs `0`, `1`, ... | Identity-issued binding |
 | TLS certificate keys | `"styrene-tls-cert-master-v1"` | `"styrene-identity-tls-cert-v1"` | `"auspex-control/dev/server/0"` | X.509 Ed25519 key material |
 
 Empty labels and agent names are rejected with `DeriveError::EmptyLabel`.
@@ -136,7 +140,7 @@ root_secret (32 bytes)
   ├─ Expand(PRK, "styrene-wireguard-v1")            → WireGuard Curve25519
   ├─ Expand(PRK, "styrene-ssh-host-v1")             → SSH host Ed25519
   ├─ Expand(PRK, "styrene-age-v1")                  → age X25519
-  ├─ Expand(PRK, "styrene-git-signing-v1")          → git signing Ed25519
+  ├─ Expand(PRK, "styrene-rns-signing-v1")          → identity and legacy commit signing Ed25519
   │
   ├─ Expand(PRK, "styrene-ssh-user-master-v1")      → SSH user master
   │   └─ Extract(salt="styrene-identity-ssh-user-v1", master) then Expand(info=label)
@@ -150,6 +154,10 @@ root_secret (32 bytes)
   │       ├─ "omegon-cleave-0"                      → cleave worker 0
   │       ├─ "auspex-deploy"                        → deployed agent
   │       └─ ...
+  │
+  ├─ Expand(PRK, "styrene-repository-signing-master-v1") → repository signing master
+  │   └─ Extract(salt="styrene-identity-repository-signing-v1", master)
+  │       └─ Expand(info="styrene-repository-signing-epoch-v1\0" || u32be(epoch))
   │
   └─ Expand(PRK, "styrene-tls-cert-master-v1")      → TLS certificate master
       └─ Extract(salt="styrene-identity-tls-cert-v1", master) then Expand(info=label)
@@ -200,7 +208,7 @@ pub trait IdentitySigner: Send + Sync {
 - `root_secret()` MUST return the same 32 bytes for the same signer configuration across calls and across machines. This is the portability guarantee.
 - `root_secret()` MAY require user interaction (touch, biometric, passphrase prompt). Callers MUST NOT assume it is non-blocking.
 - `root_secret()` exposes the raw 32-byte root to the caller for ALL tiers, including Tier A (YubiKey). The YubiKey's hmac-secret extension provides a PRF output, not on-device signing. True hardware-contained signing (key never in process memory) would require a different trait design and is not supported in the current architecture.
-- `sign()` derives the Ed25519 signing key from `root_secret()` via `KeyDeriver::derive(KeyPurpose::RnsSigning)` and zeroizes the seed after signing. This method is specific to RNS mesh signing — SSH and git signing are handled by the SSH agent, which performs its own purpose-specific derivation.
+- `sign()` derives the canonical Ed25519 identity signing key from `root_secret()` and zeroizes the seed after signing. The SSH agent can expose the same key for legacy Git commit signing. This key is not a repository authority key.
 - `is_available()` MUST NOT require user interaction. It is a synchronous check for hardware presence or file existence.
 
 **Credential input:** Signers obtain secrets via injectable provider traits, not environment variables:
@@ -341,7 +349,7 @@ The agent serves four key families, all from the same root:
 | Family | Derivation Method | Comment Format | Use Case |
 |--------|-------------------|----------------|----------|
 | SSH user keys | `derive_ssh_user_key(label)` | `styrene-ssh-user-{label}` | SSH auth to hosts |
-| Git signing key | `derive(GitSigning)` | `styrene-git-signing` | User's commit signing |
+| Legacy Git signing key | `signing_seed()` | `styrene-git-signing` | User's commit signing |
 | Agent signing keys | `derive_agent_key(name)` | `styrene-agent:{name}` | Agent commit signing |
 | SSH host key | `derive(SshHost)` | `styrene-ssh-host` | SSH server identity |
 
@@ -364,6 +372,11 @@ For systems that require key files (CI pipelines, legacy automation), an explici
 
 ## 6. Git Commit Signing and Agent Delegation
 
+This section describes signatures on Git commits and tags. These signatures
+do not establish Styrene repository authority. Repository authority uses the
+separate epoch-indexed repository-signing key family and an Identity-issued
+binding.
+
 ### 6.1 Git SSH Signing
 
 Git 2.34+ supports `gpg.format = ssh`, enabling commit signing with Ed25519 SSH keys. The Styrene SSH agent serves these keys natively:
@@ -380,7 +393,7 @@ The signing key reference can use the `key::` prefix with the literal public key
 
 | Committer | Signing Key | Key Derivation | Git Comment |
 |-----------|------------|----------------|-------------|
-| Human (you) | `GitSigning` | `derive(KeyPurpose::GitSigning)` | `styrene-git-signing` |
+| Human (you) | Canonical identity signing key | `signing_seed()` | `styrene-git-signing` |
 | Primary agent | `Agent("omegon-primary")` | `derive_agent_key("omegon-primary")` | `styrene-agent:omegon-primary` |
 | Cleave worker 0 | `Agent("omegon-cleave-0")` | `derive_agent_key("omegon-cleave-0")` | `styrene-agent:omegon-cleave-0` |
 | Deployed agent | `Agent("auspex-deploy")` | `derive_agent_key("auspex-deploy")` | `styrene-agent:auspex-deploy` |

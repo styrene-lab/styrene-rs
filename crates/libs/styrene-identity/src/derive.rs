@@ -75,6 +75,8 @@ const HKDF_SALT_SSH_USER: &[u8] = b"styrene-identity-ssh-user-v1";
 const HKDF_SALT_I2P_SERVICE: &[u8] = b"styrene-identity-i2p-service-v1";
 /// Level-2 salt for the Tor per-service derivation tree.
 const HKDF_SALT_ONION_SERVICE: &[u8] = b"styrene-identity-onion-service-v1";
+/// Level-2 salt for epoch-indexed repository-signing keys.
+const HKDF_SALT_REPOSITORY_SIGNING: &[u8] = b"styrene-identity-repository-signing-v1";
 
 /// Key derivation purpose — maps to HKDF info strings for flat (non-parameterized) keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -303,6 +305,26 @@ impl KeyDeriver {
     /// Derive a per-service Tor onion v3 key via two-level HKDF.
     pub fn derive_onion_service(&self, service_name: &str) -> Result<[u8; 32], DeriveError> {
         self.derive_parameterized(b"styrene-onion-master-v1", HKDF_SALT_ONION_SERVICE, service_name)
+    }
+
+    /// Derive the dedicated Ed25519 repository-signing seed for `epoch`.
+    ///
+    /// Epochs are explicit values, including zero and [`u32::MAX`]. This method never
+    /// increments an epoch, so derivation cannot wrap around.
+    pub fn derive_repository_signing_key(&self, epoch: u32) -> [u8; 32] {
+        let mut master = [0u8; 32];
+        self.expander()
+            .expand(b"styrene-repository-signing-master-v1", &mut master)
+            .expect("HKDF expand to 32 bytes should never fail");
+        let hk2 = Hkdf::<Sha256>::new(Some(HKDF_SALT_REPOSITORY_SIGNING), &master);
+        master.zeroize();
+
+        let mut info = [0u8; 40];
+        info[..36].copy_from_slice(b"styrene-repository-signing-epoch-v1\0");
+        info[36..].copy_from_slice(&epoch.to_be_bytes());
+        let mut seed = [0u8; 32];
+        hk2.expand(&info, &mut seed).expect("HKDF expand to 32 bytes should never fail");
+        seed
     }
 
     /// Generic two-level HKDF derivation for parameterized families.

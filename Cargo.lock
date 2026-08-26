@@ -6658,6 +6658,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.8.2",
  "x25519-dalek",
  "x509-parser 0.16.0",
  "zeroize",

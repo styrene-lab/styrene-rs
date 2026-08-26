@@ -16,9 +16,17 @@ install_dir := env_var_or_default("STYRENE_INSTALL_DIR", env_var("HOME") + "/.ca
 
 # ─── Development ────────────────────────────────────────────────────────────
 
-# Run all tests
+# Run all tests and prove committed Identity vectors remain unchanged
 test:
-    cargo test --workspace
+    identity_vectors_before="$(git hash-object -- \
+        crates/libs/styrene-identity/tests/test-vectors.json \
+        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/positive.json \
+        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/negative.json)" && \
+    cargo test --workspace --features styrene-identity/repository-signing && \
+    test "$identity_vectors_before" = "$(git hash-object -- \
+        crates/libs/styrene-identity/tests/test-vectors.json \
+        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/positive.json \
+        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/negative.json)"
 
 # Run tests with output
 test-verbose:
