@@ -1,0 +1,10 @@
+[package]
+name = "minimal-repository-signing-consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+styrene-identity = { path = "../..", default-features = false, features = ["repository-signing"] }
+
+[workspace]
