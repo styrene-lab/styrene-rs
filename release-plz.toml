@@ -38,8 +38,8 @@ git_tag_enable = true
 
 [[package]]
 name = "styrene-mqtt"
-publish = false
-release = false
+publish = true
+release = true
 changelog_update = true
 git_release_enable = true
 git_tag_enable = true
