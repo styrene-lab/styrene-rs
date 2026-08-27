@@ -29,9 +29,17 @@ git_release_enable = true
 git_tag_enable = true
 
 [[package]]
-name = "styrene-mqtt"
+name = "styrene-a2a"
 publish = true
 release = true
+changelog_update = true
+git_release_enable = true
+git_tag_enable = true
+
+[[package]]
+name = "styrene-mqtt"
+publish = false
+release = false
 changelog_update = true
 git_release_enable = true
 git_tag_enable = true

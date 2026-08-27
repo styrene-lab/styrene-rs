@@ -76,6 +76,7 @@ docs/_build/
 
 # PyBuilder
 target/
+/result
 .nix-linux-store/
 result-rpi4-builder
 result-rpi-provenance
