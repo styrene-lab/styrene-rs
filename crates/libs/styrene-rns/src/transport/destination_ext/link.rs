@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ed25519_dalek::{Signature, SigningKey, PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH};
+use ed25519_dalek::{Signature, SigningKey, VerifyingKey, PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH};
 use rand_core::OsRng;
 use sha2::Digest;
 use x25519_dalek::StaticSecret;
@@ -23,11 +23,14 @@ use crate::{
         ChannelError, Envelope as ChannelEnvelope, Handler as ChannelHandler, HandlerId,
         MessageState as ChannelMessageState,
     },
+    transport::time::monotonic_now,
 };
 
 use super::DestinationDesc;
 
 const LINK_MTU_SIZE: usize = 3;
+const HEADER_MAXSIZE: usize = 2 + 1 + (ADDRESS_HASH_SIZE * 2);
+const IFAC_MIN_SIZE: usize = 1;
 const KEEPALIVE_MAX_RTT: f32 = 1.75;
 const KEEPALIVE_TIMEOUT_FACTOR: f32 = 4.0;
 const STALE_GRACE_SECS: f32 = 5.0;
@@ -47,16 +50,14 @@ const CHANNEL_RTT_FAST_SECS: f32 = 0.18;
 const CHANNEL_RTT_MEDIUM_SECS: f32 = 0.75;
 const CHANNEL_RTT_SLOW_SECS: f32 = 1.45;
 const CHANNEL_WINDOW_FLEXIBILITY: u8 = 4;
-#[allow(dead_code)] // Used by poll_channel_timeouts (awaiting transport loop integration)
 const CHANNEL_MAX_TRIES: u8 = 5;
 
-#[allow(dead_code)] // Scaffolded for channel retry logic
 #[derive(Debug, Copy, Clone)]
 struct PendingChannelPacket {
     sequence: u16,
     packet: Packet,
     tries: u8,
-    next_retry_at: Instant,
+    next_retry_at: Duration,
 }
 
 struct RegisteredChannelHandler {
@@ -90,6 +91,9 @@ pub enum LinkHandleResult {
     Activated,
     Proof(Packet),
     KeepAlive,
+    Request(Box<LinkPayload>),
+    Response(Box<LinkPayload>),
+    Ingress { payload: Box<LinkPayload>, proof: Packet },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,23 +106,61 @@ pub enum LinkWatchdogAction {
 #[derive(Clone)]
 pub enum LinkEvent {
     Activated,
+    Identified,
+    Activity,
+    RttUpdated,
     Data(Box<LinkPayload>),
-    Closed,
+    Closed(LinkCloseReason),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkCloseReason {
+    Teardown,
+    StaleTimeout,
+    EstablishmentTimeout,
+    ChannelTimeout,
+    SendFailure,
 }
 
 #[derive(Clone)]
 pub struct LinkEventData {
     pub id: LinkId,
     pub address_hash: AddressHash,
+    pub interface: Option<AddressHash>,
+    pub rtt: Option<Duration>,
+    pub remote_identity: Option<AddressHash>,
+    pub observed_at: std::time::SystemTime,
     pub event: LinkEvent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkStateSnapshot {
+    pub id: LinkId,
+    pub address_hash: AddressHash,
+    pub interface: Option<AddressHash>,
+    pub rtt: Option<Duration>,
+    pub status: LinkStatus,
+    pub remote_identity: Option<AddressHash>,
+    pub close_reason: Option<LinkCloseReason>,
+    pub observed_at: std::time::SystemTime,
+    pub age: Duration,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LinkLifecycleSnapshot {
+    pub active: Vec<LinkStateSnapshot>,
+    pub history: Vec<LinkStateSnapshot>,
 }
 
 pub struct Link {
     id: LinkId,
     destination: DestinationDesc,
+    initiator: bool,
     ingress_iface: Option<AddressHash>,
     priv_identity: PrivateIdentity,
     peer_identity: Identity,
+    remote_identity: Option<Identity>,
+    close_reason: Option<LinkCloseReason>,
     derived_key: DerivedKey,
     session_cipher: Option<CachedFernet>,
     signalling: Option<[u8; LINK_MTU_SIZE]>,
@@ -130,6 +172,8 @@ pub struct Link {
     last_keepalive: Option<Instant>,
     last_proof: Option<Instant>,
     stale_since: Option<Instant>,
+    observed_at: std::time::SystemTime,
+    last_activity: Instant,
     keepalive: Duration,
     stale_time: Duration,
     next_channel_sequence: u16,
@@ -157,9 +201,12 @@ impl Link {
         Self {
             id: AddressHash::new_empty(),
             destination,
+            initiator: true,
             ingress_iface: None,
             priv_identity: PrivateIdentity::new_from_rand(OsRng),
             peer_identity: Identity::default(),
+            remote_identity: None,
+            close_reason: None,
             derived_key: DerivedKey::new_empty(),
             session_cipher: None,
             signalling: None,
@@ -171,6 +218,8 @@ impl Link {
             last_keepalive: None,
             last_proof: None,
             stale_since: None,
+            observed_at: std::time::SystemTime::now(),
+            last_activity: Instant::now(),
             keepalive: Duration::from_secs_f32(KEEPALIVE_MAX_SECS),
             stale_time: Duration::from_secs_f32(KEEPALIVE_MAX_SECS * STALE_FACTOR),
             next_channel_sequence: 0,
@@ -211,6 +260,13 @@ impl Link {
             bytes.copy_from_slice(
                 &data[PUBLIC_KEY_LENGTH * 2..PUBLIC_KEY_LENGTH * 2 + LINK_MTU_SIZE],
             );
+            let remote_mtu = ((((bytes[0] & 0x1f) as usize) << 16)
+                | ((bytes[1] as usize) << 8)
+                | bytes[2] as usize)
+                .min(PACKET_MDU + HEADER_MAXSIZE + IFAC_MIN_SIZE);
+            bytes[0] = (bytes[0] & 0xe0) | ((remote_mtu >> 16) as u8 & 0x1f);
+            bytes[1] = (remote_mtu >> 8) as u8;
+            bytes[2] = remote_mtu as u8;
             Some(bytes)
         } else {
             None
@@ -222,9 +278,12 @@ impl Link {
         let mut link = Self {
             id: link_id,
             destination,
+            initiator: false,
             ingress_iface: None,
             priv_identity: PrivateIdentity::new(StaticSecret::random_from_rng(OsRng), signing_key),
             peer_identity,
+            remote_identity: None,
+            close_reason: None,
             derived_key: DerivedKey::new_empty(),
             session_cipher: None,
             signalling,
@@ -236,6 +295,8 @@ impl Link {
             last_keepalive: None,
             last_proof: None,
             stale_since: None,
+            observed_at: std::time::SystemTime::now(),
+            last_activity: Instant::now(),
             keepalive: Duration::from_secs_f32(KEEPALIVE_MAX_SECS),
             stale_time: Duration::from_secs_f32(KEEPALIVE_MAX_SECS * STALE_FACTOR),
             next_channel_sequence: 0,
@@ -285,6 +346,10 @@ impl Link {
         self.last_keepalive = None;
         self.last_proof = None;
         self.stale_since = None;
+        self.observed_at = std::time::SystemTime::now();
+        self.last_activity = Instant::now();
+        self.remote_identity = None;
+        self.close_reason = None;
         self.keepalive = Duration::from_secs_f32(KEEPALIVE_MAX_SECS);
         self.stale_time = Duration::from_secs_f32(KEEPALIVE_MAX_SECS * STALE_FACTOR);
         self.next_channel_sequence = 0;
@@ -307,6 +372,8 @@ impl Link {
             self.activated_at = Some(activated_at);
             self.last_proof = Some(activated_at);
             self.stale_since = None;
+            self.observed_at = std::time::SystemTime::now();
+            self.last_activity = activated_at;
             self.post_event(LinkEvent::Activated);
         }
 
@@ -387,34 +454,48 @@ impl Link {
                 }
                 return LinkHandleResult::Proof(proof);
             }
-            PacketContext::None
-            | PacketContext::Request
-            | PacketContext::Response
-            | PacketContext::LinkIdentify => {
+            PacketContext::None | PacketContext::Request | PacketContext::Response => {
                 let mut buffer = [0u8; PACKET_MDU];
                 if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
                     log::trace!("link({}): data {}B", self.id, plain_text.len());
                     let request_id = if packet.context == PacketContext::Request {
                         let hash = packet.hash().to_bytes();
-                        let mut id = [0u8; ADDRESS_HASH_SIZE];
-                        id.copy_from_slice(&hash[..ADDRESS_HASH_SIZE]);
-                        Some(id)
+                        let mut request_id = [0u8; crate::hash::ADDRESS_HASH_SIZE];
+                        request_id.copy_from_slice(&hash[..crate::hash::ADDRESS_HASH_SIZE]);
+                        Some(request_id)
                     } else {
                         None
                     };
-                    self.post_event(LinkEvent::Data(Box::new(
-                        LinkPayload::new_from_slice_with_context_and_request_id(
+                    let payload =
+                        Box::new(LinkPayload::new_from_slice_with_context_and_request_id(
                             plain_text,
                             packet.context,
                             request_id,
-                        ),
-                    )));
+                        ));
+                    if packet.context == PacketContext::Request {
+                        return LinkHandleResult::Request(payload);
+                    }
+                    if packet.context == PacketContext::Response {
+                        return LinkHandleResult::Response(payload);
+                    }
                     if packet.context == PacketContext::None {
-                        return LinkHandleResult::Proof(self.prove_packet(packet));
+                        if !matches!(self.status, LinkStatus::Active | LinkStatus::Stale) {
+                            return LinkHandleResult::None;
+                        }
+                        return LinkHandleResult::Ingress {
+                            payload,
+                            proof: self.prove_packet(packet),
+                        };
                     }
                     return LinkHandleResult::None;
                 } else {
                     log::error!("link({}): can't decrypt packet", self.id);
+                }
+            }
+            PacketContext::LinkIdentify => {
+                let mut buffer = [0u8; PACKET_MDU];
+                if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
+                    self.handle_identify(plain_text);
                 }
             }
             PacketContext::KeepAlive => {
@@ -425,7 +506,20 @@ impl Link {
                 }
                 if !packet.data.is_empty() && packet.data.as_slice()[0] == 0xFE {
                     log::trace!("link({}): keep-alive response", self.id);
+                    self.rtt = self.request_time.elapsed();
+                    self.update_keepalive_timing();
+                    self.refresh_channel_flow_control();
+                    self.post_event(LinkEvent::RttUpdated);
                     return LinkHandleResult::None;
+                }
+            }
+            PacketContext::LinkClose => {
+                let mut buffer = [0u8; PACKET_MDU];
+                if self
+                    .decrypt(packet.data.as_slice(), &mut buffer[..])
+                    .is_ok_and(|plain_text| plain_text == self.id.as_slice())
+                {
+                    self.close_with_reason(LinkCloseReason::Teardown);
                 }
             }
             PacketContext::LinkRTT => {
@@ -440,6 +534,7 @@ impl Link {
                         if self.activated_at.is_none() {
                             self.activated_at = Some(Instant::now());
                         }
+                        self.post_event(LinkEvent::RttUpdated);
                     }
                 }
             }
@@ -497,12 +592,18 @@ impl Link {
 
                         self.handshake(identity);
                         self.ingress_iface.get_or_insert(iface);
+                        // The destination identity authenticated the link proof; keep it
+                        // separate from the ephemeral link handshake key material.
+                        self.remote_identity = Some(self.destination.identity);
 
                         self.status = LinkStatus::Active;
                         self.rtt = self.request_time.elapsed();
-                        self.activated_at = Some(Instant::now());
+                        let activated_at = Instant::now();
+                        self.activated_at = Some(activated_at);
                         self.last_proof = self.activated_at;
                         self.stale_since = None;
+                        self.last_activity = activated_at;
+                        self.observed_at = std::time::SystemTime::now();
                         self.update_keepalive_timing();
                         self.refresh_channel_flow_control();
 
@@ -520,6 +621,10 @@ impl Link {
         }
 
         LinkHandleResult::None
+    }
+
+    pub(crate) fn accept_ingress_payload(&mut self, payload: Box<LinkPayload>) {
+        self.post_event(LinkEvent::Data(payload));
     }
 
     pub fn data_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
@@ -571,6 +676,15 @@ impl Link {
         msg_type: u16,
         payload: Vec<u8>,
     ) -> Result<(u16, Packet), ChannelError> {
+        self.send_channel_message_at(msg_type, payload, monotonic_now())
+    }
+
+    pub(crate) fn send_channel_message_at(
+        &mut self,
+        msg_type: u16,
+        payload: Vec<u8>,
+        now: Duration,
+    ) -> Result<(u16, Packet), ChannelError> {
         if self.status != LinkStatus::Active {
             return Err(ChannelError::LinkNotReady);
         }
@@ -590,7 +704,7 @@ impl Link {
                 sequence,
                 packet,
                 tries: 1,
-                next_retry_at: Instant::now()
+                next_retry_at: now
                     + Self::channel_retry_timeout_for(self.rtt, 1, self.channel_pending.len() + 1),
             },
         );
@@ -621,8 +735,7 @@ impl Link {
         self.channel_states.insert(sequence, ChannelMessageState::Failed);
     }
 
-    #[allow(dead_code)] // Awaiting transport loop integration
-    pub(crate) fn poll_channel_timeouts(&mut self, now: Instant) -> Vec<Packet> {
+    pub(crate) fn poll_channel_timeouts(&mut self, now: Duration) -> Vec<Packet> {
         if !matches!(self.status, LinkStatus::Active | LinkStatus::Stale) {
             return Vec::new();
         }
@@ -661,15 +774,14 @@ impl Link {
             for pending in self.channel_pending.drain().map(|(_, pending)| pending) {
                 self.channel_states.insert(pending.sequence, ChannelMessageState::Failed);
             }
-            self.close();
+            self.close_with_reason(LinkCloseReason::ChannelTimeout);
             return Vec::new();
         }
 
         resend_packets
     }
 
-    #[allow(dead_code)] // Awaiting transport loop integration
-    pub(crate) fn next_channel_retry_at(&self) -> Option<Instant> {
+    pub(crate) fn next_channel_retry_at(&self) -> Option<Duration> {
         if !matches!(self.status, LinkStatus::Active | LinkStatus::Stale) {
             return None;
         }
@@ -772,7 +884,6 @@ impl Link {
         }
     }
 
-    #[allow(dead_code)]
     fn note_channel_timeout(&mut self) {
         self.channel_fast_rate_rounds = 0;
         self.channel_medium_rate_rounds = 0;
@@ -808,6 +919,48 @@ impl Link {
             context,
             data: packet_data,
         })
+    }
+
+    pub fn response_packet(&self, data: &[u8]) -> Result<Packet, RnsError> {
+        self.packet_with_context(data, PacketContext::Response)
+    }
+
+    /// Build the canonical authenticated Reticulum LINKIDENTIFY packet.
+    pub fn identify_packet(&self, identity: &PrivateIdentity) -> Result<Packet, RnsError> {
+        if !self.initiator || self.status != LinkStatus::Active {
+            return Err(RnsError::InvalidArgument);
+        }
+        let public_identity = identity.as_identity();
+        let mut signed_data = Vec::with_capacity(ADDRESS_HASH_SIZE + PUBLIC_KEY_LENGTH * 2);
+        signed_data.extend_from_slice(self.id.as_slice());
+        signed_data.extend_from_slice(public_identity.public_key.as_bytes());
+        signed_data.extend_from_slice(public_identity.verifying_key.as_bytes());
+
+        let mut proof = Vec::with_capacity(PUBLIC_KEY_LENGTH * 2 + SIGNATURE_LENGTH);
+        proof.extend_from_slice(public_identity.public_key.as_bytes());
+        proof.extend_from_slice(public_identity.verifying_key.as_bytes());
+        proof.extend_from_slice(&identity.sign(&signed_data).to_bytes());
+        self.packet_with_context(&proof, PacketContext::LinkIdentify)
+    }
+
+    /// Build the canonical encrypted LINKCLOSE packet carrying this link ID.
+    pub fn teardown_packet(&self) -> Result<Packet, RnsError> {
+        if self.status != LinkStatus::Active {
+            return Err(RnsError::InvalidArgument);
+        }
+        self.packet_with_context(self.id.as_slice(), PacketContext::LinkClose)
+    }
+
+    pub(crate) fn resource_sdu(&self) -> usize {
+        self.signalling
+            .map(|bytes| {
+                let mtu =
+                    (((bytes[0] as usize) << 16) | ((bytes[1] as usize) << 8) | bytes[2] as usize)
+                        & 0x1f_ffff;
+                mtu.saturating_sub(HEADER_MAXSIZE + IFAC_MIN_SIZE)
+            })
+            .filter(|sdu| *sdu > 0)
+            .unwrap_or(PACKET_MDU)
     }
 
     pub fn data_packet_into(&self, data: &[u8], packet: &mut Packet) -> Result<(), RnsError> {
@@ -847,6 +1000,15 @@ impl Link {
         }
     }
 
+    /// Start an RTT probe using the canonical link keepalive exchange.
+    pub fn probe_packet(&mut self) -> Result<Packet, RnsError> {
+        if self.status != LinkStatus::Active {
+            return Err(RnsError::InvalidArgument);
+        }
+        self.request_time = Instant::now();
+        Ok(self.keep_alive_packet(0xFF))
+    }
+
     pub fn encrypt<'a>(&self, text: &[u8], out_buf: &'a mut [u8]) -> Result<&'a [u8], RnsError> {
         if let Some(session_cipher) = &self.session_cipher {
             let token = session_cipher.encrypt(OsRng, PlainText::from(text), out_buf)?;
@@ -880,6 +1042,11 @@ impl Link {
 
     pub fn peer_identity(&self) -> &Identity {
         &self.peer_identity
+    }
+
+    /// Authenticated remote identity from LINKIDENTIFY, distinct from link-ephemeral keys.
+    pub fn remote_identity(&self) -> Option<&Identity> {
+        self.remote_identity.as_ref()
     }
 
     pub fn create_rtt(&self) -> Packet {
@@ -930,6 +1097,9 @@ impl Link {
     fn note_inbound(&mut self, context: PacketContext) {
         let now = Instant::now();
         self.last_inbound = Some(now);
+        self.last_activity = now;
+        self.observed_at = std::time::SystemTime::now();
+        self.post_event(LinkEvent::Activity);
         if self.status == LinkStatus::Stale {
             self.status = LinkStatus::Active;
             self.stale_since = None;
@@ -944,6 +1114,36 @@ impl Link {
             .clamp(KEEPALIVE_MIN_SECS, KEEPALIVE_MAX_SECS);
         self.keepalive = Duration::from_secs_f32(keepalive_secs);
         self.stale_time = Duration::from_secs_f32(keepalive_secs * STALE_FACTOR);
+    }
+
+    fn handle_identify(&mut self, plain_text: &[u8]) {
+        const IDENTITY_PUBLIC_KEY_SIZE: usize = PUBLIC_KEY_LENGTH * 2;
+        const IDENTIFY_SIZE: usize = IDENTITY_PUBLIC_KEY_SIZE + SIGNATURE_LENGTH;
+
+        if self.initiator || plain_text.len() != IDENTIFY_SIZE {
+            return;
+        }
+        let mut encryption_key = [0u8; PUBLIC_KEY_LENGTH];
+        encryption_key.copy_from_slice(&plain_text[..PUBLIC_KEY_LENGTH]);
+        let mut verifying_key = [0u8; PUBLIC_KEY_LENGTH];
+        verifying_key.copy_from_slice(&plain_text[PUBLIC_KEY_LENGTH..IDENTITY_PUBLIC_KEY_SIZE]);
+        let Ok(verifying_key) = VerifyingKey::from_bytes(&verifying_key) else {
+            return;
+        };
+        let Ok(signature) = Signature::from_slice(&plain_text[IDENTITY_PUBLIC_KEY_SIZE..]) else {
+            return;
+        };
+        let identity = Identity::new(x25519_dalek::PublicKey::from(encryption_key), verifying_key);
+        let mut signed_data = Vec::with_capacity(ADDRESS_HASH_SIZE + IDENTITY_PUBLIC_KEY_SIZE);
+        signed_data.extend_from_slice(self.id.as_slice());
+        signed_data.extend_from_slice(&plain_text[..IDENTITY_PUBLIC_KEY_SIZE]);
+        if identity.verify(&signed_data, &signature).is_err() || self.remote_identity.is_some() {
+            return;
+        }
+
+        self.remote_identity = Some(identity);
+        self.observed_at = std::time::SystemTime::now();
+        self.post_event(LinkEvent::Identified);
     }
 
     fn inbound_anchor(&self) -> Instant {
@@ -982,7 +1182,7 @@ impl Link {
                 );
                 if let Some(stale_since) = self.stale_since {
                     if now.duration_since(stale_since) >= stale_timeout {
-                        self.close();
+                        self.close_with_reason(LinkCloseReason::StaleTimeout);
                         return LinkWatchdogAction::Close;
                     }
                 }
@@ -1010,18 +1210,31 @@ impl Link {
         let _ = self.event_tx.send(LinkEventData {
             id: self.id,
             address_hash: self.destination.address_hash,
+            interface: self.ingress_iface,
+            rtt: (!self.rtt.is_zero()).then_some(self.rtt),
+            remote_identity: self.remote_identity.map(|identity| identity.address_hash),
+            observed_at: self.observed_at,
             event,
         });
     }
     pub fn close(&mut self) {
+        self.close_with_reason(LinkCloseReason::Teardown);
+    }
+
+    pub(crate) fn close_with_reason(&mut self, reason: LinkCloseReason) {
+        if self.status == LinkStatus::Closed {
+            return;
+        }
         for pending in self.channel_pending.drain().map(|(_, pending)| pending) {
             self.channel_states.insert(pending.sequence, ChannelMessageState::Failed);
         }
         self.channel_rx_ring.clear();
         self.status = LinkStatus::Closed;
         self.session_cipher = None;
+        self.close_reason = Some(reason);
+        self.observed_at = std::time::SystemTime::now();
 
-        self.post_event(LinkEvent::Closed);
+        self.post_event(LinkEvent::Closed(reason));
 
         log::warn!("link: close {}", self.id);
     }
@@ -1040,6 +1253,10 @@ impl Link {
         self.last_keepalive = None;
         self.last_proof = None;
         self.stale_since = None;
+        self.observed_at = std::time::SystemTime::now();
+        self.last_activity = Instant::now();
+        self.remote_identity = None;
+        self.close_reason = None;
         self.next_channel_rx_sequence = 0;
     }
 
@@ -1053,6 +1270,20 @@ impl Link {
 
     pub fn id(&self) -> &LinkId {
         &self.id
+    }
+
+    pub fn state_snapshot(&self) -> LinkStateSnapshot {
+        LinkStateSnapshot {
+            id: self.id,
+            address_hash: self.destination.address_hash,
+            interface: self.ingress_iface,
+            rtt: (!self.rtt.is_zero()).then_some(self.rtt),
+            status: self.status,
+            remote_identity: self.remote_identity.map(|identity| identity.address_hash),
+            close_reason: self.close_reason,
+            observed_at: self.observed_at,
+            age: self.last_activity.elapsed(),
+        }
     }
 
     pub(crate) fn validate_packet_proof(&self, packet: &Packet) -> Result<Hash, RnsError> {
@@ -1163,6 +1394,74 @@ mod tests {
     }
 
     #[test]
+    fn canonical_teardown_closes_authenticated_remote_link() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", "delivery"),
+        };
+        let (tx, _) = tokio::sync::broadcast::channel(8);
+        let mut outbound = Link::new(destination, tx.clone());
+        let request = outbound.request();
+        let mut inbound =
+            Link::new_from_request(&request, signer.sign_key().clone(), destination, tx)
+                .expect("link request should parse");
+        let iface = AddressHash::new_from_rand(OsRng);
+        assert!(matches!(
+            outbound.handle_packet(&inbound.prove(), iface),
+            LinkHandleResult::Activated
+        ));
+
+        let wrong = outbound
+            .packet_with_context(&[0; ADDRESS_HASH_SIZE], PacketContext::LinkClose)
+            .expect("encrypted close-shaped packet");
+        inbound.handle_packet(&wrong, iface);
+        assert_eq!(inbound.status(), LinkStatus::Active);
+
+        let teardown = outbound.teardown_packet().expect("active teardown packet");
+        assert_eq!(teardown.context, PacketContext::LinkClose);
+        inbound.handle_packet(&teardown, iface);
+
+        assert_eq!(inbound.status(), LinkStatus::Closed);
+        assert_eq!(inbound.state_snapshot().close_reason, Some(LinkCloseReason::Teardown));
+    }
+
+    #[test]
+    fn keepalive_probe_emits_fresh_rtt_update_only_after_response() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", "delivery"),
+        };
+        let (tx, mut events) = tokio::sync::broadcast::channel(8);
+        let mut outbound = Link::new(destination, tx.clone());
+        let request = outbound.request();
+        let mut inbound =
+            Link::new_from_request(&request, signer.sign_key().clone(), destination, tx)
+                .expect("link request should parse");
+        let iface = AddressHash::new_from_rand(OsRng);
+        assert!(matches!(
+            outbound.handle_packet(&inbound.prove(), iface),
+            LinkHandleResult::Activated
+        ));
+        while events.try_recv().is_ok() {}
+
+        let probe = outbound.probe_packet().expect("active probe packet");
+        assert!(matches!(inbound.handle_packet(&probe, iface), LinkHandleResult::KeepAlive));
+        assert!(!std::iter::from_fn(|| events.try_recv().ok())
+            .any(|event| matches!(event.event, LinkEvent::RttUpdated)));
+        let response = inbound.keep_alive_packet(0xFE);
+        outbound.handle_packet(&response, iface);
+
+        assert!(std::iter::from_fn(|| events.try_recv().ok())
+            .any(|event| matches!(event.event, LinkEvent::RttUpdated)));
+    }
+
+    #[test]
     fn outbound_link_binds_to_proof_iface_and_rejects_other_ifaces() {
         let signer = PrivateIdentity::new_from_rand(OsRng);
         let identity = *signer.as_identity();
@@ -1190,10 +1489,141 @@ mod tests {
             outbound.handle_packet(&payload, AddressHash::new_from_rand(OsRng)),
             LinkHandleResult::None
         ));
+        match outbound.handle_packet(&payload, bound_iface) {
+            LinkHandleResult::Ingress { payload, proof } => {
+                assert_eq!(payload.as_slice(), b"hello over the right iface");
+                assert_eq!(proof.context, PacketContext::LinkProof);
+            }
+            _ => panic!("ordinary data must defer observation and proof to ingress authority"),
+        }
+    }
+
+    #[test]
+    fn pending_outbound_link_rejects_proof_from_non_route_interface() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", "delivery"),
+        };
+        let (tx, _) = tokio::sync::broadcast::channel(4);
+        let mut outbound = Link::new(destination, tx.clone());
+        let request = outbound.request();
+        let expected_iface = AddressHash::new_from_rand(OsRng);
+        outbound.set_ingress_iface(expected_iface);
+        let mut inbound =
+            Link::new_from_request(&request, signer.sign_key().clone(), destination, tx)
+                .expect("link request should parse");
+        let proof = inbound.prove();
+
         assert!(matches!(
-            outbound.handle_packet(&payload, bound_iface),
-            LinkHandleResult::Proof(_)
+            outbound.handle_packet(&proof, AddressHash::new_from_rand(OsRng)),
+            LinkHandleResult::None
         ));
+        assert_eq!(outbound.status(), LinkStatus::Pending);
+        assert!(matches!(
+            outbound.handle_packet(&proof, expected_iface),
+            LinkHandleResult::Activated
+        ));
+    }
+
+    #[test]
+    fn canonical_link_identify_authenticates_and_retains_remote_identity() {
+        let destination_signer = PrivateIdentity::new_from_rand(OsRng);
+        let destination_identity = *destination_signer.as_identity();
+        let destination = DestinationDesc {
+            identity: destination_identity,
+            address_hash: destination_identity.address_hash,
+            name: DestinationName::new("lxmf", "delivery"),
+        };
+        let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+        let mut outbound = Link::new(destination, tx.clone());
+        let request = outbound.request();
+        let mut inbound = Link::new_from_request(
+            &request,
+            destination_signer.sign_key().clone(),
+            destination,
+            tx,
+        )
+        .expect("link request should parse");
+        let iface = AddressHash::new_from_rand(OsRng);
+        assert!(matches!(
+            outbound.handle_packet(&inbound.prove(), iface),
+            LinkHandleResult::Activated
+        ));
+        assert_eq!(
+            outbound.remote_identity().map(|identity| identity.address_hash),
+            Some(destination_identity.address_hash)
+        );
+        assert_ne!(
+            outbound.peer_identity().address_hash,
+            outbound.remote_identity().expect("proved destination identity").address_hash
+        );
+        while rx.try_recv().is_ok() {}
+
+        let identifying_identity = PrivateIdentity::new_from_rand(OsRng);
+        let packet =
+            outbound.identify_packet(&identifying_identity).expect("active initiator can identify");
+        assert!(matches!(inbound.handle_packet(&packet, iface), LinkHandleResult::None));
+
+        let authenticated = inbound.remote_identity().expect("identity must authenticate");
+        assert_eq!(authenticated.address_hash, identifying_identity.as_identity().address_hash);
+        assert_ne!(authenticated.address_hash, inbound.peer_identity().address_hash);
+        assert!(matches!(rx.try_recv(), Ok(LinkEventData { event: LinkEvent::Activity, .. })));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(LinkEventData {
+                remote_identity: Some(identity),
+                event: LinkEvent::Identified,
+                ..
+            }) if identity == identifying_identity.as_identity().address_hash
+        ));
+        assert!(rx.try_recv().is_err(), "identify must not emit generic data");
+    }
+
+    #[test]
+    fn malformed_or_unsigned_link_identify_is_not_accepted() {
+        let destination_signer = PrivateIdentity::new_from_rand(OsRng);
+        let destination_identity = *destination_signer.as_identity();
+        let destination = DestinationDesc {
+            identity: destination_identity,
+            address_hash: destination_identity.address_hash,
+            name: DestinationName::new("lxmf", "delivery"),
+        };
+        let (tx, mut rx) = tokio::sync::broadcast::channel(16);
+        let mut outbound = Link::new(destination, tx.clone());
+        let request = outbound.request();
+        let mut inbound = Link::new_from_request(
+            &request,
+            destination_signer.sign_key().clone(),
+            destination,
+            tx,
+        )
+        .expect("link request should parse");
+        let iface = AddressHash::new_from_rand(OsRng);
+        assert!(matches!(
+            outbound.handle_packet(&inbound.prove(), iface),
+            LinkHandleResult::Activated
+        ));
+        while rx.try_recv().is_ok() {}
+
+        let identity = PrivateIdentity::new_from_rand(OsRng);
+        let public = identity.as_identity();
+        let mut unsigned = Vec::with_capacity(PUBLIC_KEY_LENGTH * 2 + SIGNATURE_LENGTH);
+        unsigned.extend_from_slice(public.public_key.as_bytes());
+        unsigned.extend_from_slice(public.verifying_key.as_bytes());
+        unsigned.resize(PUBLIC_KEY_LENGTH * 2 + SIGNATURE_LENGTH, 0);
+        for proof in [&unsigned[..PUBLIC_KEY_LENGTH], unsigned.as_slice()] {
+            let packet = outbound
+                .packet_with_context(proof, PacketContext::LinkIdentify)
+                .expect("identify test packet");
+            assert!(matches!(inbound.handle_packet(&packet, iface), LinkHandleResult::None));
+        }
+
+        assert!(inbound.remote_identity().is_none());
+        let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+        assert!(!events.iter().any(|event| matches!(event.event, LinkEvent::Identified)));
     }
 
     #[test]
@@ -1223,8 +1653,14 @@ mod tests {
         {
             let mut packet = inbound.data_packet(b"control-payload").expect("data packet");
             packet.context = context;
+            let result = outbound.handle_packet(&packet, iface);
             assert!(
-                matches!(outbound.handle_packet(&packet, iface), LinkHandleResult::None),
+                matches!(
+                    (context, result),
+                    (PacketContext::Request, LinkHandleResult::Request(_))
+                        | (PacketContext::Response, LinkHandleResult::Response(_))
+                        | (_, LinkHandleResult::None)
+                ),
                 "{context:?} should not auto-generate a link proof"
             );
         }
@@ -1260,7 +1696,8 @@ mod tests {
             .expect("channel packet");
 
         assert!(matches!(outbound.handle_packet(&packet, iface), LinkHandleResult::Proof(_)));
-        assert!(rx.try_recv().is_err(), "channel packets should stay on the channel path");
+        assert!(matches!(rx.try_recv(), Ok(LinkEventData { event: LinkEvent::Activity, .. })));
+        assert!(rx.try_recv().is_err(), "channel packets must not emit generic data events");
     }
 
     #[test]
@@ -1717,7 +2154,7 @@ mod tests {
 
         let (_sequence, _packet) =
             outbound.send_channel_message(0x7201, b"timeout".to_vec()).expect("channel message");
-        let _ = outbound.poll_channel_timeouts(Instant::now() + Duration::from_secs(1));
+        let _ = outbound.poll_channel_timeouts(monotonic_now() + Duration::from_secs(1));
 
         assert_eq!(outbound.channel_send_window(), 2);
     }
@@ -1747,7 +2184,7 @@ mod tests {
         let (sequence, packet) =
             outbound.send_channel_message(0x7100, b"retry-me".to_vec()).expect("channel message");
         let resend_packets =
-            outbound.poll_channel_timeouts(Instant::now() + Duration::from_secs(1));
+            outbound.poll_channel_timeouts(monotonic_now() + Duration::from_secs(1));
 
         assert_eq!(resend_packets.len(), 1);
         assert_eq!(resend_packets[0].hash(), packet.hash());
@@ -1783,14 +2220,14 @@ mod tests {
 
         for seconds in 1..=4 {
             let resend_packets =
-                outbound.poll_channel_timeouts(Instant::now() + Duration::from_secs(seconds));
+                outbound.poll_channel_timeouts(monotonic_now() + Duration::from_secs(seconds));
             assert_eq!(resend_packets.len(), 1);
             assert_eq!(outbound.status(), LinkStatus::Active);
             assert_eq!(outbound.channel_state(sequence), ChannelMessageState::Sent);
         }
 
         let resend_packets =
-            outbound.poll_channel_timeouts(Instant::now() + Duration::from_secs(5));
+            outbound.poll_channel_timeouts(monotonic_now() + Duration::from_secs(5));
         assert!(resend_packets.is_empty());
         assert_eq!(outbound.status(), LinkStatus::Closed);
         assert_eq!(outbound.channel_state(sequence), ChannelMessageState::Failed);

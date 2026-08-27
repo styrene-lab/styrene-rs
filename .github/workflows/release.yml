@@ -1,5 +1,8 @@
 name: Release
 
+# validation-class: release-operation
+# Tag/manual release checks are operational gates, not ordinary offline validation.
+
 on:
   push:
     tags: ['[0-9]*']

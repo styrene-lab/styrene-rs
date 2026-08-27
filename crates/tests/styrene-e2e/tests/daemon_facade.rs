@@ -9,7 +9,9 @@ use std::time::Duration;
 use styrene_e2e::helpers::{await_identity_resolved, await_inbound_count, with_timeout, SETTLE};
 use styrene_e2e::node::TestNodeBuilder;
 use styrene_ipc::traits::*;
+use styrene_ipc::types::ObservationSource;
 use styrened::daemon_facade::DaemonFacade;
+use styrened::storage::messages::MessageRecord;
 
 /// Build a DaemonFacade for a TestNode, using the node's own identity as caller.
 fn facade_for(node: &styrene_e2e::node::TestNode) -> DaemonFacade {
@@ -187,7 +189,23 @@ async fn pin_and_mute_conversations() {
         let alice = TestNodeBuilder::new("alice-pin").tcp_server("127.0.0.1:0").build().await;
 
         let facade = facade_for(&alice);
-        let peer = "1111111111111111111111111111111";
+        let peer = "11111111111111111111111111111111";
+        alice
+            .app_context
+            .messaging()
+            .accept_inbound_record(&MessageRecord {
+                id: "pin-mute-message".into(),
+                source: peer.into(),
+                destination: alice.delivery_hash.clone(),
+                title: String::new(),
+                content: "conversation state".into(),
+                timestamp: 1,
+                direction: "in".into(),
+                fields: None,
+                receipt_status: None,
+                read: false,
+            })
+            .expect("persist conversation");
 
         // Pin
         let pinned = facade.pin_conversation(peer).await.expect("pin");
@@ -406,7 +424,11 @@ async fn query_path_info_for_known_peer() {
         let path = facade.query_path_info(&bob.delivery_hash).await.expect("query_path_info");
 
         assert_eq!(path.destination_hash, bob.delivery_hash);
-        // Hops may or may not be populated depending on path table state
+        assert!(path.hops.is_some(), "known peer path was not observed");
+        assert_eq!(path.observation.source, ObservationSource::TransportPathTable);
+        assert!(path.observation.observed_at.is_some());
+        assert!(path.expires.is_some());
+        assert!(!path.observation.stale);
     })
     .await;
 }

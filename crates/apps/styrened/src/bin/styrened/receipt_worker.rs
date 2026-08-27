@@ -7,7 +7,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 pub(super) fn spawn_receipt_worker(
     daemon: Arc<RpcDaemon>,
     mut receipt_rx: UnboundedReceiver<ReceiptEvent>,
-) {
+) -> tokio::task::JoinHandle<()> {
     let daemon_receipts = daemon;
     tokio::spawn(async move {
         while let Some(event) = receipt_rx.recv().await {
@@ -23,5 +23,5 @@ pub(super) fn spawn_receipt_worker(
                 log_delivery_trace(&message_id, "-", "receipt-persist", "ok");
             }
         }
-    });
+    })
 }

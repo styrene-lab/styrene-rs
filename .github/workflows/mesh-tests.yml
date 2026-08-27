@@ -1,16 +1,7 @@
 name: Mesh Integration Tests
 
 on:
-  push:
-    branches: [master, main]
-    paths:
-      - "crates/**"
-      - "tests/mesh/**"
-  pull_request:
-    branches: [master, main]
-    paths:
-      - "crates/**"
-      - "tests/mesh/**"
+  workflow_dispatch:
 
 jobs:
   mesh:

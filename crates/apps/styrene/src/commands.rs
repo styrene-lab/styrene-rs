@@ -96,16 +96,29 @@ pub(crate) async fn send(
     destination: &str,
     content: &str,
     title: Option<&str>,
+    delivery_method: &str,
 ) -> anyhow::Result<()> {
     let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
-    let msg_id = client.send_chat(destination, content, title).await.map_err(anyhow::Error::msg)?;
+    let outcome = client
+        .send_chat_outcome(destination, content, title, delivery_method)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let msg_id = outcome.message_id;
 
     eprintln!(
-        "  {} sent to {}  (id: {})",
-        style("✓").green().bold(),
+        "  {} {} to {}  (id: {})",
+        if outcome.disposition == "failed" {
+            style("✗").red().bold()
+        } else {
+            style("✓").green().bold()
+        },
+        outcome.disposition,
         truncate(destination, 12),
         truncate(&msg_id, 8)
     );
+    if let Some(uri) = outcome.paper_uri {
+        println!("{uri}");
+    }
 
     Ok(())
 }

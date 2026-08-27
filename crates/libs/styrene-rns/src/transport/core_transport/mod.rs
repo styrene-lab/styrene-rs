@@ -8,11 +8,11 @@ use path_requests::PathRequests;
 use path_requests::TagBytes;
 use path_table::PathTable;
 use rand_core::OsRng;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::Mutex as StdMutex;
+use std::time::{Duration, SystemTime};
 use tokio::time;
-use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use tokio::sync::broadcast;
@@ -26,6 +26,8 @@ use crate::destination::DestinationHandleStatus;
 use crate::destination::DestinationName;
 use crate::destination::SingleInputDestination;
 use crate::destination::SingleOutputDestination;
+use crate::destination::{IngressContext, IngressHandler, IngressKind};
+use crate::destination::{RequestDispatchError, RequestId, RequestPathHash};
 use crate::transport::destination_ext::link::Link;
 use crate::transport::destination_ext::link::LinkEvent;
 use crate::transport::destination_ext::link::LinkEventData;
@@ -45,13 +47,19 @@ use crate::transport::iface::TxMessage;
 use crate::transport::iface::TxMessageType;
 
 use crate::packet::DestinationType;
+use crate::packet::HeaderType;
 use crate::packet::Packet;
 use crate::packet::PacketContext;
 use crate::packet::PacketDataBuffer;
 use crate::packet::PacketType;
 use crate::ratchets::{encrypt_for_public_key, now_secs};
 use crate::transport::ratchet_store::RatchetStore;
-use crate::transport::resource::{build_resource_request_packet, ResourceEvent, ResourceManager};
+use crate::transport::request::{RequestClock, RequestTracker, SystemRequestClock};
+use crate::transport::resource::{
+    build_resource_cache_request_packet, build_resource_cancel_packet,
+    build_resource_request_packet, ResourceEvent, ResourceManager, ResourceStateCounts,
+};
+use crate::transport::time::{MonotonicClock, SystemMonotonicClock};
 
 #[allow(dead_code)] // Scaffolded from upstream — awaiting integration into transport loop
 mod announce_limits;
@@ -122,6 +130,8 @@ const INTERVAL_OUTPUT_LINK_REPEAT: Duration = Duration::from_secs(6);
 #[allow(dead_code)] // Used when output link keepalive is implemented
 const INTERVAL_OUTPUT_LINK_KEEP: Duration = Duration::from_secs(5);
 const INTERVAL_IFACE_CLEANUP: Duration = Duration::from_secs(10);
+const INTERVAL_PATH_CULL: Duration = Duration::from_secs(5);
+const INTERVAL_PROTOCOL_SCHEDULER: Duration = Duration::from_millis(25);
 const INTERVAL_ANNOUNCES_RETRANSMIT: Duration = Duration::from_secs(1);
 const INTERVAL_KEEP_PACKET_CACHED: Duration = Duration::from_secs(180);
 const INTERVAL_PACKET_CACHE_CLEANUP: Duration = Duration::from_secs(90);
@@ -133,6 +143,7 @@ const KEEP_ALIVE_RESPONSE: u8 = 0xFE;
 #[derive(Clone)]
 pub struct ReceivedData {
     pub destination: AddressHash,
+    pub link_id: Option<LinkId>,
     pub data: PacketDataBuffer,
     pub payload_mode: ReceivedPayloadMode,
     pub ratchet_used: bool,
@@ -146,6 +157,36 @@ pub struct ReceivedData {
 pub enum ReceivedPayloadMode {
     FullWire,
     DestinationStripped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerRequestOutcome {
+    Handled(Vec<u8>),
+    Denied,
+    Malformed,
+    PathNotFound,
+    RequestTooLarge,
+    ResponseTooLarge,
+}
+
+impl From<RequestDispatchError> for ServerRequestOutcome {
+    fn from(error: RequestDispatchError) -> Self {
+        match error {
+            RequestDispatchError::PathNotFound => Self::PathNotFound,
+            RequestDispatchError::RequestTooLarge => Self::RequestTooLarge,
+            RequestDispatchError::Unauthorized => Self::Denied,
+            RequestDispatchError::ResponseTooLarge => Self::ResponseTooLarge,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerRequestEvent {
+    pub destination: AddressHash,
+    pub link_id: LinkId,
+    pub request_id: Option<RequestId>,
+    pub path_hash: Option<RequestPathHash>,
+    pub outcome: ServerRequestOutcome,
 }
 
 pub struct TransportConfig {
@@ -179,6 +220,11 @@ pub trait ReceiptHandler: Send + Sync {
     fn on_receipt(&self, receipt: &DeliveryReceipt);
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DestinationRegistrationError {
+    Duplicate(AddressHash),
+}
+
 #[derive(Clone)]
 pub struct AnnounceEvent {
     pub destination: Arc<Mutex<SingleOutputDestination>>,
@@ -193,6 +239,7 @@ pub(crate) struct TransportHandler {
     config: TransportConfig,
     iface_manager: Arc<Mutex<InterfaceManager>>,
     announce_tx: broadcast::Sender<AnnounceEvent>,
+    route_tx: broadcast::Sender<path_table::RouteEvent>,
 
     path_table: PathTable,
     announce_table: AnnounceTable,
@@ -204,6 +251,7 @@ pub(crate) struct TransportHandler {
 
     out_links: HashMap<AddressHash, Arc<Mutex<Link>>>,
     in_links: HashMap<AddressHash, Arc<Mutex<Link>>>,
+    terminal_link_history: VecDeque<crate::transport::destination_ext::link::LinkStateSnapshot>,
 
     packet_cache: Mutex<PacketCache>,
 
@@ -215,6 +263,9 @@ pub(crate) struct TransportHandler {
 
     resource_manager: ResourceManager,
     resource_events_tx: broadcast::Sender<ResourceEvent>,
+    server_request_tx: broadcast::Sender<ServerRequestEvent>,
+    request_tracker: RequestTracker,
+    protocol_clock: Arc<dyn MonotonicClock>,
 
     fixed_dest_path_requests: AddressHash,
 
@@ -229,9 +280,11 @@ pub struct Transport {
     received_data_tx: broadcast::Sender<ReceivedData>,
     iface_messages_tx: broadcast::Sender<RxMessage>,
     resource_events_tx: broadcast::Sender<ResourceEvent>,
+    server_request_tx: broadcast::Sender<ServerRequestEvent>,
     handler: Arc<Mutex<TransportHandler>>,
     iface_manager: Arc<Mutex<InterfaceManager>>,
     cancel: CancellationToken,
+    manager_task: StdMutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 #[derive(Clone)]
@@ -271,8 +324,11 @@ mod handler;
 mod jobs;
 // links: link lifecycle and link-scoped data/resource operations.
 mod links;
+pub use links::LinkDispatch;
 // path: path request/response forwarding and intermediate handling.
 mod path;
+// requests: native Reticulum server request decoding and destination dispatch.
+mod requests;
 // wire: inbound packet handlers and wire-level packet logic.
 mod wire;
 

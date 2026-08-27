@@ -5,7 +5,7 @@
 //! - **PQC crypto** — ML-KEM-768 + X25519 hybrid key exchange, AES-256-GCM
 //!   session encryption, key ratcheting (always available)
 //! - **Session state machine** — 3-message PQC handshake protocol matching
-//!   Python `styrened`'s implementation (always available)
+//!   the Styrene tunnel implementation
 //! - **Tunnel backends** — strongSwan VICI (feature `strongswan`) and
 //!   WireGuard netlink (feature `wireguard`) behind [`TunnelBackend`] trait
 //! - **Orchestrator** — Tunnel selection, failover, health monitoring

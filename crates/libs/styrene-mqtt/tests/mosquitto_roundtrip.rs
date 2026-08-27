@@ -39,6 +39,7 @@ fn command(source: &str, target: &str, sequence: u64) -> AgentEnvelope {
 }
 
 #[tokio::test]
+#[ignore = "requires a live MQTT 5 broker configured by STYRENE_MQTT_TEST_URL"]
 async fn mosquitto_roundtrip_and_reconnect() {
     let Some((host, port)) = broker() else {
         eprintln!("skipping: no MQTT 5 broker at STYRENE_MQTT_TEST_URL");

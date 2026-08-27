@@ -1,11 +1,24 @@
+mod fleet_page;
 mod header;
-mod identity_card;
+mod lab_page;
 mod mesh_status;
+mod message_lifecycle;
 mod network_graph;
+mod network_inspector;
+mod network_interaction;
+mod network_layout;
+mod network_model;
+mod network_page;
+mod network_renderer;
 mod page_browser;
+mod propagation_page;
+mod system_page;
 
-pub use header::Header;
-pub use identity_card::IdentityCard;
-pub use mesh_status::MeshStatus;
+pub use fleet_page::FleetPage;
+pub use lab_page::LabPage;
+pub use message_lifecycle::MessageBubble;
 pub use network_graph::NetworkGraph;
+pub use network_page::NetworkPage;
 pub use page_browser::PageBrowser;
+pub use propagation_page::PropagationPage;
+pub use system_page::SystemPage;

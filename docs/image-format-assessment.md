@@ -2,7 +2,7 @@
 
 **Date**: 2026-03-02
 **Status**: Accepted — JXL as native format, JPEG as fallback
-**Applies to**: `styrene-mesh` crate (wire protocol), `styrened` Python daemon
+**Applies to**: `styrene-mesh` wire protocol and Rust clients
 
 ## Context
 
@@ -13,8 +13,8 @@ Styrene sends images over LXMF on Reticulum mesh networks — low bandwidth, hig
 - Decode on **Pi Zero 2W** (ARM Cortex-A53, 512 MB RAM)
 - Encode on desktop/Pi 4B (ARM Cortex-A72 or x86_64)
 - MCUs (ESP32, nRF52840, RP2040) skip image payloads entirely
-- Both Python (`styrened`) and Rust (`styrene-rs`) must encode and decode
-- Wire protocol is the shared contract — no FFI between implementations
+- Maintained Rust clients must encode and decode the format
+- The Styrene wire protocol is the shared contract
 
 ## Decision
 
@@ -40,60 +40,6 @@ Styrene sends images over LXMF on Reticulum mesh networks — low bandwidth, hig
 | AVIF | `avif-decode` 1.0 | `cavif` 1.6 (pure Rust) | Fragmented across many single-purpose crates |
 
 **`jxl-oxide`** is the deciding factor. A pure-Rust, actively maintained JXL decoder at v0.12 with modular sub-crates (`jxl-bitstream`, `jxl-frame`, `jxl-render`, `jxl-color`) means `styrene-rs` can decode JXL without C dependencies — critical for cross-compilation to ARM targets.
-
-### Python Library Support
-
-| Format | Library | Status |
-|--------|---------|--------|
-| **JXL** | `imagecodecs` (jxl_decode/jxl_encode) or `pillow-jxl-plugin` | Requires libjxl system lib |
-| WebP | Pillow (built-in) | Zero extra deps ✅ |
-| JPEG | Pillow (built-in) | Zero extra deps ✅ |
-| AVIF | `pillow-avif-plugin` | Requires libavif |
-
-### Python ↔ Rust Binding Landscape (PyO3/Maturin)
-
-While `styrened` and `styrene-rs` communicate over the wire (no FFI), a Python binding to Rust image codecs is a viable optimization path. The current landscape:
-
-| Tool | Purpose | Maturity |
-|------|---------|----------|
-| **PyO3** | Rust ↔ Python FFI framework | Production-grade, v0.23+. The standard. Used by Polars, Pydantic V2, ruff, cryptography, tiktoken. Supports `#[pyfunction]`, `#[pyclass]`, async, GIL management, buffer protocol. |
-| **Maturin** | Build backend for PyO3 crates → Python wheels | Production-grade, v1.8+. `pip install maturin && maturin develop`. Generates manylinux/musllinux/macOS wheels. Integrates with pyproject.toml. |
-| **pyo3-asyncio** | Bridge Rust futures ↔ Python asyncio | Stable. Maps `tokio::spawn` to Python awaitable. |
-| **rust-numpy** | Zero-copy NumPy ↔ ndarray | Stable. For image data as numpy arrays without copying. |
-| **uniffi** | Mozilla's multi-language binding generator | Generates Python/Kotlin/Swift from Rust. IDL-based. Less flexible than PyO3 but generates bindings for multiple targets from one definition. |
-| **CFFI + cbindgen** | C ABI approach | Lower-level. `cbindgen` generates C headers from Rust; Python calls via `cffi`. No GIL awareness. Legacy approach. |
-
-**PyO3 + Maturin is the clear winner** for Python-Rust integration. The ecosystem is mature, widely adopted, and well-documented. If we ever want to expose `jxl-oxide` directly to `styrened` (bypassing the system libjxl dependency), we'd publish a `styrene-imagecodecs` PyO3 crate:
-
-```toml
-# hypothetical crates/bindings/styrene-imagecodecs-py/Cargo.toml
-[dependencies]
-jxl-oxide = "0.12"
-pyo3 = { version = "0.23", features = ["extension-module"] }
-
-[build-system]
-requires = ["maturin>=1.0"]
-build-backend = "maturin"
-```
-
-```rust
-#[pyfunction]
-fn decode_jxl(data: &[u8]) -> PyResult<Vec<u8>> {
-    // jxl-oxide decode → raw RGBA pixels
-}
-
-#[pyfunction]
-fn encode_jxl(pixels: &[u8], width: u32, height: u32, quality: f32) -> PyResult<Vec<u8>> {
-    // zune-jpegxl encode
-}
-
-#[pyfunction]
-fn repack_jpeg_to_jxl(jpeg_data: &[u8]) -> PyResult<Vec<u8>> {
-    // Lossless JPEG → JXL repack
-}
-```
-
-This is **not needed immediately** — `imagecodecs` or `pillow-jxl-plugin` work fine for `styrened`. But it's a clean path to eliminating the libjxl system dependency for Python users while sharing the same Rust codec used by `styrene-rs`.
 
 ## Formats Rejected
 

@@ -48,7 +48,16 @@ async fn process_announce<'a>(
     }
 
     handler.announce_table.add(packet, dest_hash, iface);
-    handler.path_table.handle_announce(packet, packet.transport, iface);
+    let mode = handler.iface_manager.lock().await.interface_mode(&iface);
+    if let Some(event) = handler.path_table.handle_announce(
+        packet,
+        packet.transport,
+        iface,
+        mode,
+        announce.random_blob,
+    ) {
+        let _ = handler.route_tx.send(event);
+    }
 
     let name_hash = {
         let destination = destination.lock().await;

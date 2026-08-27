@@ -19,6 +19,7 @@ styrene-services = { path = "../../libs/styrene-services", version = "0.1.0" }
 styrene-mesh = { workspace = true }
 styrene-tunnel = { path = "../../libs/styrene-tunnel", version = "0.1.0", features = ["wireguard"], optional = true }
 styrene-content = { path = "../../libs/styrene-content", version = "0.1.0", features = ["alloc", "std"] }
+styrene-micron = { workspace = true }
 styrene-rbac = { path = "../../libs/styrene-rbac", version = "0.1.0", features = ["config", "signing"] }
 anyhow.workspace = true
 async-trait.workspace = true
@@ -38,6 +39,7 @@ rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+subtle = "2"
 toml = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
@@ -46,10 +48,14 @@ rustls-pemfile = { workspace = true }
 x25519-dalek = { workspace = true }
 x509-parser = { workspace = true }
 zeroize.workspace = true
+tempfile.workspace = true
 styrene-identity = { path = "../../libs/styrene-identity", optional = true }
 dirs = "6.0.0"
 portable-pty = { version = "0.9", optional = true }
 log = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
 
 [features]
 default = ["terminal", "ipc-server"]
@@ -69,7 +75,8 @@ mobile-identity = ["dep:styrene-identity", "styrene-identity/file-signer"]
 bundled-sqlite = ["rusqlite/bundled"]
 
 [dev-dependencies]
-tempfile = { workspace = true }
+styrene-interop-runner = { path = "../../tests/styrene-interop-runner" }
+tokio = { workspace = true, features = ["test-util"] }
 
 [[bin]]
 name = "styrened"

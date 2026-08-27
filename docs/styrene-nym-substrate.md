@@ -61,7 +61,7 @@ Announces, path requests, links, and LXMF then flow over the mixnet like any oth
 **Today:** `TunnelOffer` / `TunnelAccept` carry `endpoint: String` (WireGuard IP:port) and transit LXMF. The discovery-to-tunnel pipeline (docs/pqc-tunnel-architecture.md) leaks the peer relationship to anyone watching the backhaul during bootstrap, and the resulting WG tunnel endpoints are directly observable.
 
 **Proposal:**
-- Extend the endpoint representation with a kind discriminator (direct IP:port vs Nym recipient address vs future Tor/I2P/Yggdrasil endpoints). Python `styrened` is archived and dead — cross-language wire compat is a non-constraint (Decision 6). The only compat obligation is rolling-upgrade tolerance among styrene-rs nodes: older nodes must degrade gracefully (reject or ignore unknown endpoint kinds) rather than misparse. Standard msgpack forward-compat practice (additive fields, unknown-variant rejection) covers this.
+- Extend the endpoint representation with a kind discriminator (direct IP:port vs Nym recipient address vs future Tor/I2P/Yggdrasil endpoints). The compatibility obligation is rolling-upgrade tolerance among Styrene Rust nodes: older nodes must degrade gracefully rather than misparse unknown endpoint kinds.
 - Allow the tunnel control channel (offer/accept/rekey/keepalive/teardown, 0xD8–0xDE) to run over the mixnet — either via `NymIface` (LXMF-over-Nym, no new message types) or via a direct Nym Stream side-channel.
 - This subsumes the open question in the voice design node about retaining Tor/I2P/Yggdrasil endpoint advertisements as tunnel rendezvous helpers: Nym is the strongest candidate for that role (decentralized, incentivized, GPA-resistant, Rust-native SDK).
 
@@ -121,7 +121,7 @@ Announces, path requests, links, and LXMF then flow over the mixnet like any oth
 
 5. **App-layer wiring remains feature-gated in `styrened`.** The old MSRV reason is retired (workspace Rust 1.97 satisfies nym-sdk 1.87), but optional composition still prevents every Styrene installation from paying for Nym's large ungated dependency tree and runtime/storage machinery. This is where a feature flag is correct — at the app composition layer, not inside the protocol core.
 
-6. **Python `styrened` compatibility is a non-constraint** (operator ruling, 2026-07-12: the Python implementation is old, archived, and dead). Wire-protocol design for the tunnel endpoint extension — and any future Styrene envelope change — answers only to rolling-upgrade compatibility among styrene-rs nodes. Choose the clean representation (tagged endpoint-kind discriminator) rather than contorting around a retired peer implementation. Note: README, PARITY_GAPS.md, and COMPAT_ISSUES.md still describe Python styrened as supported/canonical-peer; they are stale on this point and should be updated in a separate housekeeping change.
+6. **Styrene envelope changes follow Rust-node rolling compatibility.** Choose a clean tagged endpoint-kind representation and require older nodes to reject or ignore unknown variants safely.
 
 ## Implementation Design — Bearer Slice (`styrene-nym`)
 
@@ -200,4 +200,3 @@ for iface in config.enabled_nym_dialers() {
 ## Scope Boundary
 
 The bearer slice above is Integration Point 1 end-to-end. Tunnel rendezvous (Integration Point 2) builds on the proven bearer and is a separate change. With Python compat retired (Decision 6), its only remaining design gate is rolling-upgrade behavior of the endpoint-kind extension among styrene-rs nodes.
-

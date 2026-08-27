@@ -1,0 +1,27 @@
+name: Network Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  loopback-network:
+    name: Loopback network and E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p styrene-e2e
+      - run: cargo test -p styrene-i2p
+      - run: cargo test -p styrened --test mobile_node
+
+  harness:
+    name: Subprocess interoperability harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p styrene-interop-runner

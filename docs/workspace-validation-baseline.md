@@ -5,39 +5,41 @@
 
 ## Decision
 
-PyO3 and a local Python interpreter are **not requirements for building, installing, running, or validating the Styrene Rust product**.
-
-The repository still contains the historical Python extension source at:
-
-```text
-crates/bindings/styrene-native
-```
-
-`styrene-native` comes from the superseded incremental Python-to-Rust migration plan documented in [`incremental-rust-migration.md`](incremental-rust-migration.md). That plan assumed a Python daemon would remain the product orchestrator and import Rust modules through PyO3. Rust is now the canonical distribution, so that architecture no longer applies.
-
-On 2026-07-12, `styrene-native` was removed from `workspace.members`. Its source remains only as historical reference and is no longer resolved, built, tested, or published by workspace-wide Cargo commands.
-
-The resulting boundary is intentional:
+The maintained product and workspace are Rust-only. The validation boundary is intentional:
 
 - `cargo test` validates the canonical default product set;
 - `cargo test --workspace` validates every maintained workspace member;
-- neither command resolves PyO3 or depends on the host Python ABI;
-- the operator's Python version must not constrain Styrene's Rust toolchain.
+- neither command depends on a host language runtime outside the Rust toolchain.
 
-The previous Python 3.14 failure was legacy workspace coupling, not a Styrene product failure.
+Current Cargo metadata reports 26 workspace members. Ordinary validation uses
+the following exact matrix:
 
-Verified after removal on 2026-07-12:
-
-```text
-cargo metadata --locked: 24 workspace members; no styrene-native, pyo3, or pyo3-ffi
-cargo test --workspace --exclude styrene-dx --locked: 1,252 passed; 0 failed; 11 ignored
+```bash
+cargo check --workspace --all-targets --exclude styrene-dx
+cargo clippy --workspace --all-targets --exclude styrene-dx --no-deps -- -D warnings
+just test                    # explicit deterministic target matrix
+just test-interop            # committed fixtures only
+just test-validation-offline # recipes, workflows, targets, product registry
 ```
 
-`styrene-dx` is excluded on this macOS host because its desktop WebView dependency is Linux-specific. That platform exclusion is unrelated to Python and does not weaken the maintained non-GUI Rust boundary.
+`styrene-dx` remains excluded from whole-workspace check and Clippy commands because its desktop WebView dependency is platform-specific. `just test` executes its deterministic component and Fixture tests explicitly without Python or network access.
 
 ## Active validation boundary
 
-Use the ordinary Cargo boundaries:
+`just test` batches pure library packages once, then selects deterministic
+targets for `styrened`, `styrene-e2e`, IPC server, TUI, CLI, mobile FFI, and the DX component and Fixture suites.
+The selected application targets include config, identity storage, LXMF
+fidelity, NomadNet pages, TUI rendering/state units, and LXMF protocol gates.
+Named listener, live-peer, Python, broker, and subprocess integration targets
+remain explicit recipes or manually dispatched workflows.
+
+The ordinary Rust `styrene-mesh` product registry test parses capability and
+parity metadata, validates product-manifest references, and verifies every
+committed fixture SHA-256 digest. `just validate-product` remains an explicit
+Python cross-check and is not required by ordinary validation.
+
+Use these broad Cargo boundaries only when the environment supports every
+target:
 
 ```bash
 # Canonical maintained/default product set
@@ -47,15 +49,16 @@ cargo test
 cargo test --workspace
 ```
 
-Do not use `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1` for ordinary Styrene validation. It is neither required nor an acceptable way to hide accidental Python coupling.
+Upstream protocol interoperability harnesses remain explicit and isolated from ordinary product validation.
 
-Python-generated protocol fixtures and optional Python interoperability harnesses are separate concerns. Consuming checked-in fixtures does not require PyO3. Tests that intentionally launch Python must remain explicit, isolated compatibility tests rather than implicit requirements of the Rust product build.
-
-## Historical binding policy
-
-`crates/bindings/styrene-native` is not an active Cargo package from the workspace's perspective. Do not add it back to `workspace.members` or upgrade its PyO3 dependency without a new, explicit product decision to support a Python extension distribution.
-
-If the historical source becomes misleading or costly to retain, remove or archive it in a separate change. Its presence on disk does not make it part of the maintained build graph.
+`just validate` uses `tests/offline-validation.toml` to separate target selection from
+environment-dependent execution. Deterministic `styrened` page units, the
+`styrene-e2e` LXMF protocol target, Micron/NomadNet conformance, and committed
+interop fixtures remain ordinary gates. Listener, subprocess, broker, hardware,
+and live-peer targets require an explicit recipe or manually dispatched workflow.
+Reusable workflows must use immutable commit references; ordinary validation
+rejects unmodeled Just, Cargo, or workflow trigger forms instead of assuming they
+are safe.
 
 ## `styrene-ipc-server` timeout correction
 
@@ -74,6 +77,23 @@ Therefore:
 - the earlier event is classified as an inconclusive whole-workspace timeout;
 - it must not be tracked as an IPC-server defect without a focused reproducer;
 - long whole-workspace runs should be partitioned by package group or given a larger execution budget.
+
+## `styrene-e2e` execution budget
+
+On 2026-08-21, full `styrene-e2e` runs were terminated by 120-second and
+240-second harness limits. Both terminations were harness failures, not test
+failures. The same complete command passed when its harness budget increased to
+900 seconds:
+
+```text
+cargo test -p styrene-e2e
+160 passed; 0 failed; 0 ignored
+```
+
+Use at least 900 seconds for a full `styrene-e2e` run. Do not report a timed-out
+full run as partial validation. Rerun the complete command with the correct
+budget. Focused E2E targets can use shorter budgets when their own deadline is
+bounded.
 
 ## Substrate-adoption gate
 

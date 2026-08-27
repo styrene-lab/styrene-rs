@@ -5,7 +5,7 @@
 //! re-encodes to byte-identical output.
 //!
 //! Vectors live in tests/fixtures/ipc-wire/*.bin with JSON sidecars.
-//! Regenerate with: python tests/fixtures/ipc-wire/generate_vectors.py
+//! The committed vectors are stable regression inputs for the Rust IPC contract.
 
 use std::collections::HashMap;
 use std::fs;

@@ -126,4 +126,55 @@ impl LinkTable {
             self.entries.remove(&link_id);
         }
     }
+
+    pub fn remove_unavailable_interfaces(&mut self, active_interfaces: &[AddressHash]) {
+        self.entries.retain(|_, entry| {
+            active_interfaces.contains(&entry.received_from)
+                && active_interfaces.contains(&entry.next_hop_iface)
+        });
+    }
+
+    #[cfg(feature = "testing")]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hash::Hash;
+
+    fn address(value: &[u8]) -> AddressHash {
+        AddressHash::new_from_hash(&Hash::new_from_slice(value))
+    }
+
+    #[test]
+    fn unavailable_ingress_or_egress_removes_intermediate_link() {
+        let ingress = address(b"ingress");
+        let egress = address(b"egress");
+        let link_id = address(b"link");
+        let now = Instant::now();
+        let mut table = LinkTable::new(Duration::from_secs(10), Duration::from_secs(10));
+        table.entries.insert(
+            link_id,
+            LinkEntry {
+                timestamp: now,
+                proof_timeout: now + Duration::from_secs(10),
+                next_hop: address(b"hop"),
+                next_hop_iface: egress,
+                received_from: ingress,
+                original_destination: address(b"destination"),
+                taken_hops: 1,
+                remaining_hops: 1,
+                validated: true,
+            },
+        );
+
+        table.remove_unavailable_interfaces(&[ingress, egress]);
+        assert_eq!(table.entries.len(), 1);
+
+        table.remove_unavailable_interfaces(&[egress]);
+        assert!(table.entries.is_empty());
+    }
 }

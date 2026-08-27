@@ -9,9 +9,9 @@ struct ResourceSender {
     map_hashes: Vec<[u8; MAPHASH_LEN]>,
     expected_proof: Hash,
     advertisement_packet: Packet,
-    last_activity: Instant,
-    adv_sent: Instant,
-    last_part_sent: Instant,
+    last_activity: Duration,
+    adv_sent: Duration,
+    last_part_sent: Duration,
     max_retries: u8,
     retries_left: u8,
     status: ResourceStatus,
@@ -20,11 +20,19 @@ struct ResourceSender {
 enum OutboundResourcePoll {
     None,
     Send(Box<Packet>),
+    RequestProof(Hash),
     Failed,
 }
 
 impl ResourceSender {
-    fn new(link: &Link, data: Vec<u8>, metadata: Option<Vec<u8>>) -> Result<Self, RnsError> {
+    fn new(
+        link: &Link,
+        data: Vec<u8>,
+        metadata: Option<Vec<u8>>,
+        request_id: Option<ByteBuf>,
+        is_response: bool,
+        now: Duration,
+    ) -> Result<Self, RnsError> {
         let has_metadata = metadata.is_some();
         let metadata_prefix = if let Some(payload) = metadata.as_ref() {
             if payload.len() > METADATA_MAX_SIZE {
@@ -60,8 +68,9 @@ impl ResourceSender {
         let cipher = link.encrypt(&prefix, &mut cipher_buf).map_err(|_| RnsError::CryptoError)?;
         let cipher_text = cipher.to_vec();
 
+        let resource_sdu = link.resource_sdu();
         let mut parts = Vec::new();
-        for chunk in cipher_text.chunks(PACKET_MDU) {
+        for chunk in cipher_text.chunks(resource_sdu) {
             parts.push(chunk.to_vec());
         }
 
@@ -79,9 +88,14 @@ impl ResourceSender {
             original_hash: resource_hash,
             segment_index: 1,
             total_segments: 1,
-            request_id: None,
+            request_id: request_id.clone(),
             flags: {
                 let mut flags = FLAG_ENCRYPTED;
+                if is_response {
+                    flags |= FLAG_RESPONSE;
+                } else if request_id.is_some() {
+                    flags |= FLAG_REQUEST;
+                }
                 if has_metadata {
                     flags |= FLAG_METADATA;
                 }
@@ -95,8 +109,6 @@ impl ResourceSender {
             PacketContext::ResourceAdvrtisement,
             &advertisement.pack()?,
         )?;
-        let now = Instant::now();
-
         Ok(Self {
             link_id: *link.id(),
             resource_hash,
@@ -118,8 +130,7 @@ impl ResourceSender {
         self.advertisement_packet
     }
 
-    fn mark_advertised(&mut self, retry_limit: u8) {
-        let now = Instant::now();
+    fn mark_advertised(&mut self, retry_limit: u8, now: Duration) {
         self.last_activity = now;
         self.adv_sent = now;
         self.last_part_sent = now;
@@ -128,10 +139,10 @@ impl ResourceSender {
         self.status = ResourceStatus::Advertised;
     }
 
-    fn poll(&mut self, now: Instant, retry_interval: Duration) -> OutboundResourcePoll {
+    fn poll(&mut self, now: Duration, retry_interval: Duration) -> OutboundResourcePoll {
         match self.status {
             ResourceStatus::Advertised => {
-                if now.duration_since(self.adv_sent) < retry_interval {
+                if now.saturating_sub(self.adv_sent) < retry_interval {
                     return OutboundResourcePoll::None;
                 }
                 if self.retries_left == 0 {
@@ -143,7 +154,7 @@ impl ResourceSender {
                 OutboundResourcePoll::Send(Box::new(self.advertisement_packet()))
             }
             ResourceStatus::Transferring => {
-                if now.duration_since(self.last_activity) < retry_interval {
+                if now.saturating_sub(self.last_activity) < retry_interval {
                     return OutboundResourcePoll::None;
                 }
                 if self.retries_left == 0 {
@@ -154,7 +165,7 @@ impl ResourceSender {
                 OutboundResourcePoll::None
             }
             ResourceStatus::AwaitingProof => {
-                if now.duration_since(self.last_part_sent) < retry_interval {
+                if now.saturating_sub(self.last_part_sent) < retry_interval {
                     return OutboundResourcePoll::None;
                 }
                 if self.retries_left == 0 {
@@ -162,7 +173,7 @@ impl ResourceSender {
                 }
                 self.retries_left -= 1;
                 self.last_part_sent = now;
-                OutboundResourcePoll::None
+                OutboundResourcePoll::RequestProof(self.expected_proof_packet_hash())
             }
             _ => OutboundResourcePoll::None,
         }
@@ -173,6 +184,7 @@ impl ResourceSender {
         request: &ResourceRequest,
         link: &Link,
         packets: &mut Vec<Packet>,
+        now: Duration,
     ) {
         if request.resource_hash != self.resource_hash {
             return;
@@ -183,6 +195,12 @@ impl ResourceSender {
         for hash in &request.requested_hashes {
             if let Some(index) = self.map_hashes.iter().position(|entry| entry == hash) {
                 if let Some(part) = self.parts.get(index) {
+                    crate::transport_diagnostic!(
+                        "[resource] sending part index={} bytes={} hash={}",
+                        index,
+                        part.len(),
+                        hex::encode(hash)
+                    );
                     if build_link_packet_into(
                         link,
                         PacketType::Data,
@@ -235,7 +253,6 @@ impl ResourceSender {
             || self.status == ResourceStatus::Transferring
             || self.status == ResourceStatus::AwaitingProof
         {
-            let now = Instant::now();
             self.last_activity = now;
             self.retries_left = self.max_retries;
             if sent_any {
@@ -261,5 +278,21 @@ impl ResourceSender {
             return true;
         }
         false
+    }
+
+    fn expected_proof_packet_hash(&self) -> Hash {
+        let proof = ResourceProof { resource_hash: self.resource_hash, proof: self.expected_proof };
+        Packet {
+            header: Header {
+                destination_type: DestinationType::Link,
+                packet_type: PacketType::Proof,
+                ..Default::default()
+            },
+            destination: self.link_id,
+            context: PacketContext::ResourceProof,
+            data: PacketDataBuffer::new_from_slice(&proof.encode()),
+            ..Default::default()
+        }
+        .hash()
     }
 }

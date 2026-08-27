@@ -1,0 +1,58 @@
+name: Live Interoperability
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Live scenario to execute
+        required: true
+        default: direct
+        type: choice
+        options:
+          - direct
+          - opportunistic
+          - propagated_resource_lxm
+
+jobs:
+  live-interop:
+    name: Live ${{ inputs.scenario }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install native and Python support dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev
+          pip install -r tests/interop/python/requirements.txt
+      - uses: actions/checkout@v4
+        with:
+          repository: markqvist/Reticulum
+          ref: b48b96e61676504e0a4e527b33b9a0b4495c6872
+          path: .live-upstream/Reticulum
+      - uses: actions/checkout@v4
+        with:
+          repository: markqvist/LXMF
+          ref: 795fdaa2b0777c13033787d933d1afc94a2377cb
+          path: .live-upstream/LXMF
+      - name: Run supervised live scenario
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.live-upstream/Reticulum:${{ github.workspace }}/.live-upstream/LXMF
+          LXMF_PYTHON_BIN: python3
+        run: >-
+          cargo run -p styrene-interop-runner --bin styrene-interop --
+          "${{ inputs.scenario }}"
+          --timeout 300
+          --evidence "target/interop/live-${{ inputs.scenario }}.json"
+      - name: Retain structured evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-interop-${{ inputs.scenario }}
+          path: target/interop/
+          if-no-files-found: warn

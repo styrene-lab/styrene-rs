@@ -12,7 +12,10 @@ fn inbound_payload_mode(mode: ReceivedPayloadMode) -> InboundPayloadMode {
     }
 }
 
-pub(super) fn spawn_inbound_worker(daemon: Arc<RpcDaemon>, transport: Arc<Transport>) {
+pub(super) fn spawn_inbound_worker(
+    daemon: Arc<RpcDaemon>,
+    transport: Arc<Transport>,
+) -> tokio::task::JoinHandle<()> {
     let daemon_inbound = daemon;
     let inbound_transport = transport;
     tokio::spawn(async move {
@@ -86,5 +89,5 @@ pub(super) fn spawn_inbound_worker(daemon: Arc<RpcDaemon>, transport: Arc<Transp
                 }
             }
         }
-    });
+    })
 }

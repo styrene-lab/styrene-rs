@@ -27,18 +27,31 @@ pub struct WireMessage {
     pub source: [u8; 16],
     pub signature: Option<[u8; SIGNATURE_LENGTH]>,
     pub payload: Payload,
+    raw_signed_payload: Option<Vec<u8>>,
+    raw_packed_payload: Option<Vec<u8>>,
 }
 
 impl WireMessage {
     pub fn new(destination: [u8; 16], source: [u8; 16], payload: Payload) -> Self {
-        Self { destination, source, signature: None, payload }
+        Self {
+            destination,
+            source,
+            signature: None,
+            payload,
+            raw_signed_payload: None,
+            raw_packed_payload: None,
+        }
     }
 
     pub fn message_id(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(self.destination);
         hasher.update(self.source);
-        hasher.update(self.payload.to_msgpack_without_stamp().unwrap_or_default());
+        hasher.update(
+            self.raw_signed_payload
+                .clone()
+                .unwrap_or_else(|| self.payload.to_msgpack_without_stamp().unwrap_or_default()),
+        );
         let bytes = hasher.finalize();
         let mut out = [0u8; 32];
         out.copy_from_slice(&bytes);
@@ -46,7 +59,10 @@ impl WireMessage {
     }
 
     pub fn sign(&mut self, signer: &PrivateIdentity) -> Result<(), LxmfError> {
-        let payload = self.payload.to_msgpack_without_stamp()?;
+        let payload = self
+            .raw_signed_payload
+            .clone()
+            .map_or_else(|| self.payload.to_msgpack_without_stamp(), Ok)?;
         let mut data = Vec::with_capacity(16 + 16 + payload.len() + 32);
         data.extend_from_slice(&self.destination);
         data.extend_from_slice(&self.source);
@@ -65,7 +81,10 @@ impl WireMessage {
         let signature = Signature::from_slice(&sig_bytes)
             .map_err(|e: ed25519_dalek::SignatureError| LxmfError::Decode(e.to_string()))?;
 
-        let payload = self.payload.to_msgpack_without_stamp()?;
+        let payload = self
+            .raw_signed_payload
+            .clone()
+            .map_or_else(|| self.payload.to_msgpack_without_stamp(), Ok)?;
         let mut data = Vec::with_capacity(16 + 16 + payload.len() + 32);
         data.extend_from_slice(&self.destination);
         data.extend_from_slice(&self.source);
@@ -82,13 +101,15 @@ impl WireMessage {
         out.extend_from_slice(&self.destination);
         out.extend_from_slice(&self.source);
         out.extend_from_slice(&signature);
-        let payload = self.payload.to_msgpack()?;
+        let payload =
+            self.raw_packed_payload.clone().map_or_else(|| self.payload.to_msgpack(), Ok)?;
         out.extend_from_slice(&payload);
         Ok(out)
     }
 
     pub fn pack_storage(&self) -> Result<Vec<u8>, LxmfError> {
-        let payload = self.payload.to_msgpack()?;
+        let payload =
+            self.raw_packed_payload.clone().map_or_else(|| self.payload.to_msgpack(), Ok)?;
         let mut out = Vec::with_capacity(
             STORAGE_MAGIC.len()
                 + 1
@@ -126,7 +147,16 @@ impl WireMessage {
         src.copy_from_slice(&bytes[16..32]);
         signature.copy_from_slice(&bytes[32..32 + SIGNATURE_LENGTH]);
         let payload = Payload::from_msgpack(&bytes[32 + SIGNATURE_LENGTH..])?;
-        Ok(Self { destination: dest, source: src, signature: Some(signature), payload })
+        let raw_signed_payload = Some(crate::inbound_decode::signed_payload_bytes(bytes)?);
+        let raw_packed_payload = Some(bytes[32 + SIGNATURE_LENGTH..].to_vec());
+        Ok(Self {
+            destination: dest,
+            source: src,
+            signature: Some(signature),
+            payload,
+            raw_signed_payload,
+            raw_packed_payload,
+        })
     }
 
     #[cfg(feature = "std")]
@@ -164,8 +194,26 @@ impl WireMessage {
             } else {
                 None
             };
-            let payload = Payload::from_msgpack(&bytes[idx..])?;
-            return Ok(Self { destination: dest, source: src, signature, payload });
+            let raw_packed_payload = bytes[idx..].to_vec();
+            let payload = Payload::from_msgpack(&raw_packed_payload)?;
+            let raw_signed_payload = if let Some(signature) = signature {
+                let mut wire = Vec::with_capacity(32 + SIGNATURE_LENGTH + raw_packed_payload.len());
+                wire.extend_from_slice(&dest);
+                wire.extend_from_slice(&src);
+                wire.extend_from_slice(&signature);
+                wire.extend_from_slice(&raw_packed_payload);
+                Some(crate::inbound_decode::signed_payload_bytes(&wire)?)
+            } else {
+                None
+            };
+            return Ok(Self {
+                destination: dest,
+                source: src,
+                signature,
+                payload,
+                raw_signed_payload,
+                raw_packed_payload: Some(raw_packed_payload),
+            });
         }
 
         Self::unpack(bytes)

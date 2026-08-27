@@ -17,6 +17,29 @@ impl DaemonMessaging for StubDaemon {
         Err(IpcError::not_implemented("send_chat"))
     }
 
+    async fn send_chat_outcome(
+        &self,
+        _request: SendChatRequest,
+    ) -> Result<SendChatOutcome, IpcError> {
+        Err(IpcError::not_implemented("send_chat_outcome"))
+    }
+
+    async fn set_draft(
+        &self,
+        _peer_hash: &str,
+        _content: &str,
+    ) -> Result<ConversationDraft, IpcError> {
+        Err(IpcError::not_implemented("set_draft"))
+    }
+
+    async fn draft(&self, _peer_hash: &str) -> Result<Option<ConversationDraft>, IpcError> {
+        Err(IpcError::not_implemented("draft"))
+    }
+
+    async fn clear_draft(&self, _peer_hash: &str) -> Result<MessagingDisposition, IpcError> {
+        Err(IpcError::not_implemented("clear_draft"))
+    }
+
     async fn mark_read(&self, _peer_hash: &str) -> Result<u64, IpcError> {
         Err(IpcError::not_implemented("mark_read"))
     }
@@ -35,7 +58,7 @@ impl DaemonMessaging for StubDaemon {
 
     async fn query_conversations(
         &self,
-        _include_unread: bool,
+        _unread_only: bool,
     ) -> Result<Vec<ConversationInfo>, IpcError> {
         Err(IpcError::not_implemented("query_conversations"))
     }
@@ -47,6 +70,10 @@ impl DaemonMessaging for StubDaemon {
         _before_ts: Option<i64>,
     ) -> Result<Vec<MessageInfo>, IpcError> {
         Err(IpcError::not_implemented("query_messages"))
+    }
+
+    async fn query_message(&self, _message_id: &str) -> Result<Option<MessageInfo>, IpcError> {
+        Err(IpcError::not_implemented("query_message"))
     }
 
     async fn search_messages(
@@ -128,6 +155,10 @@ impl DaemonIdentity for StubDaemon {
 impl DaemonStatus for StubDaemon {
     async fn query_status(&self) -> Result<DaemonStatusInfo, IpcError> {
         Err(IpcError::not_implemented("query_status"))
+    }
+
+    async fn query_standard_propagation(&self) -> Result<StandardPropagationSnapshot, IpcError> {
+        Err(IpcError::not_implemented("query_standard_propagation"))
     }
 
     async fn query_config(&self) -> Result<ConfigSnapshot, IpcError> {
@@ -337,6 +368,40 @@ impl DaemonPages for StubDaemon {
         Err(IpcError::not_implemented("browse_page"))
     }
 
+    async fn navigate_page(
+        &self,
+        _request: PageNavigationRequest,
+    ) -> Result<PageContent, IpcError> {
+        Err(IpcError::not_implemented("navigate_page"))
+    }
+
+    async fn close_page_session(&self, _session_id: &str) -> Result<PageNavigationInfo, IpcError> {
+        Err(IpcError::not_implemented("close_page_session"))
+    }
+
+    async fn start_file_download(
+        &self,
+        _request: FileDownloadRequest,
+    ) -> Result<FileDownloadInfo, IpcError> {
+        Err(IpcError::not_implemented("start_file_download"))
+    }
+
+    async fn file_download(&self, _download_id: &str) -> Result<FileDownloadInfo, IpcError> {
+        Err(IpcError::not_implemented("file_download"))
+    }
+
+    async fn cancel_file_download(&self, _download_id: &str) -> Result<FileDownloadInfo, IpcError> {
+        Err(IpcError::not_implemented("cancel_file_download"))
+    }
+
+    async fn save_file_download(
+        &self,
+        _download_id: &str,
+        _destination: &str,
+    ) -> Result<FileDownloadInfo, IpcError> {
+        Err(IpcError::not_implemented("save_file_download"))
+    }
+
     async fn list_pages(
         &self,
         _host: &str,
@@ -352,6 +417,10 @@ impl DaemonPages for StubDaemon {
 
 #[async_trait]
 impl DaemonEvents for StubDaemon {
+    async fn link_snapshot(&self) -> Result<crate::types::LinkSnapshot, IpcError> {
+        Err(IpcError::not_implemented("link_snapshot"))
+    }
+
     async fn subscribe_messages(
         &self,
         _peer_hashes: &[String],
@@ -365,6 +434,26 @@ impl DaemonEvents for StubDaemon {
 
     async fn subscribe_links(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
         Err(IpcError::not_implemented("subscribe_links"))
+    }
+
+    async fn subscribe_routes(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
+        Err(IpcError::not_implemented("subscribe_routes"))
+    }
+
+    async fn subscribe_requests(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
+        Err(IpcError::not_implemented("subscribe_requests"))
+    }
+
+    async fn resource_transfers(&self) -> Result<Vec<ResourceTransferInfo>, IpcError> {
+        Err(IpcError::not_implemented("resource_transfers"))
+    }
+
+    async fn cancel_resource(&self, _resource_hash: &str) -> Result<bool, IpcError> {
+        Err(IpcError::not_implemented("cancel_resource"))
+    }
+
+    async fn subscribe_resources(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
+        Err(IpcError::not_implemented("subscribe_resources"))
     }
 }
 
@@ -389,6 +478,7 @@ mod tests {
         assert!(stub.delete_conversation("abc").await.is_err());
         assert!(stub.delete_message("abc").await.is_err());
         assert!(stub.retry_message("abc").await.is_err());
+        assert!(stub.cancel_message("abc").await.is_err());
         assert!(stub.query_conversations(true).await.is_err());
         assert!(stub.query_messages("abc", 10, None).await.is_err());
         assert!(stub.search_messages("q", None, 10).await.is_err());
@@ -422,6 +512,12 @@ mod tests {
 
         // DaemonPages
         assert!(stub.browse_page("abc", "/index", None).await.is_err());
+        assert!(stub.navigate_page(PageNavigationRequest::default()).await.is_err());
+        assert!(stub.close_page_session("session").await.is_err());
+        assert!(stub.start_file_download(FileDownloadRequest::default()).await.is_err());
+        assert!(stub.file_download("download").await.is_err());
+        assert!(stub.cancel_file_download("download").await.is_err());
+        assert!(stub.save_file_download("download", "/tmp/file").await.is_err());
         assert!(stub.list_pages("abc", None).await.is_err());
         assert!(stub.page_hosts().await.is_err());
 
@@ -448,6 +544,10 @@ mod tests {
         // DaemonEvents
         assert!(stub.subscribe_messages(&[]).await.is_err());
         assert!(stub.subscribe_devices().await.is_err());
+        assert!(stub.start_request(StartRequestInfo::default()).await.is_err());
+        assert!(stub.request_receipt("00").await.is_err());
+        assert!(stub.request_receipts().await.is_err());
+        assert!(stub.cancel_request("00").await.is_err());
     }
 
     /// Verify StubDaemon satisfies the composite Daemon trait and can be

@@ -1,8 +1,8 @@
 //! Deterministic key hierarchy for Styrene mesh nodes.
 //!
 //! One 32-byte root secret derives all protocol-specific keys — RNS,
-//! Yggdrasil, WireGuard, SSH, age, git signing, and per-agent delegation
-//! — via HKDF-SHA256 with domain separation.
+//! Yggdrasil, WireGuard, SSH, age, Git commit signing, repository authority,
+//! and per-agent delegation via HKDF-SHA256 with domain separation.
 //!
 //! # Usage
 //!
@@ -13,7 +13,8 @@
 //! let deriver = KeyDeriver::new(&root_secret);
 //!
 //! // Flat-purpose keys (7 protocols)
-//! let git_seed = deriver.derive(KeyPurpose::GitSigning);
+//! let signing_seed = deriver.signing_seed();
+//! let repository_seed = deriver.derive_repository_signing_key(0);
 //! let age_key  = deriver.derive(KeyPurpose::Age);
 //!
 //! // Parameterized keys (two-level HKDF, structurally collision-free)
@@ -42,6 +43,7 @@
 //! |---------|---------|---------|
 //! | `file-signer` | **yes** | `FileSigner`, `IdentityVault` |
 //! | `signing` | via file-signer | `pubkey` module (ed25519, x25519) |
+//! | `repository-signing` | no | Repository authority bindings and strict verification |
 //! | `pki` | no | identity-bound X.509 CA/client/server certificates |
 //! | `yubikey` | no | `YubiKeySigner` (FIDO2 hmac-secret) |
 //! | `ssh-agent` | no | `StyreneAgent` (SSH agent protocol) |
@@ -58,7 +60,7 @@
 //!   ├─ Expand("styrene-wireguard-v1")       → WireGuard Curve25519
 //!   ├─ Expand("styrene-ssh-host-v1")        → SSH host Ed25519
 //!   ├─ Expand("styrene-age-v1")             → age X25519
-//!   ├─ Expand("styrene-git-signing-v1")     → git signing Ed25519
+//!   ├─ Expand("styrene-rns-signing-v1")     → identity and legacy Git commit signing Ed25519
 //!   │
 //!   ├─ SSH user keys (two-level, salt="styrene-identity-ssh-user-v1")
 //!   │   └─ Expand(label) → per-host SSH Ed25519
@@ -66,9 +68,16 @@
 //!   ├─ Agent keys (two-level, salt="styrene-identity-agent-v1")
 //!   │   └─ Expand(name) → per-agent signing Ed25519
 //!   │
+//!   ├─ Repository signing keys (two-level, epoch-indexed)
+//!   │   └─ Expand("styrene-repository-signing-epoch-v1\0" || u32be(epoch))
+//!   │
 //!   └─ TLS certificate keys (two-level, salt="styrene-identity-tls-cert-v1")
 //!       └─ Expand(label) → per-certificate Ed25519 X.509 key
 //! ```
+//!
+//! Git commit signatures authenticate individual Git objects. They do not
+//! establish Styrene repository authority. Repository authority uses the
+//! epoch-indexed key family and an Identity-issued `RepositorySignerBinding`.
 //!
 //! # Linkability warning
 //!
@@ -108,6 +117,7 @@ pub mod file_signer;
 pub mod format;
 #[cfg(feature = "signing")]
 pub mod identity;
+mod identity_id;
 #[cfg(all(feature = "keychain", any(target_os = "macos", target_os = "ios")))]
 pub mod keychain_signer;
 #[cfg(feature = "pki")]
@@ -115,6 +125,8 @@ pub mod pki;
 #[cfg(feature = "signing")]
 pub mod pubkey;
 pub mod records;
+#[cfg(feature = "repository-signing")]
+pub mod repository_signing;
 pub mod signer;
 #[cfg(feature = "ssh-agent")]
 pub mod ssh_agent;
@@ -135,6 +147,7 @@ pub use identity::{
     identity_hash, identity_pubkey, identity_sign, identity_verify, IdentityInfo, PublicIdentity,
     SignedAttestation, IDENTITY_HASH_BYTES,
 };
+pub use identity_id::{IdentityId, IdentityIdError};
 #[cfg(feature = "pki")]
 pub use pki::{
     derive_ca_certificate, derive_ca_certificate_with_profile, derive_client_certificate_chain,
@@ -142,5 +155,10 @@ pub use pki::{
     derive_server_certificate_chain_with_profile, styrene_agent_uri, styrene_ca_uri,
     styrene_client_uri, CertificateRole, StyreneCertificate, StyreneCertificateChain,
     StyreneCertificateProfile, StyrenePkiError,
+};
+#[cfg(feature = "repository-signing")]
+pub use repository_signing::{
+    verify_repository_signer_binding, RepositorySignerBinding, RepositorySignerBindingError,
+    RepositorySignerBindingErrorClass, VerifiedRepositorySignerBinding,
 };
 pub use signer::{IdentitySigner, SignerChain, SignerError, SignerTier};

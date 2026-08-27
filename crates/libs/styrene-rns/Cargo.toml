@@ -62,6 +62,7 @@ transport = [
     "dep:tokio",
     "dep:tokio-util",
 ]
+testing = ["transport"]
 serial = ["transport", "dep:tokio-serial"]
 
 [lints]

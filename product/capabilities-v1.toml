@@ -1,4 +1,5 @@
 schema_version = 1
+parity_schema_version = 1
 
 [[tiers]]
 id = "desktop-full"
@@ -58,12 +59,14 @@ id = "messaging.lxmf.direct"
 stream = "conversations"
 status = "implemented"
 evidence = ["crates/apps/styrened/src/services/messaging.rs", "crates/apps/styrene/src/commands.rs"]
+notes = "Product implementation status only. Upstream compatibility is tracked by the lxmf.direct parity claim."
 
 [[capabilities]]
 id = "messaging.history"
 stream = "conversations"
 status = "implemented"
 evidence = ["crates/apps/styrened/src/storage/messages.rs", "crates/apps/styrene-dx/src/main.rs"]
+notes = "Local persisted history and management are independently authorized; transport is required only for send/retry/cancel."
 
 [[capabilities]]
 id = "messaging.receipts"
@@ -75,13 +78,14 @@ evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs", "crates/apps/styrene
 id = "contacts.manage"
 stream = "conversations"
 status = "implemented"
-evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs"]
+evidence = ["crates/apps/styrened/src/storage/messages.rs", "crates/libs/styrene-ipc/src/types.rs"]
 
 [[capabilities]]
 id = "browse.nomadnet.micron"
 stream = "information-access"
 status = "implemented"
 evidence = ["crates/apps/styrene-dx/src/components/page_browser.rs", "crates/libs/styrene-micron/src/lib.rs"]
+notes = "Micron implementation status only. Native NomadNet transport is tracked separately and is unsupported."
 
 [[capabilities]]
 id = "browse.i2p.proxy"
@@ -94,13 +98,13 @@ notes = "Direct and explicit mesh proxy modes exist; automatic mesh discovery is
 id = "browse.semantic-web"
 stream = "information-access"
 status = "planned"
-evidence = ["docs/lightpanda-semantic-browser-notes.md"]
+evidence = ["docs/product-capability-streams.md"]
 
 [[capabilities]]
 id = "media.voice.signaling"
 stream = "live-media"
 status = "experimental"
-evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs", "docs/styrene-voice-overlay-addressing.md"]
+evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs"]
 notes = "Capability contract exists; complete product session and media path are not release-proven."
 
 [[capabilities]]
@@ -191,3 +195,235 @@ id = "sdk.telemetry"
 stream = "embedded-substrate"
 status = "implemented"
 evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs", "crates/libs/styrene-telemetry/src/lib.rs"]
+
+[[parity_upstreams]]
+id = "python-rns"
+repository = "https://github.com/markqvist/Reticulum"
+revision = "b48b96e61676504e0a4e527b33b9a0b4495c6872"
+version = "1.4.2"
+
+[[parity_upstreams]]
+id = "python-lxmf"
+repository = "https://github.com/markqvist/LXMF"
+revision = "795fdaa2b0777c13033787d933d1afc94a2377cb"
+version = "1.1.1"
+
+[[parity_upstreams]]
+id = "python-nomadnet"
+repository = "https://github.com/markqvist/NomadNet"
+revision = "ad10301569a39d4f43b3d21ae9fc392602c937ca"
+version = "1.2.8"
+
+[[parity_gates]]
+id = "rns-python-fixtures"
+kind = "fixture"
+automated = true
+enabled = true
+ignored = false
+protocol = "native"
+upstreams = ["python-rns"]
+command = "cargo test -p styrene-rns --features interop-tests,transport"
+evidence = [
+  "crates/libs/styrene-rns/tests/interop_identity.rs",
+  "crates/libs/styrene-rns/tests/interop_packet.rs",
+  "crates/libs/styrene-rns/tests/interop_announce.rs",
+  "crates/libs/styrene-rns/tests/interop_fernet.rs",
+  "crates/libs/styrene-rns/tests/interop_hdlc.rs",
+  "crates/libs/styrene-rns/tests/interop_ifac.rs",
+]
+
+[[parity_gates]]
+id = "rns-rust-e2e"
+kind = "rust"
+automated = true
+enabled = true
+ignored = false
+protocol = "internal"
+upstreams = []
+command = "cargo test -p styrene-e2e"
+evidence = [
+  "crates/tests/styrene-e2e/tests/announce.rs",
+  "crates/tests/styrene-e2e/tests/path_resolution.rs",
+  "crates/tests/styrene-e2e/tests/multi_hop.rs",
+  "crates/tests/styrene-e2e/tests/resource_transfer.rs",
+]
+
+[[parity_gates]]
+id = "rns-live-operations"
+kind = "manual"
+automated = false
+enabled = false
+ignored = true
+protocol = "native"
+upstreams = ["python-rns"]
+command = "python3 tests/compliance/lxmf_interop.py"
+evidence = ["tests/compliance/lxmf_interop.py"]
+
+[[parity_gates]]
+id = "lxmf-rust-codec"
+kind = "rust"
+automated = true
+enabled = true
+ignored = false
+protocol = "internal"
+upstreams = []
+command = "cargo test -p styrene-e2e --test lxmf_protocol"
+evidence = ["crates/tests/styrene-e2e/tests/lxmf_protocol.rs"]
+
+[[parity_gates]]
+id = "lxmf-rust-direct"
+kind = "rust"
+automated = true
+enabled = true
+ignored = false
+protocol = "internal"
+upstreams = []
+command = "cargo test -p styrene-e2e --test lxmf_delivery"
+evidence = ["crates/tests/styrene-e2e/tests/lxmf_delivery.rs"]
+
+[[parity_gates]]
+id = "lxmf-python-direct"
+kind = "live"
+automated = true
+enabled = false
+ignored = true
+protocol = "native"
+upstreams = ["python-rns", "python-lxmf"]
+command = "cargo test -p styrened --test python_compat_matrix python_compat_direct -- --ignored"
+evidence = ["crates/apps/styrened/tests/python_compat_matrix.rs", "scripts/python-lxmf-smoke.sh"]
+
+[[parity_gates]]
+id = "lxmf-python-opportunistic"
+kind = "live"
+automated = true
+enabled = false
+ignored = true
+protocol = "native"
+upstreams = ["python-rns", "python-lxmf"]
+command = "cargo test -p styrened --test python_compat_matrix python_compat_opportunistic -- --ignored"
+evidence = ["crates/apps/styrened/tests/python_compat_matrix.rs", "scripts/python-lxmf-smoke.sh"]
+
+[[parity_gates]]
+id = "lxmf-python-resources"
+kind = "live"
+automated = false
+enabled = false
+ignored = true
+protocol = "native"
+upstreams = ["python-rns", "python-lxmf"]
+command = ""
+evidence = ["crates/apps/styrened/tests/python_compat_matrix.rs"]
+
+[[parity_gates]]
+id = "lxmf-styrene-propagation"
+kind = "rust"
+automated = true
+enabled = true
+ignored = false
+protocol = "styrene-specific"
+upstreams = []
+command = "cargo test -p styrene-e2e --test propagation"
+evidence = ["crates/tests/styrene-e2e/tests/propagation.rs"]
+
+[[parity_gates]]
+id = "lxmf-python-propagation"
+kind = "live"
+automated = false
+enabled = false
+ignored = true
+protocol = "native"
+upstreams = ["python-rns", "python-lxmf"]
+command = "cargo test -p styrened --test python_compat_matrix python_compat_propagated_resource_lxm -- --ignored"
+evidence = ["crates/apps/styrened/tests/python_compat_matrix.rs", "scripts/python-lxmf-smoke.sh"]
+
+[[parity_gates]]
+id = "micron-conformance"
+kind = "fixture"
+automated = true
+enabled = true
+ignored = false
+protocol = "native"
+upstreams = ["python-nomadnet"]
+command = "cargo test -p styrene-micron --test conformance"
+evidence = [
+  "crates/libs/styrene-micron/tests/conformance.rs",
+  "crates/libs/styrene-micron/tests/fixtures/nomad_net_guide.mu",
+]
+
+[[parity_gates]]
+id = "nomadnet-styrene-pages"
+kind = "rust"
+automated = true
+enabled = true
+ignored = false
+protocol = "styrene-specific"
+upstreams = []
+command = "cargo test -p styrened --test nomadnet_pages_offline"
+evidence = ["crates/apps/styrened/src/services/pages.rs", "crates/apps/styrened/tests/nomadnet_pages_offline.rs"]
+
+[[parity_gates]]
+id = "nomadnet-native-transport"
+kind = "live"
+automated = false
+enabled = false
+ignored = true
+protocol = "native"
+upstreams = ["python-rns", "python-nomadnet"]
+command = ""
+evidence = ["crates/apps/styrened/src/services/pages.rs"]
+
+[[parity_claims]]
+id = "rns.primitives"
+level = "experimental"
+required_gates = ["rns-python-fixtures"]
+evidence_gates = ["rns-python-fixtures"]
+reason = "Fixture provenance and deterministic regeneration are not yet release-gated."
+
+[[parity_claims]]
+id = "rns.operations"
+level = "experimental"
+required_gates = ["rns-live-operations"]
+evidence_gates = ["rns-rust-e2e", "rns-live-operations"]
+reason = "No automated pinned Python/Rust routed request, resource, loss, and recovery gate exists."
+
+[[parity_claims]]
+id = "lxmf.codec"
+level = "experimental"
+required_gates = ["lxmf-rust-codec"]
+evidence_gates = ["lxmf-rust-codec"]
+reason = "Codec tests are Rust-only and lack Python LXMF canonical vectors."
+
+[[parity_claims]]
+id = "lxmf.direct"
+level = "degraded"
+required_gates = ["lxmf-python-direct", "lxmf-python-opportunistic"]
+evidence_gates = ["lxmf-rust-direct", "lxmf-python-direct", "lxmf-python-opportunistic"]
+reason = "Python interoperability is ignored, manual, and Python-to-Rust only."
+
+[[parity_claims]]
+id = "lxmf.resources"
+level = "experimental"
+required_gates = ["lxmf-python-resources"]
+evidence_gates = ["lxmf-rust-direct", "lxmf-python-resources"]
+reason = "No bidirectional Python/Rust resource-backed delivery gate exists."
+
+[[parity_claims]]
+id = "lxmf.propagation"
+level = "unsupported"
+required_gates = ["lxmf-python-propagation"]
+evidence_gates = ["lxmf-styrene-propagation", "lxmf-python-propagation"]
+reason = "Hub composition owns the standard destination and inactive metadata only; no standard offer/get handler or interoperability gate exists."
+
+[[parity_claims]]
+id = "micron.rendering"
+level = "experimental"
+required_gates = ["micron-conformance"]
+evidence_gates = ["micron-conformance"]
+reason = "Parser coverage is substantial, but fixture provenance and renderer assertions remain incomplete."
+
+[[parity_claims]]
+id = "nomadnet.transport"
+level = "unsupported"
+required_gates = ["nomadnet-native-transport"]
+evidence_gates = ["nomadnet-styrene-pages", "nomadnet-native-transport"]
+reason = "Native request paths are implemented, but revision-attested Python host/client fixtures and live interoperability gates remain unavailable."

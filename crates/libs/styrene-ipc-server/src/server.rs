@@ -4,6 +4,7 @@
 //! IPC requests to an [`Arc<dyn Daemon>`] implementation.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tokio::net::UnixListener;
@@ -14,6 +15,8 @@ use styrene_ipc::traits::Daemon;
 use styrene_ipc::types::DaemonEvent;
 
 use crate::connection;
+
+static NEXT_CONNECTION_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// Configuration for the IPC server.
 #[derive(Debug, Clone)]
@@ -118,11 +121,20 @@ async fn accept_loop(
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
+                let connection_generation =
+                    NEXT_CONNECTION_GENERATION.fetch_add(1, Ordering::Relaxed);
                 let d = daemon.clone();
                 let rx = event_tx.subscribe();
                 let (read_half, write_half) = stream.into_split();
                 tokio::spawn(async move {
-                    connection::handle_client(d, read_half, write_half, rx).await;
+                    connection::handle_client_with_generation(
+                        d,
+                        read_half,
+                        write_half,
+                        rx,
+                        connection_generation,
+                    )
+                    .await;
                 });
             }
             Err(e) => {

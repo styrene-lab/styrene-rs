@@ -7,13 +7,12 @@
 //! All intermediate seed material is zeroized after extracting the public key.
 
 use ed25519_dalek::Verifier;
-use sha2::{Digest, Sha256};
-use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 use crate::derive::{KeyDeriver, KeyPurpose};
 use crate::pubkey::{ed25519_verifying_key, sign_with_seed};
 use crate::signer::RootSecret;
+use crate::IdentityId;
 
 /// Number of bytes kept from the SHA-256 digest (16 bytes = 32 hex chars).
 pub const IDENTITY_HASH_BYTES: usize = 16;
@@ -26,8 +25,7 @@ pub const IDENTITY_HASH_BYTES: usize = 16;
 /// The derived seed is zeroized after the public key is extracted.
 pub fn identity_hash(root: &RootSecret) -> String {
     let pubkey = identity_pubkey(root);
-    let digest = Sha256::digest(pubkey);
-    hex::encode(&digest[..IDENTITY_HASH_BYTES])
+    IdentityId::from_public_key(&pubkey).to_string()
 }
 
 /// Extract the raw Ed25519 signing public key bytes from a root secret.
@@ -58,8 +56,7 @@ impl IdentityInfo {
     /// Construct from a root secret, computing both hash and pubkey.
     pub fn from_root(root: &RootSecret) -> Self {
         let pubkey = identity_pubkey(root);
-        let digest = Sha256::digest(pubkey);
-        let hash = hex::encode(&digest[..IDENTITY_HASH_BYTES]);
+        let hash = IdentityId::from_public_key(&pubkey).to_string();
         Self { hash, pubkey }
     }
 }
@@ -129,8 +126,7 @@ pub struct PublicIdentity {
 impl PublicIdentity {
     /// Construct from raw Ed25519 verifying key bytes.
     pub fn from_pubkey(pubkey: [u8; 32]) -> Self {
-        let digest = Sha256::digest(pubkey);
-        let hash = hex::encode(&digest[..IDENTITY_HASH_BYTES]);
+        let hash = IdentityId::from_public_key(&pubkey).to_string();
         Self { hash, pubkey }
     }
 
@@ -149,10 +145,9 @@ impl PublicIdentity {
     /// This is the binding check that prevents an attacker from substituting
     /// a different pubkey for a known identity hash.
     pub fn verify_hash(&self, claimed_hash: &str) -> bool {
-        let ours = self.hash.as_bytes();
-        let theirs = claimed_hash.as_bytes();
-        // Length check first (not secret), then constant-time content compare
-        ours.len() == theirs.len() && ours.ct_eq(theirs).into()
+        claimed_hash
+            .parse::<IdentityId>()
+            .is_ok_and(|claimed| claimed.matches_public_key(&self.pubkey))
     }
 
     /// Verify a signature over `data` using this identity's public key.

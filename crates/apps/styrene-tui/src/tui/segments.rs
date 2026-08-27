@@ -31,15 +31,18 @@ pub enum Segment {
         dest_name: Option<String>,
         text: String,
         delivery_status: DeliveryStatus,
+        lifecycle: MessageLifecycle,
     },
 
     /// Inbound LXMF message received.
     ReceivedMessage {
+        message_id: Option<String>,
         source_hash: String,
         source_name: Option<String>,
         title: Option<String>,
         text: String,
         timestamp: i64,
+        lifecycle: MessageLifecycle,
     },
 
     /// Protocol-layer event: link, announce, receipt, resource.
@@ -62,11 +65,131 @@ pub enum Segment {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeliveryStatus {
+    Unknown,
     Pending,
     Sending,
     Sent,
     Delivered,
+    Cancelled,
     Failed(String),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MessageLifecycle {
+    pub state: styrene_ipc::types::MessageLifecycleState,
+    pub terminal_detail: Option<String>,
+    pub requested_method: Option<String>,
+    pub actual_method: Option<String>,
+    pub fallback_reason: Option<String>,
+    pub correlation_id: Option<String>,
+    pub attempts: Vec<styrene_ipc::types::MessageAttemptInfo>,
+    pub authentication: styrene_ipc::types::MessageAuthenticationState,
+    pub stamp_state: styrene_ipc::types::MessageStampState,
+    pub stamp_value: Option<u32>,
+    pub stamp_cost: Option<u32>,
+    pub evidence: Vec<styrene_ipc::types::MessageDeliveryEvidenceInfo>,
+    pub attachments: Vec<styrene_ipc::types::AttachmentInfo>,
+    pub propagation: Vec<styrene_ipc::types::MessagePropagationCorrelationInfo>,
+}
+
+impl From<&styrene_ipc::types::MessageInfo> for MessageLifecycle {
+    fn from(message: &styrene_ipc::types::MessageInfo) -> Self {
+        Self {
+            state: message.lifecycle_state,
+            terminal_detail: message.terminal_detail.clone(),
+            requested_method: message.requested_delivery_method.clone(),
+            actual_method: message.actual_delivery_method.clone(),
+            fallback_reason: message.fallback_reason.clone(),
+            correlation_id: message.correlation_id.clone(),
+            attempts: message.attempts.clone(),
+            authentication: message.authentication_state,
+            stamp_state: message.stamp_state,
+            stamp_value: message.stamp_value,
+            stamp_cost: message.stamp_cost,
+            evidence: message.delivery_evidence.clone(),
+            attachments: message.attachments.clone(),
+            propagation: message.propagation_correlations.clone(),
+        }
+    }
+}
+
+impl MessageLifecycle {
+    fn detail_lines(&self) -> Vec<String> {
+        let mut lines = vec![
+            format!("lifecycle: {:?}", self.state),
+            format!(
+                "terminal detail: {}",
+                self.terminal_detail.as_deref().unwrap_or("Not reported")
+            ),
+            format!("authenticity: {:?}", self.authentication),
+            format!("stamp state: {:?}", self.stamp_state),
+            format!(
+                "stamp cost: {}",
+                self.stamp_cost
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "Not reported".into())
+            ),
+            format!(
+                "stamp value: {}",
+                self.stamp_value
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "Not reported".into())
+            ),
+            format!("requested: {}", self.requested_method.as_deref().unwrap_or("Not reported")),
+            format!("actual: {}", self.actual_method.as_deref().unwrap_or("Not reported")),
+            format!("fallback: {}", self.fallback_reason.as_deref().unwrap_or("Not reported")),
+            format!("correlation: {}", self.correlation_id.as_deref().unwrap_or("Not reported")),
+        ];
+        if self.attempts.is_empty() {
+            lines.push("attempts: none".into());
+        } else {
+            lines.extend(self.attempts.iter().map(|attempt| {
+                format!(
+                    "attempt #{} message={} state={} started={} deadline={}",
+                    attempt.number,
+                    attempt.message_id,
+                    attempt.state,
+                    attempt.started_unix_ms,
+                    attempt.deadline_unix_ms
+                )
+            }));
+        }
+        if self.evidence.is_empty() {
+            lines.push("delivery evidence: Not reported".into());
+        } else {
+            lines.extend(self.evidence.iter().map(|item| format!(
+                "evidence kind={:?} hash={} representation={} state={:?} outcome={} attempt={} correlation={} observed={} terminal={}",
+                item.kind, item.hash, item.representation, item.state,
+                item.outcome.as_deref().unwrap_or("Not reported"),
+                item.attempt.map(|value| value.to_string()).unwrap_or_else(|| "Not reported".into()),
+                item.correlation_id.as_deref().unwrap_or("Not reported"), item.observed_at,
+                item.terminal_at.map(|value| value.to_string()).unwrap_or_else(|| "Not reported".into()),
+            )));
+        }
+        if self.attachments.is_empty() {
+            lines.push("attachments: Not reported".into());
+        } else {
+            for attachment in &self.attachments {
+                lines.push(format!(
+                    "attachment name={} size={} checksum={} integrity={} availability={}",
+                    attachment.name,
+                    attachment.size,
+                    attachment.checksum,
+                    attachment.integrity,
+                    attachment.availability
+                ));
+                if let Some(transfer) = attachment.transfer.as_deref() {
+                    lines.push(format!("transfer resource={} progress={}/{} checksum_verified={} cancellable={} state={} error={}", transfer.resource_hash.as_deref().unwrap_or("Not reported"), transfer.transferred, transfer.total, transfer.checksum_verified, transfer.cancellable, transfer.state, transfer.error.as_deref().unwrap_or("Not reported")));
+                }
+            }
+        }
+        if self.propagation.is_empty() {
+            lines.push("propagation: Not reported".into());
+        } else {
+            lines.extend(self.propagation.iter().map(|item| format!("propagation relation={} transient={} attempt={} peer={} state={} created={} updated={}", item.relation, item.transient_id, item.attempt_id.as_deref().unwrap_or("Not reported"), item.peer_hash.as_deref().unwrap_or("Not reported"), item.state, item.created_at, item.updated_at)));
+        }
+        lines
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,10 +224,12 @@ impl ProtocolEventKind {
 impl DeliveryStatus {
     pub fn icon(&self) -> &'static str {
         match self {
+            Self::Unknown => "?",
             Self::Pending => "○",
             Self::Sending => "◎",
             Self::Sent => "◉",
             Self::Delivered => "●",
+            Self::Cancelled => "⊘",
             Self::Failed(_) => "✗",
         }
     }
@@ -119,10 +244,23 @@ impl Segment {
     pub fn height(&self, width: u16, _t: &dyn Theme) -> u16 {
         let inner = width.saturating_sub(4); // borders + padding
         match self {
-            Segment::SentMessage { text, .. } => 2 + wrapped_line_count(text, inner),
-            Segment::ReceivedMessage { title, text, .. } => {
+            Segment::SentMessage { text, lifecycle, .. } => {
+                2 + wrapped_line_count(text, inner)
+                    + lifecycle
+                        .detail_lines()
+                        .iter()
+                        .map(|line| wrapped_line_count(line, inner))
+                        .sum::<u16>()
+            }
+            Segment::ReceivedMessage { title, text, lifecycle, .. } => {
                 let title_rows = u16::from(title.is_some());
-                2 + title_rows + wrapped_line_count(text, inner)
+                2 + title_rows
+                    + wrapped_line_count(text, inner)
+                    + lifecycle
+                        .detail_lines()
+                        .iter()
+                        .map(|line| wrapped_line_count(line, inner))
+                        .sum::<u16>()
             }
             Segment::ProtocolEvent { detail, .. } => 1 + wrapped_line_count(detail, inner).max(1),
             Segment::SystemEvent { text } => 1 + wrapped_line_count(text, inner),
@@ -139,10 +277,27 @@ impl Segment {
     /// Render this segment into the given area.
     pub fn render(&self, area: Rect, buf: &mut Buffer, t: &dyn Theme) {
         match self {
-            Segment::SentMessage { dest_hash, dest_name, text, delivery_status, .. } => {
-                render_sent(area, buf, t, dest_hash, dest_name.as_deref(), text, delivery_status)
-            }
-            Segment::ReceivedMessage { source_hash, source_name, title, text, timestamp } => {
+            Segment::SentMessage {
+                dest_hash, dest_name, text, delivery_status, lifecycle, ..
+            } => render_sent(
+                area,
+                buf,
+                t,
+                dest_hash,
+                dest_name.as_deref(),
+                text,
+                delivery_status,
+                lifecycle,
+            ),
+            Segment::ReceivedMessage {
+                message_id: _,
+                source_hash,
+                source_name,
+                title,
+                text,
+                timestamp,
+                lifecycle,
+            } => {
                 let ts = format_timestamp(*timestamp);
                 render_received(
                     area,
@@ -153,6 +308,7 @@ impl Segment {
                     title.as_deref(),
                     text,
                     &ts,
+                    lifecycle,
                 )
             }
             Segment::ProtocolEvent { kind, peer_hash, peer_name, detail } => render_protocol_event(
@@ -175,6 +331,7 @@ impl Segment {
 // Per-type renderers
 // ═══════════════════════════════════════════════════════════════════
 
+#[allow(clippy::too_many_arguments)]
 fn render_sent(
     area: Rect,
     buf: &mut Buffer,
@@ -183,12 +340,14 @@ fn render_sent(
     dest_name: Option<&str>,
     text: &str,
     status: &DeliveryStatus,
+    lifecycle: &MessageLifecycle,
 ) {
     let label = dest_name.unwrap_or(dest_hash);
     let short = &dest_hash[..dest_hash.len().min(8)];
     let status_icon = status.icon();
     let status_color = match status {
         DeliveryStatus::Delivered => t.success(),
+        DeliveryStatus::Cancelled => t.muted(),
         DeliveryStatus::Failed(_) => t.error(),
         DeliveryStatus::Sending => t.accent(),
         _ => t.muted(),
@@ -208,7 +367,12 @@ fn render_sent(
         .padding(Padding::new(1, 1, 0, 0));
     let inner = block.inner(area);
     block.render(area, buf);
-    Paragraph::new(text)
+    let mut body = text.to_string();
+    for line in lifecycle.detail_lines() {
+        body.push('\n');
+        body.push_str(&line);
+    }
+    Paragraph::new(body)
         .style(Style::default().fg(t.fg()))
         .wrap(Wrap { trim: false })
         .render(inner, buf);
@@ -224,6 +388,7 @@ fn render_received(
     title: Option<&str>,
     text: &str,
     ts: &str,
+    lifecycle: &MessageLifecycle,
 ) {
     let label = source_name.unwrap_or(source_hash);
     let short = &source_hash[..source_hash.len().min(8)];
@@ -251,6 +416,12 @@ fn render_received(
         )));
     }
     lines.push(Line::from(Span::styled(text, Style::default().fg(t.fg()))));
+    lines.extend(
+        lifecycle
+            .detail_lines()
+            .into_iter()
+            .map(|line| Line::from(Span::styled(line, Style::default().fg(t.dim())))),
+    );
     Paragraph::new(lines).wrap(Wrap { trim: false }).render(inner, buf);
 }
 
@@ -324,4 +495,49 @@ fn format_timestamp(ts: i64) -> String {
     let h = day_secs / 3600;
     let m = (day_secs % 3600) / 60;
     format!("{h:02}:{m:02}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lifecycle_details_display_every_authoritative_field() {
+        let mut attempt = styrene_ipc::types::MessageAttemptInfo::default();
+        attempt.message_id = "message-2".into();
+        attempt.number = 2;
+        attempt.started_unix_ms = 100;
+        attempt.deadline_unix_ms = 200;
+        attempt.state = "failed".into();
+        let lifecycle = MessageLifecycle {
+            requested_method: Some("opportunistic".into()),
+            actual_method: Some("direct".into()),
+            fallback_reason: Some("packet limit".into()),
+            correlation_id: Some("send-1".into()),
+            attempts: vec![attempt],
+            ..MessageLifecycle::default()
+        };
+
+        let details = lifecycle.detail_lines();
+        assert!(details.iter().any(|line| line == "authenticity: Unknown"));
+        assert!(details.iter().any(|line| line == "stamp cost: Not reported"));
+        assert!(details.iter().any(|line| {
+            line == "attempt #2 message=message-2 state=failed started=100 deadline=200"
+        }));
+        assert!(details.iter().any(|line| line == "delivery evidence: Not reported"));
+    }
+
+    #[test]
+    fn lifecycle_details_display_no_attempts_without_inventing_one() {
+        let lifecycle = MessageLifecycle {
+            requested_method: Some("paper".into()),
+            actual_method: Some("paper".into()),
+            fallback_reason: None,
+            correlation_id: Some("paper-1".into()),
+            attempts: Vec::new(),
+            ..MessageLifecycle::default()
+        };
+
+        assert!(lifecycle.detail_lines().iter().any(|line| line == "attempts: none"));
+    }
 }

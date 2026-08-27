@@ -11,7 +11,10 @@ use tokio::sync::watch;
 use crate::transport::error::RnsError;
 
 use super::tcp_client::TcpClient;
-use super::{Interface, InterfaceContext, InterfaceManager};
+use super::{
+    Interface, InterfaceContext, InterfaceDescriptor, InterfaceEndpoint, InterfaceKind,
+    InterfaceManager, InterfaceMode, InterfaceState,
+};
 
 pub struct TcpServer {
     addr: String,
@@ -38,6 +41,8 @@ impl TcpServer {
 
         let iface_manager = { context.inner.lock().unwrap().iface_manager.clone() };
         let server_ifac = context.ifac.clone();
+        let server_address = context.channel.address;
+        let runtime = context.runtime.clone();
 
         let (_, tx_channel) = context.channel.split();
         let tx_channel = Arc::new(tokio::sync::Mutex::new(tx_channel));
@@ -51,6 +56,7 @@ impl TcpServer {
                 TcpListener::bind(addr.clone()).await.map_err(|_| RnsError::ConnectionError);
 
             if listener.is_err() {
+                runtime.set_state(InterfaceState::Retrying);
                 log::warn!("tcp_server: couldn't bind to <{}>", addr);
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
@@ -61,6 +67,8 @@ impl TcpServer {
             // Publish the actual bound address so callers can discover the
             // real port when binding to `:0` (ephemeral port).
             if let Ok(local_addr) = listener.local_addr() {
+                runtime.set_local_endpoint(InterfaceEndpoint::Socket(local_addr));
+                runtime.set_state(InterfaceState::Listening);
                 let _ = context.inner.lock().unwrap().bound_addr_tx.send(Some(local_addr));
                 log::info!("tcp_server: listen on <{}>", local_addr);
             } else {
@@ -112,7 +120,8 @@ impl TcpServer {
 
                             let mut iface_manager = iface_manager.lock().await;
 
-                            iface_manager.spawn_with_ifac(
+                            iface_manager.spawn_child_with_ifac(
+                                server_address,
                                 TcpClient::new_from_stream(client.1.to_string(), client.0),
                                 TcpClient::spawn,
                                 server_ifac.clone(),
@@ -124,11 +133,21 @@ impl TcpServer {
 
             let _ = tokio::join!(tx_task);
         }
+        runtime.set_state(InterfaceState::Closed);
     }
 }
 
 impl Interface for TcpServer {
     fn mtu() -> usize {
         2048
+    }
+
+    fn descriptor(&self) -> InterfaceDescriptor {
+        InterfaceDescriptor {
+            kind: InterfaceKind::TcpServer,
+            mode: InterfaceMode::Full,
+            local_endpoint: None,
+            remote_endpoint: None,
+        }
     }
 }

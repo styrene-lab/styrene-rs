@@ -15,8 +15,8 @@ Tracks reviews of upstream changes and adoption decisions. See [UPSTREAM.md](../
 
 Upstream has been in an intensive Python-parity sprint. A 41-issue Rust/Python compatibility
 list (`docs/plans/2026-03-18-rust-python-compat-issue-list.md`) was assembled and 15 of 41
-issues have been merged, with several more under active PR. The issues directly mirror
-our own Tier 1 and Tier 2 gaps in `PARITY_GAPS.md`.
+issues have been merged, with several more under active PR. The issues overlap with
+the transport and LXMF work tracked in the current parity claim ledger.
 
 **Also new:** a `rns-embedded-runtime/core/ffi` crate triad (no analog in styrene-rs), and a
 complete mixed Rust/Python interop test harness — the infrastructure we need for our interop gate.
@@ -67,7 +67,7 @@ Upstream compat issue status as of this review:
 | `9e88e96` | #128 | Announce ratchet parsing strict by context flag | Propagation ratchet strictness | Port to `styrened-rs/src/` or `styrene-rns/` |
 | `da08be1` | #85 | Optimize reticulumd RPC and storage hot paths | — performance | Port to `styrened-rs/src/` |
 | `9eb4f33` | #83 | Hot-apply legacy TCP interfaces | — usability | Port to `styrened-rs/src/` |
-| `1d0b9f1` | #91 | Single-file TOML config flow for lxmd | — config usability | Port to `styrened-rs/src/` (addresses PARITY_GAPS.md §1.4 partially) |
+| `1d0b9f1` | #91 | Single-file TOML config flow for lxmd | — config usability | Assess against the current Rust configuration contract |
 | `4b4f086` | #90 | Fix live node transport and remote control flows | — correctness | Port to `styrened-rs/src/` |
 
 #### ADOPT — Interop Test Infrastructure (maps to `tests/`)
@@ -76,7 +76,6 @@ Upstream compat issue status as of this review:
 |--------|----|-------------|--------|
 | `23a4481` | #116 | Python compatibility harness scaffold | Port matrix structure + test fixture pattern to `tests/interop-test/` |
 | `e9694bc` | #127 | Live mixed Rust/Python harness slice | Port `python_compat_matrix.rs` + `python-lxmd-rust-lxmd-smoke.sh` to `tests/` |
-| `6da2327` | #89 | Python daemon parity and interop smoke coverage | Port test patterns to interop suite |
 
 #### ADOPT — Reference Docs (read-only, no code to port)
 
@@ -90,7 +89,7 @@ Upstream compat issue status as of this review:
 
 | Commit | PR | Description | Notes |
 |--------|----|-------------|-------|
-| `6eb6bed` | #19 | Cross-platform serial/BLE/LoRa interfaces | Relevant for PARITY_GAPS §1.2 but scope is large; assess when Serial/KISS gap is prioritized |
+| `6eb6bed` | #19 | Cross-platform serial/BLE/LoRa interfaces | Scope is large; assess when Serial/KISS work is prioritized |
 | `57c1e28` | #21 | Embedded runtime proof + standalone node | Relevant for styrene-edge ARM targets |
 | `6ec28ff` | #22 | Standalone embedded node phase 0 | TCP runtime + BLE provisioning |
 | `672283b` | #24 | Implement public embedded node API | New `rns-embedded-core` crate triad — no analog in styrene-rs yet |

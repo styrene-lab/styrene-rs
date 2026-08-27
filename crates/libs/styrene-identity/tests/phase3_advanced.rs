@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use styrene_identity::derive::{KeyDeriver, KeyPurpose};
-use styrene_identity::pubkey::{ed25519_verifying_key, x25519_public_key};
+use styrene_identity::pubkey::ed25519_verifying_key;
 
 // ═══════════════════════════════════════════════════════════════════
 // Property-Based Testing (proptest)
@@ -260,100 +260,35 @@ fn same_passphrase_different_roots() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// Cross-Language Verification Script Export
-// ═══════════════════════════════════════════════════════════════════
-
-/// Write the complete test vector set to a JSON file that can be
-/// consumed by Python/JS/Go verification scripts.
-/// The file is written to the crate's test output directory.
 #[test]
-fn export_test_vectors_to_file() {
-    let root = [0x42u8; 32];
-    let d = KeyDeriver::new(&root);
+fn committed_derivation_vectors_are_verified_read_only() {
+    let parsed: serde_json::Value =
+        serde_json::from_str(include_str!("test-vectors.json")).expect("committed vector JSON");
+    let root: [u8; 32] = hex::decode(parsed["root_secret_hex"].as_str().expect("root string"))
+        .expect("root hex")
+        .try_into()
+        .expect("32-byte root");
+    let deriver = KeyDeriver::new(&root);
+    assert_eq!(parsed["hkdf_salt"], "styrene-identity-v1");
 
-    let mut vectors = serde_json::Map::new();
-    vectors.insert("root_secret_hex".into(), hex::encode(root).into());
-    vectors.insert("hkdf_salt".into(), "styrene-identity-v1".into());
-
-    // Flat purposes
-    let mut flat = serde_json::Map::new();
     for purpose in KeyPurpose::all() {
-        let seed = d.derive(*purpose);
-        let mut entry = serde_json::Map::new();
-        entry.insert("info".into(), String::from_utf8_lossy(purpose.info()).to_string().into());
-        entry.insert("seed_hex".into(), hex::encode(seed).into());
-
-        match purpose {
-            KeyPurpose::Signing
-            | KeyPurpose::SshHost
-            | KeyPurpose::Yggdrasil
-            | KeyPurpose::I2pSigning
-            | KeyPurpose::Tor => {
-                let vk = ed25519_verifying_key(&seed);
-                entry.insert("pubkey_hex".into(), hex::encode(vk.as_bytes()).into());
-                entry.insert("curve".into(), "ed25519".into());
-            }
-            KeyPurpose::RnsEncryption
-            | KeyPurpose::Age
-            | KeyPurpose::I2pEncryption
-            | KeyPurpose::WireGuard => {
-                let pk = x25519_public_key(&seed);
-                entry.insert("pubkey_hex".into(), hex::encode(pk.as_bytes()).into());
-                entry.insert("curve".into(), "x25519".into());
-            }
-            _ => {}
-        }
-
-        flat.insert(format!("{:?}", purpose), entry.into());
-    }
-    vectors.insert("flat_purposes".into(), flat.into());
-
-    // Identity hash
-    let signing_seed = d.derive(KeyPurpose::Signing);
-    let signing_vk = ed25519_verifying_key(&signing_seed);
-    let id_digest = Sha256::digest(signing_vk.as_bytes());
-    vectors.insert("identity_hash".into(), hex::encode(&id_digest[..16]).into());
-
-    // Parameterized
-    let mut param = serde_json::Map::new();
-
-    let labels = ["github", "work", "forge", "wiki", "omegon-primary", "auspex-deploy"];
-    for label in &labels {
-        let ssh = d.derive_ssh_user_key(label).unwrap();
-        param.insert(format!("ssh_user/{label}"), hex::encode(ssh).into());
-
-        let agent = d.derive_agent_key(label).unwrap();
-        param.insert(format!("agent/{label}"), hex::encode(agent).into());
+        let entry = &parsed["flat_purposes"][format!("{purpose:?}")];
+        assert_eq!(entry["info"].as_str(), Some(String::from_utf8_lossy(purpose.info()).as_ref()));
+        assert_eq!(entry["seed_hex"], hex::encode(deriver.derive(*purpose)));
     }
 
-    let services = ["forge", "wiki", "chat"];
-    for svc in &services {
-        let (s, e) = d.derive_i2p_service(svc).unwrap();
-        param.insert(format!("i2p/{svc}/signing"), hex::encode(s).into());
-        param.insert(format!("i2p/{svc}/encryption"), hex::encode(e).into());
+    let signing_key = ed25519_verifying_key(&deriver.signing_seed());
+    let identity_digest = Sha256::digest(signing_key.as_bytes());
+    assert_eq!(parsed["identity_hash"], hex::encode(&identity_digest[..16]));
 
-        let onion = d.derive_onion_service(svc).unwrap();
-        param.insert(format!("onion/{svc}"), hex::encode(onion).into());
+    for label in ["github", "work", "forge", "wiki", "omegon-primary", "auspex-deploy"] {
+        assert_eq!(
+            parsed["parameterized"][format!("ssh_user/{label}")],
+            hex::encode(deriver.derive_ssh_user_key(label).expect("SSH vector"))
+        );
+        assert_eq!(
+            parsed["parameterized"][format!("agent/{label}")],
+            hex::encode(deriver.derive_agent_key(label).expect("agent vector"))
+        );
     }
-    vectors.insert("parameterized".into(), param.into());
-
-    let json = serde_json::to_string_pretty(&serde_json::Value::Object(vectors)).unwrap();
-
-    // Write to file for cross-language verification
-    let vectors_path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("test-vectors.json");
-    std::fs::write(&vectors_path, &json).unwrap();
-
-    // Verify the file is valid JSON and contains expected fields
-    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert!(parsed["identity_hash"].is_string());
-    assert!(parsed["flat_purposes"]["Signing"]["seed_hex"].is_string());
-    assert!(parsed["flat_purposes"]["Signing"]["pubkey_hex"].is_string());
-    assert!(parsed["flat_purposes"]["Tor"]["pubkey_hex"].is_string());
-    assert!(parsed["parameterized"]["ssh_user/github"].is_string());
-    assert!(parsed["parameterized"]["i2p/forge/signing"].is_string());
-    assert!(parsed["parameterized"]["onion/forge"].is_string());
-
-    eprintln!("Test vectors written to: {}", vectors_path.display());
 }

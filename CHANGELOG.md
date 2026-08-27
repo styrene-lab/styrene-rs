@@ -21,7 +21,6 @@ Development resumed in July 2026 with a renewed focus on a cohesive install-and-
 - Workspace toolchain policy now tracks and exactly pins the latest stable Rust release (currently 1.97.0).
 - A separately installed daemon is no longer required for interactive or ghost sessions.
 - Ghost sessions retain reusable non-secret settings while regenerating ephemeral identity and data.
-- The archived Python implementation is no longer a wire-compatibility or release target.
 
 ### Fixed
 - Background daemon and transport diagnostics corrupting the alternate-screen TUI.
@@ -117,10 +116,6 @@ First internal release. Rust is now the canonical Styrene distribution for new d
 
 #### Changed
 - styrene-rs is now **canonical** — README, CLAUDE.md, UPSTREAM.md updated.
-- Python styrened positioned as legacy/supported, not primary.
-- PARITY_GAPS.md updated: IFAC resolved, serial implemented, ratchet
-  persistence resolved, upstream fixes closed, wire interop resolved.
-- `docs/incremental-rust-migration.md` marked superseded.
 
 ---
 

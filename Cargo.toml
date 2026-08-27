@@ -26,6 +26,7 @@ members = [
   "crates/libs/styrene-forge",
   "crates/libs/styrene-amcp",
   "crates/tests/styrene-e2e",
+  "crates/tests/styrene-interop-runner",
 ]
 default-members = [
   "crates/libs/styrene-entropy",
@@ -42,7 +43,7 @@ default-members = [
   "crates/libs/styrene-rbac",
   "crates/libs/styrene-secrets",
   "crates/apps/styrened",
-  # "crates/apps/styrene-dx",  # spike — build explicitly with -p
+  # "crates/apps/styrene-dx",  # desktop GUI - build explicitly with -p
   "crates/apps/styrene-tui",
   "crates/libs/styrene-amcp",
 ]

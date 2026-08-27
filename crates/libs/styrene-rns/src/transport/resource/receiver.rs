@@ -8,12 +8,18 @@ struct ResourceReceiver {
     received: usize,
     received_bytes: u64,
     total_bytes: u64,
+    data_size: usize,
+    resource_sdu: usize,
+    maximum_data_size: usize,
     encrypted: bool,
     compressed: bool,
     split: bool,
     has_metadata: bool,
-    last_progress: Instant,
-    last_request: Instant,
+    request_id: Option<[u8; ADDRESS_HASH_SIZE]>,
+    is_request: bool,
+    is_response: bool,
+    last_progress: Duration,
+    last_request: Duration,
     retry_count: u8,
     status: ResourceStatus,
 }
@@ -22,6 +28,25 @@ struct ResourceReceiver {
 struct ResourcePayload {
     data: Vec<u8>,
     metadata: Option<Vec<u8>>,
+}
+
+fn decompress_payload_bounded(
+    compressed: &[u8],
+    declared_size: usize,
+    maximum_size: usize,
+) -> Result<Vec<u8>, RnsError> {
+    if declared_size > maximum_size {
+        return Err(RnsError::InvalidArgument);
+    }
+    let read_limit = declared_size.checked_add(1).ok_or(RnsError::InvalidArgument)?;
+    let decoder = BzDecoder::new(compressed);
+    let mut bounded = decoder.take(read_limit as u64);
+    let mut decompressed = Vec::with_capacity(declared_size.min(64 * 1024));
+    bounded.read_to_end(&mut decompressed).map_err(|_| RnsError::PacketError)?;
+    if decompressed.len() != declared_size {
+        return Err(RnsError::InvalidArgument);
+    }
+    Ok(decompressed)
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -33,13 +58,47 @@ enum PartOutcome {
 }
 
 impl ResourceReceiver {
-    fn new(adv: &ResourceAdvertisement, link_id: AddressHash) -> Result<Self, RnsError> {
-        let now = Instant::now();
-        let max_parts = adv.transfer_size.max(1);
-        if adv.parts == 0 || u64::from(adv.parts) > max_parts {
+    fn new(
+        adv: &ResourceAdvertisement,
+        link_id: AddressHash,
+        resource_sdu: usize,
+        maximum_data_size: usize,
+        now: Duration,
+    ) -> Result<Self, RnsError> {
+        if resource_sdu == 0
+            || maximum_data_size == 0
+            || maximum_data_size > MAX_NEGOTIATED_RESOURCE_SIZE
+            || adv.transfer_size == 0
+            || adv.data_size > maximum_data_size as u64
+            || adv.transfer_size
+                > maximum_data_size
+                    .checked_add(RESOURCE_WIRE_OVERHEAD)
+                    .ok_or(RnsError::InvalidArgument)? as u64
+        {
             return Err(RnsError::InvalidArgument);
         }
-        let total_parts = adv.parts as usize;
+        let transfer_size = usize::try_from(adv.transfer_size)
+            .map_err(|_| RnsError::InvalidArgument)?;
+        let data_size = usize::try_from(adv.data_size).map_err(|_| RnsError::InvalidArgument)?;
+        let expected_parts = transfer_size.div_ceil(resource_sdu);
+        let total_parts = usize::try_from(adv.parts).map_err(|_| RnsError::InvalidArgument)?;
+        let expected_segments = expected_parts.div_ceil(HASHMAP_MAX_LEN);
+        let segment_index = usize::try_from(adv.segment_index).map_err(|_| RnsError::InvalidArgument)?;
+        let segment_start = segment_index
+            .checked_sub(1)
+            .and_then(|segment| segment.checked_mul(HASHMAP_MAX_LEN))
+            .ok_or(RnsError::InvalidArgument)?;
+        let expected_segment_hashes = expected_parts.saturating_sub(segment_start).min(HASHMAP_MAX_LEN);
+        if total_parts == 0
+            || total_parts != expected_parts
+            || expected_segments == 0
+            || usize::try_from(adv.total_segments).ok() != Some(expected_segments)
+            || segment_index == 0
+            || segment_index > expected_segments
+            || adv.hashmap.len() != expected_segment_hashes.saturating_mul(MAPHASH_LEN)
+        {
+            return Err(RnsError::InvalidArgument);
+        }
         let mut receiver = Self {
             resource_hash: adv.hash,
             link_id,
@@ -49,10 +108,16 @@ impl ResourceReceiver {
             received: 0,
             received_bytes: 0,
             total_bytes: adv.transfer_size,
+            data_size,
+            resource_sdu,
+            maximum_data_size,
             encrypted: adv.encrypted(),
             compressed: adv.compressed(),
             split: (adv.flags & FLAG_SPLIT) == FLAG_SPLIT,
             has_metadata: (adv.flags & FLAG_METADATA) == FLAG_METADATA,
+            request_id: adv.request_id.as_ref().and_then(|id| id.as_slice().try_into().ok()),
+            is_request: adv.is_request(),
+            is_response: adv.is_response(),
             last_progress: now,
             last_request: now,
             retry_count: 0,
@@ -110,7 +175,7 @@ impl ResourceReceiver {
         self.apply_hashmap_segment(update.segment as usize, &update.hashmap);
     }
 
-    fn handle_part(&mut self, part: &[u8], link: &Link) -> PartOutcome {
+    fn handle_part(&mut self, part: &[u8], link: &Link, now: Duration) -> PartOutcome {
         if self.split {
             self.status = ResourceStatus::Failed;
             return PartOutcome::Failed;
@@ -121,16 +186,31 @@ impl ResourceReceiver {
         else {
             return PartOutcome::NoMatch;
         };
+        let expected_len = if index + 1 == self.parts.len() {
+            usize::try_from(self.total_bytes)
+                .ok()
+                .and_then(|total| total.checked_sub(index.checked_mul(self.resource_sdu)?))
+        } else {
+            Some(self.resource_sdu)
+        };
+        if expected_len != Some(part.len()) {
+            self.status = ResourceStatus::Failed;
+            return PartOutcome::Failed;
+        }
 
         if self.parts[index].is_none() {
             self.parts[index] = Some(part.to_vec());
             self.received += 1;
             self.received_bytes = self.received_bytes.saturating_add(part.len() as u64);
-            self.last_progress = Instant::now();
+            self.last_progress = now;
         }
 
         if self.received == self.parts.len() && !self.parts.is_empty() {
-            let mut stream = Vec::new();
+            let Some(stream_capacity) = usize::try_from(self.total_bytes).ok() else {
+                self.status = ResourceStatus::Failed;
+                return PartOutcome::Failed;
+            };
+            let mut stream = Vec::with_capacity(stream_capacity);
             for part in &self.parts {
                 if let Some(bytes) = part {
                     stream.extend_from_slice(bytes);
@@ -160,13 +240,21 @@ impl ResourceReceiver {
             };
 
             if self.compressed {
-                let mut decoder = BzDecoder::new(payload.as_slice());
-                let mut decompressed = Vec::new();
-                if decoder.read_to_end(&mut decompressed).is_err() {
-                    self.status = ResourceStatus::Failed;
-                    return PartOutcome::Failed;
-                }
-                payload = decompressed;
+                payload = match decompress_payload_bounded(
+                    payload.as_slice(),
+                    self.data_size,
+                    self.maximum_data_size,
+                ) {
+                    Ok(decompressed) => decompressed,
+                    Err(_) => {
+                        self.status = ResourceStatus::Failed;
+                        return PartOutcome::Failed;
+                    }
+                };
+            }
+            if payload.len() != self.data_size || payload.len() > self.maximum_data_size {
+                self.status = ResourceStatus::Failed;
+                return PartOutcome::Failed;
             }
 
             let (metadata, data_payload) = if self.has_metadata && payload.len() >= 3 {
@@ -242,20 +330,26 @@ impl ResourceReceiver {
         !matches!(self.status, ResourceStatus::Complete | ResourceStatus::Failed)
     }
 
-    fn mark_request(&mut self) {
-        self.last_request = Instant::now();
+    fn mark_request_at(&mut self, now: Duration) {
+        self.last_request = now;
         self.retry_count = self.retry_count.saturating_add(1);
     }
 
-    fn retry_due(&self, now: Instant, retry_interval: Duration, max_retries: u8) -> bool {
+    fn retry_due(&self, now: Duration, retry_interval: Duration, max_retries: u8) -> bool {
         if self.status == ResourceStatus::Complete || self.status == ResourceStatus::Failed {
             return false;
         }
         if self.retry_count >= max_retries {
             return false;
         }
-        now.duration_since(self.last_progress) >= retry_interval
-            && now.duration_since(self.last_request) >= retry_interval
+        now.saturating_sub(self.last_progress) >= retry_interval
+            && now.saturating_sub(self.last_request) >= retry_interval
+    }
+
+    fn timeout_due(&self, now: Duration, retry_interval: Duration, max_retries: u8) -> bool {
+        self.retry_count >= max_retries
+            && now.saturating_sub(self.last_progress) >= retry_interval
+            && now.saturating_sub(self.last_request) >= retry_interval
     }
 
     fn progress(&self) -> ResourceProgress {

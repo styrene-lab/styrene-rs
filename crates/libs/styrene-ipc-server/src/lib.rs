@@ -1,9 +1,7 @@
 //! Unix socket IPC server for the Styrene daemon.
 //!
-//! Exposes an [`Arc<dyn Daemon>`](styrene_ipc::traits::Daemon) over a framed
-//! msgpack wire protocol on a Unix domain socket. Wire-compatible with the
-//! Python `styrened.ipc` protocol, enabling the Python TUI to connect to
-//! `styrened` as a drop-in daemon replacement.
+//! Exposes an [`Arc<dyn Daemon>`](styrene_ipc::traits::Daemon) over the framed
+//! Styrene MessagePack protocol on a Unix domain socket.
 //!
 //! # Quick Start
 //!

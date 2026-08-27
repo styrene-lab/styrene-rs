@@ -20,6 +20,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
+rmp-serde.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]

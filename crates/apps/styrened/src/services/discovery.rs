@@ -10,8 +10,17 @@
 
 use crate::announce_names::parse_peer_name_from_app_data;
 use crate::storage::messages::{AnnounceRecord, MessagesStore};
+use crate::storage::standard_propagation::StandardPropagationPeer;
 use std::sync::{Arc, Mutex};
+use styrene_ipc::types::{DeviceInfo, DiscoveredCapability};
 use styrene_services::node_store::{Node, NodeStore};
+
+pub const NATIVE_NOMADNET_HOST_DEVICE_TYPE: &str = "native_nomadnet_host";
+pub const STANDARD_LXMF_PROPAGATION_ACTIVE_DEVICE_TYPE: &str =
+    "standard_lxmf_propagation_host_active";
+pub const STANDARD_LXMF_PROPAGATION_INACTIVE_DEVICE_TYPE: &str =
+    "standard_lxmf_propagation_host_inactive";
+const LEGACY_NOMADNET_HOST_DEVICE_TYPE: &str = "page_host";
 
 /// Service managing device discovery via announces.
 ///
@@ -61,7 +70,36 @@ impl DiscoveryService {
             .map(|(n, s)| (Some(n), Some(s.to_string())))
             .unwrap_or((None, None));
 
-        self.accept_announce_with_details(peer_hash, timestamp, name, name_source, None)
+        let metadata = lxmf::announce::delivery_announce_metadata(app_data);
+        let stamp_cost = metadata.as_ref().and_then(|value| value.stamp_cost);
+        let record = self.accept_announce_with_details(
+            peer_hash.clone(),
+            timestamp,
+            name,
+            name_source,
+            None,
+        )?;
+        let record = AnnounceRecord {
+            stamp_cost,
+            capabilities: metadata
+                .map(|value| {
+                    value
+                        .supported_functionality
+                        .into_iter()
+                        .map(|function| format!("lxmf_function:{function}"))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            ..record
+        };
+        if stamp_cost.is_some() || !record.capabilities.is_empty() {
+            let store = self
+                .store
+                .lock()
+                .map_err(|_| std::io::Error::other("messages store lock poisoned"))?;
+            store.insert_announce(&record).map_err(std::io::Error::other)?;
+        }
+        Ok(record)
     }
 
     /// Process an announce with pre-parsed details.
@@ -109,7 +147,11 @@ impl DiscoveryService {
         };
 
         // Write to legacy announce table (secondary)
-        self.store.lock().unwrap().insert_announce(&record).map_err(std::io::Error::other)?;
+        self.store
+            .lock()
+            .map_err(|_| std::io::Error::other("messages store lock poisoned"))?
+            .insert_announce(&record)
+            .map_err(std::io::Error::other)?;
 
         Ok(record)
     }
@@ -139,6 +181,12 @@ impl DiscoveryService {
             )
             .map_err(|e| std::io::Error::other(e.to_string()))?;
 
+        let metadata = if device_type.is_none() {
+            lxmf::announce::delivery_announce_metadata(app_data)
+        } else {
+            None
+        };
+        let stamp_cost = metadata.as_ref().and_then(|value| value.stamp_cost);
         let record = AnnounceRecord {
             id: format!(
                 "announce-{}-{}-{}",
@@ -151,6 +199,107 @@ impl DiscoveryService {
             first_seen: node.first_seen,
             seen_count: node.announce_count,
             app_data_hex: None,
+            capabilities: metadata
+                .map(|value| {
+                    value
+                        .supported_functionality
+                        .into_iter()
+                        .map(|function| format!("lxmf_function:{function}"))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            rssi: None,
+            snr: None,
+            q: None,
+            stamp_cost,
+            stamp_cost_flexibility: None,
+            peering_cost: None,
+        };
+
+        let store =
+            self.store.lock().map_err(|_| std::io::Error::other("messages store lock poisoned"))?;
+        store.insert_announce(&record).map_err(std::io::Error::other)?;
+        Ok(record)
+    }
+
+    pub fn accept_standard_propagation_announce(
+        &self,
+        peer_hash: String,
+        identity_hash: [u8; 16],
+        propagation_destination: [u8; 16],
+        timestamp: i64,
+        metadata: &lxmf::propagation_announce::StandardPropagationAnnounce,
+    ) -> Result<AnnounceRecord, std::io::Error> {
+        let device_type = if metadata.node_active {
+            STANDARD_LXMF_PROPAGATION_ACTIVE_DEVICE_TYPE
+        } else {
+            STANDARD_LXMF_PROPAGATION_INACTIVE_DEVICE_TYPE
+        };
+        let mut record = self.accept_announce_with_details_and_type(
+            peer_hash,
+            timestamp,
+            metadata.node_name.clone(),
+            Some("standard_lxmf_propagation_metadata".into()),
+            device_type,
+        )?;
+        record.stamp_cost = u32::try_from(metadata.stamp_cost).ok();
+        record.stamp_cost_flexibility = u32::try_from(metadata.stamp_cost_flexibility).ok();
+        record.peering_cost = u32::try_from(metadata.peering_cost).ok();
+        record.capabilities = vec![format!(
+            "standard_lxmf_propagation:{}",
+            if metadata.node_active { "active" } else { "inactive" }
+        )];
+        let mut store =
+            self.store.lock().map_err(|_| std::io::Error::other("messages store lock poisoned"))?;
+        store.insert_announce(&record).map_err(std::io::Error::other)?;
+        store
+            .standard_propagation_upsert_peer(&StandardPropagationPeer {
+                identity_hash,
+                propagation_destination: Some(propagation_destination),
+                configured: false,
+                enabled: metadata.node_active,
+                transfer_limit_kb: usize::try_from(metadata.transfer_limit_kb).ok(),
+                sync_limit_kb: usize::try_from(metadata.sync_limit_kb).ok(),
+                stamp_cost: u32::try_from(metadata.stamp_cost).ok(),
+                stamp_flexibility: u32::try_from(metadata.stamp_cost_flexibility).ok(),
+                peering_cost: u32::try_from(metadata.peering_cost).ok(),
+                observed_at: timestamp.max(0),
+            })
+            .map_err(std::io::Error::other)?;
+        Ok(record)
+    }
+
+    fn accept_announce_with_details_and_type(
+        &self,
+        peer_hash: String,
+        timestamp: i64,
+        name: Option<String>,
+        name_source: Option<String>,
+        device_type: &str,
+    ) -> Result<AnnounceRecord, std::io::Error> {
+        let node = self
+            .node_store
+            .accept_announce(
+                &peer_hash,
+                timestamp,
+                name.as_deref(),
+                name_source.as_deref(),
+                Some(device_type),
+                None,
+            )
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        Ok(AnnounceRecord {
+            id: format!(
+                "announce-{}-{}-{}",
+                node.last_seen, node.identity_hash, node.announce_count
+            ),
+            peer: node.identity_hash,
+            timestamp: node.last_seen,
+            name: node.display_name,
+            name_source: node.name_source,
+            first_seen: node.first_seen,
+            seen_count: node.announce_count,
+            app_data_hex: None,
             capabilities: Vec::new(),
             rssi: None,
             snr: None,
@@ -158,16 +307,21 @@ impl DiscoveryService {
             stamp_cost: None,
             stamp_cost_flexibility: None,
             peering_cost: None,
-        };
-
-        self.store.lock().unwrap().insert_announce(&record).map_err(std::io::Error::other)?;
-
-        Ok(record)
+        })
     }
 
     /// Get all known peers from persistent NodeStore.
     pub fn peers(&self) -> Vec<Node> {
         self.node_store.list(None).unwrap_or_default()
+    }
+
+    /// Project persisted announce evidence into the frontend discovery contract.
+    pub fn devices(&self) -> Vec<DeviceInfo> {
+        self.peers().into_iter().map(project_device).collect()
+    }
+
+    pub fn device(&self, hash: &str) -> Option<DeviceInfo> {
+        self.peer(hash).map(project_device)
     }
 
     /// Get a specific peer by hash.
@@ -226,6 +380,38 @@ impl DiscoveryService {
             .set_bookmarked(identity_hash, true)
             .map_err(|e| std::io::Error::other(e.to_string()))
     }
+}
+
+fn project_device(node: Node) -> DeviceInfo {
+    let native_nomadnet_host = matches!(
+        node.device_type.as_deref(),
+        Some(NATIVE_NOMADNET_HOST_DEVICE_TYPE | LEGACY_NOMADNET_HOST_DEVICE_TYPE)
+    );
+    let mut device = DeviceInfo::default();
+    // The discovery key is the announced destination hash. An identity hash is
+    // not recoverable from the current announce projection.
+    device.destination_hash = node.identity_hash;
+    device.name = node.display_name.unwrap_or_default();
+    device.device_type = if native_nomadnet_host {
+        NATIVE_NOMADNET_HOST_DEVICE_TYPE.into()
+    } else {
+        node.device_type.unwrap_or_else(|| "unknown".into())
+    };
+    device.status = "announced".into();
+    device.last_announce = Some(node.last_seen);
+    device.announce_count = u32::try_from(node.announce_count).unwrap_or(u32::MAX);
+    if native_nomadnet_host {
+        device.discovered_capabilities.push(DiscoveredCapability::NativeNomadNetHost);
+    }
+    device.standard_lxmf_propagation_active = match device.device_type.as_str() {
+        STANDARD_LXMF_PROPAGATION_ACTIVE_DEVICE_TYPE => Some(true),
+        STANDARD_LXMF_PROPAGATION_INACTIVE_DEVICE_TYPE => Some(false),
+        _ => None,
+    };
+    if device.standard_lxmf_propagation_active.is_some() {
+        device.discovered_capabilities.push(DiscoveredCapability::StandardLxmfPropagationHost);
+    }
+    device
 }
 
 impl Default for DiscoveryService {
@@ -339,6 +525,38 @@ mod tests {
         assert!(result.is_ok());
         let peer = svc.peer("peer_hash").unwrap();
         assert_eq!(peer.display_name, Some("MeshNode".into()));
+    }
+
+    #[test]
+    fn native_page_host_capability_requires_nomadnet_aspect_evidence() {
+        let svc = DiscoveryService::new();
+        svc.accept_announce_with_type(
+            "0123456789abcdef0123456789abcdef".into(),
+            1000,
+            b"Native host",
+            Some(NATIVE_NOMADNET_HOST_DEVICE_TYPE),
+        )
+        .unwrap();
+        svc.accept_announce_with_details(
+            "fedcba9876543210fedcba9876543210".into(),
+            1001,
+            Some("[styrene:{\"capabilities\":[\"pages\"]}] Placeholder".into()),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let devices = svc.devices();
+        let native = devices
+            .iter()
+            .find(|device| device.destination_hash.starts_with("0123"))
+            .expect("native host projection");
+        assert_eq!(native.discovered_capabilities, vec![DiscoveredCapability::NativeNomadNetHost]);
+        let placeholder = devices
+            .iter()
+            .find(|device| device.destination_hash.starts_with("fedc"))
+            .expect("placeholder projection");
+        assert!(placeholder.discovered_capabilities.is_empty());
     }
 
     #[test]

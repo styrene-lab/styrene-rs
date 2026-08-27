@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use sha2::Digest as _;
 use tokio::sync::broadcast;
 
 use styrene_ipc::error::IpcError;
@@ -18,17 +19,188 @@ use styrene_ipc::traits::*;
 use styrene_ipc::types::*;
 
 use crate::app_context::AppContext;
+use crate::services::messaging::attachment_record_to_info;
 use crate::services::AutoReplyMode;
 use crate::storage::messages::MessageRecord;
 use styrene_rbac::Capability;
+
+const INTERFACE_FRESHNESS_THRESHOLD_SECS: u64 = 30;
+const PATH_FRESHNESS_THRESHOLD_SECS: u64 = 300;
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+        .unwrap_or(0)
+}
+
+fn standard_propagation_direction(value: &str) -> StandardPropagationDirection {
+    match value {
+        "ingress" => StandardPropagationDirection::Ingress,
+        "egress" => StandardPropagationDirection::Egress,
+        "sync" => StandardPropagationDirection::Sync,
+        _ => StandardPropagationDirection::Unknown,
+    }
+}
+
+fn standard_propagation_stage(value: &str) -> StandardPropagationStage {
+    match value {
+        "offer" => StandardPropagationStage::Offer,
+        "transfer" => StandardPropagationStage::Transfer,
+        "get" => StandardPropagationStage::Get,
+        "fetch" => StandardPropagationStage::Fetch,
+        "download" => StandardPropagationStage::Download,
+        "sync" => StandardPropagationStage::Sync,
+        "complete" => StandardPropagationStage::Complete,
+        _ => StandardPropagationStage::Unknown,
+    }
+}
+
+fn standard_propagation_state(value: &str) -> StandardPropagationAttemptState {
+    match value {
+        "running" => StandardPropagationAttemptState::Running,
+        "completed" => StandardPropagationAttemptState::Completed,
+        "failed" => StandardPropagationAttemptState::Failed,
+        "interrupted" => StandardPropagationAttemptState::Interrupted,
+        _ => StandardPropagationAttemptState::Unknown,
+    }
+}
+
+fn standard_propagation_outcome(
+    state: StandardPropagationAttemptState,
+    failure_code: Option<&str>,
+) -> StandardPropagationOutcome {
+    match (state, failure_code) {
+        (StandardPropagationAttemptState::Running, _) => StandardPropagationOutcome::Pending,
+        (StandardPropagationAttemptState::Completed, _) => StandardPropagationOutcome::Completed,
+        (StandardPropagationAttemptState::Interrupted, _) => {
+            StandardPropagationOutcome::Interrupted
+        }
+        (StandardPropagationAttemptState::Failed, Some("capacity")) => {
+            StandardPropagationOutcome::CapacityRejected
+        }
+        (StandardPropagationAttemptState::Failed, _) => StandardPropagationOutcome::Failed,
+        _ => StandardPropagationOutcome::Unknown,
+    }
+}
+
+fn path_observation(
+    snapshot: rns_core::transport::core_transport::path_table::PathSnapshot,
+) -> ObservationMetadata {
+    let observed_at = snapshot
+        .observed_at
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64);
+    let age_secs = snapshot.age.as_secs();
+    let mut observation = ObservationMetadata::default();
+    observation.source = ObservationSource::TransportPathTable;
+    observation.observed_at = observed_at;
+    observation.age_secs = Some(age_secs);
+    observation.freshness_threshold_secs = Some(PATH_FRESHNESS_THRESHOLD_SECS);
+    observation.stale = age_secs > PATH_FRESHNESS_THRESHOLD_SECS;
+    observation
+}
+
+fn path_expiry(
+    snapshot: rns_core::transport::core_transport::path_table::PathSnapshot,
+) -> Option<i64> {
+    snapshot
+        .expires_at
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+}
 
 /// Convert an io::Error to IpcError::Internal.
 fn internal(e: std::io::Error) -> IpcError {
     IpcError::Internal { message: e.to_string() }
 }
 
+fn messaging_error(error: std::io::Error) -> IpcError {
+    if error.kind() == std::io::ErrorKind::InvalidInput {
+        IpcError::invalid_request(error.to_string())
+    } else if error.kind() == std::io::ErrorKind::Unsupported {
+        IpcError::Unavailable { reason: error.to_string() }
+    } else {
+        authoritative_send_error(error.to_string())
+    }
+}
+
+fn authoritative_send_error(reason: String) -> IpcError {
+    if reason.contains("no compatible propagation node")
+        || reason.contains("propagation coordinator is unavailable")
+        || reason.contains("no selected compatible standard LXMF propagation peer")
+    {
+        IpcError::Unavailable { reason }
+    } else {
+        IpcError::Internal { message: reason }
+    }
+}
+
+fn page_error(error: crate::storage::messages::PageError) -> IpcError {
+    match error {
+        crate::storage::messages::PageError::InvalidCursor(message) => {
+            IpcError::invalid_request(message)
+        }
+        crate::storage::messages::PageError::CursorStale => {
+            IpcError::Conflict { message: "cursor_stale".into() }
+        }
+        crate::storage::messages::PageError::Internal(message) => IpcError::Internal { message },
+        crate::storage::messages::PageError::Storage(error) => {
+            IpcError::Internal { message: error.to_string() }
+        }
+    }
+}
+
+fn summary_to_conversation_info(
+    summary: crate::storage::messages::ConversationSummary,
+) -> ConversationInfo {
+    let mut info = ConversationInfo::default();
+    info.peer_hash = summary.peer_hash;
+    info.peer_name = summary.peer_name;
+    info.last_message_timestamp = summary.last_message_timestamp;
+    info.last_message_content = summary.last_message_content;
+    info.unread_count = summary.unread_count;
+    info.message_count = summary.message_count;
+    info.pinned = summary.pinned;
+    info.muted = summary.muted;
+    info
+}
+
+fn contact_to_info(contact: crate::storage::messages::ContactRecord) -> ContactInfo {
+    let mut info = ContactInfo::default();
+    info.peer_hash = contact.peer_hash;
+    info.alias = contact.alias;
+    info.notes = contact.notes;
+    info.created_at = Some(contact.created_at);
+    info.updated_at = Some(contact.updated_at);
+    info
+}
+
+fn mutation_disposition(
+    disposition: crate::storage::messages::MutationDisposition,
+) -> MessagingDisposition {
+    use crate::storage::messages::MutationDisposition as Storage;
+    match disposition {
+        Storage::Applied => MessagingDisposition::Applied,
+        Storage::Unchanged => MessagingDisposition::Unchanged,
+        Storage::NotFound => MessagingDisposition::NotFound,
+        Storage::TerminalConflict => MessagingDisposition::TerminalConflict,
+        Storage::Created => MessagingDisposition::Created,
+        Storage::Updated => MessagingDisposition::Updated,
+    }
+}
+
 /// Convert a MessageRecord to a MessageInfo IPC type.
-fn record_to_message_info(r: MessageRecord) -> MessageInfo {
+fn record_to_message_info(
+    r: MessageRecord,
+    lifecycle: Option<(
+        crate::storage::messages::OutboundRouteRecord,
+        Vec<crate::storage::messages::OutboundAttemptRecord>,
+    )>,
+    canonical: Option<crate::storage::messages::CanonicalInboundRecord>,
+) -> MessageInfo {
     let mut info = MessageInfo::default();
     info.id = r.id;
     info.source_hash = r.source;
@@ -38,7 +210,55 @@ fn record_to_message_info(r: MessageRecord) -> MessageInfo {
     info.title = if r.title.is_empty() { None } else { Some(r.title) };
     info.status = r.receipt_status.unwrap_or_default();
     info.is_outgoing = r.direction == "out";
+    if let Some((route, attempts)) = lifecycle {
+        info.lifecycle_state = match route.state.as_str() {
+            "queued" => styrene_ipc::types::MessageLifecycleState::Queued,
+            "sending" => styrene_ipc::types::MessageLifecycleState::Sending,
+            "sent" => styrene_ipc::types::MessageLifecycleState::Sent,
+            "delivered" => styrene_ipc::types::MessageLifecycleState::Delivered,
+            "failed" => styrene_ipc::types::MessageLifecycleState::Failed,
+            "cancelled" => styrene_ipc::types::MessageLifecycleState::Cancelled,
+            "expired" => styrene_ipc::types::MessageLifecycleState::Expired,
+            "rejected" => styrene_ipc::types::MessageLifecycleState::Rejected,
+            _ => styrene_ipc::types::MessageLifecycleState::Unknown,
+        };
+        info.delivery_method = Some(route.actual_method.clone());
+        info.requested_delivery_method = Some(route.requested_method);
+        info.actual_delivery_method = Some(route.actual_method);
+        info.fallback_reason = route.fallback_reason;
+        info.correlation_id = Some(route.correlation_id);
+        info.attempts = attempts
+            .into_iter()
+            .map(|attempt| {
+                let mut info = styrene_ipc::types::MessageAttemptInfo::default();
+                info.message_id = attempt.message_id;
+                info.number = attempt.attempt_number;
+                info.started_unix_ms = attempt.started_unix_ms;
+                info.deadline_unix_ms = attempt.deadline_unix_ms;
+                info.state = attempt.state;
+                info
+            })
+            .collect();
+    }
     info.read = r.read;
+    if let Some(canonical) = canonical {
+        info.lxmf_timestamp = Some(canonical.timestamp);
+        info.authentication_state = match canonical.authentication_state.as_str() {
+            "verified" => styrene_ipc::types::MessageAuthenticationState::Verified,
+            "invalid" => styrene_ipc::types::MessageAuthenticationState::Invalid,
+            "unknown_identity" => styrene_ipc::types::MessageAuthenticationState::UnknownIdentity,
+            "not_applicable" => styrene_ipc::types::MessageAuthenticationState::NotApplicable,
+            _ => styrene_ipc::types::MessageAuthenticationState::Unknown,
+        };
+        info.stamp_state = match canonical.stamp_state.as_str() {
+            "verified" => styrene_ipc::types::MessageStampState::Verified,
+            "invalid" => styrene_ipc::types::MessageStampState::Invalid,
+            "not_applicable" => styrene_ipc::types::MessageStampState::NotApplicable,
+            _ => styrene_ipc::types::MessageStampState::Unknown,
+        };
+        info.stamp_value = canonical.stamp_value;
+        info.stamp_cost = canonical.stamp_target;
+    }
     info
 }
 
@@ -73,12 +293,153 @@ impl DaemonFacade {
         if self.ctx.policy().has_capability(&self.caller_identity, capability) {
             Ok(())
         } else {
-            Err(IpcError::Unavailable { reason: format!("permission denied for {}", capability) })
+            Err(IpcError::Denied { capability: capability.into() })
         }
+    }
+
+    fn authoritative_message(&self, message_id: &str) -> Result<Option<MessageInfo>, IpcError> {
+        let Some(message) = self.ctx.messaging().get_message(message_id).map_err(internal)? else {
+            return Ok(None);
+        };
+        let lifecycle = self.ctx.messaging().outbound_lifecycle(message_id).map_err(internal)?;
+        let canonical = self.ctx.messaging().canonical_inbound(message_id).map_err(internal)?;
+        let mut info = record_to_message_info(message, lifecycle, canonical);
+        self.hydrate_attachments(&mut info)?;
+        self.hydrate_propagation_correlations(&mut info)?;
+        self.hydrate_delivery_evidence(&mut info)?;
+        Ok(Some(info))
+    }
+
+    fn hydrate_delivery_evidence(&self, message: &mut MessageInfo) -> Result<(), IpcError> {
+        use styrene_ipc::types::{
+            MessageDeliveryEvidenceInfo, MessageDeliveryEvidenceKind, MessageDeliveryEvidenceState,
+        };
+        message.terminal_detail =
+            self.ctx.messaging().terminal_detail(&message.id).map_err(internal)?;
+        message.delivery_evidence = self
+            .ctx
+            .messaging()
+            .delivery_evidence(&message.id)
+            .map_err(internal)?
+            .into_iter()
+            .map(|record| {
+                let mut info = MessageDeliveryEvidenceInfo::default();
+                info.kind = match record.kind.as_str() {
+                    "packet_receipt" => MessageDeliveryEvidenceKind::PacketReceipt,
+                    "resource_completion" => MessageDeliveryEvidenceKind::ResourceCompletion,
+                    _ => MessageDeliveryEvidenceKind::Unknown,
+                };
+                info.hash = record.evidence_hash;
+                info.representation = record.representation;
+                info.state = match record.state.as_str() {
+                    "tracked" => MessageDeliveryEvidenceState::Tracked,
+                    "completed" => MessageDeliveryEvidenceState::Completed,
+                    "failed" => MessageDeliveryEvidenceState::Failed,
+                    "cancelled" => MessageDeliveryEvidenceState::Cancelled,
+                    _ => MessageDeliveryEvidenceState::Unknown,
+                };
+                info.outcome = record.outcome;
+                info.attempt = record.attempt_number;
+                info.correlation_id = record.correlation_id;
+                info.observed_at = record.observed_at;
+                info.terminal_at = record.terminal_at;
+                info.transferred_bytes = record.transferred_bytes;
+                info.total_bytes = record.total_bytes;
+                info.progress = record.progress;
+                info
+            })
+            .collect();
+        message.projection_complete = true;
+        Ok(())
+    }
+
+    fn hydrate_attachments(&self, message: &mut MessageInfo) -> Result<(), IpcError> {
+        message.attachments = self
+            .ctx
+            .messaging()
+            .list_attachments(&message.id)
+            .map_err(internal)?
+            .into_iter()
+            .map(attachment_record_to_info)
+            .collect();
+        message.attachment_info =
+            (message.attachments.len() == 1).then(|| message.attachments[0].clone());
+        Ok(())
+    }
+
+    fn hydrate_propagation_correlations(&self, message: &mut MessageInfo) -> Result<(), IpcError> {
+        message.propagation_correlations = self
+            .ctx
+            .store()
+            .lock()
+            .map_err(|_| IpcError::Internal { message: "messages store lock poisoned".into() })?
+            .standard_propagation_links_for_message(&message.id, 64)
+            .map_err(|error| internal(std::io::Error::other(error)))?
+            .into_iter()
+            .map(|link| {
+                let mut info = styrene_ipc::types::MessagePropagationCorrelationInfo::default();
+                info.relation = link.relation;
+                info.transient_id = hex::encode(link.transient_id);
+                info.attempt_id = link.attempt_id.map(hex::encode);
+                info.peer_hash = link.peer.map(hex::encode);
+                info.state = link.state;
+                info.created_at = link.created_at;
+                info.updated_at = link.updated_at;
+                info
+            })
+            .collect();
+        Ok(())
+    }
+
+    fn emit_messaging_mutation(&self, outcome: &MessagingOperationOutcome) {
+        if matches!(
+            outcome.disposition,
+            MessagingDisposition::Applied
+                | MessagingDisposition::Created
+                | MessagingDisposition::Updated
+        ) {
+            self.ctx.events().emit_messaging_operation(outcome.clone());
+        }
+    }
+
+    async fn conversation_flag_outcome(
+        &self,
+        peer_hash: &str,
+        flag: &str,
+        value: bool,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.require(Capability::MESSAGING_MANAGE)?;
+        let result = self
+            .ctx
+            .messaging()
+            .set_conversation_flag_outcome(peer_hash, flag, value)
+            .map_err(messaging_error)?;
+        let mut outcome = MessagingOperationOutcome::default();
+        outcome.disposition = mutation_disposition(result.disposition);
+        outcome.affected_count = result.affected_count;
+        outcome.target_id = peer_hash.to_ascii_lowercase();
+        outcome.conversation = result.summary.map(summary_to_conversation_info);
+        self.emit_messaging_mutation(&outcome);
+        Ok(outcome)
     }
 
     fn not_implemented(method: &str) -> IpcError {
         IpcError::not_implemented(method)
+    }
+
+    fn network_operation_capability(
+        kind: styrene_ipc::types::NetworkOperationKind,
+    ) -> Result<&'static str, IpcError> {
+        use styrene_ipc::types::NetworkOperationKind;
+
+        match kind {
+            NetworkOperationKind::Announce => Ok(Capability::NETWORK_ANNOUNCE),
+            NetworkOperationKind::PathRequest => Ok(Capability::NETWORK_PATH_REQUEST),
+            NetworkOperationKind::Probe => Ok(Capability::NETWORK_PROBE),
+            NetworkOperationKind::LinkOpen => Ok(Capability::NETWORK_LINK_OPEN),
+            NetworkOperationKind::LinkClose => Ok(Capability::NETWORK_LINK_CLOSE),
+            _ => Err(IpcError::invalid_request("unsupported network operation kind")),
+        }
     }
 }
 
@@ -87,9 +448,19 @@ impl DaemonIdentity for DaemonFacade {
     async fn query_identity(&self) -> Result<IdentityInfo, IpcError> {
         self.require(Capability::RPC_STATUS)?;
         let svc = self.ctx.identity();
-        let dest = svc.delivery_destination_hash().unwrap_or_default();
+        let runtime_identity = self.ctx.transport().runtime_identity();
+        let identity = if let Some((identity, _)) = runtime_identity {
+            hex::encode(identity.as_slice())
+        } else {
+            svc.identity_hash().to_string()
+        };
+        let dest = if let Some((_, destination)) = runtime_identity {
+            hex::encode(destination.as_slice())
+        } else {
+            svc.delivery_destination_hash().unwrap_or_default()
+        };
         let mut info = IdentityInfo::default();
-        info.identity_hash = svc.identity_hash().to_string();
+        info.identity_hash = identity;
         info.destination_hash = dest.clone();
         info.lxmf_destination_hash = dest;
         info.display_name = svc.display_name().unwrap_or_default();
@@ -104,7 +475,7 @@ impl DaemonIdentity for DaemonFacade {
         icon: Option<&str>,
         short_name: Option<&str>,
     ) -> Result<bool, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
         let changed = self.ctx.identity().set_identity(display_name, icon, short_name);
         if changed {
             // Re-announce with updated identity
@@ -114,7 +485,7 @@ impl DaemonIdentity for DaemonFacade {
     }
 
     async fn announce(&self) -> Result<bool, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
+        self.require(Capability::NETWORK_ANNOUNCE)?;
         self.ctx.identity().announce(None).await;
         Ok(true)
     }
@@ -123,71 +494,362 @@ impl DaemonIdentity for DaemonFacade {
 #[async_trait]
 impl DaemonMessaging for DaemonFacade {
     async fn send_chat(&self, request: SendChatRequest) -> Result<MessageId, IpcError> {
+        if request
+            .delivery_method
+            .as_deref()
+            .is_some_and(|method| method.trim().eq_ignore_ascii_case("paper"))
+        {
+            return Err(IpcError::invalid_request(
+                "paper export requires send_chat_outcome so the URI is not discarded",
+            ));
+        }
+        let outcome = self.send_chat_outcome(request).await?;
+        match outcome.disposition {
+            SendChatDisposition::Accepted => Ok(outcome.message_id),
+            SendChatDisposition::Failed => Err(authoritative_send_error(
+                outcome
+                    .terminal_error
+                    .unwrap_or_else(|| "authoritative send failed after persistence".into()),
+            )),
+            SendChatDisposition::PaperExported | SendChatDisposition::Unknown => {
+                Err(IpcError::invalid_request("send_chat_outcome is required for this result"))
+            }
+            _ => Err(IpcError::invalid_request("unsupported send outcome")),
+        }
+    }
+
+    async fn send_chat_outcome(
+        &self,
+        request: SendChatRequest,
+    ) -> Result<SendChatOutcome, IpcError> {
         self.require(Capability::CHAT_SEND)?;
-        self.ctx
+        if request.content.is_empty() || request.content.len() > MAX_CHAT_CONTENT_BYTES {
+            return Err(IpcError::invalid_request("content must be 1..=65536 UTF-8 bytes"));
+        }
+        let requested_method =
+            request.delivery_method.as_deref().unwrap_or("direct").trim().to_ascii_lowercase();
+        if !matches!(requested_method.as_str(), "direct" | "opportunistic" | "propagated" | "paper")
+        {
+            return Err(IpcError::invalid_request("invalid delivery_method"));
+        }
+        if request.attachment.is_some() && !request.attachments.is_empty() {
+            return Err(IpcError::invalid_request(
+                "legacy attachment and attachments are mutually exclusive",
+            ));
+        }
+        if request.attachment.is_none() && request.attachment_name.is_some() {
+            return Err(IpcError::invalid_request("attachment_name requires attachment"));
+        }
+        let mut inputs = request.attachments;
+        if let Some(bytes) = request.attachment {
+            let mut input = AttachmentInput::default();
+            input.name = request.attachment_name.unwrap_or_else(|| "attachment.bin".into());
+            input.bytes = bytes;
+            inputs.push(input);
+        }
+        if inputs.len() > MAX_CHAT_ATTACHMENTS {
+            return Err(IpcError::invalid_request("attachment count exceeds 8"));
+        }
+        if requested_method == "paper" && !inputs.is_empty() {
+            return Err(IpcError::invalid_request("paper delivery does not support attachments"));
+        }
+        let mut aggregate = 0usize;
+        let mut attachments = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            if input.name.is_empty()
+                || input.name.len() > MAX_CHAT_ATTACHMENT_NAME_BYTES
+                || input.bytes.len() > MAX_CHAT_ATTACHMENT_BYTES
+            {
+                return Err(IpcError::invalid_request("invalid attachment name or size"));
+            }
+            aggregate = aggregate
+                .checked_add(input.bytes.len())
+                .ok_or_else(|| IpcError::invalid_request("attachment aggregate overflow"))?;
+            if aggregate > MAX_CHAT_ATTACHMENT_BYTES {
+                return Err(IpcError::invalid_request("attachment aggregate exceeds 768 KiB"));
+            }
+            let digest = hex::encode(sha2::Sha256::digest(&input.bytes));
+            if let Some(expected) = input.expected_sha256.as_deref() {
+                if expected.len() != 64
+                    || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    || expected.bytes().any(|byte| byte.is_ascii_uppercase())
+                {
+                    return Err(IpcError::invalid_request(
+                        "expected_sha256 must be 64 lowercase hex characters",
+                    ));
+                }
+                if expected != digest {
+                    return Err(IpcError::invalid_request("attachment SHA-256 mismatch"));
+                }
+            }
+            attachments.push(crate::storage::messages::AttachmentBlobInput {
+                wire_name: input.name,
+                data: input.bytes,
+                content_type: input.content_type,
+                source: "local".into(),
+            });
+        }
+        let mut committed = self
+            .ctx
             .messaging()
-            .send_chat(&request.peer_hash, &request.content, request.title.as_deref())
+            .send_chat_outcome_with_attachments(
+                &request.peer_hash,
+                &request.content,
+                request.title.as_deref(),
+                Some(&requested_method),
+                &attachments,
+            )
             .await
-            .map_err(internal)
+            .map_err(messaging_error)?;
+        let mut message = committed.message.clone();
+        let projection_error = match self.authoritative_message(&committed.message_id) {
+            Ok(Some(fresh)) if fresh.id == committed.message_id => {
+                message = fresh;
+                None
+            }
+            Ok(Some(fresh)) => Some(format!(
+                "persisted send projection ID mismatch: expected {}, observed {}",
+                committed.message_id, fresh.id
+            )),
+            Ok(None) => Some("persisted send projection is unavailable".into()),
+            Err(error) => Some(format!("persisted send projection freshness unavailable: {error}")),
+        };
+        if let Some(error) = projection_error {
+            if !committed
+                .terminal_error
+                .as_deref()
+                .is_some_and(|existing| existing.contains(&error))
+            {
+                committed.terminal_error = Some(match committed.terminal_error {
+                    Some(existing) => format!("{existing}; {error}"),
+                    None => error,
+                });
+            }
+            committed.disposition = crate::services::messaging::SendCommitDisposition::Failed;
+            committed.paper_uri = None;
+        }
+        let mut outcome = SendChatOutcome::default();
+        outcome.disposition = match committed.disposition {
+            crate::services::messaging::SendCommitDisposition::Accepted => {
+                SendChatDisposition::Accepted
+            }
+            crate::services::messaging::SendCommitDisposition::Failed => {
+                SendChatDisposition::Failed
+            }
+            crate::services::messaging::SendCommitDisposition::PaperExported => {
+                SendChatDisposition::PaperExported
+            }
+        };
+        outcome.message_id = committed.message_id;
+        outcome.message = message;
+        outcome.requested_method = committed.requested_method;
+        outcome.actual_method = committed.actual_method;
+        outcome.fallback_reason = committed.fallback_reason;
+        outcome.terminal_error = committed.terminal_error;
+        outcome.paper_uri = committed.paper_uri;
+        Ok(outcome)
+    }
+
+    async fn set_draft(
+        &self,
+        peer_hash: &str,
+        content: &str,
+    ) -> Result<ConversationDraft, IpcError> {
+        self.require(Capability::MESSAGING_MANAGE)?;
+        let draft = self.ctx.messaging().set_draft(peer_hash, content).map_err(messaging_error)?;
+        let mut result = ConversationDraft::default();
+        result.peer_hash = draft.peer_hash;
+        result.content = draft.content;
+        result.updated_at = draft.updated_at;
+        Ok(result)
+    }
+
+    async fn draft(&self, peer_hash: &str) -> Result<Option<ConversationDraft>, IpcError> {
+        self.require(Capability::MESSAGING_MANAGE)?;
+        Ok(self.ctx.messaging().draft(peer_hash).map_err(messaging_error)?.map(|draft| {
+            let mut result = ConversationDraft::default();
+            result.peer_hash = draft.peer_hash;
+            result.content = draft.content;
+            result.updated_at = draft.updated_at;
+            result
+        }))
+    }
+
+    async fn clear_draft(&self, peer_hash: &str) -> Result<MessagingDisposition, IpcError> {
+        self.require(Capability::MESSAGING_MANAGE)?;
+        Ok(if self.ctx.messaging().clear_draft(peer_hash).map_err(messaging_error)? {
+            MessagingDisposition::Applied
+        } else {
+            MessagingDisposition::Unchanged
+        })
     }
 
     async fn mark_read(&self, peer_hash: &str) -> Result<u64, IpcError> {
-        self.require(Capability::CHAT_SEND)?;
-        self.ctx.messaging().mark_read(peer_hash).map_err(internal)
+        Ok(self.mark_read_outcome(peer_hash).await?.affected_count)
+    }
+
+    async fn mark_read_outcome(
+        &self,
+        peer_hash: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.require(Capability::MESSAGING_MANAGE)?;
+        let result = self.ctx.messaging().mark_read_outcome(peer_hash).map_err(messaging_error)?;
+        let mut outcome = MessagingOperationOutcome::default();
+        outcome.disposition = mutation_disposition(result.disposition);
+        outcome.affected_count = result.affected_count;
+        outcome.target_id = peer_hash.to_ascii_lowercase();
+        outcome.conversation = result.summary.map(summary_to_conversation_info);
+        self.emit_messaging_mutation(&outcome);
+        Ok(outcome)
     }
 
     async fn delete_conversation(&self, peer_hash: &str) -> Result<u64, IpcError> {
-        self.require(Capability::CHAT_SEND)?;
-        self.ctx.messaging().delete_conversation(peer_hash).map_err(internal)
+        Ok(self.delete_conversation_outcome(peer_hash).await?.affected_count)
+    }
+
+    async fn delete_conversation_outcome(
+        &self,
+        peer_hash: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.require(Capability::MESSAGING_MANAGE)?;
+        let result =
+            self.ctx.messaging().delete_conversation_outcome(peer_hash).map_err(messaging_error)?;
+        let mut outcome = MessagingOperationOutcome::default();
+        outcome.disposition = mutation_disposition(result.disposition);
+        outcome.affected_count = result.affected_count;
+        outcome.target_id = peer_hash.to_ascii_lowercase();
+        outcome.conversation = result.summary.map(summary_to_conversation_info);
+        outcome.terminal_state = result.terminal_state;
+        self.emit_messaging_mutation(&outcome);
+        Ok(outcome)
     }
 
     async fn delete_message(&self, message_id: &str) -> Result<bool, IpcError> {
-        self.require(Capability::CHAT_SEND)?;
-        self.ctx.messaging().delete_message(message_id).map_err(internal)
+        Ok(self.delete_message_outcome(message_id).await?.disposition
+            == MessagingDisposition::Applied)
+    }
+
+    async fn delete_message_outcome(
+        &self,
+        message_id: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.require(Capability::MESSAGING_MANAGE)?;
+        let result =
+            self.ctx.messaging().delete_message_outcome(message_id).map_err(messaging_error)?;
+        let mut outcome = MessagingOperationOutcome::default();
+        outcome.disposition = mutation_disposition(result.disposition);
+        outcome.affected_count = result.affected_count;
+        outcome.target_id = message_id.into();
+        outcome.terminal_state = result.terminal_state;
+        if outcome.disposition == MessagingDisposition::TerminalConflict {
+            outcome.message = self.authoritative_message(message_id)?;
+        }
+        self.emit_messaging_mutation(&outcome);
+        Ok(outcome)
     }
 
     async fn retry_message(&self, message_id: &str) -> Result<bool, IpcError> {
-        self.require(Capability::CHAT_SEND)?;
-        // Look up the original message, re-deliver if outbound and failed
-        let msg = self
+        Ok(self.retry_message_outcome(message_id).await?.disposition
+            == MessagingDisposition::Applied)
+    }
+
+    async fn retry_message_outcome(
+        &self,
+        message_id: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.require(Capability::MESSAGING_LIFECYCLE)?;
+        use crate::services::messaging::RetryMessageOutcome as Retry;
+        let result = self
             .ctx
             .messaging()
-            .get_message(message_id)
-            .map_err(internal)?
-            .ok_or_else(|| IpcError::not_found("message", message_id))?;
-        if msg.direction != "out" {
-            return Err(IpcError::invalid_request("can only retry outbound messages"));
-        }
-        // Re-send via the delivery pipeline
-        let _new_id = self
-            .ctx
-            .messaging()
-            .send_chat(&msg.destination, &msg.content, Some(&msg.title))
+            .retry_message_outcome(message_id)
             .await
-            .map_err(internal)?;
-        Ok(true)
+            .map_err(messaging_error)?;
+        let (disposition, correlated_id, terminal_state) = match result {
+            Retry::Created(id) => (MessagingDisposition::Applied, Some(id), None),
+            Retry::Existing(id) => (MessagingDisposition::Unchanged, Some(id), None),
+            Retry::NotFound => (MessagingDisposition::NotFound, None, None),
+            Retry::TerminalConflict(state) => {
+                (MessagingDisposition::TerminalConflict, None, Some(state))
+            }
+        };
+        let message = match correlated_id.as_deref() {
+            Some(id) => self.authoritative_message(id)?,
+            None => self.authoritative_message(message_id)?,
+        };
+        let mut outcome = MessagingOperationOutcome::default();
+        outcome.disposition = disposition;
+        outcome.affected_count = u64::from(disposition == MessagingDisposition::Applied);
+        outcome.target_id = message_id.into();
+        outcome.correlated_id = correlated_id;
+        outcome.message = message;
+        outcome.terminal_state = terminal_state;
+        self.emit_messaging_mutation(&outcome);
+        Ok(outcome)
+    }
+
+    async fn cancel_message(&self, message_id: &str) -> Result<bool, IpcError> {
+        Ok(self.cancel_message_outcome(message_id).await?.disposition
+            == MessagingDisposition::Applied)
+    }
+
+    async fn cancel_message_outcome(
+        &self,
+        message_id: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.require(Capability::MESSAGING_LIFECYCLE)?;
+        use crate::services::messaging::CancelMessageOutcome as Cancel;
+        let result = self
+            .ctx
+            .messaging()
+            .cancel_outbound_outcome(message_id)
+            .await
+            .map_err(messaging_error)?;
+        let (disposition, terminal_state) = match result {
+            Cancel::Applied(state) => (MessagingDisposition::Applied, Some(state)),
+            Cancel::AlreadyCancelled => {
+                (MessagingDisposition::AlreadyCancelled, Some("cancelled".into()))
+            }
+            Cancel::NotFound => (MessagingDisposition::NotFound, None),
+            Cancel::TerminalConflict(state) => {
+                (MessagingDisposition::TerminalConflict, Some(state))
+            }
+        };
+        let mut outcome = MessagingOperationOutcome::default();
+        outcome.disposition = disposition;
+        outcome.affected_count = u64::from(disposition == MessagingDisposition::Applied);
+        outcome.target_id = message_id.into();
+        outcome.message = self.authoritative_message(message_id)?;
+        outcome.terminal_state = terminal_state;
+        self.emit_messaging_mutation(&outcome);
+        Ok(outcome)
     }
 
     async fn query_conversations(
         &self,
-        include_unread: bool,
+        unread_only: bool,
     ) -> Result<Vec<ConversationInfo>, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
-        let summaries =
-            self.ctx.messaging().list_conversations(include_unread).map_err(internal)?;
-        Ok(summaries
-            .into_iter()
-            .map(|s| {
-                let mut info = ConversationInfo::default();
-                info.peer_hash = s.peer_hash;
-                info.peer_name = s.peer_name;
-                info.last_message_timestamp = s.last_message_timestamp;
-                info.last_message_content = s.last_message_content;
-                info.unread_count = s.unread_count;
-                info.message_count = s.message_count;
-                info
-            })
-            .collect())
+        self.require(Capability::MESSAGING_HISTORY_READ)?;
+        let summaries = self.ctx.messaging().list_conversations(unread_only).map_err(internal)?;
+        Ok(summaries.into_iter().map(summary_to_conversation_info).collect())
+    }
+
+    async fn query_conversation_page(
+        &self,
+        unread_only: bool,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<ConversationPage, IpcError> {
+        self.require(Capability::MESSAGING_HISTORY_READ)?;
+        let page = self
+            .ctx
+            .messaging()
+            .conversation_page(unread_only, limit as usize, cursor)
+            .map_err(page_error)?;
+        let mut result = ConversationPage::default();
+        result.conversations = page.items.into_iter().map(summary_to_conversation_info).collect();
+        result.next_cursor = page.next_cursor;
+        Ok(result)
     }
 
     async fn query_messages(
@@ -196,13 +858,68 @@ impl DaemonMessaging for DaemonFacade {
         limit: u32,
         before_ts: Option<i64>,
     ) -> Result<Vec<MessageInfo>, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
-        let records = self
+        self.require(Capability::MESSAGING_HISTORY_READ)?;
+        let snapshots = self
             .ctx
             .messaging()
-            .list_messages_for_peer(peer_hash, limit as usize, before_ts)
-            .map_err(internal)?;
-        Ok(records.into_iter().map(record_to_message_info).collect())
+            .message_projection_snapshot_for_peer(peer_hash, limit as usize, before_ts)
+            .map_err(messaging_error)?;
+        snapshots
+            .into_iter()
+            .map(|snapshot| {
+                let mut info = record_to_message_info(
+                    snapshot.message,
+                    snapshot.lifecycle,
+                    snapshot.canonical,
+                );
+                self.hydrate_attachments(&mut info)?;
+                self.hydrate_propagation_correlations(&mut info)?;
+                self.hydrate_delivery_evidence(&mut info)?;
+                Ok(info)
+            })
+            .collect()
+    }
+
+    async fn query_message(&self, message_id: &str) -> Result<Option<MessageInfo>, IpcError> {
+        self.require(Capability::MESSAGING_HISTORY_READ)?;
+        if message_id.is_empty() || message_id.len() > 128 {
+            return Err(IpcError::invalid_request(
+                "message_id must contain between 1 and 128 bytes",
+            ));
+        }
+        self.authoritative_message(message_id)
+    }
+
+    async fn query_message_page(
+        &self,
+        peer_hash: &str,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<MessagePage, IpcError> {
+        self.require(Capability::MESSAGING_HISTORY_READ)?;
+        let page = self
+            .ctx
+            .messaging()
+            .message_projection_page_for_peer(peer_hash, limit as usize, cursor)
+            .map_err(page_error)?;
+        let mut result = MessagePage::default();
+        result.messages = page
+            .items
+            .into_iter()
+            .map(|snapshot| {
+                let mut info = record_to_message_info(
+                    snapshot.message,
+                    snapshot.lifecycle,
+                    snapshot.canonical,
+                );
+                self.hydrate_attachments(&mut info)?;
+                self.hydrate_propagation_correlations(&mut info)?;
+                self.hydrate_delivery_evidence(&mut info)?;
+                Ok(info)
+            })
+            .collect::<Result<Vec<_>, IpcError>>()?;
+        result.next_cursor = page.next_cursor;
+        Ok(result)
     }
 
     async fn search_messages(
@@ -211,27 +928,162 @@ impl DaemonMessaging for DaemonFacade {
         peer_hash: Option<&str>,
         limit: u32,
     ) -> Result<Vec<MessageInfo>, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
-        let records = self
+        Ok(self.search_messages_outcome(query, peer_hash, limit).await?.messages)
+    }
+
+    async fn search_messages_outcome(
+        &self,
+        query: &str,
+        peer_hash: Option<&str>,
+        limit: u32,
+    ) -> Result<MessageSearchOutcome, IpcError> {
+        self.require(Capability::MESSAGING_HISTORY_READ)?;
+        let snapshot = self
             .ctx
             .messaging()
-            .search_messages(query, peer_hash, limit as usize)
-            .map_err(internal)?;
-        Ok(records.into_iter().map(record_to_message_info).collect())
+            .search_message_projection_outcome(query, peer_hash, limit as usize)
+            .map_err(messaging_error)?;
+        let messages = snapshot
+            .items
+            .into_iter()
+            .map(|snapshot| {
+                let mut info = record_to_message_info(
+                    snapshot.message,
+                    snapshot.lifecycle,
+                    snapshot.canonical,
+                );
+                self.hydrate_attachments(&mut info)?;
+                self.hydrate_propagation_correlations(&mut info)?;
+                self.hydrate_delivery_evidence(&mut info)?;
+                Ok(info)
+            })
+            .collect::<Result<Vec<_>, IpcError>>()?;
+        let mut outcome = MessageSearchOutcome::default();
+        outcome.returned_count = messages.len() as u32;
+        outcome.matched_count = snapshot.matched_count;
+        outcome.truncated = snapshot.truncated;
+        outcome.messages = messages;
+        outcome.order = "timestamp_desc_id_desc".into();
+        outcome.query = query.into();
+        outcome.peer_hash = peer_hash.map(str::to_owned);
+        outcome.limit = limit;
+        Ok(outcome)
     }
 
     async fn query_attachment(&self, message_id: &str) -> Result<Vec<u8>, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
-        // Verify the message exists
-        let _msg = self
+        self.require(Capability::MESSAGING_HISTORY_READ)?;
+        let attachments = self.ctx.messaging().list_attachments(message_id).map_err(internal)?;
+        if attachments.len() != 1 || attachments[0].integrity != "verified" {
+            return Err(IpcError::not_found("attachment", message_id));
+        }
+        let mut data = Vec::with_capacity(attachments[0].byte_len as usize);
+        let mut offset = 0usize;
+        loop {
+            let chunk = self
+                .ctx
+                .messaging()
+                .query_attachment_chunk(message_id, 0, offset, 256 * 1024)
+                .map_err(internal)?
+                .ok_or_else(|| IpcError::not_found("attachment", message_id))?;
+            data.extend_from_slice(&chunk.data);
+            offset = chunk.next_offset;
+            if chunk.done {
+                return Ok(data);
+            }
+        }
+    }
+
+    async fn list_attachments(&self, message_id: &str) -> Result<Vec<AttachmentInfo>, IpcError> {
+        self.require(Capability::MESSAGING_HISTORY_READ)?;
+        self.ctx
+            .messaging()
+            .list_attachments(message_id)
+            .map_err(internal)
+            .map(|values| values.into_iter().map(attachment_record_to_info).collect())
+    }
+
+    async fn query_attachment_chunk(
+        &self,
+        message_id: &str,
+        ordinal: u8,
+        offset: u64,
+        max_bytes: u32,
+    ) -> Result<AttachmentChunk, IpcError> {
+        self.require(Capability::MESSAGING_HISTORY_READ)?;
+        if max_bytes == 0 || max_bytes > 256 * 1024 {
+            return Err(IpcError::invalid_request("max_bytes must be between 1 and 262144"));
+        }
+        let offset = usize::try_from(offset)
+            .map_err(|_| IpcError::invalid_request("attachment offset exceeds platform range"))?;
+        let chunk = self
             .ctx
             .messaging()
-            .get_message(message_id)
+            .query_attachment_chunk(message_id, ordinal, offset, max_bytes as usize)
             .map_err(internal)?
-            .ok_or_else(|| IpcError::not_found("message", message_id))?;
-        // Attachment storage is not yet implemented — LXMF messages in the
-        // current pipeline carry content inline, not as separate blobs.
-        Err(IpcError::not_found("attachment", message_id))
+            .ok_or_else(|| IpcError::not_found("attachment", message_id))?;
+        let mut result = AttachmentChunk::default();
+        result.attachment = attachment_record_to_info(chunk.attachment);
+        result.data = chunk.data;
+        result.next_offset = chunk.next_offset as u64;
+        result.done = chunk.done;
+        Ok(result)
+    }
+
+    async fn cancel_attachment_transfer(
+        &self,
+        message_id: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.require(Capability::MESSAGING_LIFECYCLE)?;
+        let attachments = self.ctx.messaging().list_attachments(message_id).map_err(internal)?;
+        let Some(transfer) = attachments.iter().find_map(|attachment| {
+            attachment.transfer_state.as_ref().map(|state| {
+                (
+                    attachment.representation.as_deref().unwrap_or(""),
+                    state.as_str(),
+                    attachment.direction.as_deref().unwrap_or(""),
+                )
+            })
+        }) else {
+            return Err(IpcError::not_found("attachment transfer", message_id));
+        };
+        if transfer.2 != "outbound" {
+            let mut outcome = MessagingOperationOutcome::default();
+            outcome.disposition = MessagingDisposition::TerminalConflict;
+            outcome.target_id = message_id.into();
+            outcome.terminal_state = Some(transfer.1.into());
+            return Ok(outcome);
+        }
+        if transfer.0 != "resource" {
+            let mut outcome = MessagingOperationOutcome::default();
+            outcome.disposition = MessagingDisposition::TerminalConflict;
+            outcome.target_id = message_id.into();
+            outcome.terminal_state = Some("packet_dispatched".into());
+            return Ok(outcome);
+        }
+        if matches!(transfer.1, "completed" | "failed" | "cancelled") {
+            let mut outcome = MessagingOperationOutcome::default();
+            outcome.disposition = if transfer.1 == "cancelled" {
+                MessagingDisposition::AlreadyCancelled
+            } else {
+                MessagingDisposition::TerminalConflict
+            };
+            outcome.target_id = message_id.into();
+            outcome.terminal_state = Some(transfer.1.into());
+            return Ok(outcome);
+        }
+        self.cancel_message_outcome(message_id).await
+    }
+
+    async fn query_attachment_transfer(
+        &self,
+        message_id: &str,
+    ) -> Result<AttachmentTransferInfo, IpcError> {
+        self.require(Capability::MESSAGING_HISTORY_READ)?;
+        self.list_attachments(message_id)
+            .await?
+            .into_iter()
+            .find_map(|attachment| attachment.transfer.map(|transfer| *transfer))
+            .ok_or_else(|| IpcError::not_found("attachment transfer", message_id))
     }
 
     async fn set_contact(
@@ -240,24 +1092,54 @@ impl DaemonMessaging for DaemonFacade {
         alias: Option<&str>,
         notes: Option<&str>,
     ) -> Result<ContactInfo, IpcError> {
-        self.require(Capability::CHAT_SEND)?;
-        let c = self.ctx.messaging().set_contact(peer_hash, alias, notes).map_err(internal)?;
-        let mut info = ContactInfo::default();
-        info.peer_hash = c.peer_hash;
-        info.alias = c.alias;
-        info.notes = c.notes;
-        info.created_at = Some(c.created_at);
-        info.updated_at = Some(c.updated_at);
-        Ok(info)
+        self.set_contact_outcome(peer_hash, alias, notes).await?.contact.ok_or_else(|| {
+            IpcError::Internal { message: "contact outcome missing projection".into() }
+        })
+    }
+
+    async fn set_contact_outcome(
+        &self,
+        peer_hash: &str,
+        alias: Option<&str>,
+        notes: Option<&str>,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.require(Capability::MESSAGING_MANAGE)?;
+        let result = self
+            .ctx
+            .messaging()
+            .set_contact_outcome(peer_hash, alias, notes)
+            .map_err(messaging_error)?;
+        let mut outcome = MessagingOperationOutcome::default();
+        outcome.disposition = mutation_disposition(result.disposition);
+        outcome.affected_count = result.affected_count;
+        outcome.target_id = peer_hash.to_ascii_lowercase();
+        outcome.contact = result.contact.map(contact_to_info);
+        self.emit_messaging_mutation(&outcome);
+        Ok(outcome)
     }
 
     async fn remove_contact(&self, peer_hash: &str) -> Result<bool, IpcError> {
-        self.require(Capability::CHAT_SEND)?;
-        self.ctx.messaging().remove_contact(peer_hash).map_err(internal)
+        Ok(self.remove_contact_outcome(peer_hash).await?.disposition
+            == MessagingDisposition::Applied)
+    }
+
+    async fn remove_contact_outcome(
+        &self,
+        peer_hash: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.require(Capability::MESSAGING_MANAGE)?;
+        let result =
+            self.ctx.messaging().remove_contact_outcome(peer_hash).map_err(messaging_error)?;
+        let mut outcome = MessagingOperationOutcome::default();
+        outcome.disposition = mutation_disposition(result.disposition);
+        outcome.affected_count = result.affected_count;
+        outcome.target_id = peer_hash.to_ascii_lowercase();
+        self.emit_messaging_mutation(&outcome);
+        Ok(outcome)
     }
 
     async fn query_contacts(&self) -> Result<Vec<ContactInfo>, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
+        self.require(Capability::MESSAGING_HISTORY_READ)?;
         let contacts = self.ctx.messaging().list_contacts().map_err(internal)?;
         Ok(contacts
             .into_iter()
@@ -283,39 +1165,51 @@ impl DaemonMessaging for DaemonFacade {
     }
 
     async fn pin_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
-        self.require(Capability::CHAT_SEND)?;
-        self.ctx
-            .conversations()
-            .set_pinned(peer_hash, true)
-            .map_err(|e| IpcError::Internal { message: e.to_string() })?;
-        Ok(true)
+        Ok(self.pin_conversation_outcome(peer_hash).await?.disposition
+            == MessagingDisposition::Applied)
+    }
+
+    async fn pin_conversation_outcome(
+        &self,
+        peer_hash: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.conversation_flag_outcome(peer_hash, "pinned", true).await
     }
 
     async fn unpin_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
-        self.require(Capability::CHAT_SEND)?;
-        self.ctx
-            .conversations()
-            .set_pinned(peer_hash, false)
-            .map_err(|e| IpcError::Internal { message: e.to_string() })?;
-        Ok(true)
+        Ok(self.unpin_conversation_outcome(peer_hash).await?.disposition
+            == MessagingDisposition::Applied)
+    }
+
+    async fn unpin_conversation_outcome(
+        &self,
+        peer_hash: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.conversation_flag_outcome(peer_hash, "pinned", false).await
     }
 
     async fn mute_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
-        self.require(Capability::CHAT_SEND)?;
-        self.ctx
-            .conversations()
-            .set_muted(peer_hash, true)
-            .map_err(|e| IpcError::Internal { message: e.to_string() })?;
-        Ok(true)
+        Ok(self.mute_conversation_outcome(peer_hash).await?.disposition
+            == MessagingDisposition::Applied)
+    }
+
+    async fn mute_conversation_outcome(
+        &self,
+        peer_hash: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.conversation_flag_outcome(peer_hash, "muted", true).await
     }
 
     async fn unmute_conversation(&self, peer_hash: &str) -> Result<bool, IpcError> {
-        self.require(Capability::CHAT_SEND)?;
-        self.ctx
-            .conversations()
-            .set_muted(peer_hash, false)
-            .map_err(|e| IpcError::Internal { message: e.to_string() })?;
-        Ok(true)
+        Ok(self.unmute_conversation_outcome(peer_hash).await?.disposition
+            == MessagingDisposition::Applied)
+    }
+
+    async fn unmute_conversation_outcome(
+        &self,
+        peer_hash: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.conversation_flag_outcome(peer_hash, "muted", false).await
     }
 }
 
@@ -330,14 +1224,221 @@ impl DaemonStatus for DaemonFacade {
         info.rns_initialized = self.ctx.transport().is_connected();
         info.lxmf_initialized = self.ctx.transport().is_connected();
         info.device_count = self.ctx.discovery().peer_count() as u32;
-        info.interface_count = status.interface_count() as u32;
+        info.interface_count = self.ctx.transport().interface_snapshots().await.len() as u32;
         info.propagation_enabled = status.propagation_enabled();
+        if let Some(contract) = self.ctx.startup_contract() {
+            info.standard_lxmf_propagation_destination_registered = contract.has_component(
+                crate::startup_contract::components::STANDARD_LXMF_PROPAGATION_DESTINATION,
+            );
+            info.standard_lxmf_propagation_active = contract
+                .advertises(crate::startup_contract::capabilities::STANDARD_LXMF_PROPAGATION.id());
+        }
         if let Ok((count, size)) = self.ctx.propagation().stats() {
             info.propagation_count = count as u32;
             info.propagation_size_bytes = size;
         }
         info.transport_enabled = self.ctx.transport().is_connected();
+        if let Some(contract) = self.ctx.startup_contract() {
+            let active = contract.active_capabilities(
+                self.ctx.policy().authorized_capabilities(&self.caller_identity),
+            );
+            let mut capabilities = styrene_ipc::types::ActiveCapabilitiesInfo::default();
+            capabilities.version = styrene_ipc::types::ACTIVE_CAPABILITIES_VERSION;
+            capabilities.runtime = active.runtime().iter().map(|id| (*id).to_string()).collect();
+            capabilities.degraded = active
+                .degraded()
+                .iter()
+                .map(|degraded| {
+                    let mut info = styrene_ipc::types::DegradedCapabilityInfo::default();
+                    info.id = degraded.id().to_string();
+                    info.reason = degraded.reason().to_string();
+                    info
+                })
+                .collect();
+            capabilities.authorized_operations = active.authorized_operations().to_vec();
+            info.active_capabilities = Some(capabilities);
+        }
         Ok(info)
+    }
+
+    async fn query_standard_propagation(&self) -> Result<StandardPropagationSnapshot, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        let mut snapshot = StandardPropagationSnapshot::default();
+        snapshot.version = STANDARD_PROPAGATION_SNAPSHOT_VERSION;
+        let Some(runtime) = self.ctx.standard_propagation() else {
+            return Ok(snapshot);
+        };
+        snapshot.registered = runtime.is_registered();
+        let runtime_policy = runtime.policy();
+        let storage_policy = crate::storage::standard_propagation::StandardPropagationPolicy {
+            queue_max_count: runtime_policy.queue_max_count,
+            queue_max_bytes: runtime_policy.queue_max_bytes,
+            expiry_secs: runtime_policy.expiry_secs,
+        };
+        let mut store = self.ctx.store().lock().map_err(|_| IpcError::Unavailable {
+            reason: "standard propagation store lock poisoned".into(),
+        })?;
+        let observation = store
+            .standard_propagation_observation(unix_now(), storage_policy)
+            .map_err(|error| IpcError::Internal { message: error.to_string() })?;
+        drop(store);
+        snapshot.active = runtime.active();
+
+        let mut policy = StandardPropagationPolicyInfo::default();
+        policy.target_cost = runtime_policy.target_cost;
+        policy.flexibility = runtime_policy.flexibility;
+        policy.peering_cost = runtime_policy.peering_cost;
+        policy.transfer_limit_kb = runtime_policy.transfer_limit_kb as u64;
+        policy.sync_limit_kb = runtime_policy.sync_limit_kb as u64;
+        policy.queue_max_count = runtime_policy.queue_max_count as u64;
+        policy.queue_max_bytes = runtime_policy.queue_max_bytes as u64;
+        policy.expiry_secs = u64::try_from(runtime_policy.expiry_secs).map_err(|_| {
+            IpcError::Internal { message: "negative standard propagation expiry".into() }
+        })?;
+        policy.throttle_secs = u64::try_from(runtime_policy.throttle_secs).map_err(|_| {
+            IpcError::Internal { message: "negative standard propagation throttle".into() }
+        })?;
+        policy.max_offer_links = u32::try_from(runtime_policy.max_offer_links).unwrap_or(u32::MAX);
+        if snapshot.registered {
+            snapshot.policy = Some(policy);
+        }
+        snapshot.observed_at = Some(observation.observed_at);
+        snapshot.queue.queued_count = observation.queue.queued_count as u64;
+        snapshot.queue.queued_bytes = observation.queue.queued_bytes as u64;
+        snapshot.queue.acknowledged_count = observation.queue.acknowledged_count as u64;
+        snapshot.queue.expired_count = observation.queue.expired_count as u64;
+        snapshot.queue.terminal_count =
+            snapshot.queue.acknowledged_count.saturating_add(snapshot.queue.expired_count);
+        snapshot.selection = observation.selection.map(|selection| {
+            let mut info = StandardPropagationSelectionInfo::default();
+            info.peer_hash = selection.peer.map(hex::encode);
+            info.mode = selection.mode;
+            info.selected_at = selection.selected_at;
+            info
+        });
+        snapshot.peers = observation
+            .peers
+            .into_iter()
+            .map(|peer| {
+                let mut info = StandardPropagationPeerObservation::default();
+                info.peer_hash = hex::encode(peer.identity_hash);
+                info.propagation_destination_hash = peer.propagation_destination.map(hex::encode);
+                info.configured = peer.configured;
+                info.enabled = peer.enabled;
+                info.first_seen_at = peer.first_seen_at;
+                info.last_seen_at = peer.last_seen_at;
+                info.retry_at = peer.retry_at;
+                info.backoff_count = peer.backoff_count as u64;
+                info.offered_count = peer.offered_count as u64;
+                info.wanted_count = peer.wanted_count as u64;
+                info.accepted_count = peer.accepted_count as u64;
+                info.accepted_bytes = peer.accepted_bytes as u64;
+                info.failure_count = peer.failure_count as u64;
+                info.transfer_limit_kb = peer.transfer_limit_kb.map(|value| value as u64);
+                info.sync_limit_kb = peer.sync_limit_kb.map(|value| value as u64);
+                info.stamp_cost = peer.stamp_cost;
+                info.stamp_flexibility = peer.stamp_flexibility;
+                info.peering_cost = peer.peering_cost;
+                info
+            })
+            .collect();
+        snapshot.attempts = observation
+            .attempts
+            .into_iter()
+            .map(|attempt| {
+                let state = standard_propagation_state(&attempt.state);
+                let mut info = StandardPropagationAttemptObservation::default();
+                info.attempt_id = hex::encode(attempt.attempt_id);
+                info.correlation_id = hex::encode(attempt.correlation_id);
+                info.peer_hash = attempt.peer.map(hex::encode);
+                info.direction = standard_propagation_direction(&attempt.direction);
+                info.stage = standard_propagation_stage(&attempt.stage);
+                info.state = state;
+                info.outcome = standard_propagation_outcome(state, attempt.failure_code.as_deref());
+                info.started_at = attempt.started_at;
+                info.updated_at = attempt.updated_at;
+                info.deadline_at = attempt.deadline_at;
+                info.offered_count = attempt.offered_count as u64;
+                info.wanted_count = attempt.wanted_count as u64;
+                info.accepted_count = attempt.accepted_count as u64;
+                info.accepted_bytes = attempt.accepted_bytes as u64;
+                info.failure_code = attempt.failure_code;
+                info
+            })
+            .collect();
+        snapshot.checkpoints = observation
+            .checkpoints
+            .into_iter()
+            .map(|checkpoint| {
+                let mut info = StandardPropagationCheckpointObservation::default();
+                info.peer_hash = hex::encode(checkpoint.peer);
+                info.direction = standard_propagation_direction(&checkpoint.direction);
+                info.completed_stage = standard_propagation_stage(&checkpoint.completed_stage);
+                info.item_count = checkpoint.item_count as u64;
+                info.byte_count = checkpoint.byte_count as u64;
+                info.last_attempt_id = checkpoint.last_attempt.map(hex::encode);
+                info.updated_at = checkpoint.updated_at;
+                info
+            })
+            .collect();
+        snapshot.failures = observation
+            .failures
+            .into_iter()
+            .map(|failure| {
+                let mut info = StandardPropagationFailureObservation::default();
+                info.code = failure.code;
+                info.occurred_at = failure.occurred_at;
+                info.peer_hash = failure.peer.map(hex::encode);
+                info.attempt_id = failure.attempt_id.map(hex::encode);
+                info
+            })
+            .collect();
+        snapshot.peers_truncated = observation.peers_truncated;
+        snapshot.attempts_truncated = observation.attempts_truncated;
+        snapshot.checkpoints_truncated = observation.checkpoints_truncated;
+        snapshot.failures_truncated = observation.failures_truncated;
+        Ok(snapshot)
+    }
+
+    async fn propagation_snapshot(
+        &self,
+        query: styrene_ipc::types::PropagationQuery,
+    ) -> Result<PropagationSnapshot, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        let service = self.ctx.propagation();
+        let after = query
+            .cursor
+            .as_deref()
+            .map(|cursor| {
+                let (timestamp, id) = cursor
+                    .split_once(':')
+                    .filter(|(_, id)| !id.is_empty())
+                    .ok_or_else(|| IpcError::invalid_request("invalid propagation cursor"))?;
+                let timestamp = timestamp
+                    .parse::<i64>()
+                    .map_err(|_| IpcError::invalid_request("invalid propagation cursor"))?;
+                Ok::<_, IpcError>((timestamp, id))
+            })
+            .transpose()?;
+        let limit = usize::try_from(query.limit.clamp(1, 200)).unwrap_or(200);
+        let (count, size) = service.stats().map_err(internal)?;
+        let mut snapshot = PropagationSnapshot::default();
+        snapshot.enabled = service.is_enabled();
+        snapshot.queue_count = u32::try_from(count).unwrap_or(u32::MAX);
+        snapshot.queue_size_bytes = size;
+        snapshot.expiry_secs = service.expiry_secs();
+        let mut queue = service.inventory(limit.saturating_add(1), after).map_err(internal)?;
+        if queue.len() > limit {
+            queue.truncate(limit);
+            snapshot.next_cursor =
+                queue.last().map(|entry| format!("{}:{}", entry.received_at, entry.id));
+        }
+        snapshot.queue = queue;
+        // Peer synchronization and configured capacity have no authoritative
+        // daemon contracts yet; support flags keep that absence explicit.
+        snapshot.peer_state_supported = false;
+        snapshot.sync_state_supported = false;
+        Ok(snapshot)
     }
 
     async fn query_config(&self) -> Result<ConfigSnapshot, IpcError> {
@@ -361,45 +1462,22 @@ impl DaemonStatus for DaemonFacade {
 
     async fn query_devices(&self, _styrene_only: bool) -> Result<Vec<DeviceInfo>, IpcError> {
         self.require(Capability::RPC_STATUS)?;
-        let announces = self
-            .ctx
-            .discovery()
-            .list_announces(500)
-            .map_err(|e| IpcError::Internal { message: e.to_string() })?;
-        Ok(announces
-            .into_iter()
-            .map(|a| {
-                let mut d = DeviceInfo::default();
-                d.destination_hash = a.peer.clone();
-                d.identity_hash = a.peer.clone();
-                d.name = a.name.unwrap_or_default();
-                // Get device_type from NodeStore (set by announce worker aspect classification)
-                d.device_type = self
-                    .ctx
-                    .discovery()
-                    .peer(&a.peer)
-                    .and_then(|n| n.device_type)
-                    .unwrap_or_else(|| "unknown".to_string());
-                d.status = "announced".into();
-                d.is_styrene_node = !a.capabilities.is_empty() || d.device_type == "page_host";
-                d.last_announce = Some(a.timestamp);
-                d.announce_count = a.seen_count as u32;
-                d
-            })
-            .collect())
+        Ok(self.ctx.discovery().devices())
     }
 
     async fn query_path_table(&self) -> Result<Vec<PathInfo>, IpcError> {
         self.require(Capability::RPC_STATUS)?;
-        let entries = self.ctx.transport().path_table().await;
+        let entries = self.ctx.transport().path_snapshots().await;
         Ok(entries
             .into_iter()
-            .map(|(dest, hops, received_from, iface)| {
+            .map(|snapshot| {
                 let mut info = PathInfo::default();
-                info.destination_hash = hex::encode(dest.as_slice());
-                info.hops = Some(hops as u32);
-                info.next_hop = Some(hex::encode(received_from.as_slice()));
-                info.interface = Some(hex::encode(iface.as_slice()));
+                info.destination_hash = hex::encode(snapshot.destination.as_slice());
+                info.hops = Some(snapshot.hops as u32);
+                info.next_hop = Some(hex::encode(snapshot.received_from.as_slice()));
+                info.interface = Some(hex::encode(snapshot.iface.as_slice()));
+                info.expires = path_expiry(snapshot);
+                info.observation = path_observation(snapshot);
                 info
             })
             .collect())
@@ -413,12 +1491,15 @@ impl DaemonStatus for DaemonFacade {
             .map_err(|_| IpcError::invalid_request("hash must be 16 bytes"))?;
         let dest = rns_core::hash::AddressHash::new(dest_bytes);
 
-        let path = self.ctx.transport().query_path(&dest).await;
+        let path = self.ctx.transport().query_path_snapshot(&dest).await;
         let mut info = PathInfo::default();
         info.destination_hash = dest_hash.to_string();
-        if let Some((hops, iface)) = path {
-            info.hops = Some(hops as u32);
-            info.interface = Some(hex::encode(iface.as_slice()));
+        if let Some(snapshot) = path {
+            info.hops = Some(snapshot.hops as u32);
+            info.next_hop = Some(hex::encode(snapshot.received_from.as_slice()));
+            info.interface = Some(hex::encode(snapshot.iface.as_slice()));
+            info.expires = path_expiry(snapshot);
+            info.observation = path_observation(snapshot);
         }
         Ok(info)
     }
@@ -443,7 +1524,7 @@ impl DaemonStatus for DaemonFacade {
         message: Option<&str>,
         cooldown_secs: Option<u64>,
     ) -> Result<bool, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
         let auto_reply_mode = match mode {
             "disabled" | "off" => AutoReplyMode::Disabled,
             "all" => AutoReplyMode::All,
@@ -463,13 +1544,13 @@ impl DaemonStatus for DaemonFacade {
     }
 
     async fn save_config(&self, config: ConfigSnapshot) -> Result<bool, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
         self.ctx.config().apply_snapshot(&config).map_err(internal)?;
         Ok(true)
     }
 
     async fn block_peer(&self, identity_hash: &str) -> Result<bool, IpcError> {
-        self.require(Capability::RPC_CONFIG_UPDATE)?;
+        self.require(Capability::POLICY_UPDATE)?;
         // Prevent self-block: blocking the daemon's own identity would lock out local IPC.
         if self.caller_identity.starts_with(identity_hash)
             || identity_hash.starts_with(&self.caller_identity)
@@ -483,7 +1564,7 @@ impl DaemonStatus for DaemonFacade {
     }
 
     async fn unblock_peer(&self, identity_hash: &str) -> Result<bool, IpcError> {
-        self.require(Capability::RPC_CONFIG_UPDATE)?;
+        self.require(Capability::POLICY_UPDATE)?;
         self.ctx
             .policy()
             .unblock(identity_hash, self.ctx.store())
@@ -501,31 +1582,59 @@ impl DaemonStatus for DaemonFacade {
 
     async fn list_interfaces(&self) -> Result<Vec<InterfaceDetail>, IpcError> {
         self.require(Capability::RPC_STATUS)?;
-        // Read from StatusService which holds the authoritative runtime list
-        // (populated at bootstrap, includes auto-detected daemon-transport).
-        let records = self.ctx.status().interfaces();
-
-        // Fetch per-interface byte counters from the transport layer and
-        // aggregate them. The stats map is keyed by runtime AddressHash which
-        // doesn't correspond 1:1 with config-level InterfaceRecords, so we
-        // sum across all runtime interfaces and distribute the totals evenly.
-        let stats = self.ctx.transport().interface_stats().await;
-        let (total_tx, total_rx) =
-            stats.values().fold((0u64, 0u64), |(tx, rx), s| (tx + s.tx_bytes, rx + s.rx_bytes));
-        let n = records.len().max(1) as u64;
-
-        Ok(records
+        let snapshots = self.ctx.transport().interface_snapshots().await;
+        let observed_at = unix_now();
+        Ok(snapshots
             .into_iter()
-            .map(|rec| {
+            .map(|snapshot| {
+                use rns_core::transport::iface::{
+                    InterfaceEndpoint, InterfaceKind, InterfaceState,
+                };
+
                 let mut d = InterfaceDetail::default();
-                d.name = rec.name.unwrap_or_else(|| rec.kind.clone());
-                d.kind = rec.kind;
-                d.enabled = rec.enabled;
-                d.status = if d.enabled { "active".into() } else { "disabled".into() };
-                d.host = rec.host;
-                d.port = rec.port;
-                d.tx_bytes = total_tx / n;
-                d.rx_bytes = total_rx / n;
+                d.hash = hex::encode(snapshot.hash.as_slice());
+                d.kind = snapshot.kind.as_str().into();
+                d.name = format!("{}-{}", d.kind, &d.hash[..8]);
+                d.mode = snapshot.mode.as_str().into();
+                d.status = snapshot.state.as_str().into();
+                d.enabled = snapshot.state != InterfaceState::Closed;
+                d.local_endpoint =
+                    snapshot.local_endpoint.as_ref().map(|endpoint| match endpoint {
+                        InterfaceEndpoint::Socket(address) => address.to_string(),
+                        InterfaceEndpoint::Device { path, baud_rate } => {
+                            format!("{path}@{baud_rate}")
+                        }
+                    });
+                d.remote_endpoint =
+                    snapshot.remote_endpoint.as_ref().map(|endpoint| match endpoint {
+                        InterfaceEndpoint::Socket(address) => address.to_string(),
+                        InterfaceEndpoint::Device { path, baud_rate } => {
+                            format!("{path}@{baud_rate}")
+                        }
+                    });
+                d.parent_hash = snapshot.parent.map(|parent| hex::encode(parent.as_slice()));
+                let compatibility_endpoint = if snapshot.kind == InterfaceKind::TcpClient {
+                    snapshot.remote_endpoint.as_ref().or(snapshot.local_endpoint.as_ref())
+                } else {
+                    snapshot.local_endpoint.as_ref().or(snapshot.remote_endpoint.as_ref())
+                };
+                match compatibility_endpoint {
+                    Some(InterfaceEndpoint::Socket(address)) => {
+                        d.host = Some(address.ip().to_string());
+                        d.port = Some(address.port());
+                    }
+                    Some(InterfaceEndpoint::Device { path, .. }) => d.host = Some(path.clone()),
+                    None => {}
+                }
+                d.tx_bytes = snapshot.tx_bytes;
+                d.rx_bytes = snapshot.rx_bytes;
+                d.peers_connected = snapshot.connected_peers;
+                d.observation = ObservationMetadata::at(
+                    ObservationSource::RuntimeInterfaceRegistry,
+                    Some(observed_at),
+                    observed_at,
+                    INTERFACE_FRESHNESS_THRESHOLD_SECS,
+                );
                 d
             })
             .collect())
@@ -618,7 +1727,7 @@ impl DaemonFleet for DaemonFacade {
         _version: Option<&str>,
         _timeout: Option<u64>,
     ) -> Result<SelfUpdateResult, IpcError> {
-        self.require(Capability::RPC_CONFIG_UPDATE)?;
+        self.require(Capability::RPC_SELF_UPDATE)?;
         Err(Self::not_implemented("self_update"))
     }
 
@@ -723,7 +1832,7 @@ impl DaemonFleet for DaemonFacade {
         verify: bool,
         timeout: Option<u64>,
     ) -> Result<ConfigApplyResult, IpcError> {
-        self.require(Capability::RPC_CONFIG_UPDATE)?;
+        self.require(Capability::RPC_FLEET_APPLY)?;
         self.ctx.fleet().apply(dest, &profile_bytes, verify, timeout).await.map_err(internal)
     }
 
@@ -803,6 +1912,20 @@ impl DaemonFleet for DaemonFacade {
 
 #[async_trait]
 impl DaemonEvents for DaemonFacade {
+    async fn link_snapshot(&self) -> Result<styrene_ipc::types::LinkSnapshot, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        let lifecycle = self.ctx.transport().link_lifecycle_snapshot().await;
+        let active =
+            lifecycle.active.into_iter().map(crate::workers::link::link_event_from_state).collect();
+        let history = lifecycle
+            .history
+            .into_iter()
+            .map(crate::workers::link::link_event_from_state)
+            .collect();
+        self.ctx.events().reconcile_links(active, history);
+        Ok(self.ctx.events().link_snapshot())
+    }
+
     async fn subscribe_messages(
         &self,
         peer_hashes: &[String],
@@ -819,6 +1942,166 @@ impl DaemonEvents for DaemonFacade {
     async fn subscribe_links(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
         self.require(Capability::RPC_STATUS)?;
         Ok(self.ctx.events().subscribe_links())
+    }
+
+    async fn subscribe_routes(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        Ok(self.ctx.events().subscribe_routes())
+    }
+
+    async fn subscribe_requests(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        let mut source = self.ctx.transport().subscribe_request_observations();
+        let (tx, rx) = broadcast::channel(64);
+        tokio::spawn(async move {
+            while let Ok(event) = daemon_request_event(source.recv().await) {
+                let _ = tx.send(event);
+            }
+        });
+        Ok(rx)
+    }
+
+    async fn start_request(
+        &self,
+        request: styrene_ipc::types::StartRequestInfo,
+    ) -> Result<styrene_ipc::types::RequestObservationInfo, IpcError> {
+        self.require(Capability::NETWORK_REQUEST)?;
+        self.ctx
+            .transport()
+            .start_request(request)
+            .await
+            .map_err(|error| IpcError::Transport { message: error.to_string() })
+    }
+
+    async fn request_receipt(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<styrene_ipc::types::RequestObservationInfo>, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        self.ctx
+            .transport()
+            .request_receipt(request_id)
+            .await
+            .map_err(|error| IpcError::Transport { message: error.to_string() })
+    }
+
+    async fn request_receipts(
+        &self,
+    ) -> Result<Vec<styrene_ipc::types::RequestObservationInfo>, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        self.ctx
+            .transport()
+            .request_receipts()
+            .await
+            .map_err(|error| IpcError::Transport { message: error.to_string() })
+    }
+
+    async fn cancel_request(
+        &self,
+        request_id: &str,
+    ) -> Result<styrene_ipc::types::RequestObservationInfo, IpcError> {
+        self.require(Capability::NETWORK_REQUEST_CANCEL)?;
+        self.ctx
+            .transport()
+            .cancel_request(request_id)
+            .await
+            .map_err(|error| IpcError::Transport { message: error.to_string() })
+    }
+
+    async fn resource_transfers(
+        &self,
+    ) -> Result<Vec<styrene_ipc::types::ResourceTransferInfo>, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        Ok(self.ctx.events().resource_transfers())
+    }
+
+    async fn cancel_resource(&self, resource_hash: &str) -> Result<bool, IpcError> {
+        self.require(Capability::NETWORK_RESOURCE_CANCEL)?;
+        let bytes = hex::decode(resource_hash)
+            .map_err(|_| IpcError::invalid_request("resource hash must be hexadecimal"))?;
+        let hash: [u8; rns_core::hash::HASH_SIZE] = bytes
+            .try_into()
+            .map_err(|_| IpcError::invalid_request("resource hash has invalid length"))?;
+        self.ctx
+            .transport()
+            .cancel_resource(rns_core::hash::Hash::new(hash))
+            .await
+            .map_err(|error| IpcError::Transport { message: error.to_string() })
+    }
+
+    async fn subscribe_resources(&self) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        Ok(self.ctx.events().subscribe_resources())
+    }
+
+    async fn subscribe_network_operations(
+        &self,
+    ) -> Result<broadcast::Receiver<DaemonEvent>, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        Ok(self.ctx.events().subscribe_network_operations())
+    }
+
+    async fn start_network_operation(
+        &self,
+        request: styrene_ipc::types::StartNetworkOperationInfo,
+    ) -> Result<styrene_ipc::types::NetworkOperationInfo, IpcError> {
+        let capability = Self::network_operation_capability(request.kind)?;
+        if let Err(error) = self.require(capability) {
+            return self
+                .ctx
+                .network_operations()
+                .denied(request, error.to_string())
+                .map_err(IpcError::invalid_request);
+        }
+        self.ctx.network_operations().start(request).map_err(IpcError::invalid_request)
+    }
+
+    async fn network_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<styrene_ipc::types::NetworkOperationInfo>, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        Ok(self.ctx.network_operations().get(operation_id))
+    }
+
+    async fn network_operations(
+        &self,
+    ) -> Result<Vec<styrene_ipc::types::NetworkOperationInfo>, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        Ok(self.ctx.network_operations().list())
+    }
+
+    async fn cancel_network_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<styrene_ipc::types::NetworkOperationInfo, IpcError> {
+        let operation = self
+            .ctx
+            .network_operations()
+            .get(operation_id)
+            .ok_or_else(|| IpcError::not_found("network operation", operation_id))?;
+        self.require(Self::network_operation_capability(operation.kind)?)?;
+        self.ctx.network_operations().cancel(operation_id).await.map_err(IpcError::invalid_request)
+    }
+}
+
+fn daemon_request_event(
+    result: Result<
+        crate::transport::mesh_transport::RequestLifecycleEvent,
+        broadcast::error::RecvError,
+    >,
+) -> Result<DaemonEvent, ()> {
+    match result {
+        Ok(crate::transport::mesh_transport::RequestLifecycleEvent::Observation(event)) => {
+            Ok(DaemonEvent::Request { event: *event })
+        }
+        Ok(crate::transport::mesh_transport::RequestLifecycleEvent::ReconcileRequired {
+            dropped,
+        })
+        | Err(broadcast::error::RecvError::Lagged(dropped)) => {
+            Ok(DaemonEvent::RequestReconcileRequired { dropped })
+        }
+        Err(broadcast::error::RecvError::Closed) => Err(()),
     }
 }
 
@@ -891,7 +2174,7 @@ impl DaemonTunnel for DaemonFacade {
     }
 
     async fn list_tunnel_sas(&self, _peer_hash: &str) -> Result<Vec<TunnelSaInfo>, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
+        self.require(Capability::TUNNEL_STATUS)?;
         Ok(Vec::new())
     }
 
@@ -927,36 +2210,165 @@ impl DaemonPages for DaemonFacade {
         &self,
         host: &str,
         path: &str,
-        _timeout: Option<u64>,
+        timeout: Option<u64>,
     ) -> Result<PageContent, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
+        self.browse_page_for_owner(0, host, path, timeout).await
+    }
+
+    async fn browse_page_for_owner(
+        &self,
+        owner: u64,
+        host: &str,
+        path: &str,
+        timeout: Option<u64>,
+    ) -> Result<PageContent, IpcError> {
+        self.require(Capability::PAGE_BROWSE)?;
 
         // Local page serving (host is empty, "local", or our own identity hash)
-        if host.is_empty() || host == "local" || host == self.ctx.identity().identity_hash() {
-            let content = self.ctx.pages().handle_request(path);
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            let mut page = PageContent::default();
-            page.source = String::from_utf8_lossy(&content).to_string();
-            page.host_hash = self.ctx.identity().identity_hash().to_string();
-            page.fetched_at = now;
-            return Ok(page);
+        let local =
+            host.is_empty() || host == "local" || host == self.ctx.identity().identity_hash();
+        let address =
+            styrene_ipc::PageAddress::from_request_parts(if local { "" } else { host }, path)
+                .map_err(|error| IpcError::invalid_request(error.to_string()))?;
+        let (validated_host, validated_path) = address.parts();
+        let mut request = PageNavigationRequest::default();
+        request.target = Some(if validated_host.is_empty() {
+            validated_path.to_string()
+        } else {
+            format!("{validated_host}:{validated_path}")
+        });
+        request.timeout_secs = timeout;
+        self.navigate_page_for_owner(owner, request).await
+    }
+
+    async fn navigate_page(&self, request: PageNavigationRequest) -> Result<PageContent, IpcError> {
+        self.navigate_page_for_owner(0, request).await
+    }
+
+    async fn navigate_page_for_owner(
+        &self,
+        owner: u64,
+        request: PageNavigationRequest,
+    ) -> Result<PageContent, IpcError> {
+        self.require(Capability::PAGE_BROWSE)?;
+        self.ctx
+            .native_browse()
+            .navigate_for_owner(owner, request, self.ctx.identity().identity_hash(), |path| {
+                self.ctx.pages().handle_request(path)
+            })
+            .await
+            .map_err(IpcError::invalid_request)
+    }
+
+    async fn close_page_session(&self, session_id: &str) -> Result<PageNavigationInfo, IpcError> {
+        self.close_page_session_for_owner(0, session_id).await
+    }
+
+    async fn close_page_session_for_owner(
+        &self,
+        owner: u64,
+        session_id: &str,
+    ) -> Result<PageNavigationInfo, IpcError> {
+        self.require(Capability::PAGE_BROWSE)?;
+        self.ctx
+            .native_browse()
+            .close_session_for_owner(owner, session_id)
+            .await
+            .map_err(IpcError::invalid_request)
+    }
+
+    async fn start_file_download(
+        &self,
+        request: FileDownloadRequest,
+    ) -> Result<FileDownloadInfo, IpcError> {
+        self.start_file_download_for_owner(0, request).await
+    }
+
+    async fn start_file_download_for_owner(
+        &self,
+        owner: u64,
+        request: FileDownloadRequest,
+    ) -> Result<FileDownloadInfo, IpcError> {
+        self.require(Capability::PAGE_BROWSE)?;
+        if let Some(checksum) = request.expected_sha256.as_deref() {
+            if checksum.len() != 64 || !checksum.as_bytes().iter().all(u8::is_ascii_hexdigit) {
+                return Err(IpcError::invalid_request(
+                    "expected SHA-256 must be 64 hexadecimal characters",
+                ));
+            }
         }
+        self.ctx
+            .native_browse()
+            .start_download_for_owner(owner, request)
+            .await
+            .map_err(IpcError::invalid_request)
+    }
 
-        // Remote page browsing — fetch via FleetService mesh RPC
-        let source = self.ctx.fleet().page_fetch(host, path, _timeout).await.map_err(internal)?;
+    async fn file_download(&self, download_id: &str) -> Result<FileDownloadInfo, IpcError> {
+        self.file_download_for_owner(0, download_id).await
+    }
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let mut page = PageContent::default();
-        page.source = source;
-        page.host_hash = host.to_string();
-        page.fetched_at = now;
-        Ok(page)
+    async fn file_download_for_owner(
+        &self,
+        owner: u64,
+        download_id: &str,
+    ) -> Result<FileDownloadInfo, IpcError> {
+        self.require(Capability::PAGE_BROWSE)?;
+        self.ctx
+            .native_browse()
+            .download_for_owner(owner, download_id)
+            .await
+            .ok_or_else(|| IpcError::not_found("file download", download_id))
+    }
+
+    async fn cancel_file_download(&self, download_id: &str) -> Result<FileDownloadInfo, IpcError> {
+        self.cancel_file_download_for_owner(0, download_id).await
+    }
+
+    async fn cancel_file_download_for_owner(
+        &self,
+        owner: u64,
+        download_id: &str,
+    ) -> Result<FileDownloadInfo, IpcError> {
+        self.require(Capability::PAGE_BROWSE)?;
+        self.ctx
+            .native_browse()
+            .cancel_download_for_owner(owner, download_id)
+            .await
+            .ok_or_else(|| IpcError::not_found("file download", download_id))
+    }
+
+    async fn save_file_download(
+        &self,
+        download_id: &str,
+        destination: &str,
+    ) -> Result<FileDownloadInfo, IpcError> {
+        self.save_file_download_for_owner(0, download_id, destination).await
+    }
+
+    async fn save_file_download_for_owner(
+        &self,
+        owner: u64,
+        download_id: &str,
+        destination: &str,
+    ) -> Result<FileDownloadInfo, IpcError> {
+        self.require(Capability::PAGE_BROWSE)?;
+        if destination.trim().is_empty() {
+            return Err(IpcError::invalid_request("save destination is empty"));
+        }
+        self.ctx
+            .native_browse()
+            .save_download_for_owner(owner, download_id, std::path::Path::new(destination))
+            .await
+            .map_err(IpcError::invalid_request)
+    }
+
+    async fn cleanup_page_owner(&self, owner: u64) -> Result<(), IpcError> {
+        self.ctx
+            .native_browse()
+            .cleanup_owner(owner)
+            .await
+            .map_err(|message| IpcError::Internal { message })
     }
 
     async fn list_pages(
@@ -964,43 +2376,44 @@ impl DaemonPages for DaemonFacade {
         host: &str,
         _timeout: Option<u64>,
     ) -> Result<Vec<PageInfo>, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
+        self.require(Capability::PAGE_BROWSE)?;
 
         if host.is_empty() || host == "local" || host == self.ctx.identity().identity_hash() {
-            let pages = self.ctx.pages().list_pages();
+            let pages = self.ctx.pages().native_inventory();
             return Ok(pages
                 .into_iter()
-                .map(|p| {
+                .map(|(entry, handler_active)| {
                     let mut info = PageInfo::default();
-                    info.path = p.request_path;
+                    info.kind = if entry.request_path.starts_with("/file/") {
+                        "file".into()
+                    } else {
+                        "page".into()
+                    };
+                    info.path = entry.request_path;
                     info.host_hash = self.ctx.identity().identity_hash().to_string();
+                    info.dynamic = entry.dynamic;
+                    info.restricted = entry.restricted;
+                    info.handler_active = handler_active;
                     info
                 })
                 .collect());
         }
 
+        styrene_ipc::NomadNetHost::parse(host)
+            .map_err(|error| IpcError::invalid_request(error.to_string()))?;
+
         Err(IpcError::not_implemented("remote page listing"))
     }
 
     async fn page_hosts(&self) -> Result<Vec<DeviceInfo>, IpcError> {
-        self.require(Capability::RPC_STATUS)?;
-        // Return nodes that have page capabilities
-        let announces = self
+        self.require(Capability::PAGE_BROWSE)?;
+        Ok(self
             .ctx
             .discovery()
-            .list_announces(500)
-            .map_err(|e| IpcError::Internal { message: e.to_string() })?;
-        Ok(announces
+            .devices()
             .into_iter()
-            .filter(|a| !a.capabilities.is_empty()) // placeholder filter
-            .map(|a| {
-                let mut d = DeviceInfo::default();
-                d.destination_hash = a.peer.clone();
-                d.identity_hash = a.peer;
-                d.name = a.name.unwrap_or_default();
-                d.device_type = "page_host".into();
-                d.last_announce = Some(a.timestamp);
-                d
+            .filter(|device| {
+                device.discovered_capabilities.contains(&DiscoveredCapability::NativeNomadNetHost)
             })
             .collect())
     }
@@ -1018,6 +2431,14 @@ mod tests {
     use std::sync::Mutex;
     use styrene_ipc::traits::Daemon;
 
+    #[test]
+    fn stale_page_cursor_maps_to_typed_conflict() {
+        assert_eq!(
+            page_error(crate::storage::messages::PageError::CursorStale),
+            IpcError::Conflict { message: "cursor_stale".into() }
+        );
+    }
+
     fn make_facade() -> DaemonFacade {
         let transport: Arc<dyn MeshTransport> = Arc::new(NullTransport::new());
         let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
@@ -1025,11 +2446,215 @@ mod tests {
         DaemonFacade::new(ctx, "test-caller".into())
     }
 
+    fn make_facade_for_role(
+        role: styrene_rbac::Role,
+        transport: Arc<dyn MeshTransport>,
+    ) -> DaemonFacade {
+        let caller = "aaaaaaaa11111111bbbbbbbb22222222";
+        let mut policy = styrene_rbac::RbacPolicy::default();
+        policy.add_entry(styrene_rbac::RosterEntry::new(caller, role));
+        let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
+        let node_store = Arc::new(styrene_services::node_store::NodeStore::in_memory().unwrap());
+        let ctx = Arc::new(AppContext::with_policy(
+            transport,
+            "test-identity".into(),
+            store,
+            node_store,
+            crate::services::PolicyService::new(policy),
+        ));
+        DaemonFacade::new(ctx, caller.into())
+    }
+
     #[test]
     fn facade_implements_daemon_trait() {
         let facade = make_facade();
         // Verify it can be used as Arc<dyn Daemon>
         let _: Arc<dyn Daemon> = Arc::new(facade);
+    }
+
+    #[tokio::test]
+    async fn offline_local_manage_commits_before_event_and_noops_emit_nothing() {
+        let facade =
+            make_facade_for_role(styrene_rbac::Role::Admin, Arc::new(NullTransport::new()));
+        let peer = "12".repeat(16);
+        let record = MessageRecord {
+            id: "offline-mark".into(),
+            source: peer.clone(),
+            destination: "34".repeat(16),
+            title: String::new(),
+            content: "unread".into(),
+            timestamp: 1,
+            direction: "in".into(),
+            fields: None,
+            receipt_status: None,
+            read: false,
+        };
+        assert!(facade.ctx.messaging().accept_inbound_record(&record).unwrap());
+        let mut events = facade.ctx.events().subscribe_daemon_events();
+
+        let outcome = facade.mark_read_outcome(&peer).await.unwrap();
+        assert_eq!(outcome.disposition, MessagingDisposition::Applied);
+        assert_eq!(outcome.conversation.as_ref().unwrap().unread_count, 0);
+        assert_eq!(facade.ctx.messaging().list_conversations(false).unwrap()[0].unread_count, 0);
+        assert!(matches!(
+            events.recv().await.unwrap(),
+            DaemonEvent::MessagingOperation { outcome }
+                if outcome.disposition == MessagingDisposition::Applied
+        ));
+
+        assert_eq!(
+            facade.mark_read_outcome(&peer).await.unwrap().disposition,
+            MessagingDisposition::Unchanged
+        );
+        assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+        assert!(facade.mark_read_outcome("invalid").await.is_err());
+        assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+    }
+
+    #[tokio::test]
+    async fn drafts_round_trip_idempotently_and_require_messaging_manage() {
+        let facade =
+            make_facade_for_role(styrene_rbac::Role::Admin, Arc::new(NullTransport::new()));
+        let peer = "56".repeat(16);
+        let first = facade.set_draft(&peer, "retained").await.unwrap();
+        let replaced = facade.set_draft(&peer, "retained").await.unwrap();
+        assert_eq!(first.content, replaced.content);
+        assert_eq!(facade.draft(&peer).await.unwrap().unwrap().content, "retained");
+        assert_eq!(facade.clear_draft(&peer).await.unwrap(), MessagingDisposition::Applied);
+        assert_eq!(facade.clear_draft(&peer).await.unwrap(), MessagingDisposition::Unchanged);
+
+        let denied =
+            make_facade_for_role(styrene_rbac::Role::Monitor, Arc::new(NullTransport::new()));
+        assert!(matches!(denied.set_draft(&peer, "secret").await, Err(IpcError::Denied { .. })));
+    }
+
+    #[tokio::test]
+    async fn poisoned_post_commit_projection_returns_typed_failed_id() {
+        let caller = "aa".repeat(16);
+        let mut policy = styrene_rbac::RbacPolicy::default();
+        policy.add_entry(styrene_rbac::RosterEntry::new(&caller, styrene_rbac::Role::Admin));
+        let transport = Arc::new(crate::transport::mock_transport::MockTransport::new_default());
+        let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
+        let nodes = Arc::new(styrene_services::node_store::NodeStore::in_memory().unwrap());
+        let ctx = Arc::new(AppContext::with_policy(
+            transport,
+            "test-identity".into(),
+            store,
+            nodes,
+            crate::services::PolicyService::new(policy),
+        ));
+        ctx.set_signer(Arc::new(rns_core::identity::PrivateIdentity::new_from_name(
+            "projection-poison",
+        )));
+        ctx.messaging().inject_post_commit_failure(true);
+        let facade = DaemonFacade::new(ctx, caller);
+        let mut request = SendChatRequest::default();
+        request.peer_hash = "48".repeat(16);
+        request.content = "projection failure".into();
+        request.delivery_method = Some("direct".into());
+
+        let outcome = facade.send_chat_outcome(request).await.unwrap();
+
+        assert_eq!(outcome.disposition, SendChatDisposition::Failed);
+        assert!(!outcome.message_id.is_empty());
+        assert_eq!(outcome.message.id, outcome.message_id);
+        assert!(outcome
+            .terminal_error
+            .as_deref()
+            .is_some_and(|error| error.contains("injected post-commit failure")));
+        assert!(outcome.paper_uri.is_none());
+    }
+
+    #[tokio::test]
+    async fn history_and_manage_are_denied_to_default_remote_peers_without_writes() {
+        let facade = make_facade_for_role(styrene_rbac::Role::Peer, Arc::new(NullTransport::new()));
+        let peer = "56".repeat(16);
+        let record = MessageRecord {
+            id: "denied-mark".into(),
+            source: peer.clone(),
+            destination: "78".repeat(16),
+            title: String::new(),
+            content: "private".into(),
+            timestamp: 1,
+            direction: "in".into(),
+            fields: None,
+            receipt_status: None,
+            read: false,
+        };
+        assert!(facade.ctx.messaging().accept_inbound_record(&record).unwrap());
+        let read = facade.query_messages(&peer, 10, None).await;
+        assert!(matches!(read, Err(IpcError::Denied { .. })));
+        let exact_read = facade.query_message("denied-mark").await;
+        assert!(matches!(exact_read, Err(IpcError::Denied { .. })));
+        let mutation = facade.mark_read_outcome(&peer).await;
+        assert!(matches!(mutation, Err(IpcError::Denied { .. })));
+        assert!(!facade.ctx.messaging().get_message("denied-mark").unwrap().unwrap().read);
+    }
+
+    #[test]
+    fn daemon_request_forwarding_lag_requires_reconciliation() {
+        assert!(matches!(
+            daemon_request_event(Err(broadcast::error::RecvError::Lagged(9))),
+            Ok(DaemonEvent::RequestReconcileRequired { dropped: 9 })
+        ));
+    }
+
+    #[test]
+    fn path_observation_uses_event_time_and_monotonic_freshness() {
+        use rns_core::hash::{AddressHash, Hash};
+        use rns_core::transport::core_transport::path_table::PathSnapshot;
+
+        let hash = AddressHash::new_from_hash(&Hash::new_from_slice(b"path"));
+        let snapshot = PathSnapshot {
+            destination: hash,
+            hops: 1,
+            received_from: hash,
+            iface: hash,
+            age: std::time::Duration::from_secs(PATH_FRESHNESS_THRESHOLD_SECS + 1),
+            observed_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(100),
+            lifetime: std::time::Duration::from_secs(600),
+            expires_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(700),
+        };
+        let observation = path_observation(snapshot);
+
+        assert_eq!(observation.observed_at, Some(100));
+        assert_eq!(observation.age_secs, Some(PATH_FRESHNESS_THRESHOLD_SECS + 1));
+        assert!(observation.stale);
+        assert_eq!(path_expiry(snapshot), Some(700));
+    }
+
+    #[tokio::test]
+    async fn link_snapshot_queries_transport_state_and_keeps_event_history_separate() {
+        use crate::transport::mock_transport::MockTransport;
+        use rns_core::hash::AddressHash;
+        use rns_core::transport::destination_ext::link::{LinkStateSnapshot, LinkStatus};
+
+        let transport = Arc::new(MockTransport::new_default());
+        transport.set_link_snapshots(vec![LinkStateSnapshot {
+            id: AddressHash::new([1; 16]),
+            address_hash: AddressHash::new([2; 16]),
+            interface: Some(AddressHash::new([3; 16])),
+            rtt: Some(std::time::Duration::from_millis(9)),
+            status: LinkStatus::Active,
+            remote_identity: None,
+            observed_at: std::time::SystemTime::now(),
+            age: std::time::Duration::from_secs(1),
+            close_reason: None,
+        }]);
+        let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
+        let ctx = Arc::new(AppContext::new(transport, "test-identity".into(), store));
+        let mut historical =
+            styrene_ipc::types::LinkEvent::new("old-link", "old-peer", "closed", None);
+        historical.kind = styrene_ipc::types::LinkEventKind::Teardown;
+        ctx.events().emit_link_event(historical);
+        let facade = DaemonFacade::new(ctx, "test-caller".into());
+
+        let snapshot = facade.link_snapshot().await.expect("link snapshot");
+
+        assert_eq!(snapshot.active.len(), 1);
+        assert_eq!(snapshot.active[0].link_id, hex::encode([1; 16]));
+        assert_eq!(snapshot.history.len(), 1);
+        assert_eq!(snapshot.history[0].link_id, "old-link");
     }
 
     #[tokio::test]
@@ -1041,9 +2666,66 @@ mod tests {
 
     #[tokio::test]
     async fn announce_succeeds() {
-        let facade = make_facade();
+        let facade = make_facade_for_role(
+            styrene_rbac::Role::Operator,
+            Arc::new(crate::transport::mock_transport::MockTransport::new_default()),
+        );
         let result = facade.announce().await.unwrap();
         assert!(result);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn peer_and_monitor_status_access_cannot_start_network_mutations() {
+        use crate::transport::mock_transport::MockTransport;
+        use styrene_ipc::types::{NetworkOperationKind, NetworkOperationOutcome};
+
+        for role in [styrene_rbac::Role::Peer, styrene_rbac::Role::Monitor] {
+            let transport = Arc::new(MockTransport::new_default());
+            let facade = make_facade_for_role(role, transport.clone());
+            assert!(facade.query_status().await.is_ok());
+            for kind in [
+                NetworkOperationKind::Announce,
+                NetworkOperationKind::PathRequest,
+                NetworkOperationKind::Probe,
+                NetworkOperationKind::LinkOpen,
+                NetworkOperationKind::LinkClose,
+            ] {
+                let mut request = styrene_ipc::types::StartNetworkOperationInfo::default();
+                request.kind = kind;
+                request.timeout_ms = 100;
+                if matches!(
+                    kind,
+                    NetworkOperationKind::PathRequest | NetworkOperationKind::LinkOpen
+                ) {
+                    request.destination_hash = Some("11".repeat(16));
+                }
+                if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) {
+                    request.link_id = Some("22".repeat(16));
+                }
+                let denied = facade.start_network_operation(request).await.expect("typed denial");
+                assert_eq!(denied.outcome, Some(NetworkOperationOutcome::Denied));
+            }
+            assert!(transport.calls().is_empty(), "read-only role mutated transport");
+        }
+
+        let transport = Arc::new(MockTransport::new_default());
+        let facade = make_facade_for_role(styrene_rbac::Role::Operator, transport.clone());
+        let mut request = styrene_ipc::types::StartNetworkOperationInfo::default();
+        request.kind = NetworkOperationKind::Announce;
+        request.timeout_ms = 100;
+        let started = facade.start_network_operation(request).await.expect("operator start");
+        tokio::task::yield_now().await;
+        let completed = facade
+            .network_operation(&started.operation_id)
+            .await
+            .unwrap()
+            .expect("retained operation");
+        assert_eq!(completed.outcome, Some(NetworkOperationOutcome::Dispatched));
+        assert!(matches!(
+            transport.calls().as_slice(),
+            [crate::transport::mock_transport::MockCall::Announce { .. }]
+        ));
     }
 
     #[tokio::test]
@@ -1052,6 +2734,121 @@ mod tests {
         let status = facade.query_status().await.unwrap();
         assert!(!status.rns_initialized); // NullTransport
         assert_eq!(status.device_count, 0);
+    }
+
+    fn test_standard_propagation_policy(
+    ) -> crate::standard_propagation::StandardPropagationRuntimePolicy {
+        crate::standard_propagation::StandardPropagationRuntimePolicy {
+            target_cost: 16,
+            flexibility: 3,
+            peering_cost: 18,
+            transfer_limit_kb: 256,
+            sync_limit_kb: 4000,
+            queue_max_count: 4096,
+            queue_max_bytes: 16 * 1024 * 1024,
+            expiry_secs: 30 * 24 * 60 * 60,
+            throttle_secs: 180,
+            max_offer_links: 3,
+        }
+    }
+
+    #[tokio::test]
+    async fn standard_propagation_query_distinguishes_absent_client_and_host_runtime() {
+        let facade =
+            make_facade_for_role(styrene_rbac::Role::Monitor, Arc::new(NullTransport::new()));
+        let absent = facade.query_standard_propagation().await.unwrap();
+        assert_eq!(absent.version, STANDARD_PROPAGATION_SNAPSHOT_VERSION);
+        assert!(!absent.registered);
+        assert!(!absent.active);
+        assert!(absent.policy.is_none());
+        assert!(absent.peers.is_empty());
+        assert!(absent.attempts.is_empty());
+
+        facade.ctx.publish_standard_propagation(
+            crate::standard_propagation::StandardPropagationRuntimeObservation::client(),
+        );
+        let client = facade.query_standard_propagation().await.unwrap();
+        assert!(!client.registered);
+        assert!(client.active);
+        assert!(client.policy.is_none());
+        assert!(client.observed_at.is_some());
+
+        facade.ctx.publish_standard_propagation(
+            crate::standard_propagation::StandardPropagationRuntimeObservation::registered(
+                test_standard_propagation_policy(),
+            ),
+        );
+        let present = facade.query_standard_propagation().await.unwrap();
+        assert!(present.registered);
+        assert!(!present.active);
+        let policy = present.policy.unwrap();
+        assert_eq!(policy.target_cost, 16);
+        assert_eq!(policy.flexibility, 3);
+        assert_eq!(policy.peering_cost, 18);
+        assert_eq!(policy.transfer_limit_kb, 256);
+        assert_eq!(policy.sync_limit_kb, 4000);
+        assert_eq!(policy.queue_max_count, 4096);
+        assert_eq!(policy.queue_max_bytes, 16 * 1024 * 1024);
+        assert_eq!(policy.expiry_secs, 30 * 24 * 60 * 60);
+        assert_eq!(policy.throttle_secs, 180);
+        assert_eq!(policy.max_offer_links, 3);
+        assert!(present.observed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn standard_propagation_query_denies_unauthorized_and_returns_no_partial_on_poison() {
+        let blocked = {
+            use crate::services::PolicyService;
+            let mut policy = styrene_rbac::RbacPolicy::default();
+            policy.block("deadbeef");
+            let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
+            let ctx = Arc::new(AppContext::with_policy(
+                Arc::new(NullTransport::new()),
+                "daemon".into(),
+                store,
+                Arc::new(styrene_services::node_store::NodeStore::in_memory().unwrap()),
+                PolicyService::new(policy),
+            ));
+            DaemonFacade::new(ctx, "deadbeef11112222333344445555aaaa".into())
+        };
+        assert!(matches!(blocked.query_standard_propagation().await, Err(IpcError::Denied { .. })));
+
+        let facade =
+            make_facade_for_role(styrene_rbac::Role::Monitor, Arc::new(NullTransport::new()));
+        facade.ctx.publish_standard_propagation(
+            crate::standard_propagation::StandardPropagationRuntimeObservation::registered(
+                test_standard_propagation_policy(),
+            ),
+        );
+        let store = Arc::clone(facade.ctx.store());
+        let _ = std::thread::spawn(move || {
+            let _guard = store.lock().unwrap();
+            panic!("poison standard propagation store");
+        })
+        .join();
+        assert!(matches!(
+            facade.query_standard_propagation().await,
+            Err(IpcError::Unavailable { .. })
+        ));
+
+        let failed =
+            make_facade_for_role(styrene_rbac::Role::Monitor, Arc::new(NullTransport::new()));
+        failed.ctx.publish_standard_propagation(
+            crate::standard_propagation::StandardPropagationRuntimeObservation::registered(
+                test_standard_propagation_policy(),
+            ),
+        );
+        failed
+            .ctx
+            .store()
+            .lock()
+            .unwrap()
+            .standard_propagation_fail_observation_for_test()
+            .unwrap();
+        assert!(matches!(
+            failed.query_standard_propagation().await,
+            Err(IpcError::Internal { .. })
+        ));
     }
 
     #[tokio::test]
@@ -1063,7 +2860,8 @@ mod tests {
 
     #[tokio::test]
     async fn set_auto_reply_updates_config() {
-        let facade = make_facade();
+        let facade =
+            make_facade_for_role(styrene_rbac::Role::Admin, Arc::new(NullTransport::new()));
         facade.set_auto_reply("all", Some("I'm away"), Some(600)).await.unwrap();
         let config = facade.query_auto_reply().await.unwrap();
         assert_eq!(config.mode, "all");
@@ -1073,7 +2871,8 @@ mod tests {
 
     #[tokio::test]
     async fn set_auto_reply_invalid_mode_returns_error() {
-        let facade = make_facade();
+        let facade =
+            make_facade_for_role(styrene_rbac::Role::Admin, Arc::new(NullTransport::new()));
         let result = facade.set_auto_reply("bogus", None, None).await;
         assert!(matches!(result, Err(IpcError::InvalidRequest { .. })));
     }
@@ -1081,9 +2880,9 @@ mod tests {
     #[tokio::test]
     async fn not_implemented_methods_return_correct_error() {
         let facade = make_facade();
-        // send_chat returns Internal (no transport in test mode), not NotImplemented
+        // Validation rejects an empty destination before transport dispatch.
         let result = facade.send_chat(SendChatRequest::default()).await;
-        assert!(matches!(result, Err(IpcError::Internal { .. })));
+        assert!(matches!(result, Err(IpcError::InvalidRequest { .. })));
 
         // list_tunnels returns Ok(empty) because TunnelService is wired but has no peers.
         let result = facade.list_tunnels().await;
@@ -1091,6 +2890,27 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
+    async fn send_chat_rejects_noncanonical_or_mismatched_attachment_digest_before_service() {
+        for expected in ["ABC", &"00".repeat(32)] {
+            let facade = make_facade();
+            let mut input = AttachmentInput::default();
+            input.name = "digest.bin".into();
+            input.bytes = vec![1, 2, 3];
+            input.expected_sha256 = Some(expected.into());
+            let mut request = SendChatRequest::default();
+            request.peer_hash = "11".repeat(16);
+            request.content = "body".into();
+            request.attachments.push(input);
+            assert!(matches!(
+                facade.send_chat(request).await,
+                Err(IpcError::InvalidRequest { .. })
+            ));
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
     async fn blocked_caller_gets_denied() {
         use crate::services::PolicyService;
         use styrene_rbac::RbacPolicy;
@@ -1112,7 +2932,15 @@ mod tests {
         // Caller whose hash starts with blocked prefix
         let facade = DaemonFacade::new(ctx, "deadbeef11112222333344445555aaaa".into());
         let result = facade.query_status().await;
-        assert!(matches!(result, Err(IpcError::Unavailable { .. })));
+        assert!(matches!(&result, Err(IpcError::Denied { .. })));
+        assert!(!result.unwrap_err().is_retryable());
+
+        let mut request = styrene_ipc::types::StartNetworkOperationInfo::default();
+        request.kind = styrene_ipc::types::NetworkOperationKind::Announce;
+        request.timeout_ms = 1_000;
+        let denied = facade.start_network_operation(request).await.expect("typed denial");
+        assert_eq!(denied.outcome, Some(styrene_ipc::types::NetworkOperationOutcome::Denied));
+        assert_eq!(denied.observation.correlation_id, Some(denied.operation_id));
     }
 
     #[tokio::test]
@@ -1124,7 +2952,7 @@ mod tests {
         let facade = DaemonFacade::new(ctx, "aaaa1111bbbb2222cccc3333dddd4444".into());
 
         let result = facade.exec("dest", "ls", vec![], None).await;
-        assert!(matches!(result, Err(IpcError::Unavailable { .. })));
+        assert!(matches!(result, Err(IpcError::Denied { .. })));
     }
 
     #[tokio::test]

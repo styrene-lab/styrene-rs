@@ -12,15 +12,77 @@ use crate::services::{
 use crate::transport::mesh_transport::MeshTransport;
 use lxmf::inbound_decode::InboundPayloadMode;
 use rns_core::transport::core_transport::ReceivedPayloadMode;
-use rns_core::transport::resource::ResourceEventKind;
+use rns_core::transport::resource::{ResourceEventKind, ResourceFailure};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
+
+/// Tasks owned by the inbound worker.
+///
+/// The resource task is separate because large LXMF payloads arrive through a
+/// different transport subscription than packet-sized messages.
+pub struct InboundWorkerHandle {
+    packet: JoinHandle<()>,
+    resource: JoinHandle<()>,
+}
+
+pub struct InboundDestinations {
+    local_delivery_hash: Option<String>,
+    excluded_propagation_destination: Option<String>,
+}
+
+impl InboundDestinations {
+    pub fn new(
+        local_delivery_hash: Option<String>,
+        excluded_propagation_destination: Option<String>,
+    ) -> Self {
+        Self { local_delivery_hash, excluded_propagation_destination }
+    }
+}
+
+impl InboundWorkerHandle {
+    pub fn abort(&self) {
+        self.packet.abort();
+        self.resource.abort();
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.packet.is_finished() && self.resource.is_finished()
+    }
+
+    pub async fn wait(&mut self) {
+        let _ = (&mut self.packet).await;
+        let _ = (&mut self.resource).await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn abort_handles(&self) -> [tokio::task::AbortHandle; 2] {
+        [self.packet.abort_handle(), self.resource.abort_handle()]
+    }
+}
 
 fn to_lxmf_mode(mode: ReceivedPayloadMode) -> InboundPayloadMode {
     match mode {
         ReceivedPayloadMode::FullWire => InboundPayloadMode::FullWire,
         ReceivedPayloadMode::DestinationStripped => InboundPayloadMode::DestinationStripped,
     }
+}
+
+async fn resolve_sender_identity(
+    transport: &dyn MeshTransport,
+    data: &[u8],
+    mode: InboundPayloadMode,
+) -> (Option<[u8; 16]>, Option<rns_core::identity::Identity>) {
+    let start = match mode {
+        InboundPayloadMode::FullWire => 16,
+        InboundPayloadMode::DestinationStripped => 0,
+    };
+    let source = data.get(start..start + 16).and_then(|value| value.try_into().ok());
+    let identity = if let Some(source) = source {
+        transport.resolve_identity(&rns_core::hash::AddressHash::new(source)).await
+    } else {
+        None
+    };
+    (source, identity)
 }
 
 /// Spawn the inbound message processing worker.
@@ -35,14 +97,14 @@ pub fn spawn_inbound_worker(
     events: Arc<EventService>,
     propagation: Arc<PropagationService>,
     local_delivery_hash: Option<String>,
-) -> JoinHandle<()> {
+) -> InboundWorkerHandle {
     spawn_inbound_worker_with_auto_reply(
         transport,
         messaging,
         protocol,
         events,
         propagation,
-        local_delivery_hash,
+        InboundDestinations::new(local_delivery_hash, None),
         None,
     )
 }
@@ -54,24 +116,74 @@ pub fn spawn_inbound_worker_with_auto_reply(
     protocol: Arc<ProtocolService>,
     events: Arc<EventService>,
     propagation: Arc<PropagationService>,
-    local_delivery_hash: Option<String>,
+    destinations: InboundDestinations,
     auto_reply: Option<Arc<AutoReplyService>>,
-) -> JoinHandle<()> {
+) -> InboundWorkerHandle {
+    let InboundDestinations { local_delivery_hash, excluded_propagation_destination } =
+        destinations;
     let mut rx = transport.subscribe_inbound();
 
     // Spawn a resource event handler that processes completed resource transfers.
     // Large payloads (> LINK_PACKET_MDU) are sent as RNS resources and arrive
     // via the resource_events channel rather than the inbound data channel.
-    {
+    let resource = {
         let mut resource_rx = transport.subscribe_resources();
         let messaging = messaging.clone();
         let events = events.clone();
         let protocol = protocol.clone();
+        let transport = transport.clone();
         let local_delivery_hash = local_delivery_hash.clone();
         tokio::spawn(async move {
             loop {
                 match resource_rx.recv().await {
                     Ok(event) => {
+                        events.emit_resource_event(&event);
+                        if let ResourceEventKind::Progress(progress) = &event.kind {
+                            if let Err(error) = messaging.handle_resource_progress(
+                                &event.hash.to_bytes(),
+                                progress.received_bytes,
+                                progress.total_bytes,
+                            ) {
+                                crate::daemon_diagnostic!(
+                                    "[worker] attachment resource progress correlation error: {error}"
+                                );
+                            }
+                            continue;
+                        }
+                        if matches!(event.kind, ResourceEventKind::OutboundComplete) {
+                            if let Err(error) = messaging
+                                .handle_resource_complete(&hex::encode(event.hash.to_bytes()))
+                            {
+                                crate::daemon_diagnostic!(
+                                    "[worker] outbound resource completion error: {error}"
+                                );
+                            }
+                            continue;
+                        }
+                        if let ResourceEventKind::Failed(failure) = event.kind {
+                            messaging.forget_pending_resource(&event.hash.to_bytes());
+                            let hash = hex::encode(event.hash.to_bytes());
+                            let result = match failure {
+                                ResourceFailure::Cancelled => {
+                                    messaging.handle_resource_cancelled(&hash)
+                                }
+                                ResourceFailure::TimedOut => {
+                                    messaging.handle_resource_failure(&hash, "timeout")
+                                }
+                                ResourceFailure::LinkClosed => {
+                                    messaging.handle_resource_failure(&hash, "link-closed")
+                                }
+                                ResourceFailure::Integrity => {
+                                    messaging.handle_resource_failure(&hash, "integrity")
+                                }
+                            };
+                            if let Err(error) = result {
+                                crate::daemon_diagnostic!(
+                                    "[worker] outbound resource failure correlation error: {error}"
+                                );
+                            }
+                            continue;
+                        }
                         if let ResourceEventKind::Complete(complete) = event.kind {
                             let data = &complete.data;
                             crate::daemon_diagnostic!(
@@ -83,6 +195,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                             // Resource data is the full LXMF wire payload.
                             // Determine destination from the first 16 bytes.
                             if data.len() < 32 {
+                                messaging.forget_pending_resource(&event.hash.to_bytes());
                                 crate::daemon_diagnostic!("[worker] resource too short to decode");
                                 continue;
                             }
@@ -96,10 +209,36 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                 .is_some_and(|local| *local == dest_hex);
 
                             if !is_local {
+                                messaging.forget_pending_resource(&event.hash.to_bytes());
                                 continue; // not for us
                             }
 
-                            match messaging.accept_inbound(destination, data, payload_mode) {
+                            let (source, sender_identity) =
+                                resolve_sender_identity(transport.as_ref(), data, payload_mode)
+                                    .await;
+                            if let (Some(source), Some(identity)) =
+                                (source, sender_identity.as_ref())
+                            {
+                                if let Err(error) =
+                                    messaging.revalidate_unknown_identity(source, identity)
+                                {
+                                    crate::daemon_diagnostic!(
+                                        "[worker] deferred resource LXMF authentication failed: {error}"
+                                    );
+                                }
+                            }
+                            match messaging.accept_inbound_resource_with_identity(
+                                destination,
+                                data,
+                                payload_mode,
+                                sender_identity.as_ref(),
+                                crate::storage::messages::InboundAttachmentTransferEvidence {
+                                    resource_hash: event.hash.to_bytes(),
+                                    transferred: complete.transfer_size,
+                                    total: complete.transfer_size,
+                                    checksum_verified: complete.checksum_verified,
+                                },
+                            ) {
                                 InboundAcceptOutcome::Accepted(record) => {
                                     crate::daemon_diagnostic!(
                                         "[worker] resource message: id={} src={} content_len={}",
@@ -107,8 +246,39 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                         record.source,
                                         record.content.len()
                                     );
-                                    protocol.dispatch_inbound(&record).await;
-                                    events.emit_message_new(&record);
+                                    let canonical = match messaging.canonical_inbound(&record.id) {
+                                        Ok(Some(canonical)) => canonical,
+                                        Ok(None) => {
+                                            events.emit_reconciliation_required(
+                                                "accepted resource message missing canonical record",
+                                            );
+                                            continue;
+                                        }
+                                        Err(error) => {
+                                            crate::daemon_diagnostic!(
+                                                "[worker] canonical resource event projection failed: {error}"
+                                            );
+                                            events.emit_reconciliation_required(
+                                                "canonical resource event projection failed",
+                                            );
+                                            continue;
+                                        }
+                                    };
+                                    events.emit_message_new(&record, Some(&canonical));
+                                    if messaging
+                                        .inbound_is_dispatchable(&record.id)
+                                        .unwrap_or(false)
+                                    {
+                                        protocol.dispatch_inbound(&record).await;
+                                    } else {
+                                        events.emit_inbound_drop(
+                                            "direct_resource",
+                                            "authentication_or_stamp_untrusted",
+                                            Some(&record.id),
+                                            Some(&record.destination),
+                                            None,
+                                        );
+                                    }
                                 }
                                 InboundAcceptOutcome::Duplicate { message_id } => {
                                     events.emit_inbound_drop(
@@ -146,10 +316,10 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
-        });
-    }
+        })
+    };
 
-    tokio::spawn(async move {
+    let packet = tokio::spawn(async move {
         loop {
             match rx.recv().await {
                 Ok(event) => {
@@ -157,6 +327,9 @@ pub fn spawn_inbound_worker_with_auto_reply(
                     let mut destination = [0u8; 16];
                     destination.copy_from_slice(event.destination.as_slice());
                     let dest_hex = hex::encode(destination);
+                    if excluded_propagation_destination.as_deref() == Some(dest_hex.as_str()) {
+                        continue;
+                    }
                     let payload_mode = to_lxmf_mode(event.payload_mode);
 
                     crate::daemon_diagnostic!(
@@ -225,73 +398,24 @@ pub fn spawn_inbound_worker_with_auto_reply(
                         continue;
                     }
 
-                    // Signature verification: look up the sender's identity
-                    // from the transport announce table and verify the LXMF
-                    // Ed25519 signature before accepting the message.
-                    // Messages with invalid signatures are logged and dropped.
-                    //
-                    // Note: the sender's identity must have been received via
-                    // a verified announce (announce signatures ARE checked by
-                    // the RNS transport layer). If the sender hasn't announced,
-                    // we can't verify — accept with a warning for now, since
-                    // the link handshake provides transport-layer authentication.
-                    {
-                        // Extract source hash from the wire to look up identity
-                        const SIG_OFFSET: usize = 32; // dest(16) + source(16)
-                        if data.len() >= SIG_OFFSET {
-                            let mut source_bytes = [0u8; 16];
-                            let source_start = match payload_mode {
-                                InboundPayloadMode::FullWire => 16,           // after dest
-                                InboundPayloadMode::DestinationStripped => 0, // source is first
-                            };
-                            if data.len() > source_start + 16 {
-                                source_bytes
-                                    .copy_from_slice(&data[source_start..source_start + 16]);
-                                // Compute the sender's delivery destination hash for identity lookup
-                                let sender_delivery_hash = {
-                                    let name = rns_core::destination::DestinationName::new(
-                                        "lxmf", "delivery",
-                                    );
-                                    rns_core::hash::AddressHash::new(rns_core::hash::address_hash(
-                                        &[name.as_name_hash_slice(), &source_bytes].concat(),
-                                    ))
-                                };
-                                if let Some(sender_identity) =
-                                    transport.resolve_identity(&sender_delivery_hash).await
-                                {
-                                    let verified =
-                                        crate::inbound_delivery::verify_inbound_signature(
-                                            data,
-                                            payload_mode,
-                                            destination,
-                                            &sender_identity,
-                                        );
-                                    match verified {
-                                        Some(true) => {} // signature valid
-                                        Some(false) => {
-                                            crate::daemon_diagnostic!(
-                                                "[worker] REJECTED inbound message: invalid signature from {}",
-                                                hex::encode(source_bytes)
-                                            );
-                                            continue;
-                                        }
-                                        None => {
-                                            crate::daemon_diagnostic!(
-                                                "[worker] WARNING: could not parse wire for signature verification from {}",
-                                                hex::encode(source_bytes)
-                                            );
-                                            // Accept anyway — wire format issue, not forgery
-                                        }
-                                    }
-                                }
-                                // If sender identity not found: accept with implicit trust
-                                // from the link-layer authentication
-                            }
+                    let (source, sender_identity) =
+                        resolve_sender_identity(transport.as_ref(), data, payload_mode).await;
+                    if let (Some(source), Some(identity)) = (source, sender_identity.as_ref()) {
+                        if let Err(error) = messaging.revalidate_unknown_identity(source, identity)
+                        {
+                            crate::daemon_diagnostic!(
+                                "[worker] deferred LXMF authentication failed: {error}"
+                            );
                         }
                     }
 
                     // Local delivery: decode and persist exactly once.
-                    match messaging.accept_inbound(destination, data, payload_mode) {
+                    match messaging.accept_inbound_with_identity(
+                        destination,
+                        data,
+                        payload_mode,
+                        sender_identity.as_ref(),
+                    ) {
                         InboundAcceptOutcome::Accepted(record) => {
                             crate::daemon_diagnostic!(
                                 "[messaging-flow] stage=durable_insert id={} source={} destination={} bytes={}",
@@ -307,11 +431,42 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                 record.content.len()
                             );
 
-                            // Route through protocol dispatch (async)
-                            protocol.dispatch_inbound(&record).await;
-
                             // Emit event for IPC subscribers
-                            events.emit_message_new(&record);
+                            let canonical = match messaging.canonical_inbound(&record.id) {
+                                Ok(Some(canonical)) => canonical,
+                                Ok(None) => {
+                                    events.emit_reconciliation_required(
+                                        "accepted packet message missing canonical record",
+                                    );
+                                    continue;
+                                }
+                                Err(error) => {
+                                    crate::daemon_diagnostic!(
+                                        "[worker] canonical packet event projection failed: {error}"
+                                    );
+                                    events.emit_reconciliation_required(
+                                        "canonical packet event projection failed",
+                                    );
+                                    continue;
+                                }
+                            };
+                            events.emit_message_new(&record, Some(&canonical));
+
+                            let trusted =
+                                messaging.inbound_is_dispatchable(&record.id).unwrap_or(false);
+                            if !trusted {
+                                events.emit_inbound_drop(
+                                    "direct_packet",
+                                    "authentication_or_stamp_untrusted",
+                                    Some(&record.id),
+                                    Some(&record.destination),
+                                    None,
+                                );
+                                continue;
+                            }
+
+                            // Route only authenticated and stamp-policy-compliant messages.
+                            protocol.dispatch_inbound(&record).await;
 
                             // Auto-reply: if enabled and cooldown permits, send reply.
                             // Skip auto-reply for:
@@ -330,24 +485,8 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                         // their delivery destination hash for send_chat.
                                         // The inbound worker knows the delivery hash is what the
                                         // transport resolved — look it up from the source identity.
-                                        let source_delivery_hash = {
-                                            let name = rns_core::destination::DestinationName::new(
-                                                "lxmf", "delivery",
-                                            );
-                                            let source_bytes: Result<[u8; 16], _> =
-                                                hex::decode(&record.source).and_then(|b| {
-                                                    b.try_into().map_err(|_| {
-                                                        hex::FromHexError::InvalidStringLength
-                                                    })
-                                                });
-                                            source_bytes.ok().map(|id_bytes| {
-                                                let truncated = rns_core::hash::address_hash(
-                                                    &[name.as_name_hash_slice(), &id_bytes]
-                                                        .concat(),
-                                                );
-                                                hex::encode(truncated)
-                                            })
-                                        };
+                                        let source_delivery_hash = (record.source.len() == 32)
+                                            .then(|| record.source.clone());
 
                                         if let Some(dest_hash) = source_delivery_hash {
                                             let m = messaging.clone();
@@ -419,5 +558,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                 }
             }
         }
-    })
+    });
+
+    InboundWorkerHandle { packet, resource }
 }

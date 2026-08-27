@@ -1,0 +1,6 @@
+name: Offline policy recursion fixture
+description: Delegates to an action that attempts an interpreter bypass
+runs:
+  using: composite
+  steps:
+    - uses: ./tests/fixtures/offline-validation/python-action

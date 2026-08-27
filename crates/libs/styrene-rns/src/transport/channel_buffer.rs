@@ -688,8 +688,7 @@ mod tests {
             address_hash: identity.address_hash,
             name: DestinationName::new("lxmf", "delivery"),
         };
-        let outbound = transport.link(destination).await;
-        let request = outbound.lock().await.request();
+        let (outbound, request) = transport.register_pending_outbound_link(destination).await;
         let (tx, _) = tokio::sync::broadcast::channel(8);
         let mut inbound =
             Link::new_from_request(&request, signer.sign_key().clone(), destination, tx)

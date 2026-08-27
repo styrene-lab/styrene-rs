@@ -4,7 +4,6 @@ mod announce_worker;
 mod bootstrap;
 mod bridge;
 mod bridge_helpers;
-mod inbound_worker;
 mod receipt_worker;
 mod rpc_loop;
 #[cfg(test)]
@@ -44,5 +43,6 @@ struct Args {
 async fn main() {
     let args = Args::parse();
     let context = bootstrap::bootstrap(args).await;
-    rpc_loop::run_rpc_loop(context.rpc_addr, context.daemon, context.rpc_tls).await;
+    rpc_loop::run_rpc_loop(context.rpc_addr, context.daemon.clone(), context.rpc_tls.clone()).await;
+    context.shutdown().await;
 }

@@ -37,9 +37,8 @@ impl RpcError {
         let code = code.into();
         let message = message.into();
         let category = Self::category_for_code(code.as_str());
-        let retryable = category
-            .as_deref()
-            .is_some_and(|value| value == "Transport" || value == "Timeout");
+        let retryable =
+            category.as_deref().is_some_and(|value| value == "Transport" || value == "Timeout");
         let is_user_actionable = category.as_deref().is_some_and(|value| {
             matches!(value, "Validation" | "Capability" | "Config" | "Policy" | "Security")
         });
@@ -247,6 +246,7 @@ struct RpcMetrics {
 
 pub struct RpcDaemon {
     store: Mutex<MessagesStore>,
+    legacy_inbound_persistence: bool,
     identity_hash: String,
     delivery_destination_hash: Mutex<Option<String>>,
     events: broadcast::Sender<RpcEvent>,

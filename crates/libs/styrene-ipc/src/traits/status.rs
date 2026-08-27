@@ -9,6 +9,19 @@ pub trait DaemonStatus: Send + Sync {
     /// Query daemon runtime status.
     async fn query_status(&self) -> Result<DaemonStatusInfo, IpcError>;
 
+    /// Query local propagation queue and synchronization capability state.
+    async fn propagation_snapshot(
+        &self,
+        _query: PropagationQuery,
+    ) -> Result<PropagationSnapshot, IpcError> {
+        Err(IpcError::not_implemented("propagation_snapshot"))
+    }
+
+    /// Query authoritative standard LXMF propagation state.
+    async fn query_standard_propagation(&self) -> Result<StandardPropagationSnapshot, IpcError> {
+        Err(IpcError::not_implemented("query_standard_propagation"))
+    }
+
     /// Query current daemon configuration.
     async fn query_config(&self) -> Result<ConfigSnapshot, IpcError>;
 

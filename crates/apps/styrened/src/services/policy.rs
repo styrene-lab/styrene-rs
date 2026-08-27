@@ -6,7 +6,7 @@
 
 use std::sync::RwLock;
 
-use styrene_rbac::{RbacPolicy, Role, RosterEntry};
+use styrene_rbac::{RbacPolicy, Role, RosterEntry, ALL_CAPABILITIES};
 
 use crate::storage::messages::MessagesStore;
 
@@ -23,6 +23,16 @@ impl PolicyService {
     /// Check whether an identity holds a specific capability.
     pub fn has_capability(&self, identity_hash: &str, cap: &str) -> bool {
         self.policy.read().unwrap().has_capability(identity_hash, cap)
+    }
+
+    /// Return the caller's currently authorized operation identifiers.
+    pub fn authorized_capabilities(&self, identity_hash: &str) -> Vec<&'static str> {
+        let policy = self.policy.read().unwrap();
+        ALL_CAPABILITIES
+            .iter()
+            .copied()
+            .filter(|capability| policy.has_capability(identity_hash, capability))
+            .collect()
     }
 
     /// Resolve the effective role for an identity.
@@ -167,5 +177,19 @@ mod tests {
         let svc = PolicyService::new(policy);
         assert!(svc.is_blocked("deadbeef11112222333344445555aaaa"));
         assert!(!svc.has_capability("deadbeef11112222333344445555aaaa", Capability::CHAT_SEND));
+    }
+
+    #[test]
+    fn authorized_capabilities_are_derived_from_current_policy() {
+        let identity = "aaaa1111bbbb2222cccc3333dddd4444";
+        let mut policy = RbacPolicy::default();
+        policy.add_entry(RosterEntry::new(identity, Role::Admin));
+        let svc = PolicyService::new(policy);
+
+        let capabilities = svc.authorized_capabilities(identity);
+
+        assert!(capabilities.contains(&Capability::CHAT_SEND));
+        assert!(capabilities.contains(&Capability::RPC_EXEC));
+        assert!(!capabilities.contains(&Capability::VPN_HANDSHAKE));
     }
 }

@@ -2,7 +2,7 @@ use ed25519_dalek::{Signature, SigningKey, VerifyingKey, SIGNATURE_LENGTH};
 use rand_core::CryptoRngCore;
 use x25519_dalek::PublicKey;
 
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Instant as StdInstant;
 
@@ -28,6 +28,8 @@ use sha2::Digest;
 mod primitives;
 #[path = "destination/ratchet.rs"]
 mod ratchet;
+#[path = "destination/request.rs"]
+mod request;
 #[cfg(test)]
 #[path = "destination/tests.rs"]
 mod tests;
@@ -37,6 +39,41 @@ pub use primitives::{
 };
 pub use ratchet::RATCHET_LENGTH;
 use ratchet::{try_decrypt_with_ratchets, RatchetState};
+use request::RequestRegistry;
+pub use request::{
+    request_path_hash, RequestAccess, RequestAccessCallback, RequestDispatchError, RequestHandler,
+    RequestId, RequestLinkContext, RequestPath, RequestPathHash, RequestRegistrationError,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IngressKind {
+    LinkPacket,
+    UnsolicitedResource,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IngressContext {
+    pub destination: AddressHash,
+    pub link_id: AddressHash,
+    pub kind: IngressKind,
+}
+
+pub type IngressHandler = Arc<dyn Fn(&[u8], &IngressContext) -> bool + Send + Sync>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IngressRegistrationError {
+    DuplicateHandler,
+}
+
+#[cfg(feature = "transport")]
+pub(crate) fn invoke_ingress_handler(
+    handler: &IngressHandler,
+    data: &[u8],
+    context: &IngressContext,
+) -> bool {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(data, context)))
+        .unwrap_or(false)
+}
 
 pub const NAME_HASH_LENGTH: usize = 10;
 pub const RAND_HASH_LENGTH: usize = 10;
@@ -95,6 +132,7 @@ pub struct AnnounceInfo<'a> {
     pub destination: SingleOutputDestination,
     pub app_data: &'a [u8],
     pub ratchet: Option<[u8; RATCHET_LENGTH]>,
+    pub random_blob: [u8; RAND_HASH_LENGTH],
 }
 
 impl DestinationAnnounce {
@@ -131,6 +169,8 @@ impl DestinationAnnounce {
         let name_hash = &announce_data[offset..(offset + NAME_HASH_LENGTH)];
         offset += NAME_HASH_LENGTH;
         let rand_hash = &announce_data[offset..(offset + RAND_HASH_LENGTH)];
+        let mut random_blob = [0u8; RAND_HASH_LENGTH];
+        random_blob.copy_from_slice(rand_hash);
         offset += RAND_HASH_LENGTH;
         let destination = &packet.destination;
         let expected_hash =
@@ -189,6 +229,7 @@ impl DestinationAnnounce {
                 ),
                 app_data,
                 ratchet: Some(ratchet_bytes),
+                random_blob,
             })
         };
 
@@ -204,6 +245,7 @@ impl DestinationAnnounce {
                 ),
                 app_data,
                 ratchet: None,
+                random_blob,
             })
         };
 
@@ -223,11 +265,97 @@ pub struct Destination<I: HashIdentity, D: Direction, T: Type> {
     ratchet_state: RatchetState,
     path_responses: BTreeMap<Vec<u8>, (StdInstant, Packet)>,
     path_response_queue: VecDeque<(Vec<u8>, StdInstant)>,
+    request_registry: RequestRegistry,
+    ingress_handler: Option<IngressHandler>,
+    ingress_resource_limit: Option<usize>,
 }
 
 impl<I: HashIdentity, D: Direction, T: Type> Destination<I, D, T> {
     pub fn destination_type(&self) -> packet::DestinationType {
         <T as Type>::destination_type()
+    }
+
+    pub fn request_path(&self, path_hash: &RequestPathHash) -> Option<&RequestPath> {
+        self.request_registry.get(path_hash)
+    }
+}
+
+impl<I: HashIdentity, T: Type> Destination<I, Input, T> {
+    pub fn register_ingress_handler(
+        &mut self,
+        handler: IngressHandler,
+    ) -> Result<(), IngressRegistrationError> {
+        if self.ingress_handler.is_some() {
+            return Err(IngressRegistrationError::DuplicateHandler);
+        }
+        self.ingress_handler = Some(handler);
+        Ok(())
+    }
+
+    pub fn set_ingress_resource_limit(&mut self, limit: Option<usize>) {
+        self.ingress_resource_limit = limit.filter(|limit| *limit > 0);
+    }
+
+    pub fn unregister_ingress_handler(&mut self) -> bool {
+        self.ingress_handler.take().is_some()
+    }
+
+    #[cfg(feature = "transport")]
+    pub(crate) fn ingress_handler(&self) -> Option<IngressHandler> {
+        self.ingress_handler.clone()
+    }
+
+    #[cfg(feature = "transport")]
+    pub(crate) fn ingress_resource_limit(&self) -> Option<usize> {
+        self.ingress_resource_limit
+    }
+
+    pub fn register_request_path(
+        &mut self,
+        path: &str,
+        access: RequestAccess,
+        max_request_size: usize,
+        max_response_size: usize,
+        handler: RequestHandler,
+    ) -> Result<RequestPathHash, RequestRegistrationError> {
+        self.request_registry.register(path, access, max_request_size, max_response_size, handler)
+    }
+
+    pub fn dispatch_request(
+        &self,
+        path_hash: &RequestPathHash,
+        data: &[u8],
+        remote_identity: Option<&Identity>,
+        link: &RequestLinkContext,
+        request_id: RequestId,
+    ) -> Result<Vec<u8>, RequestDispatchError> {
+        self.dispatch_request_with_size(
+            path_hash,
+            data,
+            data.len(),
+            remote_identity,
+            link,
+            request_id,
+        )
+    }
+
+    pub(crate) fn dispatch_request_with_size(
+        &self,
+        path_hash: &RequestPathHash,
+        data: &[u8],
+        packed_request_size: usize,
+        remote_identity: Option<&Identity>,
+        link: &RequestLinkContext,
+        request_id: RequestId,
+    ) -> Result<Vec<u8>, RequestDispatchError> {
+        self.request_registry.dispatch(
+            path_hash,
+            data,
+            packed_request_size,
+            remote_identity,
+            link,
+            request_id,
+        )
     }
 }
 
@@ -276,6 +404,9 @@ impl Destination<PrivateIdentity, Input, Single> {
             ratchet_state: RatchetState::default(),
             path_responses: BTreeMap::new(),
             path_response_queue: VecDeque::new(),
+            request_registry: RequestRegistry::default(),
+            ingress_handler: None,
+            ingress_resource_limit: None,
         }
     }
 
@@ -497,6 +628,9 @@ impl Destination<Identity, Output, Single> {
             ratchet_state: RatchetState::default(),
             path_responses: BTreeMap::new(),
             path_response_queue: VecDeque::new(),
+            request_registry: RequestRegistry::default(),
+            ingress_handler: None,
+            ingress_resource_limit: None,
         }
     }
 }
@@ -512,6 +646,9 @@ impl<D: Direction> Destination<EmptyIdentity, D, Plain> {
             ratchet_state: RatchetState::default(),
             path_responses: BTreeMap::new(),
             path_response_queue: VecDeque::new(),
+            request_registry: RequestRegistry::default(),
+            ingress_handler: None,
+            ingress_resource_limit: None,
         }
     }
 }

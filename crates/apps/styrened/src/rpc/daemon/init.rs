@@ -32,6 +32,24 @@ impl RpcDaemon {
         )
     }
 
+    /// Construct the production legacy RPC adapter without granting it inbound
+    /// message persistence ownership.
+    pub fn with_compatibility_store_and_bridges(
+        store: MessagesStore,
+        identity_hash: String,
+        outbound_bridge: Option<Arc<dyn OutboundBridge>>,
+        announce_bridge: Option<Arc<dyn AnnounceBridge>>,
+    ) -> Self {
+        Self::with_store_and_bridges_and_sinks_mode(
+            store,
+            identity_hash,
+            outbound_bridge,
+            announce_bridge,
+            Vec::new(),
+            false,
+        )
+    }
+
     pub fn with_store_and_bridges_and_sinks(
         store: MessagesStore,
         identity_hash: String,
@@ -39,13 +57,37 @@ impl RpcDaemon {
         announce_bridge: Option<Arc<dyn AnnounceBridge>>,
         event_sink_bridges: Vec<Arc<dyn EventSinkBridge>>,
     ) -> Self {
+        Self::with_store_and_bridges_and_sinks_mode(
+            store,
+            identity_hash,
+            outbound_bridge,
+            announce_bridge,
+            event_sink_bridges,
+            true,
+        )
+    }
+
+    fn with_store_and_bridges_and_sinks_mode(
+        store: MessagesStore,
+        identity_hash: String,
+        outbound_bridge: Option<Arc<dyn OutboundBridge>>,
+        announce_bridge: Option<Arc<dyn AnnounceBridge>>,
+        event_sink_bridges: Vec<Arc<dyn EventSinkBridge>>,
+        legacy_inbound_persistence: bool,
+    ) -> Self {
         let (events, _rx) = broadcast::channel(64);
+        let persisted_stamp_policy =
+            store.lxmf_stamp_policy().unwrap_or(crate::storage::messages::LxmfStampPolicy {
+                target_cost: 0,
+                flexibility: 0,
+            });
         let active_identity = identity_hash.clone();
         let mut sdk_identities = HashMap::new();
         sdk_identities
             .insert(identity_hash.clone(), Self::default_sdk_identity(identity_hash.as_str()));
         let daemon = Self {
             store: Mutex::new(store),
+            legacy_inbound_persistence,
             identity_hash,
             delivery_destination_hash: Mutex::new(None),
             events,
@@ -89,7 +131,10 @@ impl RpcDaemon {
             propagation_payloads: Mutex::new(HashMap::new()),
             outbound_propagation_node: Mutex::new(None),
             paper_ingest_seen: Mutex::new(HashSet::new()),
-            stamp_policy: Mutex::new(StampPolicy::default()),
+            stamp_policy: Mutex::new(StampPolicy {
+                target_cost: persisted_stamp_policy.target_cost,
+                flexibility: persisted_stamp_policy.flexibility,
+            }),
             ticket_cache: Mutex::new(HashMap::new()),
             delivery_traces: Mutex::new(HashMap::new()),
             delivery_status_lock: Mutex::new(()),
@@ -154,12 +199,19 @@ impl RpcDaemon {
     }
 
     fn store_inbound_record(&self, record: MessageRecord) -> Result<bool, std::io::Error> {
+        if !self.legacy_inbound_persistence {
+            self.publish_event(RpcEvent {
+                event_type: "inbound".into(),
+                payload: json!({
+                    "message": record,
+                    "persisted": false,
+                    "authority": "messaging_service",
+                }),
+            });
+            return Ok(false);
+        }
         let message_id = record.id.clone();
-        if !self
-            .messages()
-            .insert_message_if_absent(&record)
-            .map_err(std::io::Error::other)?
-        {
+        if !self.messages().insert_message_if_absent(&record).map_err(std::io::Error::other)? {
             self.publish_event(RpcEvent {
                 event_type: "inbound_dropped".into(),
                 payload: json!({
@@ -337,12 +389,13 @@ impl RpcDaemon {
     ) -> Result<(), std::io::Error> {
         self.store_inbound_record(record).map(|_| ())
     }
-
 }
 
 impl RpcDaemon {
     /// Acquires the store lock. Use instead of self.store.lock() directly.
-    pub(super) fn messages(&self) -> std::sync::MutexGuard<'_, crate::storage::messages::MessagesStore> {
+    pub(super) fn messages(
+        &self,
+    ) -> std::sync::MutexGuard<'_, crate::storage::messages::MessagesStore> {
         self.store.lock().expect("store lock poisoned")
     }
 
@@ -367,8 +420,6 @@ impl RpcDaemon {
 
     /// Propagation store statistics (count, total_bytes).
     pub fn propagation_stats(&self) -> (usize, u64) {
-        self.messages()
-            .propagation_stats()
-            .unwrap_or((0, 0))
+        self.messages().propagation_stats().unwrap_or((0, 0))
     }
 }

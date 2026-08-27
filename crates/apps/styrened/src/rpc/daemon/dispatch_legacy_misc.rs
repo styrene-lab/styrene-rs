@@ -47,7 +47,11 @@ impl RpcDaemon {
                 })
             }
             "stamp_policy_get" => {
-                let policy = self.stamp_policy.lock().expect("stamp mutex poisoned").clone();
+                let persisted = self.messages().lxmf_stamp_policy().map_err(std::io::Error::other)?;
+                let policy = StampPolicy {
+                    target_cost: persisted.target_cost,
+                    flexibility: persisted.flexibility,
+                };
                 Ok(RpcResponse {
                     id: request.id,
                     result: Some(json!({ "stamp_policy": policy })),
@@ -71,6 +75,12 @@ impl RpcDaemon {
                     }
                     guard.clone()
                 };
+                self.messages()
+                    .set_lxmf_stamp_policy(crate::storage::messages::LxmfStampPolicy {
+                        target_cost: policy.target_cost,
+                        flexibility: policy.flexibility,
+                    })
+                    .map_err(std::io::Error::other)?;
 
                 Ok(RpcResponse {
                     id: request.id,
@@ -85,7 +95,16 @@ impl RpcDaemon {
                 let parsed: TicketGenerateParams = serde_json::from_value(params)
                     .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
 
-                let ttl_secs = parsed.ttl_secs.unwrap_or(3600);
+                if parsed.destination.len() > 128 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "ticket destination exceeds limit",
+                    ));
+                }
+                let ttl_secs = parsed
+                    .ttl_secs
+                    .unwrap_or(lxmf::stamps::TICKET_EXPIRY_SECS as u64)
+                    .min((lxmf::stamps::TICKET_EXPIRY_SECS + lxmf::stamps::TICKET_GRACE_SECS) as u64);
                 let ttl = i64::try_from(ttl_secs).map_err(|_| {
                     std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
@@ -99,10 +118,10 @@ impl RpcDaemon {
                         format!("ttl_secs causes timestamp overflow: {ttl_secs}"),
                     )
                 })?;
-                let mut hasher = Sha256::new();
-                hasher.update(parsed.destination.as_bytes());
-                hasher.update(now.to_be_bytes());
-                let ticket = encode_hex(hasher.finalize());
+                use rand_core::RngCore as _;
+                let mut ticket_bytes = vec![0u8; lxmf::stamps::TICKET_LENGTH];
+                rand_core::OsRng.fill_bytes(&mut ticket_bytes);
+                let ticket = encode_hex(&ticket_bytes);
                 let record = TicketRecord {
                     destination: parsed.destination.clone(),
                     ticket,
@@ -113,6 +132,14 @@ impl RpcDaemon {
                     .lock()
                     .expect("ticket mutex poisoned")
                     .insert(parsed.destination, record.clone());
+                self.messages()
+                    .upsert_lxmf_ticket(&crate::storage::messages::LxmfTicketRecord {
+                        peer: record.destination.clone(),
+                        ticket: ticket_bytes,
+                        expires_at,
+                        direction: "issued".into(),
+                    })
+                    .map_err(std::io::Error::other)?;
 
                 Ok(RpcResponse {
                     id: request.id,

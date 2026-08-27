@@ -6,21 +6,24 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use rns_core::destination::DestinationName;
-use rns_core::transport::core_transport::{Transport, TransportConfig};
-use rns_core::transport::iface::tcp_client::TcpClient;
-use rns_core::transport::iface::tcp_server::TcpServer;
-use tokio_util::sync::CancellationToken;
-
 use crate::announce_names::{encode_delivery_display_name_app_data, normalize_display_name};
 use crate::app_context::AppContext;
 use crate::config::DaemonConfig;
 use crate::daemon_facade::DaemonFacade;
 use crate::identity_store::load_or_create_identity;
+use crate::standard_propagation::{StandardPropagationEndpoint, DEFAULT_PROPAGATION_NODE_NAME};
+use crate::startup_contract::{
+    capabilities as startup_capability, components as startup_component, ActiveCapabilities,
+    RuntimeKind, StartupContract, StartupContractBuilder,
+};
 use crate::storage::messages::MessagesStore;
 use crate::transport::adapter::TokioTransportAdapter;
 use crate::transport::mesh_transport::MeshTransport;
 use crate::transport::null_transport::NullTransport;
+use rns_core::destination::DestinationName;
+use rns_core::transport::core_transport::{Transport, TransportConfig};
+use rns_core::transport::iface::tcp_client::TcpClient;
+use rns_core::transport::iface::tcp_server::TcpServer;
 
 /// Configuration for the daemon entry point.
 pub struct DaemonConfig2 {
@@ -36,20 +39,107 @@ pub struct DaemonConfig2 {
     pub ephemeral: bool,
 }
 
-/// Handle to a running daemon — drop to shut down.
+/// Handle to a running daemon.
 pub struct DaemonHandle {
     pub app_context: Arc<AppContext>,
     pub daemon_facade: Arc<DaemonFacade>,
+    startup_contract: StartupContract,
+    standard_propagation: Option<StandardPropagationEndpoint>,
     #[cfg(feature = "ipc-server")]
     ipc_server: styrene_ipc_server::IpcServer,
-    cancel: CancellationToken,
+    workers: DaemonWorkers,
+}
+
+struct DaemonWorkers {
+    inbound: crate::workers::inbound::InboundWorkerHandle,
+    announce: tokio::task::JoinHandle<()>,
+    link: tokio::task::JoinHandle<()>,
+    route: tokio::task::JoinHandle<()>,
+    router_deadlines: tokio::task::JoinHandle<()>,
+    standard_propagation_sync:
+        Option<crate::workers::standard_propagation::StandardPropagationSyncWorker>,
+    expiry: tokio::task::JoinHandle<()>,
+    #[cfg(feature = "ipc-server")]
+    ipc_events: tokio::task::JoinHandle<()>,
+}
+
+impl DaemonWorkers {
+    fn abort(&self) {
+        self.inbound.abort();
+        self.announce.abort();
+        self.link.abort();
+        self.route.abort();
+        self.router_deadlines.abort();
+        if let Some(worker) = &self.standard_propagation_sync {
+            worker.abort();
+        }
+        self.expiry.abort();
+        #[cfg(feature = "ipc-server")]
+        self.ipc_events.abort();
+    }
+
+    async fn shutdown(&mut self) {
+        if let Some(worker) = &mut self.standard_propagation_sync {
+            worker.shutdown().await;
+        }
+        self.inbound.abort();
+        self.announce.abort();
+        self.link.abort();
+        self.route.abort();
+        self.router_deadlines.abort();
+        self.expiry.abort();
+        #[cfg(feature = "ipc-server")]
+        self.ipc_events.abort();
+        self.inbound.wait().await;
+        let _ = (&mut self.announce).await;
+        let _ = (&mut self.link).await;
+        let _ = (&mut self.route).await;
+        let _ = (&mut self.router_deadlines).await;
+        let _ = (&mut self.expiry).await;
+        #[cfg(feature = "ipc-server")]
+        let _ = (&mut self.ipc_events).await;
+    }
+}
+
+impl Drop for DaemonHandle {
+    fn drop(&mut self) {
+        self.workers.abort();
+    }
 }
 
 impl DaemonHandle {
+    pub fn startup_contract(&self) -> &StartupContract {
+        &self.startup_contract
+    }
+
+    pub fn active_capabilities(&self, caller_identity: &str) -> ActiveCapabilities {
+        self.startup_contract
+            .active_capabilities(self.app_context.policy().authorized_capabilities(caller_identity))
+    }
+
+    pub async fn standard_propagation_destination_hash(&self) -> Option<String> {
+        let endpoint = self.standard_propagation.as_ref()?;
+        Some(hex::encode(endpoint.destination().lock().await.desc.address_hash.as_slice()))
+    }
+
+    pub fn standard_propagation_destination_weak(
+        &self,
+    ) -> Option<std::sync::Weak<tokio::sync::Mutex<rns_core::destination::SingleInputDestination>>>
+    {
+        self.standard_propagation.as_ref().map(|endpoint| Arc::downgrade(endpoint.destination()))
+    }
+
     /// Stop background work and await IPC socket cleanup.
     #[allow(unused_mut)]
     pub async fn shutdown(mut self) {
-        self.cancel.cancel();
+        if let Some(mut endpoint) = self.standard_propagation.take() {
+            endpoint.shutdown().await;
+            drop(endpoint);
+        }
+        self.workers.shutdown().await;
+        if let Err(error) = self.app_context.transport().shutdown().await {
+            crate::daemon_diagnostic!("[styrene] transport shutdown error: {error}");
+        }
         #[cfg(feature = "ipc-server")]
         self.ipc_server.stop().await;
     }
@@ -60,8 +150,7 @@ impl DaemonHandle {
 /// Returns a handle that keeps the daemon alive. The daemon runs
 /// until the handle is dropped or the process is interrupted.
 pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
-    let cancel = CancellationToken::new();
-
+    let mut startup = StartupContractBuilder::production(RuntimeKind::Canonical);
     // --- Identity ---
     let identity = if cfg.ephemeral {
         rns_core::identity::PrivateIdentity::new_from_rand(rand_core::OsRng)
@@ -89,9 +178,21 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     let node_role = daemon_config.as_ref().map(|c| c.role).unwrap_or_default();
     crate::daemon_diagnostic!("[styrene] node role: {}", node_role);
 
+    // Open and migrate the shared authority before any propagation handler can be registered.
+    let db_path = cfg.db.clone().unwrap_or_else(crate::config::default_db_path);
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::create_dir_all(crate::config::default_config_dir()).ok();
+    let store = Arc::new(Mutex::new(MessagesStore::open(&db_path)?));
+
     // --- Transport ---
     let mesh_transport: Arc<dyn MeshTransport>;
     let mut delivery_hash = String::new();
+    let mut service_receipt_target = None;
+    let mut native_nomadnet = None;
+    let mut native_transport = None;
+    let mut standard_propagation = None;
 
     if node_role.runs_transport() {
         let transport_identity =
@@ -102,12 +203,24 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         // enabling multi-hop mesh routing (equivalent to Reticulum transport.enabled).
         config.set_retransmit(true);
         let mut transport_instance = Transport::new(config);
+        startup.record(startup_component::NATIVE_RESOURCE_RETRY_SCHEDULER);
+        let receipt_target = Arc::new(std::sync::OnceLock::new());
+        let packet_receipts = crate::receipt_bridge::PacketReceiptBridge::new();
+        transport_instance
+            .set_receipt_handler(Box::new(crate::receipt_bridge::CompositeReceiptHandler::new(
+                vec![
+                    Box::new(crate::receipt_bridge::ServiceReceiptBridge::new(
+                        receipt_target.clone(),
+                    )),
+                    Box::new(packet_receipts.clone()),
+                ],
+            )))
+            .await;
+        service_receipt_target = Some(receipt_target);
+        startup.record(startup_component::SERVICE_RECEIPT_BRIDGE);
 
         // TCP server on default or configured address
-        let bind_addr = daemon_config
-            .as_ref()
-            .and_then(|c| c.tcp_server_endpoint())
-            .unwrap_or_else(|| "0.0.0.0:4242".to_string());
+        let bind_addr = tcp_server_bind_addr(daemon_config.as_ref(), cfg.ephemeral);
 
         let iface_manager = transport_instance.iface_manager();
         let (tcp_server, _bound_rx) = TcpServer::new(bind_addr.clone(), iface_manager.clone());
@@ -133,12 +246,30 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
 
         // NomadNet page hosting destination — allows us to receive announces
         // from NomadNet-compatible page hosts and browse their pages.
-        let _nomadnet_dest = transport_instance
+        let nomadnet_destination = transport_instance
             .add_destination(
                 transport_identity.clone(),
                 DestinationName::new("nomadnetwork", "node"),
             )
             .await;
+        if node_role == crate::config::NodeRole::Hub {
+            let propagation_name = std::env::var("STYRENE_PROPAGATION_NODE_NAME")
+                .unwrap_or_else(|_| DEFAULT_PROPAGATION_NODE_NAME.to_string());
+            let endpoint = StandardPropagationEndpoint::register(
+                &mut transport_instance,
+                transport_identity.clone(),
+                &propagation_name,
+                Arc::clone(&store),
+            )
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!("standard propagation registration failed: {error:?}")
+            })?;
+            startup.record(startup_component::STANDARD_LXMF_PROPAGATION_DESTINATION);
+            standard_propagation = Some(endpoint);
+        }
+        startup.record(startup_component::LXMF_DELIVERY);
+        startup.record(startup_component::NOMADNET_NODE_DESTINATION);
         let (dest_hash_hex, delivery_addr) = {
             let dest = destination.lock().await;
             (hex::encode(dest.desc.address_hash.as_slice()), dest.desc.address_hash)
@@ -146,17 +277,22 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         delivery_hash = dest_hash_hex;
 
         let transport = Arc::new(transport_instance);
+        native_transport = Some(transport.clone());
+        native_nomadnet = Some((transport.clone(), nomadnet_destination));
         let mut id_hash_bytes = [0u8; 16];
         id_hash_bytes.copy_from_slice(identity.address_hash().as_slice());
 
-        let adapter = TokioTransportAdapter::new(
+        let adapter = TokioTransportAdapter::new_with_packet_receipts(
             transport.clone(),
             rns_core::hash::AddressHash::new(id_hash_bytes),
             delivery_addr,
             destination.clone(),
             display_name.as_ref().and_then(|n| encode_delivery_display_name_app_data(n)),
+            packet_receipts.sender(),
         )
         .await;
+        startup.record(startup_component::TRANSPORT_ANNOUNCE_BRIDGE);
+        startup.record(startup_component::TRANSPORT_LINK_BRIDGE);
 
         mesh_transport = Arc::new(adapter);
         crate::daemon_diagnostic!("[styrene] transport enabled, delivery_hash={}", delivery_hash);
@@ -164,15 +300,6 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         mesh_transport = Arc::new(NullTransport::new());
         crate::daemon_diagnostic!("[styrene] transport disabled (node role: {})", node_role);
     };
-
-    // --- Database ---
-    let db_path = cfg.db.unwrap_or_else(crate::config::default_db_path);
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    std::fs::create_dir_all(crate::config::default_config_dir()).ok();
-
-    let store = Arc::new(Mutex::new(MessagesStore::open(&db_path)?));
 
     // Node store
     let node_store_path = db_path.with_file_name("nodes.db");
@@ -262,6 +389,8 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         policy
     };
 
+    let transport_active = !delivery_hash.is_empty();
+
     // --- AppContext ---
     let app_context = Arc::new(AppContext::with_policy(
         mesh_transport,
@@ -270,6 +399,15 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         node_store,
         crate::services::PolicyService::new(rbac_policy),
     ));
+    if let Some(endpoint) = standard_propagation.as_ref() {
+        app_context.publish_standard_propagation(endpoint.runtime_observation());
+        endpoint.set_events(app_context.events_arc());
+    } else if transport_active && node_role != crate::config::NodeRole::Hub {
+        app_context.publish_standard_propagation(
+            crate::standard_propagation::StandardPropagationRuntimeObservation::client(),
+        );
+    }
+    startup.record_local_execution_services();
 
     // Wire signer + delivery hash
     app_context.set_signer(Arc::new(identity.clone()));
@@ -283,54 +421,139 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
 
     if node_role == crate::config::NodeRole::Hub {
         app_context.propagation().set_enabled(true);
+        app_context.status().set_propagation_state(true, None, 0);
         crate::daemon_diagnostic!("[styrene] propagation enabled (hub mode)");
+    } else {
+        app_context.status().set_propagation_state(false, None, 0);
     }
 
     // --- DaemonFacade ---
     let daemon_facade = Arc::new(DaemonFacade::new(app_context.clone(), identity_hash.clone()));
 
     // --- Workers ---
-    let local_delivery_hash = if delivery_hash.is_empty() { None } else { Some(delivery_hash) };
+    let local_delivery_hash = if transport_active { Some(delivery_hash) } else { None };
+    let standard_propagation_hash =
+        standard_propagation.as_ref().map(|endpoint| endpoint.destination().clone());
+    let standard_propagation_hash = if let Some(destination) = standard_propagation_hash {
+        Some(hex::encode(destination.lock().await.desc.address_hash.as_slice()))
+    } else {
+        None
+    };
 
-    crate::workers::inbound::spawn_inbound_worker_with_auto_reply(
+    if let (Some(endpoint), Some(transport)) =
+        (standard_propagation.as_mut(), native_transport.as_ref())
+    {
+        endpoint.activate(app_context.transport_arc(), transport.as_ref()).await.map_err(
+            |error| anyhow::anyhow!("standard propagation activation failed: {error:?}"),
+        )?;
+        startup.record(startup_component::STANDARD_LXMF_PROPAGATION_OFFER_HANDLER);
+        startup.record(startup_component::STANDARD_LXMF_PROPAGATION_GET_HANDLER);
+        startup.record(startup_component::STANDARD_LXMF_PROPAGATION_INGRESS_WORKER);
+        startup.record(startup_component::STANDARD_LXMF_PROPAGATION_ANNOUNCE);
+        startup
+            .advertise(startup_capability::STANDARD_LXMF_PROPAGATION)
+            .map_err(anyhow::Error::msg)?;
+    }
+
+    let inbound_worker = crate::workers::inbound::spawn_inbound_worker_with_auto_reply(
         app_context.transport_arc(),
         app_context.messaging_arc(),
         app_context.protocol_arc(),
         app_context.events_arc(),
         app_context.propagation_arc(),
-        local_delivery_hash,
+        crate::workers::inbound::InboundDestinations::new(
+            local_delivery_hash,
+            standard_propagation_hash,
+        ),
         Some(app_context.auto_reply_arc()),
     );
-    crate::workers::announce::spawn_announce_worker(
+    startup.record(startup_component::INBOUND_PACKET_WORKER);
+    startup.record(startup_component::INBOUND_RESOURCE_WORKER);
+    startup.record(startup_component::OUTBOUND_RESOURCE_COMPLETION_WORKER);
+    let announce_worker = crate::workers::announce::spawn_announce_worker(
         app_context.transport_arc(),
         app_context.discovery_arc(),
         app_context.events_arc(),
     );
-    crate::workers::link::spawn_link_worker(app_context.transport_arc(), app_context.events_arc());
+    startup.record(startup_component::ANNOUNCE_WORKER);
+    let link_worker = crate::workers::link::spawn_link_worker(
+        app_context.transport_arc(),
+        app_context.events_arc(),
+    );
+    startup.record(startup_component::LINK_WORKER);
+    let route_worker = crate::workers::route::spawn_route_worker(
+        app_context.transport_arc(),
+        app_context.events_arc(),
+    );
+    startup.record(startup_component::ROUTE_WORKER);
+    startup.record(startup_component::NETWORK_OPERATION_COORDINATOR);
+    let router_deadline_worker =
+        crate::workers::router::spawn_router_deadline_worker(app_context.messaging_arc());
+    startup.record(startup_component::LXMF_ROUTER_DEADLINE_SCHEDULER);
+    let standard_propagation_sync = (transport_active && node_role != crate::config::NodeRole::Hub)
+        .then(|| {
+            startup.record(startup_component::STANDARD_LXMF_PROPAGATION_CLIENT_COORDINATOR);
+            startup.record(startup_component::STANDARD_LXMF_PROPAGATION_SYNC_SCHEDULER);
+            crate::workers::standard_propagation::spawn_standard_propagation_sync_worker(
+                app_context.messaging_arc(),
+            )
+        });
 
-    // RPC handlers
-    app_context
-        .protocol()
-        .register(Arc::new(crate::workers::rpc_response::RpcResponseHandler::new(
-            app_context.fleet_arc(),
-        )))
-        .await;
-    app_context
-        .protocol()
-        .register(Arc::new(crate::workers::rpc_request::RpcRequestHandler::new(
-            app_context.transport_arc(),
-            Arc::new(identity.clone()),
-            app_context.policy_arc(),
-        )))
-        .await;
+    crate::workers::register_styrene_rpc_handlers(&app_context, Arc::new(identity.clone())).await;
+    startup.record(startup_component::RPC_RESPONSE_HANDLER);
+    startup.record(startup_component::RPC_REQUEST_HANDLER);
 
-    crate::services::propagation::spawn_expiry_task(app_context.propagation_arc());
+    if let Some((transport, destination)) = native_nomadnet {
+        crate::workers::native_nomadnet::register_handlers(
+            destination.clone(),
+            app_context.pages_arc(),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("native NomadNet path registration failed: {error:?}"))?;
+        startup.record(startup_component::NATIVE_NOMADNET_REQUEST_HANDLER);
+        transport.send_announce(&destination, display_name.as_deref().map(str::as_bytes)).await;
+        startup.record(startup_component::NOMADNET_NODE_ANNOUNCE);
+        startup.advertise(startup_capability::NATIVE_NOMADNET_HOST).map_err(anyhow::Error::msg)?;
+    }
+
+    let expiry_worker =
+        crate::services::propagation::spawn_expiry_task(app_context.propagation_arc());
+    startup.record(startup_component::PROPAGATION_EXPIRY_SCHEDULER);
+    if let Some(target) = service_receipt_target {
+        if target.set(Arc::downgrade(&app_context.messaging_arc())).is_err() {
+            anyhow::bail!("service receipt target initialized twice");
+        }
+    }
 
     crate::daemon_diagnostic!("[styrene] workers started");
 
+    startup.advertise(startup_capability::LOCAL_CONFIG).map_err(anyhow::Error::msg)?;
+    startup.advertise(startup_capability::LOCAL_POLICY).map_err(anyhow::Error::msg)?;
+
+    if transport_active {
+        startup.record_transport_state_services();
+        startup.advertise(startup_capability::LXMF_DIRECT).map_err(anyhow::Error::msg)?;
+        startup.advertise(startup_capability::LXMF_PAPER_EXPORT).map_err(anyhow::Error::msg)?;
+        startup.advertise(startup_capability::NETWORK_OPERATIONS).map_err(anyhow::Error::msg)?;
+        startup.advertise(startup_capability::RNS_REQUESTS).map_err(anyhow::Error::msg)?;
+        startup
+            .advertise(startup_capability::RNS_REQUEST_CANCELLATION)
+            .map_err(anyhow::Error::msg)?;
+        startup
+            .advertise(startup_capability::RNS_RESOURCE_CANCELLATION)
+            .map_err(anyhow::Error::msg)?;
+        startup.advertise(startup_capability::STYRENE_RPC).map_err(anyhow::Error::msg)?;
+        if node_role != crate::config::NodeRole::Hub {
+            startup
+                .advertise(startup_capability::STANDARD_LXMF_PROPAGATION_CLIENT)
+                .map_err(anyhow::Error::msg)?;
+        }
+    }
+    app_context.publish_startup_contract(startup.clone().finish());
+
     // --- IPC Server (desktop only) ---
     #[cfg(feature = "ipc-server")]
-    let ipc_server = {
+    let (ipc_server, ipc_event_worker) = {
         let socket_path = cfg.socket.unwrap_or_else(styrene_ipc_server::default_socket_path);
         let ipc_config = styrene_ipc_server::IpcServerConfig {
             socket_path: socket_path.clone(),
@@ -343,7 +566,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         server.start().await?;
 
         // Bridge daemon events → IPC server event channel
-        {
+        let event_worker = {
             let event_tx = server.event_sender();
             let mut daemon_rx = app_context.events().subscribe_daemon_events();
             tokio::spawn(async move {
@@ -356,31 +579,136 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
                 }
-            });
-        }
+            })
+        };
+        startup.record(startup_component::IPC_EVENT_BRIDGE);
         crate::daemon_diagnostic!("[styrene] IPC server listening on {}", socket_path.display());
-        server
+        (server, event_worker)
     };
 
     // Initial announce
     app_context.transport().announce(None).await;
     crate::daemon_diagnostic!("[styrene] identity={} ready", identity_hash);
 
+    let startup_contract = startup.finish();
+    app_context.publish_startup_contract(startup_contract.clone());
+    let workers = DaemonWorkers {
+        inbound: inbound_worker,
+        announce: announce_worker,
+        link: link_worker,
+        route: route_worker,
+        router_deadlines: router_deadline_worker,
+        standard_propagation_sync,
+        expiry: expiry_worker,
+        #[cfg(feature = "ipc-server")]
+        ipc_events: ipc_event_worker,
+    };
+
     Ok(DaemonHandle {
         app_context,
         daemon_facade,
+        startup_contract,
+        standard_propagation,
         #[cfg(feature = "ipc-server")]
         ipc_server,
-        cancel,
+        workers,
     })
+}
+
+fn tcp_server_bind_addr(config: Option<&DaemonConfig>, ephemeral: bool) -> String {
+    config
+        .and_then(DaemonConfig::tcp_server_endpoint)
+        .unwrap_or_else(|| if ephemeral { "127.0.0.1:0" } else { "0.0.0.0:4242" }.to_string())
 }
 
 /// Run the daemon until interrupted (Ctrl+C).
 pub async fn run(cfg: DaemonConfig2) -> anyhow::Result<()> {
-    let _handle = start(cfg).await?;
+    let handle = start(cfg).await?;
 
     // Wait for shutdown signal
     tokio::signal::ctrl_c().await?;
     crate::daemon_diagnostic!("\n[styrene] shutting down...");
+    handle.shutdown().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn ephemeral_daemon_does_not_default_to_production_listener() {
+        assert_eq!(tcp_server_bind_addr(None, true), "127.0.0.1:0");
+        assert_eq!(tcp_server_bind_addr(None, false), "0.0.0.0:4242");
+    }
+
+    #[test]
+    fn explicit_listener_is_preserved_for_ephemeral_daemon() {
+        let config = DaemonConfig::from_toml(
+            r#"
+            [[interfaces]]
+            type = "tcp_server"
+            enabled = true
+            host = "127.0.0.1"
+            port = 14242
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(tcp_server_bind_addr(Some(&config), true), "127.0.0.1:14242");
+    }
+
+    #[tokio::test]
+    async fn canonical_hub_recovers_standard_queue_before_active_composition() {
+        let root = tempfile::tempdir().unwrap();
+        let db = root.path().join("messages.db");
+        let config = root.path().join("config.toml");
+        std::fs::write(&config, "role = \"hub\"\n").unwrap();
+        let mut data = vec![0x41; lxmf::propagation::MIN_PROPAGATED_LXMF_BYTES + 1];
+        data[..16].copy_from_slice(&[0x42; 16]);
+        let item = crate::storage::standard_propagation::StandardPropagationItem {
+            transient_id: Sha256::digest(&data).into(),
+            destination: [0x42; 16],
+            stored_size: data.len() + 32,
+            lxmf_data: data,
+            stamp: [0x43; 32],
+            stamp_value: 0,
+            received_at: 1,
+            expires_at: i64::MAX,
+        };
+        MessagesStore::open(&db)
+            .unwrap()
+            .standard_propagation_ingest_batch(
+                crate::storage::standard_propagation::StandardPropagationIngestRequest {
+                    items: &[item],
+                    source_peer: None,
+                    attempt: crate::storage::standard_propagation::StandardPropagationAttemptStatus::Untracked,
+                    protocol: crate::storage::standard_propagation::StandardPropagationProtocolStatus::Valid,
+                    now: 1,
+                    policy: crate::storage::standard_propagation::StandardPropagationPolicy {
+                    queue_max_count: 4096,
+                    queue_max_bytes: 16 * 1024 * 1024,
+                    expiry_secs: 30 * 24 * 60 * 60,
+                },
+                },
+            )
+            .unwrap();
+
+        let handle = start(DaemonConfig2 {
+            db: Some(db),
+            config: Some(config),
+            identity: None,
+            socket: Some(root.path().join("daemon.sock")),
+            ephemeral: true,
+        })
+        .await
+        .unwrap();
+        let endpoint = handle.standard_propagation.as_ref().unwrap();
+        assert_eq!(endpoint.queue_stats(2).unwrap().queued_count, 1);
+        assert!(handle
+            .startup_contract
+            .advertises(crate::startup_contract::capabilities::STANDARD_LXMF_PROPAGATION.id()));
+        handle.shutdown().await;
+    }
 }

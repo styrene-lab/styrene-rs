@@ -2,16 +2,22 @@ use super::*;
 
 pub(super) async fn send_to_next_hop<'a>(
     packet: &Packet,
-    handler: &MutexGuard<'a, TransportHandler>,
+    handler: &mut MutexGuard<'a, TransportHandler>,
     lookup: Option<AddressHash>,
 ) -> bool {
+    let destination = lookup.unwrap_or(packet.destination);
     let (packet, maybe_iface) = handler.path_table.handle_inbound_packet(packet, lookup);
 
     if let Some(iface) = maybe_iface {
-        handler.send(TxMessage { tx_type: TxMessageType::Direct(iface), packet }).await;
+        let dispatch =
+            handler.send(TxMessage { tx_type: TxMessageType::Direct(iface), packet }).await;
+        if dispatch.sent_ifaces > 0 {
+            handler.path_table.refresh(&destination);
+            return true;
+        }
     }
 
-    maybe_iface.is_some()
+    false
 }
 
 pub(super) async fn handle_path_request<'a>(
@@ -162,7 +168,7 @@ pub(super) async fn handle_link_request_as_intermediate<'a>(
 ) {
     handler.link_table.add(packet, packet.destination, received_from, next_hop, next_hop_iface);
 
-    send_to_next_hop(packet, &handler, None).await;
+    send_to_next_hop(packet, &mut handler, None).await;
 }
 
 pub(super) async fn handle_link_request<'a>(

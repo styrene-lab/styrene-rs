@@ -83,7 +83,9 @@ pub async fn await_inbound_count(
     loop {
         {
             let store = ctx.store().lock().expect("lock store");
-            if let Ok(messages) = store.list_messages(500, None) {
+            if let Ok(messages) =
+                store.list_messages(styrene_ipc::types::MAX_MESSAGE_QUERY_LIMIT as usize, None)
+            {
                 let inbound: Vec<_> =
                     messages.into_iter().filter(|m| m.direction == "in").collect();
                 if inbound.len() >= count {
@@ -94,7 +96,7 @@ pub async fn await_inbound_count(
         if tokio::time::Instant::now() >= deadline {
             let store = ctx.store().lock().expect("lock store");
             let actual = store
-                .list_messages(500, None)
+                .list_messages(styrene_ipc::types::MAX_MESSAGE_QUERY_LIMIT as usize, None)
                 .map(|msgs| msgs.iter().filter(|m| m.direction == "in").count())
                 .unwrap_or(0);
             panic!("timed out waiting for {} inbound messages (got {})", count, actual);
@@ -113,7 +115,9 @@ pub async fn await_message_count(
     loop {
         {
             let store = ctx.store().lock().expect("lock store");
-            if let Ok(messages) = store.list_messages(500, None) {
+            if let Ok(messages) =
+                store.list_messages(styrene_ipc::types::MAX_MESSAGE_QUERY_LIMIT as usize, None)
+            {
                 if messages.len() >= count {
                     return messages;
                 }
@@ -121,7 +125,10 @@ pub async fn await_message_count(
         }
         if tokio::time::Instant::now() >= deadline {
             let store = ctx.store().lock().expect("lock store");
-            let actual = store.list_messages(500, None).map(|msgs| msgs.len()).unwrap_or(0);
+            let actual = store
+                .list_messages(styrene_ipc::types::MAX_MESSAGE_QUERY_LIMIT as usize, None)
+                .map(|msgs| msgs.len())
+                .unwrap_or(0);
             panic!("timed out waiting for {} total messages (got {})", count, actual);
         }
         tokio::time::sleep(POLL_INTERVAL).await;

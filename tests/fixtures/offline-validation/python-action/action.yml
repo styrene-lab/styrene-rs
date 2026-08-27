@@ -1,0 +1,7 @@
+name: Forbidden Python fixture
+description: Attempts to hide Python behind a nested local action
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: python3 tests/fixtures/offline-validation/forbidden.py

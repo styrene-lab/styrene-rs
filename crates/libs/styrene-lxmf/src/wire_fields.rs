@@ -76,7 +76,74 @@ pub fn json_to_rmpv(value: &JsonValue) -> Result<Value, LxmfError> {
     if let JsonValue::Object(map) = &mut normalized {
         normalize_attachment_fields_for_wire(map)?;
     }
-    json_to_rmpv_lossless(&normalized)
+    let mut value = json_to_rmpv_lossless(&normalized)?;
+    canonicalize_attachment_binary(&mut value)?;
+    Ok(value)
+}
+
+fn canonicalize_attachment_binary(value: &mut Value) -> Result<(), LxmfError> {
+    {
+        let Value::Map(fields) = value else { return Ok(()) };
+        let Some((_, attachments)) = fields.iter_mut().find(|(key, _)| key.as_i64() == Some(5))
+        else {
+            return Ok(());
+        };
+        let Value::Array(entries) = attachments else {
+            return Err(LxmfError::Encode("LXMF attachment field 5 must be an array".into()));
+        };
+        for entry in entries {
+            let Value::Array(tuple) = entry else {
+                return Err(LxmfError::Encode(
+                    "LXMF attachment entries must be two-element tuples".into(),
+                ));
+            };
+            if tuple.len() != 2 {
+                return Err(LxmfError::Encode(
+                    "LXMF attachment entries must be two-element tuples".into(),
+                ));
+            }
+            let bytes = tuple[1]
+                .as_array()
+                .ok_or_else(|| LxmfError::Encode("attachment data must be a byte array".into()))?
+                .iter()
+                .map(|value| value.as_u64().and_then(|value| u8::try_from(value).ok()))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(|| {
+                    LxmfError::Encode("attachment data array contains a non-byte".into())
+                })?;
+            tuple[1] = Value::Binary(bytes);
+        }
+    }
+    crate::attachments::parse_attachment_field(Some(value))?;
+    Ok(())
+}
+
+pub fn rmpv_to_json_redacting_attachments(value: &Value) -> Option<JsonValue> {
+    let mut projected = value.clone();
+    if let Value::Map(fields) = &mut projected {
+        if let Some((_, attachment_value)) =
+            fields.iter_mut().find(|(key, _)| key.as_i64() == Some(5))
+        {
+            *attachment_value = match crate::attachments::parse_attachment_field(Some(value)) {
+                Ok(entries) => Value::Array(
+                    entries
+                        .into_iter()
+                        .enumerate()
+                        .map(|(ordinal, entry)| {
+                            Value::Map(vec![
+                                (Value::from("ordinal"), Value::from(ordinal as u64)),
+                                (Value::from("name"), Value::from(entry.filename)),
+                                (Value::from("size"), Value::from(entry.data.len() as u64)),
+                                (Value::from("data"), Value::from("stored_attachment")),
+                            ])
+                        })
+                        .collect(),
+                ),
+                Err(_) => Value::Map(vec![(Value::from("state"), Value::from("invalid"))]),
+            };
+        }
+    }
+    rmpv_to_json(&projected)
 }
 
 pub fn rmpv_to_json(value: &Value) -> Option<JsonValue> {
@@ -491,4 +558,52 @@ fn decode_u16_be(value: &Value) -> Option<u16> {
     let mut raw = [0u8; 2];
     raw.copy_from_slice(bytes);
     Some(u16::from_be_bytes(raw))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outbound_json_attachment_alias_encodes_messagepack_binary() {
+        let fields = serde_json::json!({
+            "attachments": [{"name": "vector.bin", "data": [0, 1, 255]}],
+            "99": "untouched"
+        });
+        let encoded = json_to_rmpv(&fields).expect("attachment fields");
+        let entries = encoded.as_map().expect("fields map");
+        assert_eq!(
+            entries.iter().find(|(key, _)| key.as_i64() == Some(99)).unwrap().1,
+            "untouched".into()
+        );
+        let attachment = &entries
+            .iter()
+            .find(|(key, _)| key.as_i64() == Some(5))
+            .expect("field 5")
+            .1
+            .as_array()
+            .expect("attachments")[0]
+            .as_array()
+            .expect("tuple")[1];
+        assert_eq!(attachment, &Value::Binary(vec![0, 1, 255]));
+
+        let wire = rmp_serde::to_vec(&encoded).expect("MessagePack");
+        assert!(wire.windows(4).any(|window| window == [0xc4, 3, 0, 1]));
+    }
+
+    #[test]
+    fn normal_projection_redacts_attachment_bytes() {
+        let fields = Value::Map(vec![(
+            Value::from(5),
+            Value::Array(vec![Value::Array(vec![
+                Value::from("secret.bin"),
+                Value::Binary(vec![0xde, 0xad]),
+            ])]),
+        )]);
+        let projection = rmpv_to_json_redacting_attachments(&fields).expect("projection");
+        let text = projection.to_string();
+        assert!(text.contains("stored_attachment"));
+        assert!(!text.contains("222"));
+        assert!(!text.contains("173"));
+    }
 }

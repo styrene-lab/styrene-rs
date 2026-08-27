@@ -47,6 +47,32 @@ pub fn build_resource_request_packet(link: &Link, request: &ResourceRequest) -> 
         .expect("resource request packet")
 }
 
+#[doc(hidden)]
+pub fn build_resource_cancel_packet(
+    link: &Link,
+    hash: Hash,
+    context: PacketContext,
+) -> Result<Packet, RnsError> {
+    debug_assert!(matches!(
+        context,
+        PacketContext::ResourceInitiatorCancel | PacketContext::ResourceReceiverCancel
+    ));
+    build_link_packet(link, PacketType::Data, context, hash.as_slice())
+}
+
+#[doc(hidden)]
+pub fn build_resource_cache_request_packet(
+    link: &Link,
+    proof_packet_hash: Hash,
+) -> Result<Packet, RnsError> {
+    build_link_packet(
+        link,
+        PacketType::Data,
+        PacketContext::CacheRequest,
+        proof_packet_hash.as_slice(),
+    )
+}
+
 fn fill_link_packet_data(
     link: &Link,
     packet_type: PacketType,

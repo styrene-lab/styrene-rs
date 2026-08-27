@@ -177,21 +177,20 @@ Integration tests in `tests/`:
 - `app_context_construction` -- service graph wiring
 - `config` -- TOML parsing roundtrips
 - `direct_link_delivery` / `direct_link_inbound` -- transport pipeline
-- `python_compat_matrix` -- wire format compatibility with Python styrened
+- `python_compat_matrix` -- live compatibility with upstream Python RNS/LXMF
 - `transport_contract` / `transport_null` -- MeshTransport trait contracts
 - `worker_inbound` -- inbound worker decode + persist
 
 ## Known issues and TODOs
 
 - **Dual dispatch**: RpcDaemon (legacy) and DaemonFacade (new) run side-by-side. Both connect to the same SQLite database via separate handles. RpcDaemon will be removed once all clients migrate to IPC.
-- **ConversationStore**: Uses in-memory SQLite. Needs file-backed storage wired through bootstrap for persistence across restarts.
 - **Tunnel service**: Stub only -- all methods return NotImplemented.
 - **Terminal (remote shell)**: Stub only.
 - **Self-update**: Stub only.
 - **Remote page browsing**: Local page serving works; remote fetch over RNS links is not yet implemented.
 - **Attachment storage**: LXMF messages carry content inline; separate attachment blob storage is not implemented.
 - **CBOR migration**: Wire protocol will move from MessagePack to CBOR (RFC 8949) for deterministic encoding and COSE signing. Mechanical change but requires Python sync.
-- **Config file naming**: Default path now prefers `config.toml` but falls back to `config.yaml` for compatibility with Python daemon installs.
+- **Config file naming**: The default configuration path is `config.toml`.
 
 ## Current status
 

@@ -84,8 +84,8 @@ async fn main() -> anyhow::Result<()> {
         }
 
         #[cfg(feature = "cli")]
-        Some(Command::Send { ref destination, ref content, ref title }) => {
-            commands::send(socket, destination, content, title.as_deref()).await
+        Some(Command::Send { ref destination, ref content, ref title, ref delivery_method }) => {
+            commands::send(socket, destination, content, title.as_deref(), delivery_method).await
         }
 
         #[cfg(feature = "cli")]

@@ -2,7 +2,7 @@
 #
 # Defaults: don't publish anything. Crates opt-in explicitly below.
 # The workspace has ~30 crates — apps (styrened, styrene-tui),
-# bindings (styrene-native, styrene-mobile-ffi), tests, and internal
+# bindings, tests, and internal packages
 # libs aren't meant for crates.io. Only the public ecosystem libraries
 # get auto-published here.
 

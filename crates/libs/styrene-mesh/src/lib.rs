@@ -48,7 +48,7 @@ pub mod pqc;
 
 pub use wire::{StyreneMessage, StyreneMessageType, WireError};
 
-/// Wire format namespace prefix (must match Python styrene_wire.py STYRENE_PREFIX).
+/// Wire format namespace prefix for Styrene application envelopes.
 pub const NAMESPACE: &[u8; 11] = b"styrene.io:";
 
 /// Current wire format version (v2 = with request_id, must match Python STYRENE_VERSION).

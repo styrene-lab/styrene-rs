@@ -42,6 +42,14 @@ pub struct MobileConfig {
     pub display_name: Option<String>,
     /// Identity backend: "keychain" (default), "encrypted_file", "plaintext_file"
     pub identity_backend: Option<String>,
+    /// Direct Reticulum TCP interfaces.
+    pub interfaces: Vec<MobileTcpInterface>,
+}
+
+#[derive(Clone, uniffi::Enum)]
+pub enum MobileTcpInterface {
+    Server { bind_address: String },
+    Client { remote_address: String },
 }
 
 #[derive(uniffi::Record)]
@@ -133,6 +141,18 @@ impl MobileNode {
             hub_delivery_hash: config.hub_delivery_hash,
             display_name: config.display_name,
             identity_backend,
+            interfaces: config
+                .interfaces
+                .into_iter()
+                .map(|interface| match interface {
+                    MobileTcpInterface::Server { bind_address } => {
+                        styrened::mobile::MobileInterfaceConfig::TcpServer { bind_address }
+                    }
+                    MobileTcpInterface::Client { remote_address } => {
+                        styrened::mobile::MobileInterfaceConfig::TcpClient { remote_address }
+                    }
+                })
+                .collect(),
         };
 
         let node = rt
@@ -361,11 +381,24 @@ impl MobileNode {
         })
     }
 
+    /// Actual addresses bound by TCP server profiles.
+    pub fn tcp_listen_addresses(&self) -> Vec<String> {
+        self.rt.block_on(async {
+            let guard = self.inner.lock().await;
+            guard
+                .as_ref()
+                .map(|node| node.tcp_listen_addresses().iter().map(ToString::to_string).collect())
+                .unwrap_or_default()
+        })
+    }
+
     /// Shut down the node. Call on app termination.
     pub fn shutdown(&self) {
         self.rt.block_on(async {
             let mut guard = self.inner.lock().await;
-            *guard = None;
+            if let Some(node) = guard.take() {
+                let _ = node.shutdown().await;
+            }
         });
     }
 }

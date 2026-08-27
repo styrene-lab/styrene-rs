@@ -43,6 +43,36 @@ pub fn build_wire_message_with_options(
     outbound_ticket_hex: Option<&str>,
     include_ticket: Option<(i64, &[u8])>,
 ) -> Result<Vec<u8>, LxmfError> {
+    build_wire_message_with_stamp_control(
+        source,
+        destination,
+        title,
+        content,
+        fields,
+        signer,
+        stamp_cost,
+        outbound_ticket_hex,
+        include_ticket,
+        || false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_wire_message_with_stamp_control<F>(
+    source: [u8; 16],
+    destination: [u8; 16],
+    title: &str,
+    content: &str,
+    fields: Option<JsonValue>,
+    signer: &PrivateIdentity,
+    stamp_cost: Option<u32>,
+    outbound_ticket_hex: Option<&str>,
+    include_ticket: Option<(i64, &[u8])>,
+    should_cancel: F,
+) -> Result<Vec<u8>, LxmfError>
+where
+    F: FnMut() -> bool,
+{
     let mut message = Message::new();
     message.destination_hash = Some(destination);
     message.source_hash = Some(source);
@@ -72,8 +102,8 @@ pub fn build_wire_message_with_options(
         let stamp = ticket_stamp(&ticket, &message_id);
         message.set_stamp_from_bytes(&stamp);
     } else if let Some(cost) = stamp_cost {
-        let stamp = generate_stamp(&message_id, cost)
-            .ok_or_else(|| LxmfError::Encode("failed to generate LXMF stamp".into()))?;
+        let stamp = lxmf::stamps::generate_stamp_with_control(&message_id, cost, should_cancel)
+            .map_err(|error| LxmfError::Encode(format!("LXMF stamp generation {error:?}")))?;
         message.set_stamp_from_bytes(&stamp);
     }
 
@@ -125,10 +155,62 @@ fn current_time_secs_f64() -> f64 {
         .as_secs_f64()
 }
 
-fn generate_stamp(message_id: &[u8; 32], stamp_cost: u32) -> Option<Vec<u8>> {
-    crate::lxmf_stamps::generate_stamp(message_id, stamp_cost)
-}
-
 pub fn decode_wire_message(bytes: &[u8]) -> Result<Message, LxmfError> {
     Message::from_wire(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outbound_options_apply_ticket_stamp_and_include_renewal_ticket() {
+        let signer = PrivateIdentity::new_from_name("stamp-options-signer");
+        let outbound_ticket = vec![0x44; lxmf::stamps::TICKET_LENGTH];
+        let renewal_ticket = vec![0x55; lxmf::stamps::TICKET_LENGTH];
+        let wire = build_wire_message_with_options(
+            [0x11; 16],
+            [0x22; 16],
+            "title",
+            "content",
+            None,
+            &signer,
+            Some(8),
+            Some(&hex::encode(&outbound_ticket)),
+            Some((1_800_000_000, &renewal_ticket)),
+        )
+        .expect("wire message");
+        let unpacked = WireMessage::unpack(&wire).expect("unpack");
+        let expected = lxmf::stamps::ticket_stamp(&outbound_ticket, &unpacked.message_id())
+            .expect("ticket stamp");
+        assert_eq!(
+            unpacked.payload.stamp.as_ref().map(|stamp| stamp.as_ref()),
+            Some(expected.as_slice())
+        );
+        let fields = unpacked.payload.fields.expect("ticket field");
+        let entry = fields
+            .as_map()
+            .and_then(|entries| entries.iter().find(|(key, _)| key.as_i64() == Some(FIELD_TICKET)))
+            .expect("ticket entry");
+        assert_eq!(entry.1.as_array().unwrap()[1].as_slice(), Some(renewal_ticket.as_slice()));
+    }
+
+    #[test]
+    fn outbound_pow_stamp_has_pinned_lxmf_size() {
+        let signer = PrivateIdentity::new_from_name("pow-options-signer");
+        let wire = build_wire_message_with_options(
+            [0x11; 16],
+            [0x22; 16],
+            "",
+            "content",
+            None,
+            &signer,
+            Some(0),
+            None,
+            None,
+        )
+        .expect("wire message");
+        let unpacked = WireMessage::unpack(&wire).expect("unpack");
+        assert_eq!(unpacked.payload.stamp.unwrap().len(), lxmf::stamps::STAMP_LENGTH);
+    }
 }

@@ -12,7 +12,10 @@ use crate::serde::Serialize;
 use crate::transport::error::RnsError;
 use crate::transport::iface::RxMessage;
 
-use super::{Interface, InterfaceContext};
+use super::{
+    Interface, InterfaceContext, InterfaceDescriptor, InterfaceEndpoint, InterfaceKind,
+    InterfaceMode, InterfaceState,
+};
 
 // TODO: UDP does not use HDLC/stream_iface loops, so IFAC wrap/unwrap is not
 // wired here yet. UDP IFAC would require wrapping raw packets before send_to
@@ -36,6 +39,7 @@ impl UdpInterface {
         let bind_addr = { context.inner.lock().unwrap().bind_addr.clone() };
         let forward_addr = { context.inner.lock().unwrap().forward_addr.clone() };
         let iface_address = context.channel.address;
+        let runtime = context.runtime.clone();
 
         let (rx_channel, tx_channel) = context.channel.split();
         let tx_channel = Arc::new(tokio::sync::Mutex::new(tx_channel));
@@ -49,6 +53,7 @@ impl UdpInterface {
                 UdpSocket::bind(bind_addr.clone()).await.map_err(|_| RnsError::ConnectionError);
 
             if socket.is_err() {
+                runtime.set_state(InterfaceState::Retrying);
                 log::info!("udp_interface: couldn't bind to <{}>", bind_addr);
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
@@ -58,6 +63,10 @@ impl UdpInterface {
             let stop = CancellationToken::new();
 
             let socket = socket.unwrap();
+            if let Ok(local_addr) = socket.local_addr() {
+                runtime.set_local_endpoint(InterfaceEndpoint::Socket(local_addr));
+            }
+            runtime.set_state(InterfaceState::Active);
             let read_socket = Arc::new(socket);
             let write_socket = read_socket.clone();
 
@@ -112,6 +121,7 @@ impl UdpInterface {
                                     }
                                     Err(e) => {
                                         log::warn!("udp_interface: connection error {}", e);
+                                        stop.cancel();
                                         break;
                                     }
                                 }
@@ -165,13 +175,24 @@ impl UdpInterface {
             rx_task.await.unwrap();
 
             log::info!("udp_interface <{}>: closed", bind_addr);
+            runtime.set_state(InterfaceState::Retrying);
         }
+        runtime.set_state(InterfaceState::Closed);
     }
 }
 
 impl Interface for UdpInterface {
     fn mtu() -> usize {
         2048
+    }
+
+    fn descriptor(&self) -> InterfaceDescriptor {
+        InterfaceDescriptor {
+            kind: InterfaceKind::Udp,
+            mode: InterfaceMode::Full,
+            local_endpoint: None,
+            remote_endpoint: None,
+        }
     }
 }
 

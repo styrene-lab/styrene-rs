@@ -1,0 +1,68 @@
+schema_version = 1
+
+[[upstreams]]
+id = "python-rns"
+repository = "https://github.com/markqvist/Reticulum"
+revision = "b48b96e61676504e0a4e527b33b9a0b4495c6872"
+version = "1.4.2"
+
+[[upstreams]]
+id = "python-lxmf"
+repository = "https://github.com/markqvist/LXMF"
+revision = "795fdaa2b0777c13033787d933d1afc94a2377cb"
+version = "1.1.1"
+
+[[upstreams]]
+id = "python-nomadnet"
+repository = "https://github.com/markqvist/NomadNet"
+revision = "ad10301569a39d4f43b3d21ae9fc392602c937ca"
+version = "1.2.8"
+
+[[fixture_sets]]
+id = "rns-python-vectors"
+reference_upstream = "python-rns"
+provenance = "legacy-unrecorded"
+generator = "tests/interop/python/generate_fixtures.py"
+notes = "The files predate pinned provenance. Regenerate them with the pinned reference before promoting rns.primitives."
+
+[[fixture_sets.artifacts]]
+path = "tests/interop/fixtures/identity_vectors.json"
+sha256 = "7268459b46bbae5680b159e1b751f5928a88ff3a6c575dcb3277a53680993e8d"
+
+[[fixture_sets.artifacts]]
+path = "tests/interop/fixtures/packet_vectors.json"
+sha256 = "470c63e49d64e7f5474c6550860f40ba4c464119f4a73554a835b0c9b2b6048a"
+
+[[fixture_sets.artifacts]]
+path = "tests/interop/fixtures/announce_vectors.json"
+sha256 = "480dbbbfa11ac35b29440f9bf11d2950ccd13fd5fdfc5e08597bca004550bea8"
+
+[[fixture_sets.artifacts]]
+path = "tests/interop/fixtures/fernet_vectors.json"
+sha256 = "3a24c1598da9cb9b5b8ce28d7dd1aff65d94d07918c9e5fbafd29456d007df38"
+
+[[fixture_sets.artifacts]]
+path = "tests/interop/fixtures/hdlc_vectors.json"
+sha256 = "a73c56a22370043499719122db8c418acb6559c4d6acfb886281fad3fc139e4a"
+
+[[fixture_sets]]
+id = "rns-ifac-vectors"
+reference_upstream = "python-rns"
+provenance = "independent-reimplementation"
+generator = "tests/interop/python/generate_ifac_fixtures.py"
+notes = "The generator independently implements the IFAC algorithm and does not execute Python RNS."
+
+[[fixture_sets.artifacts]]
+path = "tests/interop/fixtures/ifac_vectors.json"
+sha256 = "c255dbb52f575094c77551c94066fbab27db806f1e57a8273d3a1dd019d37439"
+
+[[fixture_sets]]
+id = "nomadnet-micron-guide"
+reference_upstream = "python-nomadnet"
+provenance = "legacy-unrecorded"
+generator = "manual-copy"
+notes = "The canonical guide fixture predates source-revision capture. Reacquire it from the pinned reference before promotion."
+
+[[fixture_sets.artifacts]]
+path = "crates/libs/styrene-micron/tests/fixtures/nomad_net_guide.mu"
+sha256 = "c7ef37a6d46b6f68ff0068ecd7e0d67d0efdb65ac4a62905a09e1963bf9f0fa3"
