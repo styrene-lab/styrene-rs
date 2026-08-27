@@ -38,7 +38,10 @@ pub fn emit(arguments: std::fmt::Arguments<'_>) {
         lines.push(arguments.to_string());
         return;
     }
-    eprintln!("{arguments}");
+    use std::io::Write as _;
+
+    // Embedded hosts may not provide a writable stderr descriptor.
+    let _ = writeln!(std::io::stderr().lock(), "{arguments}");
 }
 
 #[cfg(test)]
