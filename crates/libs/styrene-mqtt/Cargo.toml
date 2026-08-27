@@ -1,6 +1,6 @@
 [package]
 name = "styrene-mqtt"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT"
@@ -14,7 +14,7 @@ categories = ["network-programming"]
 name = "styrene_mqtt"
 
 [dependencies]
-styrene-a2a = { version = "0.1.0", path = "../styrene-a2a" }
+styrene-a2a = { version = "0.1.1", path = "../styrene-a2a" }
 tokio = { version = "1.44.2", features = ["sync", "rt", "macros", "time"] }
 thiserror = "1"
 rumqttc = "0.25"
