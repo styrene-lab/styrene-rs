@@ -481,7 +481,7 @@ impl MobileNode {
         paths.ensure_dirs()?;
 
         // Load or create identity via the configured backend.
-        let identity = load_or_create_identity(&config.identity_backend, &paths)?;
+        let identity = load_or_create_identity(&config.identity_backend, &paths).await?;
 
         // Open database
         let db_path = paths.db_path();
@@ -883,13 +883,13 @@ pub struct ConversationSummary {
 ///
 /// On first launch, creates a new identity seamlessly — no passphrase prompts
 /// on keychain backends, no manual key management. The user just opens the app.
-fn load_or_create_identity(
+async fn load_or_create_identity(
     backend: &IdentityBackend,
     paths: &PlatformPaths,
 ) -> anyhow::Result<PrivateIdentity> {
     match backend {
-        IdentityBackend::Keychain => load_or_create_keychain(paths),
-        IdentityBackend::EncryptedFile => load_or_create_encrypted_file(paths),
+        IdentityBackend::Keychain => load_or_create_keychain(paths).await,
+        IdentityBackend::EncryptedFile => load_or_create_encrypted_file(paths).await,
         IdentityBackend::PlaintextFile => load_or_create_plaintext_file(paths),
     }
 }
@@ -899,7 +899,7 @@ fn load_or_create_identity(
 /// On iOS: Face ID / Touch ID protects access. Zero-interaction on create.
 /// On macOS: Keychain Access with biometric. Same behavior.
 /// Fallback: if keychain feature not compiled, falls back to plaintext file.
-fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
+async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
     #[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
     {
         use styrene_identity::keychain_signer::KeychainSigner;
@@ -915,9 +915,8 @@ fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<PrivateIden
         }
 
         // Retrieve root secret (triggers biometric on iOS)
-        let root = tokio::runtime::Handle::current()
-            .block_on(signer.root_secret())
-            .map_err(|e| anyhow::anyhow!("keychain access: {e}"))?;
+        let root =
+            signer.root_secret().await.map_err(|e| anyhow::anyhow!("keychain access: {e}"))?;
 
         // Derive RNS identity from root secret via HKDF.
         // Construct the 64-byte canonical format: [X25519_secret || Ed25519_secret]
@@ -946,7 +945,7 @@ fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<PrivateIden
 ///
 /// Requires a passphrase — the host app must provide it via a prompt.
 /// Less seamless than keychain but works on any platform.
-fn load_or_create_encrypted_file(paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
+async fn load_or_create_encrypted_file(paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
     #[cfg(feature = "mobile-identity")]
     {
         use styrene_identity::{IdentitySigner, KeyDeriver, KeyPurpose};
@@ -959,8 +958,9 @@ fn load_or_create_encrypted_file(paths: &PlatformPaths) -> anyhow::Result<Privat
         );
 
         // FileSigner auto-creates on first root_secret() if file doesn't exist
-        let root = tokio::runtime::Handle::current()
-            .block_on(signer.root_secret())
+        let root = signer
+            .root_secret()
+            .await
             .map_err(|e| anyhow::anyhow!("encrypted file access: {e}"))?;
 
         if !identity_path.exists() {

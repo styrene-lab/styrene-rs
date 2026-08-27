@@ -114,7 +114,7 @@ pub struct ContactEntry {
 #[derive(uniffi::Object)]
 pub struct MobileNode {
     inner: Mutex<Option<Arc<styrened::mobile::MobileNode>>>,
-    rt: tokio::runtime::Handle,
+    rt: tokio::runtime::Runtime,
 }
 
 impl MobileNode {
@@ -128,6 +128,30 @@ impl MobileNode {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shutdown_allows_owned_runtime_to_drop() {
+        let root = tempfile::tempdir().expect("create mobile test directory");
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config").to_string_lossy().into_owned(),
+            data_dir: root.path().join("data").to_string_lossy().into_owned(),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("ffi lifecycle".into()),
+            identity_backend: Some("plaintext_file".into()),
+            interfaces: Vec::new(),
+            enable_rnode_channel: false,
+        })
+        .expect("boot mobile node");
+
+        node.shutdown();
+        drop(node);
+    }
+}
+
 #[uniffi::export]
 impl MobileNode {
     /// Boot the daemon in-process. Call once on app launch.
@@ -138,8 +162,6 @@ impl MobileNode {
             .enable_all()
             .build()
             .map_err(|e| MobileError::Boot { msg: format!("runtime: {e}") })?;
-
-        let handle = rt.handle().clone();
 
         let identity_backend = match config.identity_backend.as_deref() {
             Some("encrypted_file") => styrened::mobile::IdentityBackend::EncryptedFile,
@@ -173,10 +195,7 @@ impl MobileNode {
             .block_on(styrened::mobile::MobileNode::boot(inner_config))
             .map_err(|e| MobileError::Boot { msg: e.to_string() })?;
 
-        // Keep runtime alive for process lifetime
-        std::mem::forget(rt);
-
-        Ok(Arc::new(Self { inner: Mutex::new(Some(Arc::new(node))), rt: handle }))
+        Ok(Arc::new(Self { inner: Mutex::new(Some(Arc::new(node))), rt }))
     }
 
     /// Poll the propagation hub for queued messages.

@@ -23,7 +23,7 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 hex.workspace = true
 
 [features]
-default = ["android"]
+default = []
 android = ["styrened/mobile-identity"]
 ios = ["styrened/mobile-keychain"]
 bindgen = ["uniffi/cli"]
@@ -35,6 +35,9 @@ required-features = ["bindgen"]
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
