@@ -248,6 +248,10 @@ check-mobile-identity:
 check-ffi:
     cargo check -p styrene-mobile-ffi
 
+# Install Rust targets used by the iOS device and universal simulator builds
+ios-targets:
+    rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+
 # Build iOS static library (requires Xcode + iOS SDK)
 build-ios:
     cargo build -p styrened --no-default-features --features mobile-keychain \
@@ -261,7 +265,17 @@ build-ios-sim:
 # Build iOS FFI bridge (static library for Swift)
 build-ios-ffi:
     cargo build -p styrene-mobile-ffi \
+        --no-default-features --features ios \
         --target aarch64-apple-ios --release
+
+# Build iOS simulator FFI bridges
+build-ios-sim-ffi:
+    cargo build -p styrene-mobile-ffi \
+        --no-default-features --features ios \
+        --target aarch64-apple-ios-sim --release
+    cargo build -p styrene-mobile-ffi \
+        --no-default-features --features ios \
+        --target x86_64-apple-ios --release
 
 # Build Android library (requires cargo-ndk + NDK)
 build-android:
@@ -275,10 +289,11 @@ build-android-ffi:
 
 # Generate Swift bindings from UniFFI
 gen-swift: build-ios-ffi
-    cargo run -p uniffi-bindgen -- generate \
+    cargo run -p styrene-mobile-ffi --no-default-features --features ios,bindgen \
+        --bin styrene-uniffi-bindgen -- generate \
         --library target/aarch64-apple-ios/release/libstyrene_mobile_ffi.a \
         --language swift \
-        --out-dir bindings/swift/Sources/StyreneMobile/
+        --out-dir target/ios-bindings
 
 # Generate Kotlin bindings from UniFFI
 gen-kotlin:
@@ -294,8 +309,41 @@ screenshot-dx:
     @echo "View: open /tmp/styrene-dx-screenshot.png"
 
 # Full iOS build: compile + generate Swift bindings
-mobile-ios: build-ios-ffi gen-swift
-    @echo "iOS build complete — Swift bindings in bindings/swift/"
+mobile-ios: ios-targets
+    ./scripts/build-ios-ffi.sh
+    @echo "iOS native artifacts are ready for the Xcode project"
+
+# Build and link the iOS app for a simulator without signing
+ios-simulator: mobile-ios
+    xcodebuild \
+        -project ios/StyreneMobile.xcodeproj \
+        -scheme StyreneMobile \
+        -configuration Debug \
+        -sdk iphonesimulator \
+        -destination 'generic/platform=iOS Simulator' \
+        -derivedDataPath target/ios-derived-data \
+        CODE_SIGNING_ALLOWED=NO \
+        build
+
+# Generate native artifacts and open the app in Xcode for USB deployment
+ios-open: mobile-ios
+    open ios/StyreneMobile.xcodeproj
+
+# Build, sign, and install on a connected iPhone
+ios-install device team: mobile-ios
+    xcodebuild \
+        -project ios/StyreneMobile.xcodeproj \
+        -scheme StyreneMobile \
+        -configuration Debug \
+        -destination 'id={{ device }}' \
+        -derivedDataPath target/ios-device-derived-data \
+        DEVELOPMENT_TEAM='{{ team }}' \
+        CODE_SIGN_STYLE=Automatic \
+        -allowProvisioningUpdates \
+        build
+    xcrun devicectl device install app \
+        --device '{{ device }}' \
+        target/ios-device-derived-data/Build/Products/Debug-iphoneos/StyreneMobile.app
 
 # Full Android build: compile + generate Kotlin bindings
 mobile-android: build-android-ffi gen-kotlin
@@ -454,7 +502,7 @@ clean:
 
 # Clean mobile binding outputs
 clean-bindings:
-    rm -rf bindings/swift/Sources bindings/kotlin/src
+    rm -rf bindings/swift/Sources bindings/kotlin/src ios/Generated ios/Frameworks/StyreneMobileFFI.xcframework
 
 # ─── Release ───────────────────────────────────────────────────────────────
 
