@@ -21,10 +21,11 @@ changelog_update = true
 git_release_enable = true
 git_tag_enable = true
 
+# Re-enable after a controlled publish establishes a packageable baseline.
 [[package]]
 name = "styrene-forge"
-publish = true
-release = true
+publish = false
+release = false
 changelog_update = true
 git_release_enable = true
 git_tag_enable = true
@@ -45,10 +46,11 @@ changelog_update = true
 git_release_enable = true
 git_tag_enable = true
 
+# Re-enable after a controlled publish establishes a packageable baseline.
 [[package]]
 name = "styrene-secrets"
-publish = true
-release = true
+publish = false
+release = false
 changelog_update = true
 git_release_enable = true
 git_tag_enable = true
