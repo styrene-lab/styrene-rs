@@ -15,6 +15,7 @@ pub mod identity_ext;
 pub mod iface;
 pub(crate) mod ratchet_store;
 pub mod receipt;
+pub mod request;
 pub mod resource;
 pub mod storage;
 pub mod time;

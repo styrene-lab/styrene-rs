@@ -29,6 +29,7 @@ impl Capability {
 
     // ── Monitor (20) ──────────────────────────────────────────
     pub const RPC_INBOX_READ: &str = "rpc.inbox_read";
+    pub const MESSAGING_HISTORY_READ: &str = "messaging.history.read";
     pub const WEB_READ: &str = "web.read";
     pub const DATALINK_ESTABLISH: &str = "datalink.establish";
     pub const DATALINK_SPEEDTEST: &str = "datalink.speedtest";
@@ -41,11 +42,23 @@ impl Capability {
     pub const RELAY_ACCEPT_PERMANENT: &str = "relay.accept_permanent";
     pub const RELAY_PRIORITIZE: &str = "relay.prioritize";
     pub const RELAY_BRIDGE: &str = "relay.bridge";
+    pub const NETWORK_ANNOUNCE: &str = "network.announce";
+    pub const NETWORK_PATH_REQUEST: &str = "network.path_request";
+    pub const NETWORK_PROBE: &str = "network.probe";
+    pub const NETWORK_LINK_OPEN: &str = "network.link_open";
+    pub const NETWORK_LINK_CLOSE: &str = "network.link_close";
+    pub const NETWORK_REQUEST: &str = "network.request";
+    pub const NETWORK_REQUEST_CANCEL: &str = "network.request_cancel";
+    pub const NETWORK_RESOURCE_CANCEL: &str = "network.resource_cancel";
+    pub const MESSAGING_MANAGE: &str = "messaging.manage";
+    pub const MESSAGING_LIFECYCLE: &str = "messaging.lifecycle";
 
     // ── Admin (40) ────────────────────────────────────────────
     pub const RPC_EXEC: &str = "rpc.exec";
     pub const RPC_REBOOT: &str = "rpc.reboot";
     pub const RPC_SELF_UPDATE: &str = "rpc.self_update";
+    pub const RPC_FLEET_APPLY: &str = "rpc.fleet_apply";
+    pub const POLICY_UPDATE: &str = "policy.update";
     pub const TERMINAL_FULL: &str = "terminal.full";
     pub const ADAPTER_PROVISION: &str = "adapter.provision";
     pub const RELAY_ADMIN: &str = "relay.admin";
@@ -87,6 +100,7 @@ pub const ALL_CAPABILITIES: &[&str] = &[
     Capability::RELAY_ACCEPT,
     // Monitor
     Capability::RPC_INBOX_READ,
+    Capability::MESSAGING_HISTORY_READ,
     Capability::WEB_READ,
     Capability::DATALINK_ESTABLISH,
     Capability::DATALINK_SPEEDTEST,
@@ -98,10 +112,22 @@ pub const ALL_CAPABILITIES: &[&str] = &[
     Capability::RELAY_ACCEPT_PERMANENT,
     Capability::RELAY_PRIORITIZE,
     Capability::RELAY_BRIDGE,
+    Capability::NETWORK_ANNOUNCE,
+    Capability::NETWORK_PATH_REQUEST,
+    Capability::NETWORK_PROBE,
+    Capability::NETWORK_LINK_OPEN,
+    Capability::NETWORK_LINK_CLOSE,
+    Capability::NETWORK_REQUEST,
+    Capability::NETWORK_REQUEST_CANCEL,
+    Capability::NETWORK_RESOURCE_CANCEL,
+    Capability::MESSAGING_MANAGE,
+    Capability::MESSAGING_LIFECYCLE,
     // Admin
     Capability::RPC_EXEC,
     Capability::RPC_REBOOT,
     Capability::RPC_SELF_UPDATE,
+    Capability::RPC_FLEET_APPLY,
+    Capability::POLICY_UPDATE,
     Capability::TERMINAL_FULL,
     Capability::ADAPTER_PROVISION,
     Capability::RELAY_ADMIN,
@@ -162,6 +188,7 @@ pub const MONITOR_CAPS: &[&str] = &[
     Capability::AETHER_REPORT,
     // Monitor
     Capability::RPC_INBOX_READ,
+    Capability::MESSAGING_HISTORY_READ,
     Capability::WEB_READ,
     Capability::DATALINK_ESTABLISH,
     Capability::DATALINK_SPEEDTEST,
@@ -188,6 +215,7 @@ pub const OPERATOR_CAPS: &[&str] = &[
     Capability::AETHER_REPORT,
     // Monitor
     Capability::RPC_INBOX_READ,
+    Capability::MESSAGING_HISTORY_READ,
     Capability::WEB_READ,
     Capability::DATALINK_ESTABLISH,
     Capability::DATALINK_SPEEDTEST,
@@ -199,6 +227,16 @@ pub const OPERATOR_CAPS: &[&str] = &[
     Capability::RELAY_ACCEPT_PERMANENT,
     Capability::RELAY_PRIORITIZE,
     Capability::RELAY_BRIDGE,
+    Capability::NETWORK_ANNOUNCE,
+    Capability::NETWORK_PATH_REQUEST,
+    Capability::NETWORK_PROBE,
+    Capability::NETWORK_LINK_OPEN,
+    Capability::NETWORK_LINK_CLOSE,
+    Capability::NETWORK_REQUEST,
+    Capability::NETWORK_REQUEST_CANCEL,
+    Capability::NETWORK_RESOURCE_CANCEL,
+    Capability::MESSAGING_MANAGE,
+    Capability::MESSAGING_LIFECYCLE,
     Capability::TUNNEL_ESTABLISH,
     Capability::TUNNEL_TEARDOWN,
     // Operator can delegate
@@ -228,6 +266,7 @@ pub const ADMIN_CAPS: &[&str] = &[
     Capability::AETHER_REPORT,
     // Monitor
     Capability::RPC_INBOX_READ,
+    Capability::MESSAGING_HISTORY_READ,
     Capability::WEB_READ,
     Capability::DATALINK_ESTABLISH,
     Capability::DATALINK_SPEEDTEST,
@@ -239,6 +278,16 @@ pub const ADMIN_CAPS: &[&str] = &[
     Capability::RELAY_ACCEPT_PERMANENT,
     Capability::RELAY_PRIORITIZE,
     Capability::RELAY_BRIDGE,
+    Capability::NETWORK_ANNOUNCE,
+    Capability::NETWORK_PATH_REQUEST,
+    Capability::NETWORK_PROBE,
+    Capability::NETWORK_LINK_OPEN,
+    Capability::NETWORK_LINK_CLOSE,
+    Capability::NETWORK_REQUEST,
+    Capability::NETWORK_REQUEST_CANCEL,
+    Capability::NETWORK_RESOURCE_CANCEL,
+    Capability::MESSAGING_MANAGE,
+    Capability::MESSAGING_LIFECYCLE,
     Capability::TUNNEL_ESTABLISH,
     Capability::TUNNEL_TEARDOWN,
     Capability::AETHER_DELEGATE,
@@ -246,6 +295,8 @@ pub const ADMIN_CAPS: &[&str] = &[
     Capability::RPC_EXEC,
     Capability::RPC_REBOOT,
     Capability::RPC_SELF_UPDATE,
+    Capability::RPC_FLEET_APPLY,
+    Capability::POLICY_UPDATE,
     Capability::TERMINAL_FULL,
     Capability::ADAPTER_PROVISION,
     Capability::RELAY_ADMIN,
@@ -336,5 +387,37 @@ mod tests {
     fn capabilities_for_blocked_is_empty() {
         assert!(capabilities_for_role(Role::Blocked).is_empty());
         assert!(capabilities_for_role(Role::None).is_empty());
+    }
+
+    #[test]
+    fn network_mutations_require_operator_tier() {
+        let mutations = [
+            Capability::NETWORK_ANNOUNCE,
+            Capability::NETWORK_PATH_REQUEST,
+            Capability::NETWORK_PROBE,
+            Capability::NETWORK_LINK_OPEN,
+            Capability::NETWORK_LINK_CLOSE,
+            Capability::NETWORK_REQUEST,
+            Capability::NETWORK_REQUEST_CANCEL,
+            Capability::NETWORK_RESOURCE_CANCEL,
+        ];
+        for capability in mutations {
+            assert!(!PEER_CAPS.contains(&capability));
+            assert!(!MONITOR_CAPS.contains(&capability));
+            assert!(OPERATOR_CAPS.contains(&capability));
+            assert!(ADMIN_CAPS.contains(&capability));
+            assert!(ALL_CAPABILITIES.contains(&capability));
+        }
+    }
+
+    #[test]
+    fn fleet_apply_and_policy_update_require_admin_tier() {
+        for capability in [Capability::RPC_FLEET_APPLY, Capability::POLICY_UPDATE] {
+            assert!(!PEER_CAPS.contains(&capability));
+            assert!(!MONITOR_CAPS.contains(&capability));
+            assert!(!OPERATOR_CAPS.contains(&capability));
+            assert!(ADMIN_CAPS.contains(&capability));
+            assert!(ALL_CAPABILITIES.contains(&capability));
+        }
     }
 }

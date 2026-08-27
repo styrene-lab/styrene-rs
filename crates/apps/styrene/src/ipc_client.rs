@@ -13,12 +13,19 @@ use tokio::net::UnixStream;
 use tokio::time::{timeout, Duration};
 
 use styrene_ipc::types::{
-    ConversationInfo, DaemonStatusInfo, DeviceInfo, IdentityInfo, MessageInfo,
+    ActiveCapabilitiesInfo, ConversationInfo, DaemonStatusInfo, DegradedCapabilityInfo, DeviceInfo,
+    IdentityInfo, MessageInfo, StandardPropagationSnapshot,
 };
 use styrene_ipc_server::wire::{self, Frame, MessageType, REQUEST_ID_SIZE};
 
 /// Default timeout for RPC calls.
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub struct CliSendOutcome {
+    pub message_id: String,
+    pub disposition: String,
+    pub paper_uri: Option<String>,
+}
 
 /// Combined async read+write trait.
 trait AsyncStream: AsyncRead + AsyncWrite + Send + Unpin {}
@@ -129,6 +136,14 @@ impl DaemonClient {
         parse_status(&frame.payload)
     }
 
+    pub async fn standard_propagation(&mut self) -> Result<StandardPropagationSnapshot, String> {
+        let frame = self.rpc(MessageType::QueryStandardPropagation, &HashMap::new()).await?;
+        let encoded = rmp_serde::to_vec_named(&frame.payload)
+            .map_err(|error| format!("encode standard propagation snapshot: {error}"))?;
+        rmp_serde::from_slice(&encoded)
+            .map_err(|error| format!("decode standard propagation snapshot: {error}"))
+    }
+
     pub async fn devices(&mut self, styrene_only: bool) -> Result<Vec<DeviceInfo>, String> {
         let mut p = HashMap::new();
         p.insert("styrene_only".into(), MpValue::Boolean(styrene_only));
@@ -170,6 +185,44 @@ impl DaemonClient {
         self.with_timeout(30);
         let frame = self.rpc(MessageType::CmdSendChat, &p).await?;
         Ok(mp_str(&frame.payload, "message_id"))
+    }
+
+    pub async fn send_chat_outcome(
+        &mut self,
+        destination: &str,
+        content: &str,
+        title: Option<&str>,
+        delivery_method: &str,
+    ) -> Result<CliSendOutcome, String> {
+        let mut payload = HashMap::new();
+        payload.insert("peer_hash".into(), MpValue::String(destination.into()));
+        payload.insert("content".into(), MpValue::String(content.into()));
+        payload.insert("delivery_method".into(), MpValue::String(delivery_method.into()));
+        if let Some(title) = title {
+            payload.insert("title".into(), MpValue::String(title.into()));
+        }
+        self.with_timeout(30);
+        let frame = self.rpc(MessageType::CmdSendChatOutcome, &payload).await?;
+        let value = frame.payload.get("outcome").cloned().ok_or("send response omitted outcome")?;
+        let encoded = rmp_serde::to_vec_named(&value)
+            .map_err(|error| format!("encode send outcome: {error}"))?;
+        let outcome: styrene_ipc::types::SendChatOutcome = rmp_serde::from_slice(&encoded)
+            .map_err(|error| format!("decode send outcome: {error}"))?;
+        if outcome.message_id.is_empty() || outcome.message.id != outcome.message_id {
+            return Err("send response omitted its authoritative message projection".into());
+        }
+        let disposition = match outcome.disposition {
+            styrene_ipc::types::SendChatDisposition::Accepted => "accepted",
+            styrene_ipc::types::SendChatDisposition::Failed => "failed",
+            styrene_ipc::types::SendChatDisposition::PaperExported => "paper_exported",
+            styrene_ipc::types::SendChatDisposition::Unknown => "unknown",
+            _ => "unknown",
+        };
+        Ok(CliSendOutcome {
+            message_id: outcome.message_id,
+            disposition: disposition.into(),
+            paper_uri: outcome.paper_uri,
+        })
     }
 
     pub async fn announce(&mut self) -> Result<bool, String> {
@@ -384,9 +437,49 @@ fn parse_status(p: &HashMap<String, MpValue>) -> Result<DaemonStatusInfo, String
     s.interface_count = mp_u64(p, "interface_count") as u32;
     s.hub_status = p.get("hub_status").and_then(|v| v.as_str()).map(|s| s.to_string());
     s.propagation_enabled = mp_bool(p, "propagation_enabled");
+    s.standard_lxmf_propagation_destination_registered =
+        mp_bool(p, "standard_lxmf_propagation_destination_registered");
+    s.standard_lxmf_propagation_active = mp_bool(p, "standard_lxmf_propagation_active");
     s.transport_enabled = mp_bool(p, "transport_enabled");
     s.active_links = mp_u64(p, "active_links") as u32;
+    s.active_capabilities = p.get("active_capabilities").and_then(parse_capabilities);
+    s.connection_generation = p.get("connection_generation").and_then(MpValue::as_u64);
     Ok(s)
+}
+
+fn parse_capabilities(value: &MpValue) -> Option<ActiveCapabilitiesInfo> {
+    let map = value.as_map()?;
+    let item = |key: &str| map.iter().find(|(k, _)| k.as_str() == Some(key)).map(|(_, v)| v);
+    let strings = |key: &str| {
+        item(key)?
+            .as_array()?
+            .iter()
+            .map(|value| value.as_str().map(ToOwned::to_owned))
+            .collect::<Option<Vec<_>>>()
+    };
+    let degraded = item("degraded")?
+        .as_array()?
+        .iter()
+        .map(|value| {
+            let map = value.as_map()?;
+            let get = |key: &str| {
+                map.iter()
+                    .find(|(k, _)| k.as_str() == Some(key))
+                    .and_then(|(_, value)| value.as_str())
+                    .map(ToOwned::to_owned)
+            };
+            let mut degraded = DegradedCapabilityInfo::default();
+            degraded.id = get("id")?;
+            degraded.reason = get("reason")?;
+            Some(degraded)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let mut capabilities = ActiveCapabilitiesInfo::default();
+    capabilities.version = u16::try_from(item("version")?.as_u64()?).ok()?;
+    capabilities.runtime = strings("runtime")?;
+    capabilities.degraded = degraded;
+    capabilities.authorized_operations = strings("authorized_operations")?;
+    Some(capabilities)
 }
 
 fn parse_devices(p: &HashMap<String, MpValue>) -> Result<Vec<DeviceInfo>, String> {
@@ -422,6 +515,10 @@ fn parse_device_value(v: &MpValue) -> Option<DeviceInfo> {
     dev.status = get("status");
     dev.is_styrene_node = get_bool("is_styrene_node");
     dev.lxmf_destination_hash = get("lxmf_destination_hash");
+    dev.standard_lxmf_propagation_active = m
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("standard_lxmf_propagation_active"))
+        .and_then(|(_, value)| value.as_bool());
     Some(dev)
 }
 
@@ -465,6 +562,16 @@ fn parse_conversations(p: &HashMap<String, MpValue>) -> Result<Vec<ConversationI
             c.last_message_timestamp = get_i64("last_message_timestamp");
             c.unread_count = get_u32("unread_count");
             c.message_count = get_u32("message_count");
+            c.pinned = m
+                .iter()
+                .find(|(k, _)| k.as_str() == Some("pinned"))
+                .and_then(|(_, v)| v.as_bool())
+                .unwrap_or(false);
+            c.muted = m
+                .iter()
+                .find(|(k, _)| k.as_str() == Some("muted"))
+                .and_then(|(_, v)| v.as_bool())
+                .unwrap_or(false);
             Some(c)
         })
         .collect())

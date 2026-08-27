@@ -13,7 +13,10 @@ use crate::transport::error::RnsError;
 use alloc::string::String;
 
 use super::stream_iface::{run_hdlc_rx_loop, run_hdlc_tx_loop};
-use super::{Interface, InterfaceContext};
+use super::{
+    Interface, InterfaceContext, InterfaceDescriptor, InterfaceEndpoint, InterfaceKind,
+    InterfaceMode, InterfaceState,
+};
 
 const CONNECT_RETRY_DELAY: Duration = Duration::from_secs(5);
 const SOCKET_KEEPALIVE_IDLE: Duration = Duration::from_secs(10);
@@ -67,13 +70,15 @@ impl TcpClient {
         let addr = { context.inner.lock().unwrap().addr.clone() };
         let iface_address = context.channel.address;
         let mut stream = { context.inner.lock().unwrap().stream.take() };
+        let accepted = stream.is_some();
+        let runtime = context.runtime.clone();
 
         let (rx_channel, tx_channel) = context.channel.split();
         let tx_channel = Arc::new(tokio::sync::Mutex::new(tx_channel));
 
         let mut running = true;
         loop {
-            if !running || context.cancel.is_cancelled() {
+            if !running || context.cancel.is_cancelled() || iface_stop.is_cancelled() {
                 break;
             }
 
@@ -83,6 +88,8 @@ impl TcpClient {
                     Ok(s)
                 }
                 None => {
+                    runtime.clear_endpoints();
+                    runtime.set_state(InterfaceState::Connecting);
                     if tx_diag_enabled() {
                         crate::transport_diagnostic!(
                             "[tp-diag] tcp_client connect_attempt iface={} addr={}",
@@ -95,6 +102,7 @@ impl TcpClient {
             };
 
             if stream.is_err() {
+                runtime.set_state(InterfaceState::Retrying);
                 log::info!("tcp_client: couldn't connect to <{}>", addr);
                 if tx_diag_enabled() {
                     crate::transport_diagnostic!(
@@ -103,13 +111,24 @@ impl TcpClient {
                         addr
                     );
                 }
-                tokio::time::sleep(CONNECT_RETRY_DELAY).await;
+                tokio::select! {
+                    _ = context.cancel.cancelled() => break,
+                    _ = iface_stop.cancelled() => break,
+                    _ = tokio::time::sleep(CONNECT_RETRY_DELAY) => {}
+                }
                 continue;
             }
 
             let cancel = context.cancel.clone();
             let stop = CancellationToken::new();
             let stream = stream.unwrap();
+            if let Ok(local_addr) = stream.local_addr() {
+                runtime.set_local_endpoint(InterfaceEndpoint::Socket(local_addr));
+            }
+            if let Ok(remote_addr) = stream.peer_addr() {
+                runtime.set_remote_endpoint(InterfaceEndpoint::Socket(remote_addr));
+            }
+            runtime.set_state(InterfaceState::Connected);
             if let Err(error) = configure_socket_liveness(&stream) {
                 log::warn!("tcp_client: failed to configure keepalive for <{}>: {}", addr, error);
             }
@@ -153,6 +172,7 @@ impl TcpClient {
             };
 
             tokio::select! {
+                _ = iface_stop.cancelled() => {}
                 result = rx_task => {
                     if tx_diag_enabled() {
                         crate::transport_diagnostic!(
@@ -179,6 +199,17 @@ impl TcpClient {
                 }
             }
             stop.cancel();
+            runtime.set_state(if accepted {
+                InterfaceState::Closed
+            } else {
+                InterfaceState::Retrying
+            });
+            if iface_stop.is_cancelled() {
+                break;
+            }
+            if !accepted {
+                runtime.clear_endpoints();
+            }
 
             log::info!("tcp_client: disconnected from <{}>", addr);
             if tx_diag_enabled() {
@@ -191,12 +222,22 @@ impl TcpClient {
         }
 
         iface_stop.cancel();
+        runtime.set_state(InterfaceState::Closed);
     }
 }
 
 impl Interface for TcpClient {
     fn mtu() -> usize {
         2048
+    }
+
+    fn descriptor(&self) -> InterfaceDescriptor {
+        InterfaceDescriptor {
+            kind: InterfaceKind::TcpClient,
+            mode: InterfaceMode::Full,
+            local_endpoint: None,
+            remote_endpoint: None,
+        }
     }
 }
 

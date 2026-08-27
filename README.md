@@ -138,7 +138,7 @@ Important workspace components:
 
 RNS and LXMF interoperability is validated against committed cross-language fixtures. Upstream RNS/LXMF projects are reviewed and changes are manually adopted rather than merged across the heavily restructured tree.
 
-The archived Python implementation is not the product architecture or release target. Rolling compatibility among Styrene Rust nodes is the maintained Styrene application contract; upstream protocol compatibility remains covered where the RNS/LXMF specifications require it.
+Rolling compatibility among Styrene Rust nodes is the maintained Styrene application contract. Upstream protocol compatibility remains covered where the RNS/LXMF specifications require it.
 
 See:
 

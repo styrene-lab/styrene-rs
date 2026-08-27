@@ -19,7 +19,7 @@ pub struct InterfaceRecord {
     pub name: Option<String>,
 }
 
-/// LXMF propagation node state.
+/// Existing Styrene-specific CBOR propagation-service state.
 #[derive(Debug, Clone, Default)]
 pub struct PropagationState {
     pub enabled: bool,

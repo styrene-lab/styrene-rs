@@ -241,6 +241,20 @@ impl FleetService {
                         info.peer_hash = v.get("peer_hash")?.as_str()?.to_string();
                         info.unread_count = v.get("unread_count")?.as_u64()? as u32;
                         info.message_count = v.get("message_count")?.as_u64()? as u32;
+                        info.peer_name = v
+                            .get("peer_name")
+                            .and_then(|value| value.as_str())
+                            .map(ToOwned::to_owned);
+                        info.last_message_timestamp =
+                            v.get("last_message_timestamp").and_then(|value| value.as_i64());
+                        info.last_message_content = v
+                            .get("last_message_content")
+                            .and_then(|value| value.as_str())
+                            .map(ToOwned::to_owned);
+                        info.pinned =
+                            v.get("pinned").and_then(|value| value.as_bool()).unwrap_or(false);
+                        info.muted =
+                            v.get("muted").and_then(|value| value.as_bool()).unwrap_or(false);
                         Some(info)
                     })
                     .collect()

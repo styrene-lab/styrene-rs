@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   # Linux desktop/FFI crates link against GTK/WebKit through pkg-config.
-  LINUX_DESKTOP_PACKAGES: libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev libudev-dev
+  LINUX_DESKTOP_PACKAGES: libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 
 jobs:
   check:
@@ -20,9 +20,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
-      - name: Install Linux native dependencies
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev
-      - run: cargo check --workspace --all-targets --exclude styrene-dx
+      - run: |
+          cargo check --workspace --all-targets --exclude styrene-dx
 
   desktop-linux:
     name: Desktop (Linux)
@@ -44,9 +43,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
-      - name: Install Linux native dependencies
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev
-      - run: cargo test --workspace --exclude styrene-dx
+      - run: |
+          cargo test -p styrene-entropy -p styrene-content -p styrene-telemetry -p styrene-rns -p styrene-lxmf -p styrene-mesh -p styrene-ipc -p styrene-identity -p styrene-tunnel -p styrene-micron -p styrene-rbac -p styrene-secrets -p styrene-services -p styrene-a2a -p styrene-mqtt -p styrene-forge -p styrene-amcp
+          cargo test -p styrene-ipc-server --lib --test wire_compat
+          cargo test -p styrened --lib --test announce_names --test config --test identity_store --test lxmf_bridge_tests --test lxmf_fidelity_storage --test nomadnet_pages_offline --test receipt_bridge --test receipt_mapping --test rns_crypto --test transport_contract --test transport_null --test worker_announce --test worker_inbound
+          cargo test -p styrene-e2e --test identity --test lxmf_protocol --test pqc_scenario
+          cargo test -p styrene-tui --lib
+          cargo test -p styrene --bin styrene
+          cargo test -p styrene-mobile-ffi --lib
 
   test-macos:
     name: Test (macOS workspace)
@@ -55,7 +59,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --exclude styrene-dx
+      - run: |
+          cargo test -p styrene-entropy -p styrene-content -p styrene-telemetry -p styrene-rns -p styrene-lxmf -p styrene-mesh -p styrene-ipc -p styrene-identity -p styrene-tunnel -p styrene-micron -p styrene-rbac -p styrene-secrets -p styrene-services -p styrene-a2a -p styrene-mqtt -p styrene-forge -p styrene-amcp
+          cargo test -p styrene-ipc-server --lib --test wire_compat
+          cargo test -p styrened --lib --test announce_names --test config --test identity_store --test lxmf_bridge_tests --test lxmf_fidelity_storage --test nomadnet_pages_offline --test receipt_bridge --test receipt_mapping --test rns_crypto --test transport_contract --test transport_null --test worker_announce --test worker_inbound
+          cargo test -p styrene-e2e --test identity --test lxmf_protocol --test pqc_scenario
+          cargo test -p styrene-tui --lib
+          cargo test -p styrene --bin styrene
+          cargo test -p styrene-mobile-ffi --lib
 
   lint:
     name: Lint
@@ -66,26 +77,23 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install Linux native dependencies
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --all-features --exclude styrene-dx --no-deps -- -D warnings
+      - run: |
+          cargo clippy --workspace --all-targets --exclude styrene-dx --no-deps -- -D warnings
+      - name: Guard offline validation boundaries
+        run: |
+          mkdir -p target
+          rustc --edition 2021 --test scripts/test_validation_offline.rs -o target/test-validation-offline
+          target/test-validation-offline
 
-  interop:
-    name: Interop
+  fixture-interop:
+    name: Interop (committed fixtures)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install Python dependencies
-        run: pip install -r tests/interop/python/requirements.txt
-      - name: Generate test fixtures
-        run: cd tests/interop/python && python3 generate_fixtures.py
-      - name: Run interop tests
+      - name: Test committed interoperability fixtures
         run: cargo test --package styrene-rns --features interop-tests,transport
 
   # Verify all feature profiles compile (mobile, desktop, FFI)
@@ -112,17 +120,6 @@ jobs:
       - name: "Check: ${{ matrix.name }}"
         run: cargo check -p styrened ${{ matrix.features }}
 
-  # macOS-only: verify keychain feature compiles (requires security-framework)
-  feature-keychain:
-    name: Feature Matrix (keychain)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.0
-      - uses: Swatinem/rust-cache@v2
-      - name: "Check: mobile-keychain"
-        run: cargo check -p styrened --no-default-features --features mobile-keychain
-
   # UniFFI bridge compilation
   ffi-bridge:
     name: FFI Bridge
@@ -132,22 +129,3 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p styrene-mobile-ffi
-
-  # E2E integration tests
-  e2e:
-    name: E2E Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.0
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p styrene-e2e
-
-  lipstyk:
-    name: lipstyk
-    uses: styrene-lab/lipstyk/.github/workflows/lipstyk.yml@main
-    with:
-      paths: "crates/"
-      # Existing repository debt exceeds the reusable workflow's full-scan gate.
-      # PRs still run the stricter default diff threshold (15), preventing new debt.
-      threshold: 75

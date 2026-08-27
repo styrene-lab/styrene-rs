@@ -4,11 +4,15 @@
 //! receivers that never produce events. `is_connected()` returns `false`.
 //! Eliminates `Option<Arc<dyn MeshTransport>>` throughout services.
 
-use super::mesh_transport::{MeshTransport, TransportError, TransportLifecycleEvent};
+use super::mesh_transport::{
+    MeshTransport, RequestLifecycleEvent, TransportError, TransportLifecycleEvent,
+};
 use rns_core::destination::DestinationDesc;
 use rns_core::hash::AddressHash;
 use rns_core::identity::Identity;
-use rns_core::transport::core_transport::{AnnounceEvent, ReceivedData, SendPacketOutcome};
+use rns_core::transport::core_transport::{
+    path_table::RouteEvent, AnnounceEvent, ReceivedData, SendPacketOutcome,
+};
 use rns_core::transport::delivery::LinkSendResult;
 use rns_core::transport::resource::ResourceEvent;
 use std::time::Duration;
@@ -19,13 +23,19 @@ pub struct NullTransport {
     /// Lifecycle channel kept alive so `subscribe_lifecycle()` returns a valid receiver.
     _lifecycle_tx: broadcast::Sender<TransportLifecycleEvent>,
     _resource_tx: broadcast::Sender<ResourceEvent>,
+    _packet_receipt_tx: broadcast::Sender<[u8; 32]>,
+    _route_tx: broadcast::Sender<RouteEvent>,
+    _request_tx: broadcast::Sender<RequestLifecycleEvent>,
 }
 
 impl NullTransport {
     pub fn new() -> Self {
         let (_lifecycle_tx, _) = broadcast::channel(1);
         let (_resource_tx, _) = broadcast::channel(1);
-        Self { _lifecycle_tx, _resource_tx }
+        let (_packet_receipt_tx, _) = broadcast::channel(1);
+        let (_route_tx, _) = broadcast::channel(1);
+        let (_request_tx, _) = broadcast::channel(1);
+        Self { _lifecycle_tx, _resource_tx, _packet_receipt_tx, _route_tx, _request_tx }
     }
 }
 
@@ -88,6 +98,18 @@ impl MeshTransport for NullTransport {
         self._resource_tx.subscribe()
     }
 
+    fn subscribe_packet_receipts(&self) -> broadcast::Receiver<[u8; 32]> {
+        self._packet_receipt_tx.subscribe()
+    }
+
+    fn subscribe_routes(&self) -> broadcast::Receiver<RouteEvent> {
+        self._route_tx.subscribe()
+    }
+
+    fn subscribe_request_observations(&self) -> broadcast::Receiver<RequestLifecycleEvent> {
+        self._request_tx.subscribe()
+    }
+
     async fn query_path(&self, _dest: &AddressHash) -> Option<(u8, AddressHash)> {
         None
     }
@@ -100,8 +122,16 @@ impl MeshTransport for NullTransport {
         AddressHash::new([0u8; 16])
     }
 
+    fn runtime_identity(&self) -> Option<(AddressHash, AddressHash)> {
+        None
+    }
+
     fn is_connected(&self) -> bool {
         false
+    }
+
+    async fn interface_snapshots(&self) -> Vec<rns_core::transport::iface::InterfaceSnapshot> {
+        Vec::new()
     }
 
     async fn shutdown(&self) -> Result<(), TransportError> {

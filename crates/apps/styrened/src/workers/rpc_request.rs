@@ -382,7 +382,7 @@ impl ProtocolHandler for RpcRequestHandler {
                 }
             }
             StyreneMessageType::ConfigUpdate => {
-                if !self.policy.has_capability(source, Capability::RPC_CONFIG_UPDATE) {
+                if !self.policy.has_capability(source, Capability::RPC_FLEET_APPLY) {
                     crate::daemon_diagnostic!(
                         "[rpc-request] DENIED config_update from {} — insufficient privileges",
                         source
@@ -394,7 +394,7 @@ impl ProtocolHandler for RpcRequestHandler {
                             "verified": false,
                             "exit_code": -1,
                             "stdout": "",
-                            "stderr": format!("permission denied: caller lacks {} capability", Capability::RPC_CONFIG_UPDATE),
+                            "stderr": format!("permission denied: caller lacks {} capability", Capability::RPC_FLEET_APPLY),
                         })),
                     )
                 } else {

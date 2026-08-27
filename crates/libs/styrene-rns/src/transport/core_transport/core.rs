@@ -3,12 +3,37 @@ use super::*;
 
 impl Transport {
     pub fn new(config: TransportConfig) -> Self {
+        Self::new_with_clocks(
+            config,
+            Arc::new(SystemRequestClock::new()),
+            Arc::new(SystemMonotonicClock),
+        )
+    }
+
+    pub fn new_with_request_clock(config: TransportConfig, clock: Arc<dyn RequestClock>) -> Self {
+        Self::new_with_clocks(config, clock, Arc::new(SystemMonotonicClock))
+    }
+
+    pub fn new_with_protocol_clock(
+        config: TransportConfig,
+        protocol_clock: Arc<dyn MonotonicClock>,
+    ) -> Self {
+        Self::new_with_clocks(config, Arc::new(SystemRequestClock::new()), protocol_clock)
+    }
+
+    fn new_with_clocks(
+        config: TransportConfig,
+        request_clock: Arc<dyn RequestClock>,
+        protocol_clock: Arc<dyn MonotonicClock>,
+    ) -> Self {
         let (announce_tx, _) = tokio::sync::broadcast::channel(16);
+        let (route_tx, _) = tokio::sync::broadcast::channel(64);
         let (link_in_event_tx, _) = tokio::sync::broadcast::channel(16);
         let (link_out_event_tx, _) = tokio::sync::broadcast::channel(16);
         let (received_data_tx, _) = tokio::sync::broadcast::channel(16);
         let (iface_messages_tx, _) = tokio::sync::broadcast::channel(16);
         let (resource_events_tx, _) = tokio::sync::broadcast::channel(16);
+        let (server_request_tx, _) = tokio::sync::broadcast::channel(16);
 
         let iface_manager = InterfaceManager::new(128);
 
@@ -59,23 +84,32 @@ impl Transport {
             announce_limits: AnnounceLimits::new(),
             out_links: HashMap::new(),
             in_links: HashMap::new(),
+            terminal_link_history: VecDeque::new(),
             packet_cache: Mutex::new(PacketCache::new()),
             path_requests,
             announce_tx,
+            route_tx,
             link_in_event_tx: link_in_event_tx.clone(),
             received_data_tx: received_data_tx.clone(),
             ratchet_store,
-            resource_manager: ResourceManager::new_with_config(
+            resource_manager: ResourceManager::new_with_config_and_clock(
                 Duration::from_secs(resource_retry_interval_secs),
                 resource_retry_limit,
+                protocol_clock.clone(),
             ),
             resource_events_tx: resource_events_tx.clone(),
+            server_request_tx: server_request_tx.clone(),
+            request_tracker: RequestTracker::new(
+                crate::transport::request::DEFAULT_REQUEST_RECEIPT_CAPACITY,
+                request_clock,
+            ),
+            protocol_clock: protocol_clock.clone(),
             fixed_dest_path_requests: path_request_dest,
             cancel: cancel.clone(),
             receipt_handler: None,
         }));
 
-        {
+        let manager_task = {
             let handler = handler.clone();
             tokio::spawn(manage_transport(handler, rx_receiver, iface_messages_tx.clone()))
         };
@@ -87,9 +121,10 @@ impl Transport {
                 loop {
                     match link_rx.recv().await {
                         Ok(event) => {
-                            if let LinkEvent::Data(payload) = event.event {
+                            if let LinkEvent::Data(ref payload) = event.event {
                                 let _ = received_data_tx.send(ReceivedData {
                                     destination: event.address_hash,
+                                    link_id: Some(event.id),
                                     data: PacketDataBuffer::new_from_slice(payload.as_slice()),
                                     payload_mode: ReceivedPayloadMode::FullWire,
                                     ratchet_used: false,
@@ -119,16 +154,23 @@ impl Transport {
             received_data_tx,
             iface_messages_tx,
             resource_events_tx,
+            server_request_tx,
             handler,
             cancel,
+            manager_task: StdMutex::new(Some(manager_task)),
         }
     }
 
     pub async fn outbound(&self, packet: &Packet) {
+        let destination = packet.destination;
         let (packet, maybe_iface) = self.handler.lock().await.path_table.handle_packet(packet);
 
         if let Some(iface) = maybe_iface {
-            self.send_direct(iface, packet).await;
+            let routed = packet.header.header_type == HeaderType::Type2;
+            let dispatch = self.send_direct(iface, packet).await;
+            if routed && dispatch.sent_ifaces > 0 {
+                self.handler.lock().await.path_table.refresh(&destination);
+            }
             log::trace!("Sent outbound packet to {}", iface);
         }
         if maybe_iface.is_none() {
@@ -161,6 +203,21 @@ impl Transport {
             .collect()
     }
 
+    pub async fn path_snapshot(
+        &self,
+        dest: &AddressHash,
+    ) -> Option<crate::transport::core_transport::path_table::PathSnapshot> {
+        let handler = self.handler.lock().await;
+        handler.path_table.snapshot(dest, std::time::Instant::now())
+    }
+
+    pub async fn path_snapshots(
+        &self,
+    ) -> Vec<crate::transport::core_transport::path_table::PathSnapshot> {
+        let handler = self.handler.lock().await;
+        handler.path_table.snapshots(std::time::Instant::now())
+    }
+
     pub fn iface_manager(&self) -> Arc<Mutex<InterfaceManager>> {
         self.iface_manager.clone()
     }
@@ -173,6 +230,10 @@ impl Transport {
         self.iface_manager.lock().await.interface_stats()
     }
 
+    pub async fn interface_snapshots(&self) -> Vec<crate::transport::iface::InterfaceSnapshot> {
+        self.iface_manager.lock().await.interface_snapshots()
+    }
+
     pub fn iface_rx(&self) -> broadcast::Receiver<RxMessage> {
         self.iface_messages_tx.subscribe()
     }
@@ -183,6 +244,10 @@ impl Transport {
 
     pub async fn recv_announces(&self) -> broadcast::Receiver<AnnounceEvent> {
         self.handler.lock().await.announce_tx.subscribe()
+    }
+
+    pub async fn route_events(&self) -> broadcast::Receiver<path_table::RouteEvent> {
+        self.handler.lock().await.route_tx.subscribe()
     }
 
     pub async fn send_packet(&self, packet: Packet) {
@@ -204,7 +269,7 @@ impl Transport {
         &self,
         destination: &Arc<Mutex<SingleInputDestination>>,
         app_data: Option<&[u8]>,
-    ) {
+    ) -> SendPacketOutcome {
         let mut destination = destination.lock().await;
         crate::transport_diagnostic!(
             "[tp] announce_tx dst={} app_data_len={}",
@@ -213,7 +278,7 @@ impl Transport {
         );
         let packet = destination.announce(OsRng, app_data).expect("valid announce packet");
         let mut handler = self.handler.lock().await;
-        handler.send_packet(packet).await;
+        handler.send_packet_with_outcome(packet).await
     }
 
     pub async fn set_receipt_handler(&mut self, handler: Box<dyn ReceiptHandler>) {
@@ -252,11 +317,11 @@ impl Transport {
             .await;
     }
 
-    pub async fn send_direct(&self, addr: AddressHash, packet: Packet) {
+    pub async fn send_direct(&self, addr: AddressHash, packet: Packet) -> TxDispatchTrace {
         self.handler
             .lock()
             .await
             .send(TxMessage { tx_type: TxMessageType::Direct(addr), packet })
-            .await;
+            .await
     }
 }

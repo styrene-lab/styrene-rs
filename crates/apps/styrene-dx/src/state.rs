@@ -3,25 +3,14 @@
 //! These are UI-friendly types derived from daemon IPC responses.
 //! No raw crypto or wire types in the view layer.
 
-/// UI-friendly identity summary.
-#[derive(Clone, Debug, PartialEq)]
-pub struct IdentityInfo {
-    pub hash_hex: String,
-    pub public_key_hex: String,
-    pub signing_key_hex: String,
-}
-
-/// Node identity for the top bar.
-#[derive(Clone, Debug, PartialEq)]
-pub struct NodeIdentity {
-    pub hash: String,
-    pub display_name: Option<String>,
-}
+pub use styrene_ipc::PageAddress;
 
 /// A peer in the sidebar list.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PeerEntry {
     pub hash: String,
+    /// Identity hash reported by discovery, if available.
+    pub identity_hash: Option<String>,
     /// Clean display name (Styrene prefix stripped).
     pub name: Option<String>,
     pub status: String,
@@ -63,13 +52,37 @@ pub struct MeshStatusInfo {
     pub version: String,
 }
 
-/// Active tab in the main navigation.
+/// Stable primary route in the operator console.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum Tab {
+pub enum AppRoute {
     #[default]
+    Command,
     Network,
-    Conversations,
-    Pages,
+    Messages,
+    Fleet,
+    Propagation,
+    Content,
+    Lab,
+    System,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivitySeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ActivityEntry {
+    pub timestamp: i64,
+    pub severity: ActivitySeverity,
+    pub kind: &'static str,
+    pub summary: String,
+    pub entity: Option<String>,
+    pub correlation_id: Option<String>,
+    pub provenance: String,
 }
 
 /// State for the page browser.
@@ -77,9 +90,51 @@ pub enum Tab {
 pub struct PageView {
     pub host: String,
     pub path: String,
-    pub content: Option<String>,
+    pub authoritative: Option<styrene_ipc::types::PageContent>,
     pub loading: bool,
     pub error: Option<String>,
+    pub elapsed_ms: Option<u64>,
+    pub retryable: bool,
+}
+
+impl PageView {
+    pub fn loading(host: String, path: String) -> Self {
+        Self {
+            host,
+            path,
+            authoritative: None,
+            loading: true,
+            error: None,
+            elapsed_ms: None,
+            retryable: false,
+        }
+    }
+
+    pub fn from_daemon(mut page: styrene_ipc::types::PageContent) -> Self {
+        if let Some(failure) = &mut page.failure {
+            failure.message = "daemon page request failed".into();
+        }
+        for warning in &mut page.parser_warnings {
+            warning.message = "page parser warning".into();
+        }
+        let host = page.host_hash.clone();
+        let path = page.request.native_path.clone();
+        let error = page.failure.as_ref().map(|failure| failure.message.clone());
+        let retryable = page.failure.as_ref().is_some_and(|failure| failure.retryable);
+        let elapsed_ms = page.elapsed_ms;
+        Self { host, path, authoritative: Some(page), loading: false, error, elapsed_ms, retryable }
+    }
+
+    pub fn failed_at(host: String, path: String, message: String, elapsed_ms: u64) -> Self {
+        let mut page = Self::loading(host, path);
+        page.loading = false;
+        tracing::warn!(target: "dx::content", error_bytes = message.len(), "page request failed before daemon evidence");
+        page.error = Some("page request failed before daemon evidence".into());
+        page.elapsed_ms = Some(elapsed_ms);
+        // An IPC failure has no daemon terminal observation from which to infer retryability.
+        page.retryable = false;
+        page
+    }
 }
 
 /// A node in the network graph visualization.
@@ -236,15 +291,32 @@ impl GraphNode {
                 let cr = r * 0.25; // corner radius
                 let d = format!(
                     "M{},{} L{},{} Q{},{} {},{} L{},{} Q{},{} {},{} L{},{} Q{},{} {},{} L{},{} Q{},{} {},{} Z",
-                    cx - half + cr, cy - half,                         // top-left after corner
-                    cx + half - cr, cy - half,                         // top-right before corner
-                    cx + half, cy - half, cx + half, cy - half + cr,   // top-right corner
-                    cx + half, cy + half - cr,                         // bottom-right before corner
-                    cx + half, cy + half, cx + half - cr, cy + half,   // bottom-right corner
-                    cx - half + cr, cy + half,                         // bottom-left before corner
-                    cx - half, cy + half, cx - half, cy + half - cr,   // bottom-left corner
-                    cx - half, cy - half + cr,                         // top-left before corner
-                    cx - half, cy - half, cx - half + cr, cy - half,   // top-left corner
+                    cx - half + cr,
+                    cy - half, // top-left after corner
+                    cx + half - cr,
+                    cy - half, // top-right before corner
+                    cx + half,
+                    cy - half,
+                    cx + half,
+                    cy - half + cr, // top-right corner
+                    cx + half,
+                    cy + half - cr, // bottom-right before corner
+                    cx + half,
+                    cy + half,
+                    cx + half - cr,
+                    cy + half, // bottom-right corner
+                    cx - half + cr,
+                    cy + half, // bottom-left before corner
+                    cx - half,
+                    cy + half,
+                    cx - half,
+                    cy + half - cr, // bottom-left corner
+                    cx - half,
+                    cy - half + cr, // top-left before corner
+                    cx - half,
+                    cy - half,
+                    cx - half + cr,
+                    cy - half, // top-left corner
                 );
                 Some(d)
             }
@@ -277,6 +349,15 @@ pub struct GraphEdge {
     pub target: usize,
     /// Hop count for this edge (0 = direct/unknown).
     pub hops: u8,
+    pub kind: GraphEdgeKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphEdgeKind {
+    Interface,
+    Route,
+    Link,
+    Association,
 }
 
 /// A path table entry for graph topology construction.
@@ -286,6 +367,8 @@ pub struct PathEntry {
     pub hops: u8,
     pub next_hop: String,
     pub interface: String,
+    pub expires: Option<i64>,
+    pub observation: styrene_ipc::types::ObservationMetadata,
 }
 
 /// An announce event for the activity stream.
@@ -297,23 +380,19 @@ pub struct AnnounceEvent {
     pub node_role: PeerRole,
 }
 
-/// Per-interface stats for the interface panel.
-#[derive(Clone, Debug, PartialEq)]
-pub struct InterfaceInfo {
-    pub name: String,
-    pub hash: String,
-    pub status: String,
-    pub tx_bytes: u64,
-    pub rx_bytes: u64,
-}
+/// Exact typed interface projection retained for operator inspection.
+pub type InterfaceInfo = styrene_ipc::types::InterfaceDetail;
 
 /// An active link with telemetry.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinkInfo {
+    pub link_id: String,
     pub peer_hash: String,
     pub status: String,
+    pub activity: styrene_ipc::types::LinkActivity,
     pub rtt_ms: Option<f64>,
     pub timestamp: i64,
+    pub observation: styrene_ipc::types::ObservationMetadata,
 }
 
 /// A conversation summary for the sidebar.
@@ -325,6 +404,8 @@ pub struct ConversationEntry {
     pub last_timestamp: Option<i64>,
     pub unread_count: u32,
     pub message_count: u32,
+    pub pinned: bool,
+    pub muted: bool,
 }
 
 /// A chat message.
@@ -338,6 +419,62 @@ pub struct ChatMessage {
     pub is_outgoing: bool,
     /// Delivery status: "pending", "delivered", "read", "failed", or empty.
     pub status: String,
+    pub lifecycle: MessageLifecycle,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MessageLifecycle {
+    pub state: styrene_ipc::types::MessageLifecycleState,
+    pub terminal_detail: Option<String>,
+    pub requested_method: Option<String>,
+    pub actual_method: Option<String>,
+    pub fallback_reason: Option<String>,
+    pub correlation_id: Option<String>,
+    pub attempts: Vec<styrene_ipc::types::MessageAttemptInfo>,
+    pub authentication: styrene_ipc::types::MessageAuthenticationState,
+    pub stamp_state: styrene_ipc::types::MessageStampState,
+    pub stamp_value: Option<u32>,
+    pub stamp_cost: Option<u32>,
+    pub evidence: Vec<styrene_ipc::types::MessageDeliveryEvidenceInfo>,
+    pub attachments: Vec<styrene_ipc::types::AttachmentInfo>,
+    pub propagation: Vec<styrene_ipc::types::MessagePropagationCorrelationInfo>,
+}
+
+impl From<styrene_ipc::types::MessageInfo> for ChatMessage {
+    fn from(message: styrene_ipc::types::MessageInfo) -> Self {
+        Self {
+            id: message.id,
+            source: message.source_hash,
+            destination: message.destination_hash,
+            content: message.content,
+            timestamp: message.timestamp,
+            is_outgoing: message.is_outgoing,
+            status: message.status,
+            lifecycle: MessageLifecycle {
+                state: message.lifecycle_state,
+                terminal_detail: message.terminal_detail,
+                requested_method: message.requested_delivery_method,
+                actual_method: message.actual_delivery_method,
+                fallback_reason: message.fallback_reason,
+                correlation_id: message.correlation_id,
+                attempts: message.attempts,
+                authentication: message.authentication_state,
+                stamp_state: message.stamp_state,
+                stamp_value: message.stamp_value,
+                stamp_cost: message.stamp_cost,
+                evidence: message.delivery_evidence,
+                attachments: message.attachments,
+                propagation: message.propagation_correlations,
+            },
+        }
+    }
+}
+
+impl ChatMessage {
+    #[cfg(test)]
+    pub fn apply_status(&mut self, status: String) {
+        self.status = status;
+    }
 }
 
 // ── Styrene announce name parser ──────────────────────────────────────────
@@ -431,5 +568,96 @@ fn extract_json_name(s: &str) -> String {
         format!("{}...", &s[..24])
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_lifecycle_preserves_authoritative_ipc_details() {
+        let mut info = styrene_ipc::types::MessageInfo::default();
+        info.id = "message".into();
+        info.status = "delivered".into();
+        info.requested_delivery_method = Some("opportunistic".into());
+        info.actual_delivery_method = Some("direct".into());
+        info.fallback_reason = Some("packet limit".into());
+        info.correlation_id = Some("send-1".into());
+        let mut attempt = styrene_ipc::types::MessageAttemptInfo::default();
+        attempt.message_id = "message".into();
+        attempt.number = 2;
+        attempt.started_unix_ms = 100;
+        attempt.deadline_unix_ms = 200;
+        attempt.state = "delivered".into();
+        info.attempts.push(attempt);
+        info.read = true;
+        let mut attachment = styrene_ipc::types::AttachmentInfo::default();
+        attachment.name = "evidence.bin".into();
+        attachment.size = 2048;
+        info.attachments.push(attachment);
+
+        let message = ChatMessage::from(info);
+        assert_eq!(message.lifecycle.requested_method.as_deref(), Some("opportunistic"));
+        assert_eq!(message.lifecycle.actual_method.as_deref(), Some("direct"));
+        assert_eq!(message.lifecycle.fallback_reason.as_deref(), Some("packet limit"));
+        assert_eq!(message.lifecycle.correlation_id.as_deref(), Some("send-1"));
+        assert_eq!(message.lifecycle.attempts.len(), 1);
+        assert_eq!(message.lifecycle.attempts[0].message_id, "message");
+        assert_eq!(message.lifecycle.attempts[0].number, 2);
+        assert_eq!(message.lifecycle.attempts[0].started_unix_ms, 100);
+        assert_eq!(message.lifecycle.attempts[0].deadline_unix_ms, 200);
+        assert_eq!(message.lifecycle.attempts[0].state, "delivered");
+        assert!(message.lifecycle.propagation.is_empty());
+        assert_eq!(message.lifecycle.attachments[0].size, 2048);
+    }
+
+    #[test]
+    fn terminal_message_failure_updates_one_lifecycle() {
+        let mut message = ChatMessage::from(styrene_ipc::types::MessageInfo::default());
+        message.apply_status("failed".into());
+        assert_eq!(message.status, "failed");
+        assert!(message.lifecycle.terminal_detail.is_none());
+    }
+
+    #[test]
+    fn page_failure_names_stage_and_leaves_loading_state() {
+        let page =
+            PageView::failed_at("peer".into(), "/".into(), "identity unavailable".into(), 42);
+        assert!(!page.loading);
+        assert!(!page.retryable);
+        assert_eq!(page.elapsed_ms, Some(42));
+        assert!(page.authoritative.is_none(), "client must not fabricate daemon stages");
+    }
+
+    #[test]
+    fn completed_page_records_transfer_size_and_ui_stages() {
+        let mut content = styrene_ipc::types::PageContent::default();
+        content.source_bytes = b"# Page".to_vec();
+        content.rendered_text = "Page".into();
+        content.fetched_at = 10;
+        content.transfer.received_bytes = 6;
+        content.correlation_id = "page-1".into();
+        content.elapsed_ms = Some(12);
+        content.outcome = styrene_ipc::types::PageBrowseOutcome::Succeeded;
+        let mut failure = styrene_ipc::types::PageBrowseFailure::default();
+        failure.message = "token=structured-secret /private/key".into();
+        content.failure = Some(failure);
+        let mut warning = styrene_ipc::types::PageParserWarning::default();
+        warning.message = "password=structured-secret".into();
+        content.parser_warnings.push(warning);
+        let mut stage = styrene_ipc::types::PageBrowseStage::default();
+        stage.correlation_id = "page-1".into();
+        stage.kind = styrene_ipc::types::PageBrowseStageKind::Transfer;
+        stage.state = styrene_ipc::types::PageBrowseStageState::Succeeded;
+        content.stages.push(stage);
+        let page = PageView::from_daemon(content);
+        let retained = page.authoritative.expect("authoritative daemon page");
+        assert_eq!(retained.source_bytes, b"# Page");
+        assert_eq!(retained.fetched_at, 10);
+        assert_eq!(retained.stages.len(), 1);
+        let rendered = format!("{retained:?}");
+        assert!(!rendered.contains("structured-secret"));
+        assert!(!rendered.contains("/private/key"));
     }
 }

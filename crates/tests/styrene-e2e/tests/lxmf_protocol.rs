@@ -299,8 +299,8 @@ fn destination_stripped_mode_decodes_correctly() {
 
     assert_eq!(decoded.source, sender_hash);
     assert_eq!(decoded.destination, receiver_hash);
-    assert_eq!(decoded.title, "Stripped Title");
-    assert_eq!(decoded.content, "stripped content");
+    assert_eq!(decoded.title, b"Stripped Title");
+    assert_eq!(decoded.content, b"stripped content");
 }
 
 #[test]

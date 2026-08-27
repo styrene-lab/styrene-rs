@@ -22,10 +22,13 @@
 //! - [`Daemon`] — composite (auto-implemented for all seven)
 
 pub mod error;
+pub mod operator_fixtures;
+pub mod pages;
 pub mod traits;
 pub mod types;
 
 pub use error::IpcError;
+pub use pages::{NomadNetHost, NomadNetPath, PageAddress, PageAddressError};
 pub use traits::{
     Daemon, DaemonEvents, DaemonFleet, DaemonIdentity, DaemonMessaging, DaemonPages, DaemonStatus,
     DaemonTunnel,

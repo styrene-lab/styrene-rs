@@ -2,6 +2,11 @@ use crate::ratchets::now_secs;
 use core::num::Wrapping;
 use rand_core::OsRng;
 use rand_core::{CryptoRng, RngCore};
+use std::collections::BTreeSet;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use tempfile::TempDir;
 
 use crate::buffer::OutputBuffer;
@@ -17,6 +22,10 @@ use super::DestinationAnnounce;
 use super::DestinationName;
 use super::SingleInputDestination;
 use super::RATCHET_LENGTH;
+use super::{
+    request_path_hash, IngressRegistrationError, RequestAccess, RequestDispatchError,
+    RequestHandler, RequestLinkContext, RequestRegistrationError,
+};
 
 #[derive(Clone, Copy)]
 struct FixedRng {
@@ -253,4 +262,291 @@ fn announce_with_ratchet_bytes_but_unset_flag_is_rejected() {
     if DestinationAnnounce::validate(&announce).is_ok() {
         panic!("ratchet bytes without ratchet flag must fail validation");
     }
+}
+
+fn request_link(destination: &SingleInputDestination) -> RequestLinkContext {
+    RequestLinkContext {
+        link_id: AddressHash::new_from_slice(b"request-test-link"),
+        destination: destination.desc.address_hash,
+    }
+}
+
+fn empty_request_handler() -> RequestHandler {
+    Arc::new(|_: &[u8], _: Option<&crate::identity::Identity>, _: &RequestLinkContext, _| {
+        Vec::new()
+    })
+}
+
+fn echo_request_handler() -> RequestHandler {
+    Arc::new(|data: &[u8], _: Option<&crate::identity::Identity>, _: &RequestLinkContext, _| {
+        data.to_vec()
+    })
+}
+
+#[test]
+fn request_path_registration_retains_canonical_path_and_hash() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut destination =
+        SingleInputDestination::new(identity, DestinationName::new("nomadnetwork", "node"));
+    let path_hash = destination
+        .register_request_path(
+            "/page/index.mu",
+            RequestAccess::Public,
+            64,
+            256,
+            empty_request_handler(),
+        )
+        .expect("valid request path registration");
+
+    assert_eq!(
+        path_hash,
+        [
+            0xfb, 0x40, 0xab, 0xf3, 0x59, 0xb3, 0xf2, 0x5f, 0xa0, 0x08, 0x61, 0x07, 0xc5, 0xee,
+            0xe5, 0x16,
+        ],
+        "path hash must match the Reticulum truncated SHA-256 value",
+    );
+    assert_eq!(path_hash, request_path_hash("/page/index.mu"));
+    let registered = destination.request_path(&path_hash).expect("registered path");
+    assert_eq!(registered.path(), "/page/index.mu");
+    assert_eq!(registered.path_hash(), path_hash);
+    assert_eq!(registered.max_request_size(), 64);
+    assert_eq!(registered.max_response_size(), 256);
+}
+
+#[test]
+fn duplicate_request_path_and_invalid_registration_are_rejected() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut destination =
+        SingleInputDestination::new(identity, DestinationName::new("nomadnetwork", "node"));
+    destination
+        .register_request_path(
+            "/page/index.mu",
+            RequestAccess::Public,
+            1,
+            1,
+            empty_request_handler(),
+        )
+        .expect("first path registration");
+    assert_eq!(
+        destination.register_request_path(
+            "/page/index.mu",
+            RequestAccess::Public,
+            1,
+            1,
+            empty_request_handler(),
+        ),
+        Err(RequestRegistrationError::DuplicatePath)
+    );
+    assert_eq!(
+        destination.register_request_path(
+            "page/no-slash",
+            RequestAccess::Public,
+            1,
+            1,
+            empty_request_handler(),
+        ),
+        Err(RequestRegistrationError::InvalidPath)
+    );
+    assert_eq!(
+        destination.register_request_path(
+            "/page/zero",
+            RequestAccess::Public,
+            0,
+            1,
+            empty_request_handler(),
+        ),
+        Err(RequestRegistrationError::InvalidLimits)
+    );
+    assert_eq!(
+        destination.register_request_path(
+            "/page/zero",
+            RequestAccess::Public,
+            1,
+            0,
+            empty_request_handler(),
+        ),
+        Err(RequestRegistrationError::InvalidLimits)
+    );
+}
+
+#[test]
+fn request_access_policies_enforce_identified_identity() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut destination =
+        SingleInputDestination::new(identity, DestinationName::new("nomadnetwork", "node"));
+    let allowed = PrivateIdentity::new_from_rand(OsRng);
+    let denied = PrivateIdentity::new_from_rand(OsRng);
+    let callback_allowed = *destination.identity.as_identity();
+    let callback_allowed_hash = callback_allowed.address_hash;
+    let link = request_link(&destination);
+    let request_id = [0x42; crate::hash::ADDRESS_HASH_SIZE];
+    let public = destination
+        .register_request_path("/public", RequestAccess::Public, 16, 16, echo_request_handler())
+        .expect("public path");
+    let identified = destination
+        .register_request_path(
+            "/identified",
+            RequestAccess::Identified,
+            16,
+            16,
+            echo_request_handler(),
+        )
+        .expect("identified path");
+    let allow_list = destination
+        .register_request_path(
+            "/allowed",
+            RequestAccess::AllowList(BTreeSet::from([allowed.as_identity().address_hash])),
+            16,
+            16,
+            echo_request_handler(),
+        )
+        .expect("allow-list path");
+    let callback = destination
+        .register_request_path(
+            "/callback",
+            RequestAccess::Callback(Arc::new(move |remote, _| {
+                remote.is_some_and(|identity| identity.address_hash == callback_allowed_hash)
+            })),
+            16,
+            16,
+            echo_request_handler(),
+        )
+        .expect("callback path");
+
+    assert_eq!(
+        destination.dispatch_request(&public, b"ok", None, &link, request_id),
+        Ok(b"ok".to_vec())
+    );
+    assert_eq!(
+        destination.dispatch_request(&identified, b"no", None, &link, request_id),
+        Err(RequestDispatchError::Unauthorized)
+    );
+    assert_eq!(
+        destination.dispatch_request(
+            &identified,
+            b"ok",
+            Some(denied.as_identity()),
+            &link,
+            request_id,
+        ),
+        Ok(b"ok".to_vec())
+    );
+    assert_eq!(
+        destination.dispatch_request(
+            &allow_list,
+            b"no",
+            Some(denied.as_identity()),
+            &link,
+            request_id,
+        ),
+        Err(RequestDispatchError::Unauthorized)
+    );
+    assert_eq!(
+        destination.dispatch_request(
+            &allow_list,
+            b"ok",
+            Some(allowed.as_identity()),
+            &link,
+            request_id,
+        ),
+        Ok(b"ok".to_vec())
+    );
+    assert_eq!(
+        destination.dispatch_request(
+            &callback,
+            b"no",
+            Some(allowed.as_identity()),
+            &link,
+            request_id,
+        ),
+        Err(RequestDispatchError::Unauthorized)
+    );
+    assert_eq!(
+        destination.dispatch_request(&callback, b"ok", Some(&callback_allowed), &link, request_id,),
+        Ok(b"ok".to_vec())
+    );
+}
+
+#[test]
+fn request_and_response_size_limits_are_inclusive_and_handler_receives_context() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut destination =
+        SingleInputDestination::new(identity, DestinationName::new("nomadnetwork", "node"));
+    let remote = PrivateIdentity::new_from_rand(OsRng);
+    let link = request_link(&destination);
+    let request_id = [0x73; crate::hash::ADDRESS_HASH_SIZE];
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = Arc::clone(&calls);
+    let expected_link = link;
+    let expected_remote = remote.as_identity().address_hash;
+    let handler = Arc::new(
+        move |data: &[u8],
+              remote: Option<&crate::identity::Identity>,
+              context: &RequestLinkContext,
+              id| {
+            handler_calls.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(data, b"1234");
+            assert_eq!(remote.map(|identity| identity.address_hash), Some(expected_remote));
+            assert_eq!(*context, expected_link);
+            assert_eq!(id, request_id);
+            vec![0x55; 5]
+        },
+    );
+    let path = destination
+        .register_request_path("/bounded", RequestAccess::Identified, 4, 5, handler)
+        .expect("bounded path");
+
+    assert_eq!(
+        destination.dispatch_request(
+            &path,
+            b"12345",
+            Some(remote.as_identity()),
+            &link,
+            request_id,
+        ),
+        Err(RequestDispatchError::RequestTooLarge)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "oversized request must not invoke handler");
+    assert_eq!(
+        destination
+            .dispatch_request(&path, b"1234", Some(remote.as_identity()), &link, request_id,),
+        Ok(vec![0x55; 5])
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    let oversized_response = destination
+        .register_request_path(
+            "/oversized-response",
+            RequestAccess::Public,
+            1,
+            5,
+            Arc::new(|_, _, _, _| vec![0; 6]),
+        )
+        .expect("response-limited path");
+    assert_eq!(
+        destination.dispatch_request(&oversized_response, b"x", None, &link, request_id),
+        Err(RequestDispatchError::ResponseTooLarge)
+    );
+}
+
+#[test]
+fn ingress_handler_registration_is_duplicate_safe_and_unregisters() {
+    let mut destination = SingleInputDestination::new(
+        PrivateIdentity::new_from_name("ingress-registration"),
+        DestinationName::new("test", "ingress"),
+    );
+    let first = Arc::new(|_: &[u8], _: &super::IngressContext| true);
+    let second = Arc::new(|_: &[u8], _: &super::IngressContext| false);
+
+    destination.register_ingress_handler(first).unwrap();
+    assert_eq!(
+        destination.register_ingress_handler(second),
+        Err(IngressRegistrationError::DuplicateHandler)
+    );
+    assert!(destination.unregister_ingress_handler());
+    assert!(!destination.unregister_ingress_handler());
+    destination
+        .register_ingress_handler(Arc::new(|_, _| true))
+        .expect("slot should be reusable after unregister");
 }

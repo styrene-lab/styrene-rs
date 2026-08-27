@@ -1,5 +1,8 @@
 use core::fmt;
 
+#[cfg(not(feature = "alloc"))]
+use heapless::Vec as HVec;
+
 use crate::{announce::ResourceAvailableAnnounce, content_id::ContentId};
 
 /// Maximum chunk data size for no_alloc ContentEvent variants.
@@ -8,6 +11,8 @@ const MAX_CHUNK_DATA: usize = 256 * 1024;
 
 /// An event received from the mesh content transport layer.
 #[derive(Debug)]
+// The no-alloc profile must retain chunk bytes inline; indirection is unavailable there.
+#[allow(clippy::large_enum_variant)]
 pub enum ContentEvent {
     /// A peer announced availability of content chunks.
     Announce(ResourceAvailableAnnounce),

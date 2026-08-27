@@ -217,6 +217,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "invokes the host PATH probe; run explicitly with environment integration checks"]
     fn scan_is_rooted_in_explicit_paths() {
         let nonce =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();

@@ -20,15 +20,64 @@ pub async fn dispatch(
     msg_type: MessageType,
     payload: HashMap<String, rmpv::Value>,
 ) -> Result<HashMap<String, rmpv::Value>, String> {
+    dispatch_for_connection(daemon, msg_type, payload, 0).await
+}
+
+/// Dispatch with metadata scoped to the physical IPC connection.
+pub async fn dispatch_for_connection(
+    daemon: &Arc<dyn Daemon>,
+    msg_type: MessageType,
+    payload: HashMap<String, rmpv::Value>,
+    connection_generation: u64,
+) -> Result<HashMap<String, rmpv::Value>, String> {
     match msg_type {
-        MessageType::QueryStatus => dispatch_query_status(daemon).await,
+        MessageType::QueryStatus => dispatch_query_status(daemon, connection_generation).await,
+        MessageType::QueryPropagation => dispatch_query_propagation(daemon, &payload).await,
+        MessageType::QueryStandardPropagation => {
+            dispatch_query_standard_propagation(daemon, connection_generation).await
+        }
+        MessageType::QueryLinks => dispatch_query_links(daemon, connection_generation).await,
+        MessageType::QueryRequest => {
+            dispatch_query_request(daemon, &payload, connection_generation).await
+        }
+        MessageType::QueryRequests => dispatch_query_requests(daemon, connection_generation).await,
+        MessageType::CmdRequestStart => {
+            dispatch_start_request(daemon, &payload, connection_generation).await
+        }
+        MessageType::CmdRequestCancel => {
+            dispatch_cancel_request(daemon, &payload, connection_generation).await
+        }
+        MessageType::QueryNetworkOperation => {
+            dispatch_query_network_operation(daemon, &payload, connection_generation).await
+        }
+        MessageType::CmdNetworkOperationStart => {
+            dispatch_start_network_operation(daemon, &payload, connection_generation).await
+        }
+        MessageType::CmdNetworkOperationCancel => {
+            dispatch_cancel_network_operation(daemon, &payload, connection_generation).await
+        }
+        MessageType::QueryResources => {
+            dispatch_query_resources(daemon, connection_generation).await
+        }
+        MessageType::CmdResourceCancel => dispatch_cancel_resource(daemon, &payload).await,
+        MessageType::QueryAttachmentTransfer => {
+            dispatch_query_attachment_transfer(daemon, &payload).await
+        }
+        MessageType::CmdAttachmentTransferCancel => {
+            dispatch_cancel_attachment_transfer(daemon, &payload).await
+        }
         MessageType::QueryIdentity => dispatch_query_identity(daemon).await,
         MessageType::QueryDevices => dispatch_query_devices(daemon, &payload).await,
         MessageType::QueryAutoReply => dispatch_query_auto_reply(daemon).await,
         MessageType::CmdAnnounce => dispatch_announce(daemon).await,
         MessageType::QueryConversations => dispatch_query_conversations(daemon, &payload).await,
         MessageType::QueryMessages => dispatch_query_messages(daemon, &payload).await,
-        MessageType::CmdSendChat => dispatch_send_chat(daemon, payload).await,
+        MessageType::QueryMessage => dispatch_query_message(daemon, &payload).await,
+        MessageType::CmdSendChat => dispatch_send_chat(daemon, payload, false).await,
+        MessageType::CmdSendChatOutcome => dispatch_send_chat(daemon, payload, true).await,
+        MessageType::QueryDraft => dispatch_query_draft(daemon, &payload).await,
+        MessageType::CmdSetDraft => dispatch_set_draft(daemon, &payload).await,
+        MessageType::CmdClearDraft => dispatch_clear_draft(daemon, &payload).await,
         MessageType::CmdMarkRead => dispatch_mark_read(daemon, &payload).await,
         MessageType::CmdDeleteConversation => dispatch_delete_conversation(daemon, &payload).await,
         MessageType::CmdDeleteMessage => dispatch_delete_message(daemon, &payload).await,
@@ -36,14 +85,33 @@ pub async fn dispatch(
         MessageType::QueryResolveName => dispatch_resolve_name(daemon, &payload).await,
         MessageType::CmdSetIdentity => dispatch_set_identity(daemon, &payload).await,
         MessageType::CmdRetryMessage => dispatch_retry_message(daemon, &payload).await,
+        MessageType::CmdCancelMessage => dispatch_cancel_message(daemon, &payload).await,
         MessageType::CmdSetAutoReply => dispatch_set_auto_reply(daemon, &payload).await,
         MessageType::QuerySearchMessages => dispatch_search_messages(daemon, &payload).await,
         MessageType::QueryConfig => dispatch_query_config(daemon).await,
         MessageType::CmdSetContact => dispatch_set_contact(daemon, &payload).await,
         MessageType::CmdRemoveContact => dispatch_remove_contact(daemon, &payload).await,
-        MessageType::QueryPathInfo => dispatch_query_path_info(daemon, &payload).await,
-        MessageType::QueryPathTable => dispatch_query_path_table(daemon).await,
-        MessageType::QueryInterfaceStats => dispatch_query_interface_stats(daemon).await,
+        MessageType::CmdPinConversation => {
+            dispatch_conversation_flag(daemon, &payload, "pin").await
+        }
+        MessageType::CmdUnpinConversation => {
+            dispatch_conversation_flag(daemon, &payload, "unpin").await
+        }
+        MessageType::CmdMuteConversation => {
+            dispatch_conversation_flag(daemon, &payload, "mute").await
+        }
+        MessageType::CmdUnmuteConversation => {
+            dispatch_conversation_flag(daemon, &payload, "unmute").await
+        }
+        MessageType::QueryPathInfo => {
+            dispatch_query_path_info(daemon, &payload, connection_generation).await
+        }
+        MessageType::QueryPathTable => {
+            dispatch_query_path_table(daemon, connection_generation).await
+        }
+        MessageType::QueryInterfaceStats => {
+            dispatch_query_interface_stats(daemon, connection_generation).await
+        }
         MessageType::CmdRemoteInbox => dispatch_remote_inbox(daemon, &payload).await,
         MessageType::CmdRemoteMessages => dispatch_remote_messages(daemon, &payload).await,
         MessageType::CmdSelfUpdate => dispatch_self_update(daemon, &payload).await,
@@ -54,19 +122,35 @@ pub async fn dispatch(
             p.insert("pqc_active".into(), rmpv::Value::Boolean(false));
             ok_payload(p)
         }
-        MessageType::QueryAttachment => {
-            // Attachment queries — not yet implemented
-            Err("attachment storage not yet implemented".into())
+        MessageType::QueryAttachment => dispatch_query_attachment(daemon, &payload).await,
+        MessageType::QueryPage => {
+            dispatch_query_page(daemon, &payload, connection_generation).await
         }
-        MessageType::QueryPage => dispatch_query_page(daemon, &payload).await,
+        MessageType::CmdPageNavigate => {
+            dispatch_page_navigate(daemon, &payload, connection_generation).await
+        }
+        MessageType::CmdPageDisconnect => {
+            dispatch_page_disconnect(daemon, &payload, connection_generation).await
+        }
+        MessageType::CmdFileDownloadStart => {
+            dispatch_file_download_start(daemon, &payload, connection_generation).await
+        }
+        MessageType::QueryFileDownload => {
+            dispatch_file_download_query(daemon, &payload, connection_generation).await
+        }
+        MessageType::CmdFileDownloadCancel => {
+            dispatch_file_download_cancel(daemon, &payload, connection_generation).await
+        }
+        MessageType::CmdFileDownloadSave => {
+            dispatch_file_download_save(daemon, &payload, connection_generation).await
+        }
         MessageType::CmdPageListSites => dispatch_list_pages(daemon, &payload).await,
         MessageType::QueryPageServerStatus
         | MessageType::CmdPageGetCached
         | MessageType::CmdPageSaveSite
         | MessageType::CmdPageRemoveSite
         | MessageType::CmdPageCrawlSite
-        | MessageType::CmdPageRegenerate
-        | MessageType::CmdPageDisconnect => Err("page management not yet implemented".into()),
+        | MessageType::CmdPageRegenerate => Err("page management not yet implemented".into()),
         MessageType::CmdTerminalOpen => dispatch_terminal_open(daemon, &payload).await,
         MessageType::CmdTerminalInput => dispatch_terminal_input(daemon, &payload).await,
         MessageType::CmdTerminalClose => dispatch_terminal_close(daemon, &payload).await,
@@ -93,6 +177,8 @@ pub async fn dispatch(
         MessageType::GetAdapterState => dispatch_get_adapter_state().await,
         MessageType::SubActivity => dispatch_sub_activity().await,
         MessageType::SubLinks => dispatch_sub_links().await,
+        MessageType::SubNetworkOperations => ok_payload(Payload::new()),
+        MessageType::SubResources => ok_payload(Payload::new()),
         // Unsub is handled in connection.rs before dispatch — this is unreachable
         MessageType::Unsub => ok_payload(Payload::new()),
         MessageType::CmdExec => dispatch_exec(daemon, &payload).await,
@@ -122,21 +208,67 @@ fn val_str<'a>(payload: &'a HashMap<String, rmpv::Value>, key: &str) -> Option<&
     payload.get(key).and_then(|v| v.as_str())
 }
 
-/// Validate a hex hash string (16-32 hex chars).
-fn validate_hash(s: &str) -> Result<&str, String> {
-    if s.len() >= 16 && s.len() <= 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        Ok(s)
-    } else {
-        Err(format!("invalid hash: expected 16-64 hex chars, got '{s}'"))
+fn validate_peer_hash(s: &str) -> Result<&str, String> {
+    if s.len() != 32
+        || s.bytes().any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
+    {
+        return Err("peer hash must be exactly 32 lowercase hexadecimal characters".into());
     }
+    Ok(s)
+}
+
+fn validate_message_id(s: &str) -> Result<&str, String> {
+    if s.is_empty()
+        || s.len() > 128
+        || s.bytes()
+            .any(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err("message ID must be 1..=128 ASCII identifier characters".into());
+    }
+    Ok(s)
 }
 
 fn val_u64(payload: &HashMap<String, rmpv::Value>, key: &str) -> Option<u64> {
     payload.get(key).and_then(|v| v.as_u64())
 }
 
-fn val_i64(payload: &HashMap<String, rmpv::Value>, key: &str) -> Option<i64> {
-    payload.get(key).and_then(|v| v.as_i64())
+fn message_query_limit(payload: &HashMap<String, rmpv::Value>) -> Result<u32, String> {
+    let limit = val_u64(payload, "limit").unwrap_or(50);
+    if limit > u64::from(styrene_ipc::types::MAX_MESSAGE_QUERY_LIMIT) {
+        return Err(format!(
+            "message query limit {limit} exceeds maximum {}",
+            styrene_ipc::types::MAX_MESSAGE_QUERY_LIMIT
+        ));
+    }
+    u32::try_from(limit).map_err(|_| "message query limit exceeds u32 range".into())
+}
+
+fn page_limit(payload: &Payload) -> Result<u32, String> {
+    let limit = match payload.get("limit") {
+        None => 50,
+        Some(value) => value.as_u64().ok_or("page limit must be an unsigned integer")?,
+    };
+    if !(1..=u64::from(styrene_ipc::types::MAX_MESSAGE_QUERY_LIMIT)).contains(&limit) {
+        return Err(format!(
+            "page limit must be between 1 and {}",
+            styrene_ipc::types::MAX_MESSAGE_QUERY_LIMIT
+        ));
+    }
+    u32::try_from(limit).map_err(|_| "page limit exceeds u32 range".into())
+}
+
+fn page_cursor<'a>(payload: &'a Payload, key: &str) -> Result<Option<&'a str>, String> {
+    let Some(value) = payload.get(key) else {
+        return Ok(None);
+    };
+    let cursor = value.as_str().ok_or_else(|| format!("{key} must be a string"))?;
+    if cursor.is_empty() || cursor.len() > styrene_ipc::types::MAX_PAGE_CURSOR_LENGTH {
+        return Err(format!(
+            "{key} length must be between 1 and {}",
+            styrene_ipc::types::MAX_PAGE_CURSOR_LENGTH
+        ));
+    }
+    Ok(Some(cursor))
 }
 
 fn val_bool(payload: &HashMap<String, rmpv::Value>, key: &str) -> Option<bool> {
@@ -146,13 +278,326 @@ fn val_bool(payload: &HashMap<String, rmpv::Value>, key: &str) -> Option<bool> {
 type Payload = HashMap<String, rmpv::Value>;
 
 fn ok_payload(p: Payload) -> Result<Payload, String> {
+    let encoded = rmp_serde::to_vec(&p).map_err(|error| format!("encode IPC response: {error}"))?;
+    if encoded.len() > crate::wire::MAX_PAYLOAD_SIZE {
+        return Err(format!(
+            "IPC response payload is {} bytes; maximum is {} (reduce page limit)",
+            encoded.len(),
+            crate::wire::MAX_PAYLOAD_SIZE
+        ));
+    }
     Ok(p)
+}
+
+fn serialized_value<T: serde::Serialize>(value: &T) -> Result<rmpv::Value, String> {
+    let json =
+        serde_json::to_value(value).map_err(|error| format!("encode typed IPC value: {error}"))?;
+    rmpv::ext::to_value(json).map_err(|error| format!("encode typed IPC value: {error}"))
+}
+
+fn typed_ipc_error(error: styrene_ipc::IpcError) -> String {
+    serde_json::to_string(&error).unwrap_or_else(|_| error.to_string())
+}
+
+fn invalid_dispatch(message: impl Into<String>) -> String {
+    typed_ipc_error(styrene_ipc::IpcError::invalid_request(message))
+}
+
+fn required_str<'a>(payload: &'a Payload, key: &str) -> Result<&'a str, String> {
+    val_str(payload, key).ok_or_else(|| invalid_dispatch(format!("missing {key}")))
+}
+
+fn required_peer_hash<'a>(payload: &'a Payload, key: &str) -> Result<&'a str, String> {
+    validate_peer_hash(required_str(payload, key)?).map_err(invalid_dispatch)
+}
+
+fn required_message_id(payload: &Payload) -> Result<&str, String> {
+    validate_message_id(required_str(payload, "message_id")?).map_err(invalid_dispatch)
+}
+
+fn add_outcome(
+    payload: &mut Payload,
+    outcome: &styrene_ipc::types::MessagingOperationOutcome,
+) -> Result<(), String> {
+    payload.insert("outcome".into(), serialized_value(outcome)?);
+    Ok(())
+}
+
+async fn dispatch_query_resources(
+    daemon: &Arc<dyn Daemon>,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    let resources = daemon.resource_transfers().await.map_err(|error| error.to_string())?;
+    let resources = resources
+        .into_iter()
+        .map(|resource| resource_info_value(resource, connection_generation))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Payload::from([("resources".into(), rmpv::Value::Array(resources))]))
+}
+
+async fn dispatch_cancel_resource(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let resource_hash = val_str(payload, "resource_hash").ok_or("missing resource_hash")?;
+    let accepted =
+        daemon.cancel_resource(resource_hash).await.map_err(|error| error.to_string())?;
+    Ok(Payload::from([("accepted".into(), rmpv::Value::from(accepted))]))
+}
+
+pub(crate) fn resource_info_payload(
+    resource: styrene_ipc::types::ResourceTransferInfo,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    let value = resource_info_value(resource, connection_generation)?;
+    value.as_map().ok_or_else(|| "resource encoding was not a map".to_string()).map(|entries| {
+        entries
+            .iter()
+            .filter_map(|(key, value)| key.as_str().map(|key| (key.to_string(), value.clone())))
+            .collect()
+    })
+}
+
+fn resource_info_value(
+    mut resource: styrene_ipc::types::ResourceTransferInfo,
+    connection_generation: u64,
+) -> Result<rmpv::Value, String> {
+    if connection_generation != 0 {
+        resource.observation.connection_generation = Some(connection_generation);
+    }
+    let json = serde_json::to_value(resource).map_err(|error| error.to_string())?;
+    serde_json::from_value(json).map_err(|error| error.to_string())
+}
+
+async fn dispatch_start_request(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    let mut request = styrene_ipc::types::StartRequestInfo::default();
+    request.link_id = val_str(payload, "link_id").ok_or("missing link_id")?.to_string();
+    request.path = val_str(payload, "path").ok_or("missing path")?.to_string();
+    request.data = payload
+        .get("data")
+        .and_then(|value| value.as_slice())
+        .ok_or("missing binary data")?
+        .to_vec();
+    request.timeout_ms = val_u64(payload, "timeout_ms").ok_or("missing timeout_ms")?;
+    request.max_response_size =
+        val_u64(payload, "max_response_size").ok_or("missing max_response_size")?;
+    request_info_payload(
+        daemon.start_request(request).await.map_err(|error| error.to_string())?,
+        connection_generation,
+    )
+}
+
+async fn dispatch_query_request(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    let request_id = val_str(payload, "request_id").ok_or("missing request_id")?;
+    let receipt = daemon
+        .request_receipt(request_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("request receipt not found")?;
+    request_info_payload(receipt, connection_generation)
+}
+
+async fn dispatch_query_requests(
+    daemon: &Arc<dyn Daemon>,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    let receipts = daemon.request_receipts().await.map_err(|error| error.to_string())?;
+    let values = receipts
+        .into_iter()
+        .map(|receipt| request_info_value(receipt, connection_generation))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Payload::from([("requests".into(), rmpv::Value::Array(values))]))
+}
+
+async fn dispatch_cancel_request(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    let request_id = val_str(payload, "request_id").ok_or("missing request_id")?;
+    request_info_payload(
+        daemon.cancel_request(request_id).await.map_err(|error| error.to_string())?,
+        connection_generation,
+    )
+}
+
+async fn dispatch_start_network_operation(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    use styrene_ipc::types::{NetworkOperationKind, StartNetworkOperationInfo};
+
+    let kind = match val_str(payload, "kind").ok_or("missing kind")? {
+        "announce" => NetworkOperationKind::Announce,
+        "path_request" => NetworkOperationKind::PathRequest,
+        "probe" => NetworkOperationKind::Probe,
+        "link_open" => NetworkOperationKind::LinkOpen,
+        "link_close" => NetworkOperationKind::LinkClose,
+        other => return Err(format!("unknown network operation kind: {other}")),
+    };
+    let mut request = StartNetworkOperationInfo::default();
+    request.kind = kind;
+    request.destination_hash = val_str(payload, "destination_hash")
+        .map(validate_peer_hash)
+        .transpose()?
+        .map(str::to_string);
+    request.link_id = val_str(payload, "link_id").map(str::to_string);
+    request.timeout_ms = val_u64(payload, "timeout_ms").ok_or("missing timeout_ms")?;
+    network_operation_payload(
+        daemon.start_network_operation(request).await.map_err(|error| error.to_string())?,
+        connection_generation,
+    )
+}
+
+async fn dispatch_query_network_operation(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    if let Some(operation_id) = val_str(payload, "operation_id") {
+        let operation = daemon
+            .network_operation(operation_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("network operation not found")?;
+        return network_operation_payload(operation, connection_generation);
+    }
+    let operations = daemon.network_operations().await.map_err(|error| error.to_string())?;
+    let operations = operations
+        .into_iter()
+        .map(|operation| {
+            network_operation_payload(operation, connection_generation).map(|payload| {
+                rmpv::Value::Map(
+                    payload
+                        .into_iter()
+                        .map(|(key, value)| (rmpv::Value::from(key), value))
+                        .collect(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Payload::from([("operations".into(), rmpv::Value::Array(operations))]))
+}
+
+async fn dispatch_cancel_network_operation(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    let operation_id = val_str(payload, "operation_id").ok_or("missing operation_id")?;
+    network_operation_payload(
+        daemon.cancel_network_operation(operation_id).await.map_err(|error| error.to_string())?,
+        connection_generation,
+    )
+}
+
+pub(crate) fn network_operation_payload(
+    operation: styrene_ipc::types::NetworkOperationInfo,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    use styrene_ipc::types::NetworkOperationOutcome;
+
+    let mut payload = Payload::from([
+        ("operation_id".into(), rmpv::Value::from(operation.operation_id.as_str())),
+        ("kind".into(), rmpv::Value::from(operation.kind.as_str())),
+        ("started_unix_ms".into(), rmpv::Value::from(operation.started_unix_ms)),
+        ("deadline_unix_ms".into(), rmpv::Value::from(operation.deadline_unix_ms)),
+        ("cancellable".into(), rmpv::Value::from(operation.cancellable)),
+        ("progress".into(), rmpv::Value::from(operation.progress.as_str())),
+        ("source".into(), rmpv::Value::from(operation.observation.source.as_str())),
+        ("connection_generation".into(), rmpv::Value::from(connection_generation)),
+    ]);
+    if let Some(destination) = operation.destination_hash {
+        payload.insert("destination_hash".into(), rmpv::Value::from(destination));
+    }
+    if let Some(link_id) = operation.link_id {
+        payload.insert("link_id".into(), rmpv::Value::from(link_id));
+    }
+    if let Some(outcome) = operation.outcome {
+        let outcome = match outcome {
+            NetworkOperationOutcome::Succeeded => "succeeded",
+            NetworkOperationOutcome::Dispatched => "dispatched",
+            NetworkOperationOutcome::TimedOut => "timed_out",
+            NetworkOperationOutcome::Denied => "denied",
+            NetworkOperationOutcome::Unavailable => "unavailable",
+            NetworkOperationOutcome::Cancelled => "cancelled",
+            NetworkOperationOutcome::Failed => "failed",
+            _ => "unknown",
+        };
+        payload.insert("outcome".into(), rmpv::Value::from(outcome));
+    }
+    if let Some(detail) = operation.detail {
+        payload.insert("detail".into(), rmpv::Value::from(detail));
+    }
+    if let Some(rtt_ms) = operation.rtt_ms {
+        payload.insert("rtt_ms".into(), rmpv::Value::F64(rtt_ms));
+    }
+    if let Some(observed_at) = operation.observation.observed_at {
+        payload.insert("observed_at".into(), rmpv::Value::from(observed_at));
+    }
+    if let Some(correlation_id) = operation.observation.correlation_id {
+        payload.insert("correlation_id".into(), rmpv::Value::from(correlation_id));
+    }
+    Ok(payload)
+}
+
+pub(crate) fn request_info_payload(
+    info: styrene_ipc::types::RequestObservationInfo,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    let value = request_info_value(info, connection_generation)?;
+    value.as_map().ok_or_else(|| "request receipt encoding was not a map".to_string()).map(
+        |entries| {
+            entries
+                .iter()
+                .filter_map(|(key, value)| key.as_str().map(|key| (key.to_string(), value.clone())))
+                .collect()
+        },
+    )
+}
+
+fn request_info_value(
+    mut info: styrene_ipc::types::RequestObservationInfo,
+    connection_generation: u64,
+) -> Result<rmpv::Value, String> {
+    let response = info.response.take();
+    if connection_generation != 0 {
+        info.observation.connection_generation = Some(connection_generation);
+    }
+    let json = serde_json::to_value(info).map_err(|error| error.to_string())?;
+    let mut value: rmpv::Value = serde_json::from_value(json).map_err(|error| error.to_string())?;
+    if let Some(response) = response {
+        let rmpv::Value::Map(entries) = &mut value else {
+            return Err("request receipt encoding was not a map".to_string());
+        };
+        let encoded = entries
+            .iter_mut()
+            .find(|(key, _)| key.as_str() == Some("response"))
+            .ok_or_else(|| "request receipt encoding omitted response".to_string())?;
+        encoded.1 = rmpv::Value::Binary(response);
+    }
+    Ok(value)
 }
 
 // ── Status ──────────────────────────────────────────────────────────────
 
-async fn dispatch_query_status(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
-    let info = daemon.query_status().await.map_err(|e| e.to_string())?;
+async fn dispatch_query_status(
+    daemon: &Arc<dyn Daemon>,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    let mut info = daemon.query_status().await.map_err(|e| e.to_string())?;
+    if connection_generation != 0 {
+        info.connection_generation = Some(connection_generation);
+    }
     let mut p = Payload::new();
     p.insert("uptime".into(), rmpv::Value::from(info.uptime));
     p.insert("daemon_version".into(), rmpv::Value::from(info.daemon_version.as_str()));
@@ -164,6 +609,14 @@ async fn dispatch_query_status(daemon: &Arc<dyn Daemon>) -> Result<Payload, Stri
         p.insert("hub_status".into(), rmpv::Value::from(hs.as_str()));
     }
     p.insert("propagation_enabled".into(), rmpv::Value::from(info.propagation_enabled));
+    p.insert(
+        "standard_lxmf_propagation_destination_registered".into(),
+        rmpv::Value::from(info.standard_lxmf_propagation_destination_registered),
+    );
+    p.insert(
+        "standard_lxmf_propagation_active".into(),
+        rmpv::Value::from(info.standard_lxmf_propagation_active),
+    );
     p.insert("propagation_count".into(), rmpv::Value::from(info.propagation_count as i64));
     p.insert(
         "propagation_size_bytes".into(),
@@ -171,7 +624,291 @@ async fn dispatch_query_status(daemon: &Arc<dyn Daemon>) -> Result<Payload, Stri
     );
     p.insert("transport_enabled".into(), rmpv::Value::from(info.transport_enabled));
     p.insert("active_links".into(), rmpv::Value::from(info.active_links));
+    if let Some(capabilities) = info.active_capabilities {
+        let degraded = capabilities
+            .degraded
+            .into_iter()
+            .map(|capability| {
+                rmpv::Value::Map(vec![
+                    (rmpv::Value::from("id"), rmpv::Value::from(capability.id)),
+                    (rmpv::Value::from("reason"), rmpv::Value::from(capability.reason)),
+                ])
+            })
+            .collect();
+        p.insert(
+            "active_capabilities".into(),
+            rmpv::Value::Map(vec![
+                (rmpv::Value::from("version"), rmpv::Value::from(capabilities.version)),
+                (
+                    rmpv::Value::from("runtime"),
+                    rmpv::Value::Array(
+                        capabilities.runtime.into_iter().map(rmpv::Value::from).collect(),
+                    ),
+                ),
+                (rmpv::Value::from("degraded"), rmpv::Value::Array(degraded)),
+                (
+                    rmpv::Value::from("authorized_operations"),
+                    rmpv::Value::Array(
+                        capabilities
+                            .authorized_operations
+                            .into_iter()
+                            .map(rmpv::Value::from)
+                            .collect(),
+                    ),
+                ),
+            ]),
+        );
+    }
+    if let Some(generation) = info.connection_generation {
+        p.insert("connection_generation".into(), rmpv::Value::from(generation));
+    }
     ok_payload(p)
+}
+
+async fn dispatch_query_propagation(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let mut query = styrene_ipc::types::PropagationQuery::default();
+    query.cursor = val_str(payload, "cursor").map(ToOwned::to_owned);
+    query.limit = payload
+        .get("limit")
+        .and_then(rmpv::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(100);
+    let snapshot = daemon.propagation_snapshot(query).await.map_err(|error| error.to_string())?;
+    let queue = snapshot
+        .queue
+        .iter()
+        .map(|entry| {
+            let mut values = vec![
+                (rmpv::Value::from("id"), rmpv::Value::from(entry.id.as_str())),
+                (
+                    rmpv::Value::from("destination_hash"),
+                    rmpv::Value::from(entry.destination_hash.as_str()),
+                ),
+                (rmpv::Value::from("received_at"), rmpv::Value::from(entry.received_at)),
+                (rmpv::Value::from("expires_at"), rmpv::Value::from(entry.expires_at)),
+                (rmpv::Value::from("size_bytes"), rmpv::Value::from(entry.size_bytes)),
+                (rmpv::Value::from("state"), rmpv::Value::from(entry.state.as_str())),
+            ];
+            if let Some(source) = &entry.source_hash {
+                values.push((rmpv::Value::from("source_hash"), rmpv::Value::from(source.as_str())));
+            }
+            if let Some(attempts) = entry.attempts {
+                values.push((rmpv::Value::from("attempts"), rmpv::Value::from(attempts)));
+            }
+            rmpv::Value::Map(values)
+        })
+        .collect();
+    let mut payload = Payload::new();
+    payload.insert("enabled".into(), rmpv::Value::from(snapshot.enabled));
+    payload.insert("queue_count".into(), rmpv::Value::from(snapshot.queue_count));
+    payload.insert("queue_size_bytes".into(), rmpv::Value::from(snapshot.queue_size_bytes));
+    payload.insert("expiry_secs".into(), rmpv::Value::from(snapshot.expiry_secs));
+    payload.insert("queue".into(), rmpv::Value::Array(queue));
+    payload.insert("peer_state_supported".into(), rmpv::Value::from(snapshot.peer_state_supported));
+    payload.insert("sync_state_supported".into(), rmpv::Value::from(snapshot.sync_state_supported));
+    if let Some(capacity) = snapshot.capacity_bytes {
+        payload.insert("capacity_bytes".into(), rmpv::Value::from(capacity));
+    }
+    payload.insert("peers".into(), rmpv::Value::Array(Vec::new()));
+    payload.insert("failures".into(), rmpv::Value::Array(Vec::new()));
+    if let Some(cursor) = snapshot.next_cursor {
+        payload.insert("next_cursor".into(), rmpv::Value::from(cursor));
+    }
+    ok_payload(payload)
+}
+
+fn standard_direction_name(
+    value: styrene_ipc::types::StandardPropagationDirection,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationDirection as Direction;
+    match value {
+        Direction::Ingress => "ingress",
+        Direction::Egress => "egress",
+        Direction::Sync => "sync",
+        _ => "unknown",
+    }
+}
+
+fn standard_stage_name(value: styrene_ipc::types::StandardPropagationStage) -> &'static str {
+    use styrene_ipc::types::StandardPropagationStage as Stage;
+    match value {
+        Stage::Offer => "offer",
+        Stage::Transfer => "transfer",
+        Stage::Get => "get",
+        Stage::Fetch => "fetch",
+        Stage::Download => "download",
+        Stage::Sync => "sync",
+        Stage::Complete => "complete",
+        _ => "unknown",
+    }
+}
+
+fn standard_state_name(value: styrene_ipc::types::StandardPropagationAttemptState) -> &'static str {
+    use styrene_ipc::types::StandardPropagationAttemptState as State;
+    match value {
+        State::Running => "running",
+        State::Completed => "completed",
+        State::Failed => "failed",
+        State::Interrupted => "interrupted",
+        _ => "unknown",
+    }
+}
+
+fn standard_outcome_name(value: styrene_ipc::types::StandardPropagationOutcome) -> &'static str {
+    use styrene_ipc::types::StandardPropagationOutcome as Outcome;
+    match value {
+        Outcome::Pending => "pending",
+        Outcome::Completed => "completed",
+        Outcome::Failed => "failed",
+        Outcome::Interrupted => "interrupted",
+        Outcome::CapacityRejected => "capacity_rejected",
+        _ => "unknown",
+    }
+}
+
+fn optional_value(value: Option<impl Into<rmpv::Value>>) -> rmpv::Value {
+    value.map(Into::into).unwrap_or(rmpv::Value::Nil)
+}
+
+fn string_map(entries: impl IntoIterator<Item = (&'static str, rmpv::Value)>) -> rmpv::Value {
+    rmpv::Value::Map(
+        entries.into_iter().map(|(key, value)| (rmpv::Value::from(key), value)).collect(),
+    )
+}
+
+async fn dispatch_query_standard_propagation(
+    daemon: &Arc<dyn Daemon>,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    let mut snapshot = daemon.query_standard_propagation().await.map_err(typed_ipc_error)?;
+    if connection_generation != 0 {
+        snapshot.connection_generation = Some(connection_generation);
+    }
+    let policy = snapshot.policy.map(|policy| {
+        string_map([
+            ("target_cost", policy.target_cost.into()),
+            ("flexibility", policy.flexibility.into()),
+            ("peering_cost", policy.peering_cost.into()),
+            ("transfer_limit_kb", policy.transfer_limit_kb.into()),
+            ("sync_limit_kb", policy.sync_limit_kb.into()),
+            ("queue_max_count", policy.queue_max_count.into()),
+            ("queue_max_bytes", policy.queue_max_bytes.into()),
+            ("expiry_secs", policy.expiry_secs.into()),
+            ("throttle_secs", policy.throttle_secs.into()),
+            ("max_offer_links", policy.max_offer_links.into()),
+        ])
+    });
+    let selection = snapshot.selection.map(|selection| {
+        string_map([
+            ("peer_hash", optional_value(selection.peer_hash)),
+            ("mode", selection.mode.into()),
+            ("selected_at", selection.selected_at.into()),
+        ])
+    });
+    let peers = snapshot
+        .peers
+        .into_iter()
+        .map(|peer| {
+            string_map([
+                ("peer_hash", peer.peer_hash.into()),
+                ("propagation_destination_hash", optional_value(peer.propagation_destination_hash)),
+                ("configured", peer.configured.into()),
+                ("enabled", peer.enabled.into()),
+                ("first_seen_at", peer.first_seen_at.into()),
+                ("last_seen_at", peer.last_seen_at.into()),
+                ("retry_at", optional_value(peer.retry_at)),
+                ("backoff_count", peer.backoff_count.into()),
+                ("offered_count", peer.offered_count.into()),
+                ("wanted_count", peer.wanted_count.into()),
+                ("accepted_count", peer.accepted_count.into()),
+                ("accepted_bytes", peer.accepted_bytes.into()),
+                ("failure_count", peer.failure_count.into()),
+                ("transfer_limit_kb", optional_value(peer.transfer_limit_kb)),
+                ("sync_limit_kb", optional_value(peer.sync_limit_kb)),
+                ("stamp_cost", optional_value(peer.stamp_cost)),
+                ("stamp_flexibility", optional_value(peer.stamp_flexibility)),
+                ("peering_cost", optional_value(peer.peering_cost)),
+            ])
+        })
+        .collect();
+    let attempts = snapshot
+        .attempts
+        .into_iter()
+        .map(|attempt| {
+            string_map([
+                ("attempt_id", attempt.attempt_id.into()),
+                ("correlation_id", attempt.correlation_id.into()),
+                ("peer_hash", optional_value(attempt.peer_hash)),
+                ("direction", standard_direction_name(attempt.direction).into()),
+                ("stage", standard_stage_name(attempt.stage).into()),
+                ("state", standard_state_name(attempt.state).into()),
+                ("outcome", standard_outcome_name(attempt.outcome).into()),
+                ("started_at", attempt.started_at.into()),
+                ("updated_at", attempt.updated_at.into()),
+                ("deadline_at", optional_value(attempt.deadline_at)),
+                ("offered_count", attempt.offered_count.into()),
+                ("wanted_count", attempt.wanted_count.into()),
+                ("accepted_count", attempt.accepted_count.into()),
+                ("accepted_bytes", attempt.accepted_bytes.into()),
+                ("failure_code", optional_value(attempt.failure_code)),
+            ])
+        })
+        .collect();
+    let checkpoints = snapshot
+        .checkpoints
+        .into_iter()
+        .map(|checkpoint| {
+            string_map([
+                ("peer_hash", checkpoint.peer_hash.into()),
+                ("direction", standard_direction_name(checkpoint.direction).into()),
+                ("completed_stage", standard_stage_name(checkpoint.completed_stage).into()),
+                ("item_count", checkpoint.item_count.into()),
+                ("byte_count", checkpoint.byte_count.into()),
+                ("last_attempt_id", optional_value(checkpoint.last_attempt_id)),
+                ("updated_at", checkpoint.updated_at.into()),
+            ])
+        })
+        .collect();
+    let failures = snapshot
+        .failures
+        .into_iter()
+        .map(|failure| {
+            string_map([
+                ("code", failure.code.into()),
+                ("occurred_at", failure.occurred_at.into()),
+                ("peer_hash", optional_value(failure.peer_hash)),
+                ("attempt_id", optional_value(failure.attempt_id)),
+            ])
+        })
+        .collect();
+    let queue = string_map([
+        ("queued_count", snapshot.queue.queued_count.into()),
+        ("queued_bytes", snapshot.queue.queued_bytes.into()),
+        ("acknowledged_count", snapshot.queue.acknowledged_count.into()),
+        ("expired_count", snapshot.queue.expired_count.into()),
+        ("terminal_count", snapshot.queue.terminal_count.into()),
+    ]);
+    ok_payload(Payload::from([
+        ("version".into(), snapshot.version.into()),
+        ("registered".into(), snapshot.registered.into()),
+        ("active".into(), snapshot.active.into()),
+        ("observed_at".into(), optional_value(snapshot.observed_at)),
+        ("connection_generation".into(), optional_value(snapshot.connection_generation)),
+        ("policy".into(), policy.unwrap_or(rmpv::Value::Nil)),
+        ("queue".into(), queue),
+        ("selection".into(), selection.unwrap_or(rmpv::Value::Nil)),
+        ("peers".into(), rmpv::Value::Array(peers)),
+        ("attempts".into(), rmpv::Value::Array(attempts)),
+        ("checkpoints".into(), rmpv::Value::Array(checkpoints)),
+        ("failures".into(), rmpv::Value::Array(failures)),
+        ("peers_truncated".into(), snapshot.peers_truncated.into()),
+        ("attempts_truncated".into(), snapshot.attempts_truncated.into()),
+        ("checkpoints_truncated".into(), snapshot.checkpoints_truncated.into()),
+        ("failures_truncated".into(), snapshot.failures_truncated.into()),
+    ]))
 }
 
 // ── Identity ──────────────────────────────────────────────────────────────
@@ -206,7 +943,7 @@ async fn dispatch_query_devices(
     let device_list: Vec<rmpv::Value> = devices
         .iter()
         .map(|d| {
-            rmpv::Value::Map(vec![
+            let mut fields = vec![
                 (
                     rmpv::Value::from("destination_hash"),
                     rmpv::Value::from(d.destination_hash.as_str()),
@@ -216,7 +953,23 @@ async fn dispatch_query_devices(
                 (rmpv::Value::from("device_type"), rmpv::Value::from(d.device_type.as_str())),
                 (rmpv::Value::from("status"), rmpv::Value::from(d.status.as_str())),
                 (rmpv::Value::from("is_styrene_node"), rmpv::Value::from(d.is_styrene_node)),
-            ])
+                (
+                    rmpv::Value::from("discovered_capabilities"),
+                    rmpv::Value::Array(
+                        d.discovered_capabilities
+                            .iter()
+                            .map(|capability| rmpv::Value::from(capability.as_str()))
+                            .collect(),
+                    ),
+                ),
+            ];
+            if let Some(active) = d.standard_lxmf_propagation_active {
+                fields.push((
+                    rmpv::Value::from("standard_lxmf_propagation_active"),
+                    rmpv::Value::from(active),
+                ));
+            }
+            rmpv::Value::Map(fields)
         })
         .collect();
     let mut p = Payload::new();
@@ -254,61 +1007,469 @@ async fn dispatch_query_conversations(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
 ) -> Result<Payload, String> {
-    let include_unread = val_bool(payload, "include_unread").unwrap_or(false);
-    let convos = daemon.query_conversations(include_unread).await.map_err(|e| e.to_string())?;
-    let list: Vec<rmpv::Value> = convos
-        .iter()
-        .map(|c| {
-            let mut m = Vec::new();
-            m.push((rmpv::Value::from("peer_hash"), rmpv::Value::from(c.peer_hash.as_str())));
-            m.push((rmpv::Value::from("unread_count"), rmpv::Value::from(c.unread_count)));
-            m.push((rmpv::Value::from("message_count"), rmpv::Value::from(c.message_count)));
-            if let Some(ref name) = c.peer_name {
-                m.push((rmpv::Value::from("peer_name"), rmpv::Value::from(name.as_str())));
-            }
-            rmpv::Value::Map(m)
-        })
-        .collect();
+    let unread_only = conversation_unread_only(payload)?;
+    let paged = payload.contains_key("limit") || payload.contains_key("cursor");
+    let (convos, next_cursor) = if paged {
+        let limit = page_limit(payload)?;
+        let cursor = page_cursor(payload, "cursor")?;
+        let page = daemon
+            .query_conversation_page(unread_only, limit, cursor)
+            .await
+            .map_err(|e| e.to_string())?;
+        (page.conversations, page.next_cursor)
+    } else {
+        (daemon.query_conversations(unread_only).await.map_err(|e| e.to_string())?, None)
+    };
+    let list = convos.iter().map(conversation_info_value).collect();
     let mut p = Payload::new();
     p.insert("conversations".into(), rmpv::Value::Array(list));
+    if paged {
+        p.insert("next_cursor".into(), next_cursor.map_or(rmpv::Value::Nil, rmpv::Value::from));
+    }
     ok_payload(p)
 }
 
+fn conversation_unread_only(payload: &Payload) -> Result<bool, String> {
+    let canonical = optional_bool(payload, "unread_only")?;
+    // `include_unread` was the original unbounded-client spelling. Despite its
+    // name, its established meaning was identical to `unread_only`.
+    let legacy = optional_bool(payload, "include_unread")?;
+    if canonical.is_some() && legacy.is_some() && canonical != legacy {
+        return Err("unread_only and include_unread must not conflict".into());
+    }
+    Ok(canonical.or(legacy).unwrap_or(false))
+}
+
+fn optional_bool(payload: &Payload, key: &str) -> Result<Option<bool>, String> {
+    match payload.get(key) {
+        None => Ok(None),
+        Some(value) => value.as_bool().map(Some).ok_or_else(|| format!("{key} must be a boolean")),
+    }
+}
+
+fn conversation_info_value(c: &styrene_ipc::types::ConversationInfo) -> rmpv::Value {
+    let mut fields = vec![
+        (rmpv::Value::from("peer_hash"), rmpv::Value::from(c.peer_hash.as_str())),
+        (rmpv::Value::from("unread_count"), rmpv::Value::from(c.unread_count)),
+        (rmpv::Value::from("message_count"), rmpv::Value::from(c.message_count)),
+        (rmpv::Value::from("pinned"), rmpv::Value::from(c.pinned)),
+        (rmpv::Value::from("muted"), rmpv::Value::from(c.muted)),
+    ];
+    if let Some(name) = c.peer_name.as_deref() {
+        fields.push((rmpv::Value::from("peer_name"), rmpv::Value::from(name)));
+    }
+    if let Some(timestamp) = c.last_message_timestamp {
+        fields.push((rmpv::Value::from("last_message_timestamp"), rmpv::Value::from(timestamp)));
+    }
+    if let Some(content) = c.last_message_content.as_deref() {
+        fields.push((rmpv::Value::from("last_message_content"), rmpv::Value::from(content)));
+    }
+    rmpv::Value::Map(fields)
+}
+
 // ── Messages ────────────────────────────────────────────────────────────
+
+pub(crate) fn canonical_message_fields(
+    message: &styrene_ipc::types::MessageInfo,
+) -> Vec<(String, rmpv::Value)> {
+    use styrene_ipc::types::{MessageAuthenticationState, MessageStampState};
+
+    let authentication_state = match message.authentication_state {
+        MessageAuthenticationState::Verified => "verified",
+        MessageAuthenticationState::Invalid => "invalid",
+        MessageAuthenticationState::UnknownIdentity => "unknown_identity",
+        MessageAuthenticationState::NotApplicable => "not_applicable",
+        MessageAuthenticationState::Unknown => "unknown",
+        _ => "unknown",
+    };
+    let stamp_state = match message.stamp_state {
+        MessageStampState::Verified => "verified",
+        MessageStampState::Invalid => "invalid",
+        MessageStampState::NotApplicable => "not_applicable",
+        MessageStampState::Unknown => "unknown",
+        _ => "unknown",
+    };
+    vec![
+        (
+            "lxmf_timestamp".into(),
+            message.lxmf_timestamp.map_or(rmpv::Value::Nil, rmpv::Value::F64),
+        ),
+        ("authentication_state".into(), rmpv::Value::from(authentication_state)),
+        ("stamp_state".into(), rmpv::Value::from(stamp_state)),
+        ("stamp_value".into(), message.stamp_value.map_or(rmpv::Value::Nil, rmpv::Value::from)),
+        ("stamp_cost".into(), message.stamp_cost.map_or(rmpv::Value::Nil, rmpv::Value::from)),
+    ]
+}
+
+pub(crate) fn message_info_value(message: &styrene_ipc::types::MessageInfo) -> rmpv::Value {
+    let mut values = vec![
+        (rmpv::Value::from("id"), rmpv::Value::from(message.id.as_str())),
+        (rmpv::Value::from("source_hash"), rmpv::Value::from(message.source_hash.as_str())),
+        (
+            rmpv::Value::from("destination_hash"),
+            rmpv::Value::from(message.destination_hash.as_str()),
+        ),
+        (rmpv::Value::from("content"), rmpv::Value::from(message.content.as_str())),
+        (
+            rmpv::Value::from("title"),
+            message.title.as_deref().map_or(rmpv::Value::Nil, rmpv::Value::from),
+        ),
+        (rmpv::Value::from("timestamp"), rmpv::Value::from(message.timestamp)),
+        (rmpv::Value::from("is_outgoing"), rmpv::Value::from(message.is_outgoing)),
+        (rmpv::Value::from("read"), rmpv::Value::from(message.read)),
+        (rmpv::Value::from("status"), rmpv::Value::from(message.status.as_str())),
+        (rmpv::Value::from("projection_complete"), rmpv::Value::from(message.projection_complete)),
+        (
+            rmpv::Value::from("lifecycle_state"),
+            rmpv::Value::from(message_lifecycle_state_name(message.lifecycle_state)),
+        ),
+        (
+            rmpv::Value::from("terminal_detail"),
+            message.terminal_detail.as_deref().map_or(rmpv::Value::Nil, rmpv::Value::from),
+        ),
+    ];
+    for (key, value) in [
+        ("delivery_method", message.delivery_method.as_deref()),
+        ("requested_delivery_method", message.requested_delivery_method.as_deref()),
+        ("actual_delivery_method", message.actual_delivery_method.as_deref()),
+        ("fallback_reason", message.fallback_reason.as_deref()),
+        ("correlation_id", message.correlation_id.as_deref()),
+    ] {
+        if let Some(value) = value {
+            values.push((rmpv::Value::from(key), rmpv::Value::from(value)));
+        }
+    }
+    values.push((
+        rmpv::Value::from("delivery_evidence"),
+        rmpv::Value::Array(message.delivery_evidence.iter().map(delivery_evidence_value).collect()),
+    ));
+    values.push((
+        rmpv::Value::from("attempts"),
+        rmpv::Value::Array(
+            message
+                .attempts
+                .iter()
+                .map(|attempt| {
+                    rmpv::Value::Map(vec![
+                        (
+                            rmpv::Value::from("message_id"),
+                            rmpv::Value::from(attempt.message_id.as_str()),
+                        ),
+                        (rmpv::Value::from("number"), rmpv::Value::from(attempt.number)),
+                        (
+                            rmpv::Value::from("started_unix_ms"),
+                            rmpv::Value::from(attempt.started_unix_ms),
+                        ),
+                        (
+                            rmpv::Value::from("deadline_unix_ms"),
+                            rmpv::Value::from(attempt.deadline_unix_ms),
+                        ),
+                        (rmpv::Value::from("state"), rmpv::Value::from(attempt.state.as_str())),
+                    ])
+                })
+                .collect(),
+        ),
+    ));
+    values.push((
+        rmpv::Value::from("propagation_correlations"),
+        rmpv::Value::Array(
+            message
+                .propagation_correlations
+                .iter()
+                .map(|correlation| {
+                    let mut fields = vec![
+                        (
+                            rmpv::Value::from("relation"),
+                            rmpv::Value::from(correlation.relation.as_str()),
+                        ),
+                        (
+                            rmpv::Value::from("transient_id"),
+                            rmpv::Value::from(correlation.transient_id.as_str()),
+                        ),
+                        (rmpv::Value::from("state"), rmpv::Value::from(correlation.state.as_str())),
+                        (
+                            rmpv::Value::from("created_at"),
+                            rmpv::Value::from(correlation.created_at),
+                        ),
+                        (
+                            rmpv::Value::from("updated_at"),
+                            rmpv::Value::from(correlation.updated_at),
+                        ),
+                    ];
+                    if let Some(attempt_id) = &correlation.attempt_id {
+                        fields.push((
+                            rmpv::Value::from("attempt_id"),
+                            rmpv::Value::from(attempt_id.as_str()),
+                        ));
+                    }
+                    if let Some(peer_hash) = &correlation.peer_hash {
+                        fields.push((
+                            rmpv::Value::from("peer_hash"),
+                            rmpv::Value::from(peer_hash.as_str()),
+                        ));
+                    }
+                    rmpv::Value::Map(fields)
+                })
+                .collect(),
+        ),
+    ));
+    if let Some(attachment) = &message.attachment_info {
+        values.push((rmpv::Value::from("attachment_info"), attachment_info_value(attachment)));
+    }
+    values.push((
+        rmpv::Value::from("attachments"),
+        rmpv::Value::Array(message.attachments.iter().map(attachment_info_value).collect()),
+    ));
+    values.extend(
+        canonical_message_fields(message)
+            .into_iter()
+            .map(|(key, value)| (rmpv::Value::from(key), value)),
+    );
+    rmpv::Value::Map(values)
+}
+
+fn attachment_info_value(attachment: &styrene_ipc::types::AttachmentInfo) -> rmpv::Value {
+    let mut values = vec![
+        (rmpv::Value::from("ordinal"), rmpv::Value::from(attachment.ordinal)),
+        (rmpv::Value::from("id"), rmpv::Value::from(attachment.id.as_str())),
+        (rmpv::Value::from("name"), rmpv::Value::from(attachment.name.as_str())),
+        (rmpv::Value::from("content_type"), rmpv::Value::from(attachment.content_type.as_str())),
+        (rmpv::Value::from("size"), rmpv::Value::from(attachment.size)),
+        (rmpv::Value::from("checksum"), rmpv::Value::from(attachment.checksum.as_str())),
+        (rmpv::Value::from("availability"), rmpv::Value::from(attachment.availability.as_str())),
+        (rmpv::Value::from("integrity"), rmpv::Value::from(attachment.integrity.as_str())),
+    ];
+    if let Some(transfer) = &attachment.transfer {
+        values.push((
+            rmpv::Value::from("transfer"),
+            rmpv::Value::Map(vec![
+                (rmpv::Value::from("message_id"), rmpv::Value::from(transfer.message_id.as_str())),
+                (
+                    rmpv::Value::from("resource_hash"),
+                    transfer.resource_hash.as_deref().map_or(rmpv::Value::Nil, rmpv::Value::from),
+                ),
+                (
+                    rmpv::Value::from("transfer_id"),
+                    rmpv::Value::from(transfer.transfer_id.as_str()),
+                ),
+                (
+                    rmpv::Value::from("representation"),
+                    rmpv::Value::from(transfer.representation.as_str()),
+                ),
+                (rmpv::Value::from("direction"), rmpv::Value::from(transfer.direction.as_str())),
+                (rmpv::Value::from("state"), rmpv::Value::from(transfer.state.as_str())),
+                (rmpv::Value::from("transferred"), rmpv::Value::from(transfer.transferred)),
+                (rmpv::Value::from("total"), rmpv::Value::from(transfer.total)),
+                (
+                    rmpv::Value::from("checksum_verified"),
+                    rmpv::Value::from(transfer.checksum_verified),
+                ),
+                (rmpv::Value::from("cancellable"), rmpv::Value::from(transfer.cancellable)),
+                (
+                    rmpv::Value::from("error"),
+                    transfer.error.as_deref().map_or(rmpv::Value::Nil, rmpv::Value::from),
+                ),
+            ]),
+        ));
+    }
+    rmpv::Value::Map(values)
+}
+
+fn message_lifecycle_state_name(state: styrene_ipc::types::MessageLifecycleState) -> &'static str {
+    use styrene_ipc::types::MessageLifecycleState::*;
+    match state {
+        Queued => "queued",
+        Sending => "sending",
+        Sent => "sent",
+        Delivered => "delivered",
+        Failed => "failed",
+        Cancelled => "cancelled",
+        Expired => "expired",
+        Rejected => "rejected",
+        Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
+fn delivery_evidence_value(
+    evidence: &styrene_ipc::types::MessageDeliveryEvidenceInfo,
+) -> rmpv::Value {
+    use styrene_ipc::types::{
+        MessageDeliveryEvidenceKind as Kind, MessageDeliveryEvidenceState as State,
+    };
+    let kind = match evidence.kind {
+        Kind::PacketReceipt => "packet_receipt",
+        Kind::ResourceCompletion => "resource_completion",
+        _ => "unknown",
+    };
+    let state = match evidence.state {
+        State::Tracked => "tracked",
+        State::Completed => "completed",
+        State::Failed => "failed",
+        State::Cancelled => "cancelled",
+        _ => "unknown",
+    };
+    rmpv::Value::Map(vec![
+        (rmpv::Value::from("kind"), rmpv::Value::from(kind)),
+        (rmpv::Value::from("hash"), rmpv::Value::from(evidence.hash.as_str())),
+        (rmpv::Value::from("representation"), rmpv::Value::from(evidence.representation.as_str())),
+        (rmpv::Value::from("state"), rmpv::Value::from(state)),
+        (
+            rmpv::Value::from("outcome"),
+            evidence.outcome.as_deref().map_or(rmpv::Value::Nil, rmpv::Value::from),
+        ),
+        (
+            rmpv::Value::from("attempt"),
+            evidence.attempt.map_or(rmpv::Value::Nil, rmpv::Value::from),
+        ),
+        (
+            rmpv::Value::from("correlation_id"),
+            evidence.correlation_id.as_deref().map_or(rmpv::Value::Nil, rmpv::Value::from),
+        ),
+        (rmpv::Value::from("observed_at"), rmpv::Value::from(evidence.observed_at)),
+        (
+            rmpv::Value::from("terminal_at"),
+            evidence.terminal_at.map_or(rmpv::Value::Nil, rmpv::Value::from),
+        ),
+        (
+            rmpv::Value::from("transferred_bytes"),
+            evidence.transferred_bytes.map_or(rmpv::Value::Nil, rmpv::Value::from),
+        ),
+        (
+            rmpv::Value::from("total_bytes"),
+            evidence.total_bytes.map_or(rmpv::Value::Nil, rmpv::Value::from),
+        ),
+        (
+            rmpv::Value::from("progress"),
+            evidence.progress.map_or(rmpv::Value::Nil, rmpv::Value::from),
+        ),
+    ])
+}
+
+async fn dispatch_query_attachment(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let message_id = val_str(payload, "message_id").ok_or("missing message_id")?;
+    let chunked = payload.contains_key("ordinal")
+        || payload.contains_key("offset")
+        || payload.contains_key("max_bytes");
+    let (attachment, data, next_offset, done) = if chunked {
+        let ordinal = payload.get("ordinal").and_then(rmpv::Value::as_u64).unwrap_or(0);
+        let ordinal = u8::try_from(ordinal).map_err(|_| "ordinal must be between 0 and 7")?;
+        let offset = payload.get("offset").and_then(rmpv::Value::as_u64).unwrap_or(0);
+        let max_bytes =
+            payload.get("max_bytes").and_then(rmpv::Value::as_u64).unwrap_or(256 * 1024);
+        let max_bytes = u32::try_from(max_bytes).map_err(|_| "max_bytes exceeds u32")?;
+        let chunk = daemon
+            .query_attachment_chunk(message_id, ordinal, offset, max_bytes)
+            .await
+            .map_err(|error| error.to_string())?;
+        (chunk.attachment, chunk.data, chunk.next_offset, chunk.done)
+    } else {
+        let data = daemon.query_attachment(message_id).await.map_err(|error| error.to_string())?;
+        let attachment = daemon
+            .list_attachments(message_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .next()
+            .ok_or("attachment metadata unavailable")?;
+        let len = data.len() as u64;
+        (attachment, data, len, true)
+    };
+    let mut response = Payload::new();
+    response.insert("attachment".into(), attachment_info_value(&attachment));
+    response.insert("data".into(), rmpv::Value::Binary(data));
+    response.insert("next_offset".into(), rmpv::Value::from(next_offset));
+    response.insert("done".into(), rmpv::Value::from(done));
+    ok_payload(response)
+}
+
+async fn dispatch_query_attachment_transfer(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let message_id = val_str(payload, "message_id").ok_or("missing message_id")?;
+    let transfer = daemon.query_attachment_transfer(message_id).await.map_err(typed_ipc_error)?;
+    let value =
+        rmpv::ext::to_value(serde_json::to_value(transfer).map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    ok_payload(HashMap::from([("attachment_transfer".into(), value)]))
+}
+
+async fn dispatch_cancel_attachment_transfer(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let message_id = val_str(payload, "message_id").ok_or("missing message_id")?;
+    let outcome = daemon.cancel_attachment_transfer(message_id).await.map_err(typed_ipc_error)?;
+    let mut response = Payload::new();
+    response.insert(
+        "success".into(),
+        rmpv::Value::from(outcome.disposition == styrene_ipc::types::MessagingDisposition::Applied),
+    );
+    add_outcome(&mut response, &outcome)?;
+    ok_payload(response)
+}
 
 async fn dispatch_query_messages(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
 ) -> Result<Payload, String> {
-    let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
-    let peer_hash = validate_hash(peer_hash)?;
-    let limit = val_u64(payload, "limit").unwrap_or(50) as u32;
-    let before_ts = val_i64(payload, "before_ts");
-    let msgs =
-        daemon.query_messages(peer_hash, limit, before_ts).await.map_err(|e| e.to_string())?;
-    let list: Vec<rmpv::Value> = msgs
-        .iter()
-        .map(|m| {
-            rmpv::Value::Map(vec![
-                (rmpv::Value::from("id"), rmpv::Value::from(m.id.as_str())),
-                (rmpv::Value::from("source_hash"), rmpv::Value::from(m.source_hash.as_str())),
-                (rmpv::Value::from("content"), rmpv::Value::from(m.content.as_str())),
-                (rmpv::Value::from("timestamp"), rmpv::Value::from(m.timestamp)),
-                (rmpv::Value::from("is_outgoing"), rmpv::Value::from(m.is_outgoing)),
-                (rmpv::Value::from("read"), rmpv::Value::from(m.read)),
-            ])
-        })
-        .collect();
+    let peer_hash = required_peer_hash(payload, "peer_hash")?;
+    let before_ts = match payload.get("before_ts") {
+        None | Some(rmpv::Value::Nil) => None,
+        Some(value) => Some(
+            value
+                .as_i64()
+                .ok_or_else(|| "before_ts must be a signed integer or nil".to_string())?,
+        ),
+    };
+    let cursor = page_cursor(payload, "cursor")?;
+    if cursor.is_some() && before_ts.is_some() {
+        return Err("cursor and before_ts are mutually exclusive".into());
+    }
+    let limit = page_limit(payload)?;
+    let (msgs, next_cursor) = if before_ts.is_some() {
+        (daemon.query_messages(peer_hash, limit, before_ts).await.map_err(|e| e.to_string())?, None)
+    } else {
+        let page =
+            daemon.query_message_page(peer_hash, limit, cursor).await.map_err(|e| e.to_string())?;
+        (page.messages, page.next_cursor)
+    };
+    let list: Vec<rmpv::Value> = msgs.iter().map(message_info_value).collect();
     let mut p = Payload::new();
     p.insert("messages".into(), rmpv::Value::Array(list));
+    if before_ts.is_none() {
+        p.insert("next_cursor".into(), next_cursor.map_or(rmpv::Value::Nil, rmpv::Value::from));
+    }
     ok_payload(p)
+}
+
+async fn dispatch_query_message(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let message_id = val_str(payload, "message_id").ok_or("missing message_id")?;
+    if message_id.is_empty() || message_id.len() > 128 {
+        return Err("message_id must contain between 1 and 128 bytes".into());
+    }
+    let message = daemon.query_message(message_id).await.map_err(typed_ipc_error)?;
+    let mut response = Payload::new();
+    response
+        .insert("message".into(), message.as_ref().map_or(rmpv::Value::Nil, message_info_value));
+    ok_payload(response)
 }
 
 // ── Send chat ───────────────────────────────────────────────────────────
 
-async fn dispatch_send_chat(daemon: &Arc<dyn Daemon>, payload: Payload) -> Result<Payload, String> {
-    let peer_hash = val_str(&payload, "peer_hash").ok_or("missing peer_hash")?;
-    let peer_hash = validate_hash(peer_hash)?.to_string();
+async fn dispatch_send_chat(
+    daemon: &Arc<dyn Daemon>,
+    payload: Payload,
+    authoritative_outcome: bool,
+) -> Result<Payload, String> {
+    let peer_hash = required_peer_hash(&payload, "peer_hash")?.to_string();
     let content = val_str(&payload, "content").ok_or("missing content")?;
     if content.len() > 65536 {
         return Err(format!("content too large: {} bytes (max 65536)", content.len()));
@@ -322,10 +1483,133 @@ async fn dispatch_send_chat(daemon: &Arc<dyn Daemon>, payload: Payload) -> Resul
     req.content = content;
     req.title = title;
     req.delivery_method = delivery_method;
-    let msg_id = daemon.send_chat(req).await.map_err(|e| e.to_string())?;
+    if let Some(value) = payload.get("attachment") {
+        req.attachment = Some(
+            value
+                .as_slice()
+                .filter(|bytes| bytes.len() <= 768 * 1024)
+                .ok_or("attachment must be binary and at most 768 KiB")?
+                .to_vec(),
+        );
+        req.attachment_name = val_str(&payload, "attachment_name").map(str::to_owned);
+        if payload.contains_key("attachment_name") && req.attachment_name.is_none() {
+            return Err("attachment_name must be a string".into());
+        }
+    } else if payload.contains_key("attachment_name") {
+        return Err("attachment_name requires legacy attachment".into());
+    }
+    if let Some(value) = payload.get("attachments") {
+        if req.attachment.is_some() {
+            return Err("legacy attachment and attachments are mutually exclusive".into());
+        }
+        let entries = value.as_array().ok_or("attachments must be an array")?;
+        if entries.len() > 8 {
+            return Err("attachment count exceeds 8".into());
+        }
+        let mut aggregate = 0usize;
+        for entry in entries {
+            let map = entry.as_map().ok_or("attachment entry must be a map")?;
+            let get = |key: &str| {
+                map.iter()
+                    .find(|(candidate, _)| candidate.as_str() == Some(key))
+                    .map(|(_, value)| value)
+            };
+            let name = get("name")
+                .and_then(rmpv::Value::as_str)
+                .filter(|name| (1..=255).contains(&name.len()))
+                .ok_or("attachment name must be 1..=255 UTF-8 bytes")?;
+            let bytes = get("bytes")
+                .or_else(|| get("data"))
+                .and_then(rmpv::Value::as_slice)
+                .filter(|bytes| bytes.len() <= 768 * 1024)
+                .ok_or("attachment bytes must be binary and at most 768 KiB")?;
+            aggregate =
+                aggregate.checked_add(bytes.len()).ok_or("attachment aggregate overflow")?;
+            if aggregate > 768 * 1024 {
+                return Err("attachment aggregate exceeds 768 KiB".into());
+            }
+            let mut input = styrene_ipc::types::AttachmentInput::default();
+            input.name = name.to_owned();
+            input.bytes = bytes.to_vec();
+            input.content_type = match get("content_type") {
+                None | Some(rmpv::Value::Nil) => None,
+                Some(value) => Some(
+                    value
+                        .as_str()
+                        .ok_or("attachment content_type must be a string or nil")?
+                        .to_owned(),
+                ),
+            };
+            input.expected_sha256 = match get("expected_sha256") {
+                None | Some(rmpv::Value::Nil) => None,
+                Some(value) => {
+                    let expected = value
+                        .as_str()
+                        .ok_or("attachment expected_sha256 must be a string or nil")?;
+                    if expected.len() != 64
+                        || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
+                        || expected.bytes().any(|byte| byte.is_ascii_uppercase())
+                    {
+                        return Err(
+                            "attachment expected_sha256 must be 64 lowercase hex characters".into(),
+                        );
+                    }
+                    Some(expected.to_owned())
+                }
+            };
+            req.attachments.push(input);
+        }
+    }
     let mut p = Payload::new();
-    p.insert("message_id".into(), rmpv::Value::from(msg_id.as_str()));
+    if authoritative_outcome {
+        let outcome = daemon.send_chat_outcome(req).await.map_err(typed_ipc_error)?;
+        if outcome.message_id.is_empty() || outcome.message.id != outcome.message_id {
+            return Err("daemon send outcome omitted its authoritative message projection".into());
+        }
+        p.insert("message_id".into(), rmpv::Value::from(outcome.message_id.as_str()));
+        p.insert("outcome".into(), serialized_value(&outcome)?);
+    } else {
+        let msg_id = daemon.send_chat(req).await.map_err(|e| e.to_string())?;
+        p.insert("message_id".into(), rmpv::Value::from(msg_id.as_str()));
+    }
     ok_payload(p)
+}
+
+async fn dispatch_query_draft(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let peer_hash = required_peer_hash(payload, "peer_hash")?;
+    let draft = daemon.draft(peer_hash).await.map_err(typed_ipc_error)?;
+    Ok(Payload::from([(
+        "draft".into(),
+        match draft {
+            Some(draft) => serialized_value(&draft)?,
+            None => rmpv::Value::Nil,
+        },
+    )]))
+}
+
+async fn dispatch_set_draft(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let peer_hash = required_peer_hash(payload, "peer_hash")?;
+    let content = required_str(payload, "content")?;
+    if content.len() > styrene_ipc::types::MAX_CHAT_CONTENT_BYTES {
+        return Err(invalid_dispatch("draft content exceeds 65536 UTF-8 bytes"));
+    }
+    let draft = daemon.set_draft(peer_hash, content).await.map_err(typed_ipc_error)?;
+    Ok(Payload::from([("draft".into(), serialized_value(&draft)?)]))
+}
+
+async fn dispatch_clear_draft(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let peer_hash = required_peer_hash(payload, "peer_hash")?;
+    let disposition = daemon.clear_draft(peer_hash).await.map_err(typed_ipc_error)?;
+    Ok(Payload::from([("disposition".into(), serialized_value(&disposition)?)]))
 }
 
 // ── Mark read ───────────────────────────────────────────────────────────
@@ -334,11 +1618,11 @@ async fn dispatch_mark_read(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
 ) -> Result<Payload, String> {
-    let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
-    let peer_hash = validate_hash(peer_hash)?;
-    let count = daemon.mark_read(peer_hash).await.map_err(|e| e.to_string())?;
+    let peer_hash = required_peer_hash(payload, "peer_hash")?;
+    let outcome = daemon.mark_read_outcome(peer_hash).await.map_err(typed_ipc_error)?;
     let mut p = Payload::new();
-    p.insert("count".into(), rmpv::Value::from(count));
+    p.insert("count".into(), rmpv::Value::from(outcome.affected_count));
+    add_outcome(&mut p, &outcome)?;
     ok_payload(p)
 }
 
@@ -348,11 +1632,11 @@ async fn dispatch_delete_conversation(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
 ) -> Result<Payload, String> {
-    let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
-    let peer_hash = validate_hash(peer_hash)?;
-    let count = daemon.delete_conversation(peer_hash).await.map_err(|e| e.to_string())?;
+    let peer_hash = required_peer_hash(payload, "peer_hash")?;
+    let outcome = daemon.delete_conversation_outcome(peer_hash).await.map_err(typed_ipc_error)?;
     let mut p = Payload::new();
-    p.insert("count".into(), rmpv::Value::from(count));
+    p.insert("count".into(), rmpv::Value::from(outcome.affected_count));
+    add_outcome(&mut p, &outcome)?;
     ok_payload(p)
 }
 
@@ -362,10 +1646,14 @@ async fn dispatch_delete_message(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
 ) -> Result<Payload, String> {
-    let message_id = val_str(payload, "message_id").ok_or("missing message_id")?;
-    let ok = daemon.delete_message(message_id).await.map_err(|e| e.to_string())?;
+    let message_id = required_message_id(payload)?;
+    let outcome = daemon.delete_message_outcome(message_id).await.map_err(typed_ipc_error)?;
     let mut p = Payload::new();
-    p.insert("success".into(), rmpv::Value::from(ok));
+    p.insert(
+        "success".into(),
+        rmpv::Value::from(outcome.disposition == styrene_ipc::types::MessagingDisposition::Applied),
+    );
+    add_outcome(&mut p, &outcome)?;
     ok_payload(p)
 }
 
@@ -376,11 +1664,25 @@ async fn dispatch_query_contacts(daemon: &Arc<dyn Daemon>) -> Result<Payload, St
     let list: Vec<rmpv::Value> = contacts
         .iter()
         .map(|c| {
-            let mut m = Vec::new();
-            m.push((rmpv::Value::from("peer_hash"), rmpv::Value::from(c.peer_hash.as_str())));
-            if let Some(ref alias) = c.alias {
-                m.push((rmpv::Value::from("alias"), rmpv::Value::from(alias.as_str())));
-            }
+            let m = vec![
+                (rmpv::Value::from("peer_hash"), rmpv::Value::from(c.peer_hash.as_str())),
+                (
+                    rmpv::Value::from("alias"),
+                    c.alias.as_deref().map_or(rmpv::Value::Nil, rmpv::Value::from),
+                ),
+                (
+                    rmpv::Value::from("notes"),
+                    c.notes.as_deref().map_or(rmpv::Value::Nil, rmpv::Value::from),
+                ),
+                (
+                    rmpv::Value::from("created_at"),
+                    c.created_at.map_or(rmpv::Value::Nil, rmpv::Value::from),
+                ),
+                (
+                    rmpv::Value::from("updated_at"),
+                    c.updated_at.map_or(rmpv::Value::Nil, rmpv::Value::from),
+                ),
+            ];
             rmpv::Value::Map(m)
         })
         .collect();
@@ -438,26 +1740,21 @@ async fn dispatch_search_messages(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
 ) -> Result<Payload, String> {
-    let query = val_str(payload, "query").ok_or("missing query")?;
-    let peer_hash = val_str(payload, "peer_hash");
-    let limit = payload.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as u32;
-    let messages =
-        daemon.search_messages(query, peer_hash, limit).await.map_err(|e| e.to_string())?;
-    let arr: Vec<rmpv::Value> = messages
-        .iter()
-        .map(|m| {
-            let mut item = HashMap::new();
-            item.insert("id".to_string(), rmpv::Value::from(m.id.as_str()));
-            item.insert("source_hash".to_string(), rmpv::Value::from(m.source_hash.as_str()));
-            item.insert("content".to_string(), rmpv::Value::from(m.content.as_str()));
-            item.insert("timestamp".to_string(), rmpv::Value::from(m.timestamp));
-            rmpv::Value::Map(
-                item.into_iter().map(|(k, v)| (rmpv::Value::from(k.as_str()), v)).collect(),
-            )
-        })
-        .collect();
+    let query = val_str(payload, "query").ok_or_else(|| invalid_dispatch("missing query"))?;
+    if query.is_empty() || query.len() > 1024 {
+        return Err(invalid_dispatch("search query must be 1..=1024 UTF-8 bytes"));
+    }
+    let peer_hash = val_str(payload, "peer_hash")
+        .map(|peer| validate_peer_hash(peer))
+        .transpose()
+        .map_err(invalid_dispatch)?;
+    let limit = message_query_limit(payload).map_err(invalid_dispatch)?;
+    let outcome =
+        daemon.search_messages_outcome(query, peer_hash, limit).await.map_err(typed_ipc_error)?;
+    let arr: Vec<rmpv::Value> = outcome.messages.iter().map(message_info_value).collect();
     let mut p = Payload::new();
     p.insert("messages".into(), rmpv::Value::Array(arr));
+    p.insert("outcome".into(), serialized_value(&outcome)?);
     ok_payload(p)
 }
 
@@ -465,11 +1762,33 @@ async fn dispatch_retry_message(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
 ) -> Result<Payload, String> {
-    let message_id = val_str(payload, "message_id").ok_or("missing message_id")?;
-    let retried = daemon.retry_message(message_id).await.map_err(|e| e.to_string())?;
+    let message_id = required_message_id(payload)?;
+    let outcome = daemon.retry_message_outcome(message_id).await.map_err(typed_ipc_error)?;
     let mut p = Payload::new();
-    p.insert("retried".into(), rmpv::Value::Boolean(retried));
+    p.insert(
+        "retried".into(),
+        rmpv::Value::Boolean(
+            outcome.disposition == styrene_ipc::types::MessagingDisposition::Applied,
+        ),
+    );
+    add_outcome(&mut p, &outcome)?;
     ok_payload(p)
+}
+
+async fn dispatch_cancel_message(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let message_id = required_message_id(payload)?;
+    let outcome = daemon.cancel_message_outcome(message_id).await.map_err(typed_ipc_error)?;
+    let mut payload = Payload::from([(
+        "cancelled".into(),
+        rmpv::Value::Boolean(
+            outcome.disposition == styrene_ipc::types::MessagingDisposition::Applied,
+        ),
+    )]);
+    add_outcome(&mut payload, &outcome)?;
+    ok_payload(payload)
 }
 
 // ── Query Config ─────────────────────────────────────────────────────────────
@@ -494,13 +1813,25 @@ async fn dispatch_set_contact(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
 ) -> Result<Payload, String> {
-    let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
-    let peer_hash = validate_hash(peer_hash)?;
+    let peer_hash = required_peer_hash(payload, "peer_hash")?;
     let alias = val_str(payload, "alias");
     let notes = val_str(payload, "notes");
-    daemon.set_contact(peer_hash, alias, notes).await.map_err(|e| e.to_string())?;
+    let outcome =
+        daemon.set_contact_outcome(peer_hash, alias, notes).await.map_err(typed_ipc_error)?;
     let mut p = Payload::new();
-    p.insert("ok".into(), rmpv::Value::Boolean(true));
+    p.insert(
+        "ok".into(),
+        rmpv::Value::Boolean(matches!(
+            outcome.disposition,
+            styrene_ipc::types::MessagingDisposition::Applied
+                | styrene_ipc::types::MessagingDisposition::Created
+                | styrene_ipc::types::MessagingDisposition::Updated
+        )),
+    );
+    if let Some(contact) = outcome.contact.as_ref() {
+        p.insert("contact".into(), serialized_value(contact)?);
+    }
+    add_outcome(&mut p, &outcome)?;
     ok_payload(p)
 }
 
@@ -508,12 +1839,43 @@ async fn dispatch_remove_contact(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
 ) -> Result<Payload, String> {
-    let peer_hash = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
-    let peer_hash = validate_hash(peer_hash)?;
-    let removed = daemon.remove_contact(peer_hash).await.map_err(|e| e.to_string())?;
+    let peer_hash = required_peer_hash(payload, "peer_hash")?;
+    let outcome = daemon.remove_contact_outcome(peer_hash).await.map_err(typed_ipc_error)?;
     let mut p = Payload::new();
-    p.insert("removed".into(), rmpv::Value::Boolean(removed));
+    p.insert(
+        "removed".into(),
+        rmpv::Value::Boolean(
+            outcome.disposition == styrene_ipc::types::MessagingDisposition::Applied,
+        ),
+    );
+    add_outcome(&mut p, &outcome)?;
     ok_payload(p)
+}
+
+async fn dispatch_conversation_flag(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    operation: &str,
+) -> Result<Payload, String> {
+    let peer_hash = val_str(payload, "peer_hash")
+        .ok_or_else(|| invalid_dispatch("missing peer_hash"))
+        .and_then(|peer| validate_peer_hash(peer).map_err(invalid_dispatch))?;
+    let outcome = match operation {
+        "pin" => daemon.pin_conversation_outcome(peer_hash).await,
+        "unpin" => daemon.unpin_conversation_outcome(peer_hash).await,
+        "mute" => daemon.mute_conversation_outcome(peer_hash).await,
+        "unmute" => daemon.unmute_conversation_outcome(peer_hash).await,
+        _ => return Err("invalid conversation flag operation".into()),
+    }
+    .map_err(typed_ipc_error)?;
+    let mut response = Payload::from([(
+        "success".into(),
+        rmpv::Value::Boolean(
+            outcome.disposition == styrene_ipc::types::MessagingDisposition::Applied,
+        ),
+    )]);
+    add_outcome(&mut response, &outcome)?;
+    ok_payload(response)
 }
 
 // ── Device Status (fleet RPC) ────────────────────────────────────────────────
@@ -523,7 +1885,7 @@ async fn dispatch_device_status(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
-    let dest = validate_hash(dest)?;
+    let dest = validate_peer_hash(dest)?;
     let timeout = payload.get("timeout").and_then(|v| v.as_u64());
     let info = daemon.device_status(dest, timeout).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
@@ -550,10 +1912,22 @@ async fn dispatch_sub_messages(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
 ) -> Result<Payload, String> {
-    let peer_hashes: Vec<String> = payload
+    let peer_hashes = payload
         .get("peer_hashes")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|value| {
+            value
+                .as_array()
+                .ok_or_else(|| invalid_dispatch("peer_hashes must be an array"))?
+                .iter()
+                .map(|value| {
+                    let peer = value
+                        .as_str()
+                        .ok_or_else(|| invalid_dispatch("peer_hashes entries must be strings"))?;
+                    validate_peer_hash(peer).map(str::to_string).map_err(invalid_dispatch)
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
         .unwrap_or_default();
     let _ = daemon.subscribe_messages(&peer_hashes).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
@@ -575,10 +1949,7 @@ async fn dispatch_get_hub_status() -> Result<Payload, String> {
 
 async fn dispatch_get_unread_counts(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
     // Build unread counts from conversations
-    let convos = daemon
-        .query_conversations(true) // unread_only
-        .await
-        .unwrap_or_default();
+    let convos = daemon.query_conversations(true).await.unwrap_or_default();
     let mut counts = HashMap::new();
     for c in &convos {
         if c.unread_count > 0 {
@@ -670,11 +2041,98 @@ async fn dispatch_sub_links() -> Result<Payload, String> {
     ok_payload(p)
 }
 
+async fn dispatch_query_links(
+    daemon: &Arc<dyn Daemon>,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    let snapshot = daemon.link_snapshot().await.map_err(|error| error.to_string())?;
+    let mut payload = Payload::new();
+    payload.insert(
+        "active".into(),
+        rmpv::Value::Array(
+            snapshot
+                .active
+                .iter()
+                .map(|event| link_event_value(event, connection_generation))
+                .collect(),
+        ),
+    );
+    payload.insert(
+        "history".into(),
+        rmpv::Value::Array(
+            snapshot
+                .history
+                .iter()
+                .map(|event| link_event_value(event, connection_generation))
+                .collect(),
+        ),
+    );
+    ok_payload(payload)
+}
+
+fn link_event_value(event: &styrene_ipc::types::LinkEvent, generation: u64) -> rmpv::Value {
+    use styrene_ipc::types::{LinkActivity, LinkEventKind, LinkLifecycleReason};
+
+    let kind = match event.kind {
+        LinkEventKind::Established => "established",
+        LinkEventKind::Identified => "identified",
+        LinkEventKind::Activity => "activity",
+        LinkEventKind::RttUpdated => "rtt_updated",
+        LinkEventKind::Teardown => "teardown",
+        LinkEventKind::Timeout => "timeout",
+        _ => "unknown",
+    };
+    let activity = match event.activity {
+        LinkActivity::Active => "active",
+        LinkActivity::Historical => "historical",
+        _ => "unknown",
+    };
+    let mut fields = vec![
+        (rmpv::Value::from("link_id"), rmpv::Value::from(event.link_id.as_str())),
+        (rmpv::Value::from("peer_hash"), rmpv::Value::from(event.peer_hash.as_str())),
+        (rmpv::Value::from("status"), rmpv::Value::from(event.status.as_str())),
+        (rmpv::Value::from("kind"), rmpv::Value::from(kind)),
+        (rmpv::Value::from("activity"), rmpv::Value::from(activity)),
+        (rmpv::Value::from("identified"), rmpv::Value::from(event.identified)),
+        (rmpv::Value::from("timestamp"), rmpv::Value::from(event.timestamp)),
+        (rmpv::Value::from("source"), rmpv::Value::from(event.observation.source.as_str())),
+        (rmpv::Value::from("connection_generation"), rmpv::Value::from(generation)),
+        (rmpv::Value::from("stale"), rmpv::Value::from(event.observation.stale)),
+    ];
+    if let Some(interface) = &event.interface {
+        fields.push((rmpv::Value::from("interface"), rmpv::Value::from(interface.as_str())));
+    }
+    if let Some(identity) = &event.remote_identity_hash {
+        fields.push((
+            rmpv::Value::from("remote_identity_hash"),
+            rmpv::Value::from(identity.as_str()),
+        ));
+    }
+    if let Some(rtt_ms) = event.rtt_ms {
+        fields.push((rmpv::Value::from("rtt_ms"), rmpv::Value::F64(rtt_ms)));
+    }
+    if let Some(observed_at) = event.observation.observed_at {
+        fields.push((rmpv::Value::from("observed_at"), rmpv::Value::from(observed_at)));
+    }
+    if let Some(reason) = event.reason {
+        let reason = match reason {
+            LinkLifecycleReason::LocalTeardown => "local_teardown",
+            LinkLifecycleReason::StaleTimeout => "stale_timeout",
+            LinkLifecycleReason::EstablishmentTimeout => "establishment_timeout",
+            LinkLifecycleReason::ChannelTimeout => "channel_timeout",
+            LinkLifecycleReason::SendFailure => "send_failure",
+            _ => "unknown",
+        };
+        fields.push((rmpv::Value::from("reason"), rmpv::Value::from(reason)));
+    }
+    rmpv::Value::Map(fields)
+}
+
 // ── Exec / Reboot (fleet RPC) ────────────────────────────────────────────────
 
 async fn dispatch_exec(daemon: &Arc<dyn Daemon>, payload: &Payload) -> Result<Payload, String> {
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
-    let dest = validate_hash(dest)?;
+    let dest = validate_peer_hash(dest)?;
     let cmd = val_str(payload, "command").ok_or("missing command")?;
     let args: Vec<String> = payload
         .get("args")
@@ -695,7 +2153,7 @@ async fn dispatch_reboot_device(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
-    let dest = validate_hash(dest)?;
+    let dest = validate_peer_hash(dest)?;
     let delay = payload.get("delay").and_then(|v| v.as_u64());
     let timeout = payload.get("timeout").and_then(|v| v.as_u64());
     let result = daemon.reboot_device(dest, delay, timeout).await.map_err(|e| e.to_string())?;
@@ -713,7 +2171,7 @@ async fn dispatch_send(daemon: &Arc<dyn Daemon>, payload: &Payload) -> Result<Pa
     let peer_hash = val_str(payload, "destination_hash")
         .or_else(|| val_str(payload, "peer_hash"))
         .ok_or("missing destination_hash or peer_hash")?;
-    let peer_hash = validate_hash(peer_hash)?.to_string();
+    let peer_hash = validate_peer_hash(peer_hash)?.to_string();
     let content = val_str(payload, "content").unwrap_or("").to_string();
     if content.len() > 65536 {
         return Err(format!("content too large: {} bytes", content.len()));
@@ -736,7 +2194,7 @@ async fn dispatch_block_peer(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
-    validate_hash(hash)?;
+    validate_peer_hash(hash)?;
     daemon
         .block_peer(hash)
         .await
@@ -753,7 +2211,7 @@ async fn dispatch_unblock_peer(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
-    validate_hash(hash)?;
+    validate_peer_hash(hash)?;
     daemon
         .unblock_peer(hash)
         .await
@@ -819,11 +2277,43 @@ async fn dispatch_provision_adapter() -> Result<Payload, String> {
 
 // ── Path Info ────────────────────────────────────────────────────────────────
 
+fn append_observation(
+    values: &mut Vec<(rmpv::Value, rmpv::Value)>,
+    observation: &styrene_ipc::types::ObservationMetadata,
+    connection_generation: u64,
+) {
+    values.push((rmpv::Value::from("source"), rmpv::Value::from(observation.source.as_str())));
+    if let Some(observed_at) = observation.observed_at {
+        values.push((rmpv::Value::from("observed_at"), rmpv::Value::from(observed_at)));
+    }
+    let generation = (connection_generation != 0)
+        .then_some(connection_generation)
+        .or(observation.connection_generation);
+    if let Some(generation) = generation {
+        values.push((rmpv::Value::from("connection_generation"), rmpv::Value::from(generation)));
+    }
+    if let Some(age) = observation.age_secs {
+        values.push((rmpv::Value::from("age_secs"), rmpv::Value::from(age)));
+    }
+    if let Some(threshold) = observation.freshness_threshold_secs {
+        values.push((rmpv::Value::from("freshness_threshold_secs"), rmpv::Value::from(threshold)));
+    }
+    values.push((rmpv::Value::from("stale"), rmpv::Value::from(observation.stale)));
+    if let Some(correlation_id) = &observation.correlation_id {
+        values.push((
+            rmpv::Value::from("correlation_id"),
+            rmpv::Value::from(correlation_id.as_str()),
+        ));
+    }
+}
+
 async fn dispatch_query_path_info(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
+    connection_generation: u64,
 ) -> Result<Payload, String> {
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let dest = validate_peer_hash(dest)?;
     let info = daemon.query_path_info(dest).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("destination_hash".into(), rmpv::Value::from(info.destination_hash.as_str()));
@@ -834,10 +2324,26 @@ async fn dispatch_query_path_info(
     if let Some(iface) = &info.interface {
         p.insert("interface".into(), rmpv::Value::from(iface.as_str()));
     }
+    if let Some(expires) = info.expires {
+        p.insert("expires".into(), rmpv::Value::from(expires));
+    }
+    if let Some(next_hop) = &info.next_hop {
+        p.insert("next_hop".into(), rmpv::Value::from(next_hop.as_str()));
+    }
+    let mut observation = Vec::new();
+    append_observation(&mut observation, &info.observation, connection_generation);
+    for (key, value) in observation {
+        if let Some(key) = key.as_str() {
+            p.insert(key.to_string(), value);
+        }
+    }
     ok_payload(p)
 }
 
-async fn dispatch_query_path_table(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
+async fn dispatch_query_path_table(
+    daemon: &Arc<dyn Daemon>,
+    connection_generation: u64,
+) -> Result<Payload, String> {
     let entries = daemon.query_path_table().await.map_err(|e| e.to_string())?;
     let paths: Vec<rmpv::Value> = entries
         .iter()
@@ -856,6 +2362,10 @@ async fn dispatch_query_path_table(daemon: &Arc<dyn Daemon>) -> Result<Payload, 
             if let Some(ref iface) = info.interface {
                 m.push((rmpv::Value::from("interface"), rmpv::Value::from(iface.as_str())));
             }
+            if let Some(expires) = info.expires {
+                m.push((rmpv::Value::from("expires"), rmpv::Value::from(expires)));
+            }
+            append_observation(&mut m, &info.observation, connection_generation);
             rmpv::Value::Map(m)
         })
         .collect();
@@ -865,7 +2375,10 @@ async fn dispatch_query_path_table(daemon: &Arc<dyn Daemon>) -> Result<Payload, 
     ok_payload(p)
 }
 
-async fn dispatch_query_interface_stats(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
+async fn dispatch_query_interface_stats(
+    daemon: &Arc<dyn Daemon>,
+    connection_generation: u64,
+) -> Result<Payload, String> {
     let interfaces = daemon.list_interfaces().await.map_err(|e| e.to_string())?;
     let ifaces: Vec<rmpv::Value> = interfaces
         .iter()
@@ -874,7 +2387,9 @@ async fn dispatch_query_interface_stats(daemon: &Arc<dyn Daemon>) -> Result<Payl
                 (rmpv::Value::from("name"), rmpv::Value::from(iface.name.as_str())),
                 (rmpv::Value::from("hash"), rmpv::Value::from(iface.hash.as_str())),
                 (rmpv::Value::from("type"), rmpv::Value::from(iface.kind.as_str())),
+                (rmpv::Value::from("mode"), rmpv::Value::from(iface.mode.as_str())),
                 (rmpv::Value::from("status"), rmpv::Value::from(iface.status.as_str())),
+                (rmpv::Value::from("enabled"), rmpv::Value::from(iface.enabled)),
             ];
             if let Some(host) = &iface.host {
                 m.push((rmpv::Value::from("host"), rmpv::Value::from(host.as_str())));
@@ -882,12 +2397,25 @@ async fn dispatch_query_interface_stats(daemon: &Arc<dyn Daemon>) -> Result<Payl
             if let Some(port) = iface.port {
                 m.push((rmpv::Value::from("port"), rmpv::Value::from(port as i64)));
             }
-            m.push((rmpv::Value::from("tx_bytes"), rmpv::Value::from(iface.tx_bytes as i64)));
-            m.push((rmpv::Value::from("rx_bytes"), rmpv::Value::from(iface.rx_bytes as i64)));
+            if let Some(endpoint) = &iface.local_endpoint {
+                m.push((rmpv::Value::from("local_endpoint"), rmpv::Value::from(endpoint.as_str())));
+            }
+            if let Some(endpoint) = &iface.remote_endpoint {
+                m.push((
+                    rmpv::Value::from("remote_endpoint"),
+                    rmpv::Value::from(endpoint.as_str()),
+                ));
+            }
+            if let Some(parent) = &iface.parent_hash {
+                m.push((rmpv::Value::from("parent_hash"), rmpv::Value::from(parent.as_str())));
+            }
+            m.push((rmpv::Value::from("tx_bytes"), rmpv::Value::from(iface.tx_bytes)));
+            m.push((rmpv::Value::from("rx_bytes"), rmpv::Value::from(iface.rx_bytes)));
             m.push((
                 rmpv::Value::from("connected_peers"),
                 rmpv::Value::from(iface.peers_connected as i64),
             ));
+            append_observation(&mut m, &iface.observation, connection_generation);
             rmpv::Value::Map(m)
         })
         .collect();
@@ -903,20 +2431,12 @@ async fn dispatch_remote_inbox(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let dest = validate_peer_hash(dest)?;
     let limit = val_u64(payload, "limit").unwrap_or(50) as u32;
     let timeout = val_u64(payload, "timeout");
     let conversations =
         daemon.remote_inbox(dest, limit, timeout).await.map_err(|e| e.to_string())?;
-    let items: Vec<rmpv::Value> = conversations
-        .iter()
-        .map(|c| {
-            rmpv::Value::Map(vec![
-                (rmpv::Value::from("peer_hash"), rmpv::Value::from(c.peer_hash.as_str())),
-                (rmpv::Value::from("unread_count"), rmpv::Value::from(c.unread_count as i64)),
-                (rmpv::Value::from("message_count"), rmpv::Value::from(c.message_count as i64)),
-            ])
-        })
-        .collect();
+    let items = conversations.iter().map(conversation_info_value).collect();
     let mut p = Payload::new();
     p.insert("conversations".into(), rmpv::Value::Array(items));
     ok_payload(p)
@@ -927,7 +2447,9 @@ async fn dispatch_remote_messages(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let dest = validate_peer_hash(dest)?;
     let peer = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let peer = validate_peer_hash(peer)?;
     let limit = val_u64(payload, "limit").unwrap_or(50) as u32;
     let timeout = val_u64(payload, "timeout");
     let messages =
@@ -955,6 +2477,7 @@ async fn dispatch_self_update(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
+    let dest = validate_peer_hash(dest)?;
     let version = val_str(payload, "version");
     let timeout = val_u64(payload, "timeout");
     let result = daemon.self_update(dest, version, timeout).await.map_err(|e| e.to_string())?;
@@ -1001,6 +2524,7 @@ async fn dispatch_query_tunnel_status(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let peer = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let peer = validate_peer_hash(peer)?;
     let info = match daemon.tunnel_operation(peer).await {
         Ok(operation) => {
             let mut p = Payload::new();
@@ -1035,6 +2559,7 @@ async fn dispatch_tunnel_teardown(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let peer = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
+    let peer = validate_peer_hash(peer)?;
     let ok = daemon.tunnel_teardown(peer).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("success".into(), rmpv::Value::Boolean(ok));
@@ -1048,7 +2573,7 @@ async fn dispatch_fleet_apply(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let dest = val_str(payload, "destination_hash").ok_or("missing destination_hash")?;
-    let dest = validate_hash(dest)?;
+    let dest = validate_peer_hash(dest)?;
     let profile_b64 = val_str(payload, "profile").ok_or("missing profile")?;
     let profile_bytes = base64::engine::general_purpose::STANDARD
         .decode(profile_b64)
@@ -1081,7 +2606,7 @@ async fn dispatch_tunnel_establish(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let peer = val_str(payload, "peer_hash").ok_or("missing peer_hash")?;
-    let peer = validate_hash(peer)?;
+    let peer = validate_peer_hash(peer)?;
     let nonce = daemon.tunnel_establish(peer).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("accepted".into(), rmpv::Value::Boolean(true));
@@ -1100,7 +2625,7 @@ async fn dispatch_fleet_grant(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let identity_hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
-    let identity_hash = validate_hash(identity_hash)?;
+    let identity_hash = validate_peer_hash(identity_hash)?;
     let role = val_str(payload, "role").ok_or("missing role")?.to_string();
     let label = val_str(payload, "label").unwrap_or("").to_string();
     let grants: Vec<String> = payload
@@ -1122,7 +2647,7 @@ async fn dispatch_fleet_revoke(
     payload: &Payload,
 ) -> Result<Payload, String> {
     let identity_hash = val_str(payload, "identity_hash").ok_or("missing identity_hash")?;
-    let identity_hash = validate_hash(identity_hash)?;
+    let identity_hash = validate_peer_hash(identity_hash)?;
     let ok = daemon.fleet_revoke(identity_hash).await.map_err(|e| e.to_string())?;
     let mut p = Payload::new();
     p.insert("success".into(), rmpv::Value::Boolean(ok));
@@ -1134,17 +2659,131 @@ async fn dispatch_fleet_revoke(
 async fn dispatch_query_page(
     daemon: &Arc<dyn Daemon>,
     payload: &Payload,
+    owner: u64,
 ) -> Result<Payload, String> {
     let host = val_str(payload, "host").unwrap_or("local");
     let path = val_str(payload, "path").unwrap_or("/");
     let timeout = payload.get("timeout").and_then(|v| v.as_u64());
 
-    let page = daemon.browse_page(host, path, timeout).await.map_err(|e| e.to_string())?;
+    let page = daemon
+        .browse_page_for_owner(owner, host, path, timeout)
+        .await
+        .map_err(|e| e.to_string())?;
+    page_payload(page, owner)
+}
 
+fn decode_typed<T: serde::de::DeserializeOwned>(payload: &Payload, key: &str) -> Result<T, String> {
+    let bytes = payload
+        .get(key)
+        .and_then(rmpv::Value::as_slice)
+        .ok_or_else(|| format!("missing typed {key} payload"))?;
+    rmp_serde::from_slice(bytes).map_err(|error| format!("decode {key}: {error}"))
+}
+
+fn typed_payload<T: serde::Serialize>(key: &str, value: &T) -> Result<Payload, String> {
+    let bytes = rmp_serde::to_vec_named(value).map_err(|error| format!("encode {key}: {error}"))?;
+    let mut payload = Payload::new();
+    payload.insert(key.into(), rmpv::Value::Binary(bytes));
+    ok_payload(payload)
+}
+
+async fn dispatch_page_navigate(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    owner: u64,
+) -> Result<Payload, String> {
+    let request = decode_typed(payload, "navigation")?;
+    let page =
+        daemon.navigate_page_for_owner(owner, request).await.map_err(|error| error.to_string())?;
+    page_payload(page, owner)
+}
+
+async fn dispatch_page_disconnect(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    owner: u64,
+) -> Result<Payload, String> {
+    let session_id = val_str(payload, "session_id").ok_or("missing session_id")?;
+    let navigation = daemon
+        .close_page_session_for_owner(owner, session_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    typed_payload("navigation", &navigation)
+}
+
+async fn dispatch_file_download_start(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    owner: u64,
+) -> Result<Payload, String> {
+    let request = decode_typed(payload, "download_request")?;
+    let download = daemon
+        .start_file_download_for_owner(owner, request)
+        .await
+        .map_err(|error| error.to_string())?;
+    typed_payload("download", &download)
+}
+
+async fn dispatch_file_download_query(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    owner: u64,
+) -> Result<Payload, String> {
+    let id = val_str(payload, "download_id").ok_or("missing download_id")?;
+    let download =
+        daemon.file_download_for_owner(owner, id).await.map_err(|error| error.to_string())?;
+    typed_payload("download", &download)
+}
+
+async fn dispatch_file_download_cancel(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    owner: u64,
+) -> Result<Payload, String> {
+    let id = val_str(payload, "download_id").ok_or("missing download_id")?;
+    let download = daemon
+        .cancel_file_download_for_owner(owner, id)
+        .await
+        .map_err(|error| error.to_string())?;
+    typed_payload("download", &download)
+}
+
+async fn dispatch_file_download_save(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+    owner: u64,
+) -> Result<Payload, String> {
+    let id = val_str(payload, "download_id").ok_or("missing download_id")?;
+    let destination = val_str(payload, "destination").ok_or("missing destination")?;
+    let download = daemon
+        .save_file_download_for_owner(owner, id, destination)
+        .await
+        .map_err(|error| error.to_string())?;
+    typed_payload("download", &download)
+}
+
+fn page_payload(
+    mut page: styrene_ipc::types::PageContent,
+    connection_generation: u64,
+) -> Result<Payload, String> {
+    if connection_generation != 0 {
+        page.observation.connection_generation = Some(connection_generation);
+        for stage in &mut page.stages {
+            stage.observation.connection_generation = Some(connection_generation);
+        }
+    }
+    let encoded_page = rmp_serde::to_vec_named(&page)
+        .map_err(|error| format!("page IPC projection encoding failed: {error}"))?;
     let mut p = Payload::new();
-    p.insert("source".into(), rmpv::Value::from(page.source.as_str()));
-    p.insert("host_hash".into(), rmpv::Value::from(page.host_hash.as_str()));
-    p.insert("fetched_at".into(), rmpv::Value::from(page.fetched_at));
+    p.insert("page".into(), rmpv::Value::Binary(encoded_page));
+    let encoded_payload = rmp_serde::to_vec(&p)
+        .map_err(|error| format!("page IPC payload encoding failed: {error}"))?;
+    if encoded_payload.len() > crate::wire::MAX_PAYLOAD_SIZE {
+        return Err(format!(
+            "page IPC payload exceeds {} byte limit",
+            crate::wire::MAX_PAYLOAD_SIZE
+        ));
+    }
     ok_payload(p)
 }
 
@@ -1157,20 +2796,13 @@ async fn dispatch_list_pages(
 
     let pages = daemon.list_pages(host, timeout).await.map_err(|e| e.to_string())?;
 
-    let arr: Vec<rmpv::Value> = pages
-        .into_iter()
-        .map(|page| {
-            let m = vec![
-                (rmpv::Value::from("path"), rmpv::Value::from(page.path.as_str())),
-                (rmpv::Value::from("host_hash"), rmpv::Value::from(page.host_hash.as_str())),
-            ];
-            rmpv::Value::Map(m)
-        })
-        .collect();
+    page_list_payload(&pages)
+}
 
-    let mut p = Payload::new();
-    p.insert("pages".into(), rmpv::Value::Array(arr));
-    ok_payload(p)
+fn page_list_payload(pages: &[styrene_ipc::types::PageInfo]) -> Result<Payload, String> {
+    let mut response = Payload::new();
+    response.insert("pages".into(), serialized_value(&pages)?);
+    ok_payload(response)
 }
 
 // ── Terminal Operations ────────────────────────────────────────────────
@@ -1229,4 +2861,180 @@ async fn dispatch_terminal_close(
     daemon.terminal_close(session_id).await.map_err(|e| e.to_string())?;
 
     ok_payload(Payload::new())
+}
+
+#[cfg(test)]
+mod page_projection_tests {
+    use super::*;
+    use styrene_ipc::types::{
+        PageBrowseStage, PageBrowseStageKind, PageBrowseStageState, PageCacheStatus,
+        PageParserWarning, PageTransferKind,
+    };
+
+    #[test]
+    fn typed_page_projection_retains_all_authoritative_metadata() {
+        let mut page = styrene_ipc::types::PageContent::default();
+        page.source_bytes = b">Index\nbody".to_vec();
+        page.rendered_text = "Index\nbody".into();
+        page.title = Some("Index".into());
+        page.links = vec!["next.mu".into()];
+        page.correlation_id = "page-correlation".into();
+        page.source_checksum = "ab".repeat(32);
+        page.request.native_path = "/page/index.mu".into();
+        page.request.path_hash = "cd".repeat(16);
+        page.request.request_id = Some("ef".repeat(16));
+        page.transfer.kind = PageTransferKind::Resource;
+        page.transfer.resource_hash = Some("12".repeat(32));
+        page.transfer.verified = true;
+        page.cache.status = PageCacheStatus::Hit;
+        page.cache.stored_at = Some(42);
+        let mut stage = PageBrowseStage::default();
+        stage.correlation_id = page.correlation_id.clone();
+        stage.kind = PageBrowseStageKind::Transfer;
+        stage.state = PageBrowseStageState::Succeeded;
+        page.stages.push(stage);
+        let mut warning = PageParserWarning::default();
+        warning.code = "unsupported".into();
+        warning.message = "retained".into();
+        page.parser_warnings.push(warning);
+
+        let mut expected = page.clone();
+        expected.observation.connection_generation = Some(41);
+        expected.stages[0].observation.connection_generation = Some(41);
+        let payload = page_payload(page, 41).expect("IPC-safe projection");
+        let bytes = match payload.get("page") {
+            Some(rmpv::Value::Binary(bytes)) => bytes,
+            _ => panic!("typed page binary missing"),
+        };
+        let decoded: styrene_ipc::types::PageContent =
+            rmp_serde::from_slice(bytes).expect("typed page decode");
+
+        assert_eq!(decoded, expected);
+        assert_eq!(decoded.observation.connection_generation, Some(41));
+        assert_eq!(decoded.stages[0].observation.connection_generation, Some(41));
+    }
+
+    #[test]
+    fn oversized_typed_page_returns_explicit_error() {
+        let mut page = styrene_ipc::types::PageContent::default();
+        page.source_bytes = vec![0; crate::wire::MAX_PAYLOAD_SIZE];
+
+        let error = page_payload(page, 0).expect_err("oversized IPC projection must fail");
+
+        assert!(error.contains("exceeds"));
+    }
+
+    #[test]
+    fn local_inventory_projection_retains_native_handler_metadata() {
+        let mut page = styrene_ipc::types::PageInfo::default();
+        page.path = "/file/manual.bin".into();
+        page.title = Some("Manual".into());
+        page.host_hash = "11".repeat(16);
+        page.kind = "file".into();
+        page.dynamic = false;
+        page.restricted = true;
+        page.handler_active = true;
+
+        let payload = page_list_payload(&[page.clone()]).expect("inventory projection");
+        let decoded: Vec<styrene_ipc::types::PageInfo> = payload
+            .get("pages")
+            .and_then(rmpv::Value::as_array)
+            .expect("pages array")
+            .iter()
+            .cloned()
+            .map(|value| rmpv::ext::from_value(value).expect("page entry"))
+            .collect();
+
+        assert_eq!(decoded, [page]);
+    }
+}
+
+#[cfg(test)]
+mod conversation_projection_tests {
+    use super::*;
+
+    #[test]
+    fn unread_only_and_legacy_alias_have_consistent_filter_semantics() {
+        assert!(!conversation_unread_only(&Payload::new()).unwrap());
+        assert!(conversation_unread_only(&Payload::from([(
+            "unread_only".into(),
+            rmpv::Value::Boolean(true),
+        )]))
+        .unwrap());
+        assert!(!conversation_unread_only(&Payload::from([(
+            "unread_only".into(),
+            rmpv::Value::Boolean(false),
+        )]))
+        .unwrap());
+        assert!(conversation_unread_only(&Payload::from([(
+            "include_unread".into(),
+            rmpv::Value::Boolean(true),
+        )]))
+        .unwrap());
+    }
+
+    #[test]
+    fn shared_conversation_projection_retains_additive_fields() {
+        let mut conversation = styrene_ipc::types::ConversationInfo::default();
+        conversation.peer_hash = "ab".repeat(16);
+        conversation.peer_name = Some("Peer".into());
+        conversation.last_message_timestamp = Some(42);
+        conversation.last_message_content = Some("hello".into());
+        conversation.unread_count = 3;
+        conversation.message_count = 7;
+        conversation.pinned = true;
+        conversation.muted = true;
+
+        let rmpv::Value::Map(fields) = conversation_info_value(&conversation) else {
+            panic!("conversation projection must be a map");
+        };
+        let field = |name: &str| {
+            fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some(name))
+                .map(|(_, value)| value)
+                .expect("projected field")
+        };
+        assert_eq!(field("peer_name").as_str(), Some("Peer"));
+        assert_eq!(field("last_message_timestamp").as_i64(), Some(42));
+        assert_eq!(field("last_message_content").as_str(), Some("hello"));
+        assert_eq!(field("unread_count").as_u64(), Some(3));
+        assert_eq!(field("message_count").as_u64(), Some(7));
+        assert_eq!(field("pinned").as_bool(), Some(true));
+        assert_eq!(field("muted").as_bool(), Some(true));
+    }
+}
+
+#[cfg(test)]
+mod propagation_correlation_projection_tests {
+    use super::*;
+
+    #[test]
+    fn message_correlation_is_bounded_metadata_without_payload_or_stamp() {
+        let mut message = styrene_ipc::types::MessageInfo::default();
+        let mut correlation = styrene_ipc::types::MessagePropagationCorrelationInfo::default();
+        correlation.relation = "inbound".into();
+        correlation.transient_id = "11".repeat(32);
+        correlation.attempt_id = Some("22".repeat(16));
+        correlation.peer_hash = Some("33".repeat(16));
+        correlation.state = "pending_ack".into();
+        correlation.created_at = 1;
+        correlation.updated_at = 2;
+        message.propagation_correlations.push(correlation);
+
+        let rmpv::Value::Map(fields) = message_info_value(&message) else {
+            panic!("message projection must be a map");
+        };
+        let correlations = fields
+            .iter()
+            .find_map(|(key, value)| {
+                (key.as_str() == Some("propagation_correlations")).then_some(value)
+            })
+            .expect("correlation field");
+        let encoded = format!("{correlations:?}");
+        assert!(encoded.contains("transient_id"));
+        assert!(encoded.contains("attempt_id"));
+        assert!(!encoded.contains("payload"));
+        assert!(!encoded.contains("stamp"));
+    }
 }

@@ -10,7 +10,7 @@ pub(super) fn spawn_announce_worker(
     daemon: Arc<RpcDaemon>,
     transport: Arc<Transport>,
     peer_crypto: Arc<Mutex<HashMap<String, PeerCrypto>>>,
-) {
+) -> tokio::task::JoinHandle<()> {
     let daemon_announce = daemon;
     tokio::spawn(async move {
         let mut rx = transport.recv_announces().await;
@@ -39,5 +39,5 @@ pub(super) fn spawn_announce_worker(
                 );
             }
         }
-    });
+    })
 }

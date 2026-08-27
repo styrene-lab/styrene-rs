@@ -1,6 +1,6 @@
 # styrene-ipc-server
 
-Unix socket IPC server exposing `Arc<dyn Daemon>` over a framed msgpack wire protocol. Wire-compatible with the Python `styrened.ipc` protocol, enabling the Python TUI to connect to the Rust daemon as a drop-in replacement.
+Unix socket IPC server exposing `Arc<dyn Daemon>` over the framed Styrene MessagePack protocol.
 
 ## Wire Format (IPC)
 

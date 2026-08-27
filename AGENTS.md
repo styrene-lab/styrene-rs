@@ -6,7 +6,7 @@ Working guidance for agents and contributors in this repository.
 
 Rust implementation of the RNS/LXMF protocol stack for the [Styrene](https://github.com/styrene-lab) mesh communications project. Styrene is an independent project descended from FreeTAKTeam/LXMF-rs and BeechatNetworkSystemsLtd/Reticulum-rs; those repositories are tracked as historical lineage and selective reference sources, not as merge upstreams.
 
-This is the **canonical implementation** of the Styrene daemon. The wire protocol is the shared contract with the legacy Python `styrened` — no FFI, no PyO3 bindings. Both implementations communicate over LXMF like any two Reticulum nodes.
+This repository is the Styrene daemon implementation. Styrene application protocols are governed by Rust contracts and rolling-upgrade compatibility among Styrene nodes.
 
 ## Build Commands
 
@@ -40,27 +40,16 @@ crates/
                             # delivery pipeline, message packing.
                             # SDK domain types behind `features = ["sdk"]`
     styrene-mesh/           # Styrene wire protocol envelope format
-                            # (must match styrened's styrene_wire.py byte-for-byte)
   apps/
     styrened/            # Daemon binary + RPC server + test harness
                             # (lib name: styrened)
 ```
 
-## Relationship to Python styrened
-
-| Concern | Rust (styrene-rs) | Python (styrened) |
-|---------|-------------------|-------------------|
-| Production status | **Primary** (new deployments) | Legacy (supported, not new installs) |
-| Wire protocol | Must match byte-for-byte | `styrene_wire.py` is reference |
-| TUI | styrene-tui (ratatui) | styrene-tui (Textual) |
-| Target devices | All — Hub, edge (Pi Zero 2W), workstation | Hub, operator workstation |
-| Communication | Over LXMF mesh | Over LXMF mesh |
-
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `crates/libs/styrene-mesh/src/wire.rs` | Wire protocol — must match `styrene_wire.py` |
+| `crates/libs/styrene-mesh/src/wire.rs` | Styrene wire protocol contract |
 | `crates/libs/styrene-rns/src/transport/` | Transport layer (feature-gated) |
 | `crates/libs/styrene-lxmf/src/sdk/` | SDK domain types (feature-gated) |
 | `crates/apps/styrened/src/rpc/` | RPC daemon + codec + HTTP |
@@ -92,5 +81,5 @@ crates/
 - **justfile** is the command runner (`just --list` for all recipes)
 - **Workspace lints** enforced: `unsafe_code = "forbid"`, `clippy::unwrap_used = "warn"`
 - **Boundary checks** prevent unauthorized inter-crate dependencies
-- Wire protocol evolution answers to rolling-upgrade compatibility among `styrene-rs` nodes; the archived Python implementation is not a compatibility target
+- Wire protocol evolution answers to rolling-upgrade compatibility among Styrene Rust nodes
 - All crates inherit `rust-version` from the workspace (pinned to latest stable; see rust-toolchain.toml). Editions are per-crate (`2021` for most, `2024` for styrene-tui)

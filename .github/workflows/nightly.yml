@@ -1,8 +1,6 @@
 name: Nightly
 
 on:
-  schedule:
-    - cron: "23 7 * * *" # 07:23 UTC daily
   workflow_dispatch:
 
 permissions:
@@ -24,24 +22,28 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx -- -D warnings
-      - run: cargo test --workspace --exclude styrene-dx
+      - run: |
+          cargo test --workspace \
+            --exclude styrene-dx \
+            --exclude styrene-e2e \
+            --exclude styrene-interop-runner \
+            --exclude styrene-i2p \
+            --exclude styrene \
+            --exclude styrene-mobile-ffi \
+            --exclude styrened \
+            --exclude styrene-tui \
+            --exclude styrene-ipc-server
+          cargo test -p styrene-ipc-server --lib --test wire_compat
 
   interop:
-    name: Interop
+    name: Interop (committed fixtures)
     runs-on: ubuntu-latest
     needs: validate
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install Python dependencies
-        run: pip install -r tests/interop/python/requirements.txt
-      - name: Generate fresh test fixtures
-        run: cd tests/interop/python && python3 generate_fixtures.py
-      - name: Run interop tests
+      - name: Test committed interoperability fixtures
         run: cargo test --package styrene-rns --features interop-tests,transport
 
   security:

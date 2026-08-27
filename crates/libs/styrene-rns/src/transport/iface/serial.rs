@@ -26,7 +26,10 @@ mod inner {
 
     use super::super::kiss::{kiss_encode, KissDecoder};
     use super::super::stream_iface::{run_hdlc_rx_loop, run_hdlc_tx_loop};
-    use crate::transport::iface::{Interface, InterfaceContext};
+    use crate::transport::iface::{
+        Interface, InterfaceContext, InterfaceDescriptor, InterfaceEndpoint, InterfaceKind,
+        InterfaceMode, InterfaceState,
+    };
 
     /// AsyncRead adapter that strips KISS framing from the underlying reader.
     ///
@@ -232,6 +235,7 @@ mod inner {
                 (inner.path.clone(), inner.baud_rate, inner.use_kiss)
             };
             let iface_address = context.channel.address;
+            let runtime = context.runtime.clone();
             let (rx_channel, tx_channel) = context.channel.split();
             let tx_channel = Arc::new(tokio::sync::Mutex::new(tx_channel));
 
@@ -244,11 +248,17 @@ mod inner {
 
                 match port {
                     Err(e) => {
+                        runtime.set_state(InterfaceState::Retrying);
                         log::warn!("serial: failed to open {}: {}", path, e);
                         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                         continue;
                     }
                     Ok(port) => {
+                        runtime.set_local_endpoint(InterfaceEndpoint::Device {
+                            path: path.clone(),
+                            baud_rate,
+                        });
+                        runtime.set_state(InterfaceState::Active);
                         let mode = if use_kiss { "KISS+HDLC" } else { "HDLC" };
                         log::info!("serial: opened {} @ {}bps ({})", path, baud_rate, mode);
                         let stop = CancellationToken::new();
@@ -294,11 +304,13 @@ mod inner {
                             rx_task.await.ok();
                         }
                         log::info!("serial: closed {}", path);
+                        runtime.set_state(InterfaceState::Retrying);
                     }
                 }
             }
 
             iface_stop.cancel();
+            runtime.set_state(InterfaceState::Closed);
         }
     }
 
@@ -306,6 +318,18 @@ mod inner {
         fn mtu() -> usize {
             256
         } // LoRa typical MTU
+
+        fn descriptor(&self) -> InterfaceDescriptor {
+            InterfaceDescriptor {
+                kind: if self.use_kiss { InterfaceKind::Kiss } else { InterfaceKind::Serial },
+                mode: InterfaceMode::Full,
+                local_endpoint: Some(InterfaceEndpoint::Device {
+                    path: self.path.clone(),
+                    baud_rate: self.baud_rate,
+                }),
+                remote_endpoint: None,
+            }
+        }
     }
 }
 

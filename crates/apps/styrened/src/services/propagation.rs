@@ -42,6 +42,10 @@ impl PropagationService {
         *self.expiry_secs.lock().unwrap() = secs;
     }
 
+    pub fn expiry_secs(&self) -> u64 {
+        *self.expiry_secs.lock().unwrap()
+    }
+
     /// Store an LXMF message for later delivery to an offline client.
     ///
     /// Returns true if the message was stored (new), false if it was a duplicate.
@@ -91,6 +95,33 @@ impl PropagationService {
     /// Get propagation statistics (count, total_size_bytes).
     pub fn stats(&self) -> Result<(usize, u64), std::io::Error> {
         self.store.lock().unwrap().propagation_stats().map_err(std::io::Error::other)
+    }
+
+    pub fn inventory(
+        &self,
+        limit: usize,
+        after: Option<(i64, &str)>,
+    ) -> Result<Vec<styrene_ipc::types::PropagationQueueEntry>, std::io::Error> {
+        self.store
+            .lock()
+            .unwrap()
+            .propagation_inventory(limit, after)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|item| {
+                        let mut entry = styrene_ipc::types::PropagationQueueEntry::default();
+                        entry.id = item.id;
+                        entry.destination_hash = item.destination_hash;
+                        entry.source_hash = item.source_hash;
+                        entry.received_at = item.received_at;
+                        entry.expires_at = item.expires_at;
+                        entry.size_bytes = item.size_bytes;
+                        entry.state = "stored".into();
+                        entry
+                    })
+                    .collect()
+            })
+            .map_err(std::io::Error::other)
     }
 }
 
@@ -183,5 +214,32 @@ mod tests {
 
         let (count, _) = svc.stats().unwrap();
         assert_eq!(count, 1); // Deduplicated by content hash
+    }
+
+    #[test]
+    fn inventory_exposes_metadata_without_payload() {
+        let svc = test_service();
+        svc.set_enabled(true);
+        svc.store_for_propagation("dest1", b"secret-payload", Some("source1")).unwrap();
+        let inventory = svc.inventory(10, None).unwrap();
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(inventory[0].destination_hash, "dest1");
+        assert_eq!(inventory[0].source_hash.as_deref(), Some("source1"));
+        assert_eq!(inventory[0].size_bytes, 14);
+        assert_eq!(inventory[0].state, "stored");
+    }
+
+    #[test]
+    fn inventory_pages_are_stable_and_non_overlapping() {
+        let svc = test_service();
+        svc.set_enabled(true);
+        svc.store_for_propagation("dest1", b"first", None).unwrap();
+        svc.store_for_propagation("dest2", b"second", None).unwrap();
+
+        let first = svc.inventory(1, None).unwrap();
+        let second = svc.inventory(1, Some((first[0].received_at, &first[0].id))).unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(second.len(), 1);
+        assert_ne!(first[0].id, second[0].id);
     }
 }

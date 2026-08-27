@@ -1,7 +1,4 @@
-//! Resource transfer debugging.
-//!
-//! Diagnoses why large messages (> LINK_PACKET_MDU) don't complete
-//! between two TestNodes. Monitors resource events at the transport layer.
+//! Assertive resource transfer completion over two live RNS transports.
 
 use rns_core::transport::resource::ResourceEventKind;
 use std::time::Duration;
@@ -9,13 +6,9 @@ use styrene_e2e::helpers::{await_identity_resolved, with_timeout, SETTLE};
 use styrene_e2e::node::TestNodeBuilder;
 
 #[tokio::test]
-async fn resource_events_fire_on_large_payload() {
+async fn large_payload_completes_with_integrity_progress_and_cleanup() {
     with_timeout(async {
-        let alice = TestNodeBuilder::new("alice-res")
-            .tcp_server("127.0.0.1:0")
-            .build()
-            .await;
-
+        let alice = TestNodeBuilder::new("alice-res").tcp_server("127.0.0.1:0").build().await;
         let bob = TestNodeBuilder::new("bob-res")
             .tcp_client(alice.listen_addr.expect("addr"))
             .build()
@@ -24,110 +17,103 @@ async fn resource_events_fire_on_large_payload() {
         tokio::time::sleep(SETTLE).await;
         alice.announce().await;
         bob.announce().await;
-
-        await_identity_resolved(
-            &alice.app_context,
-            &bob.delivery_addr,
-            Duration::from_secs(10),
-        )
-        .await;
-
-        // Subscribe to resource events on BOTH sides
-        let mut alice_resource_rx = alice.app_context.transport().subscribe_resources();
-        let mut bob_resource_rx = bob.app_context.transport().subscribe_resources();
-
-        // Send a message that exceeds single-packet size
-        // LXMF overhead: dest(16) + source(16) + sig(64) + msgpack = ~120 bytes
-        // LINK_PACKET_MDU ≈ 350 bytes → useful content ≈ 230 bytes
-        // A 500-byte content will definitely trigger resource transfer
-        let large = "X".repeat(500);
-        eprintln!("[test] sending 500-byte content...");
-
-        let send_result = alice
-            .send_chat(&bob.delivery_hash, &large)
+        await_identity_resolved(&alice.app_context, &bob.delivery_addr, Duration::from_secs(10))
             .await;
 
-        match &send_result {
-            Ok(id) => eprintln!("[test] send_chat returned Ok({})", id),
-            Err(e) => eprintln!("[test] send_chat returned Err({})", e),
-        }
+        let mut sender_events = alice.app_context.transport().subscribe_resources();
+        let mut receiver_events = bob.app_context.transport().subscribe_resources();
+        let content =
+            (0..4096).map(|index| char::from(b'A' + (index % 26) as u8)).collect::<String>();
+        let message_id =
+            alice.send_chat(&bob.delivery_hash, &content).await.expect("resource-backed send");
 
-        // Wait and collect resource events
-        eprintln!("[test] waiting for resource events...");
-        tokio::time::sleep(Duration::from_secs(5)).await;
-
-        // Check alice's resource events (sender side — should see OutboundComplete)
-        let mut alice_events = Vec::new();
-        while let Ok(event) = alice_resource_rx.try_recv() {
-            let kind = match &event.kind {
-                ResourceEventKind::Progress(p) => {
-                    format!("Progress({}/{})", p.received_parts, p.total_parts)
+        let sender_hash = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let event = sender_events.recv().await.expect("sender resource event channel");
+                match event.kind {
+                    ResourceEventKind::OutboundComplete => break event.hash,
+                    ResourceEventKind::Failed(reason) => {
+                        panic!("sender resource failed: {reason:?}")
+                    }
+                    ResourceEventKind::Progress(_) | ResourceEventKind::Complete(_) => {}
                 }
-                ResourceEventKind::Complete(c) => {
-                    format!("Complete(data_len={})", c.data.len())
-                }
-                ResourceEventKind::OutboundComplete => "OutboundComplete".to_string(),
-            };
-            eprintln!("[test] alice resource event: {} link={}", kind, event.link_id);
-            alice_events.push(event);
-        }
-
-        // Check bob's resource events (receiver side — should see Progress → Complete)
-        let mut bob_events = Vec::new();
-        while let Ok(event) = bob_resource_rx.try_recv() {
-            let kind = match &event.kind {
-                ResourceEventKind::Progress(p) => {
-                    format!("Progress({}/{})", p.received_parts, p.total_parts)
-                }
-                ResourceEventKind::Complete(c) => {
-                    format!("Complete(data_len={})", c.data.len())
-                }
-                ResourceEventKind::OutboundComplete => "OutboundComplete".to_string(),
-            };
-            eprintln!("[test] bob resource event: {} link={}", kind, event.link_id);
-            bob_events.push(event);
-        }
-
-        eprintln!(
-            "[test] alice resource events: {}, bob resource events: {}",
-            alice_events.len(),
-            bob_events.len()
-        );
-
-        // Check if bob got any messages in the store
-        {
-            let store = bob.app_context.store().lock().expect("lock");
-            let msgs = store.list_messages(100, None).expect("list");
-            let inbound: Vec<_> = msgs.iter().filter(|m| m.direction == "in").collect();
-            eprintln!("[test] bob inbound messages: {}", inbound.len());
-            for msg in &inbound {
-                eprintln!("[test]   content_len={} src={}", msg.content.len(), msg.source);
             }
-        }
+        })
+        .await
+        .expect("sender resource completion deadline");
 
-        // Report findings
-        if bob_events.is_empty() {
-            eprintln!(
-                "[test] FINDING: no resource events on receiver side. \
-                 The resource advertisement may not be reaching the receiver, \
-                 or the resource protocol negotiation is not completing."
-            );
-        }
+        let (receiver_hash, progress) = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut progress = Vec::new();
+            loop {
+                let event = receiver_events.recv().await.expect("receiver resource event channel");
+                match event.kind {
+                    ResourceEventKind::Progress(value) => progress.push(value),
+                    ResourceEventKind::Complete(complete) => {
+                        assert!(!complete.data.is_empty(), "completed resource payload is empty");
+                        break (event.hash, progress);
+                    }
+                    ResourceEventKind::Failed(reason) => {
+                        panic!("receiver resource failed: {reason:?}")
+                    }
+                    ResourceEventKind::OutboundComplete => {}
+                }
+            }
+        })
+        .await
+        .expect("receiver resource completion deadline");
 
-        let bob_complete = bob_events.iter().any(|e| matches!(e.kind, ResourceEventKind::Complete(_)));
-        if bob_complete {
-            eprintln!("[test] resource transfer COMPLETED on receiver side");
-            // Verify the message was delivered
-            let store = bob.app_context.store().lock().expect("lock");
-            let msgs = store.list_messages(100, None).expect("list");
-            let inbound: Vec<_> = msgs.iter().filter(|m| m.direction == "in").collect();
-            assert!(
-                !inbound.is_empty(),
-                "resource completed but no message in store — inbound worker not processing resource events"
-            );
-        }
+        assert_eq!(sender_hash, receiver_hash);
+        assert!(!progress.is_empty(), "multi-part transfer emitted no progress");
+        assert!(progress.windows(2).all(|pair| {
+            pair[0].received_bytes <= pair[1].received_bytes
+                && pair[0].received_parts <= pair[1].received_parts
+        }));
+        assert!(progress.iter().all(|value| {
+            value.received_bytes <= value.total_bytes
+                && value.received_parts <= value.total_parts
+                && value.total_parts > 1
+        }));
 
-        // This test is diagnostic — it passes either way but logs what's happening
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = alice
+                    .app_context
+                    .messaging()
+                    .outbound_lifecycle(&message_id)
+                    .expect("outbound lifecycle")
+                    .expect("outbound route")
+                    .0
+                    .state;
+                if state == "delivered" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("verified resource completion delivery deadline");
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let delivered = {
+                    let store = bob.app_context.store().lock().expect("message store lock");
+                    store
+                        .list_messages(100, None)
+                        .expect("list messages")
+                        .into_iter()
+                        .any(|message| message.direction == "in" && message.content == content)
+                };
+                if delivered {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("byte-identical message delivery deadline");
+
+        assert_eq!(alice.transport.resource_state_counts().await.total(), 0);
+        assert_eq!(bob.transport.resource_state_counts().await.total(), 0);
     })
     .await;
 }

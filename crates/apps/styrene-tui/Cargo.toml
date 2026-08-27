@@ -41,8 +41,12 @@ rand_core = { workspace = true, features = ["getrandom"] }
 serde.workspace = true
 serde_json.workspace = true
 rmpv = { workspace = true, features = ["with-serde"] }
+rmp-serde.workspace = true
 tokio = { workspace = true }
 anyhow.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

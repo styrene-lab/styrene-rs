@@ -1,3 +1,4 @@
-rns>=0.7.0
-lxmf>=0.4.0
-msgpack>=1.0
+rns @ git+https://github.com/markqvist/Reticulum.git@b48b96e61676504e0a4e527b33b9a0b4495c6872
+lxmf @ git+https://github.com/markqvist/LXMF.git@795fdaa2b0777c13033787d933d1afc94a2377cb
+nomadnet @ git+https://github.com/markqvist/NomadNet.git@ad10301569a39d4f43b3d21ae9fc392602c937ca
+msgpack==1.1.1

@@ -45,7 +45,7 @@ use crate::signer::{IdentitySigner, RootSecret, SignerError, SignerTier};
 
 /// Dedicated StyreneID salt for FIDO2 hmac-secret.
 ///
-/// Distinct from the RNS-specific salts used in styrened's Python implementation
+/// Distinct from the RNS-specific salts used by transport identities
 /// (`styrene-encryption-v1`, `styrene-signing-v1`). This ensures the StyreneID
 /// root secret is cryptographically independent from legacy direct-derivation keys.
 fn styrene_identity_salt() -> [u8; 32] {

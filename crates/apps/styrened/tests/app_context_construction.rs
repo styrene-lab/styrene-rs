@@ -116,17 +116,33 @@ fn app_context_set_signer_wires_transport() {
     );
     assert!(!ctx.tunnel().is_wired(), "tunnel should start unwired");
 
-    // After set_signer, send_chat should fail with a different error (not connected)
-    // because NullTransport.is_connected() returns false
+    // After set_signer, persistence succeeds and the unavailable transport is
+    // represented as a durable terminal delivery outcome.
     let identity = rns_core::identity::PrivateIdentity::new_from_name("test-signer");
     ctx.set_signer(Arc::new(identity));
     assert!(ctx.tunnel().is_wired(), "set_signer must wire tunnel dependencies");
 
-    let err2 =
-        rt.block_on(ctx.messaging().send_chat("deadbeef01020304deadbeef01020304", "hello", None));
-    assert!(err2.is_err());
+    let outcome = rt
+        .block_on(ctx.messaging().send_chat_outcome_with_attachments(
+            "deadbeef01020304deadbeef01020304",
+            "hello",
+            None,
+            None,
+            &[],
+        ))
+        .expect("the failed delivery must remain queryable");
+    assert_eq!(outcome.disposition, styrened::services::messaging::SendCommitDisposition::Failed);
     assert!(
-        err2.unwrap_err().to_string().contains("not connected"),
-        "should fail with transport-not-connected after set_signer, not transport-not-available"
+        outcome.terminal_error.as_deref().is_some_and(|error| error.contains("not connected")),
+        "the typed outcome must expose the transport failure"
     );
+    let persisted = ctx
+        .messaging()
+        .get_message(&outcome.message_id)
+        .unwrap()
+        .expect("failed message must be durable");
+    assert!(persisted
+        .receipt_status
+        .as_deref()
+        .is_some_and(|status| status.starts_with("failed:")));
 }

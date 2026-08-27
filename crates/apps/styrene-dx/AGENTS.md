@@ -1,17 +1,21 @@
 # styrene-dx
 
-**Status: Spike / experimental. Not in default workspace members. `publish = false`.**
+**Status: Desktop operator console. Not in default workspace members. `publish = false`.**
 
-Dioxus 0.7 cross-platform UI experiment (desktop + web). Explores whether a single codebase can serve both targets vs the current ratatui TUI.
+Dioxus 0.7 desktop operator console for Live, Embedded, and Fixture sessions. It uses typed daemon and interoperability-runner contracts without owning protocol behavior.
 
 ## Structure
 
 ```
 src/
-  main.rs          — Dioxus app root, routes
-  state.rs         — App state (identity, mesh status)
-  components/      — UI components
-  assets/          — Static assets (CSS, images)
+  main.rs          - Dioxus app root, profile lifecycle, routes
+  backend.rs       - Live, Embedded, and Fixture backend sessions
+  daemon_bridge.rs - Typed IPC request broker
+  scenario.rs      - Protocol Lab runner boundary and evidence projection
+  state.rs         - Presentation domain types
+  stores.rs        - Generation-gated domain stores and diagnostics
+  components/      - Routed operator pages and controls
+  assets/          - Static assets (CSS, images)
 ```
 
 ## Build
@@ -21,16 +25,17 @@ cargo build -p styrene-dx          # desktop
 dx serve                           # dev server (requires dioxus-cli)
 ```
 
-Not included in `cargo test --workspace` or default members. Build explicitly with `-p styrene-dx`.
+Not included in default members. `just test` runs its deterministic Fixture and component coverage explicitly.
 
 ## Dependencies
 
 - `dioxus 0.7` (desktop + web features)
-- `styrene-rns` (data types only, no transport)
-- `rand_core`, `hex`, `log`
+- `styrene-ipc` and `styrene-ipc-server` for typed local daemon sessions
+- `styrene-interop-runner` for bounded Protocol Lab execution
 
 ## Notes
 
-- This is a spike to evaluate Dioxus, not a shipping product
-- The primary TUI is `styrene-tui` (ratatui)
-- If this spike proves out, it would replace or supplement the TUI for desktop/web use cases
+- Runtime profiles are explicit. Live connection failure never starts Embedded mode.
+- Fixture mode opens no daemon process or external network interface.
+- Live Protocol Lab scenarios run in a separate `styrene-interop` process. Set `STYRENE_DX_LIVE_INTEROP=1`. Install `styrene-interop` beside `styrene-dx`, or set `STYRENE_DX_INTEROP_RUNNER` to its executable path.
+- The primary terminal client remains `styrene-tui` (ratatui).

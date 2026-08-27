@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::Read;
-use tokio::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use bzip2::read::BzDecoder;
 use rand_core::{OsRng, RngCore};
@@ -14,6 +15,7 @@ use crate::packet::DestinationType;
 use crate::packet::{Header, Packet, PacketContext, PacketDataBuffer, PacketType, PACKET_MDU};
 use crate::transport::destination_ext::link::Link;
 use crate::transport::error::RnsError;
+use crate::transport::time::{MonotonicClock, SystemMonotonicClock};
 
 pub const WINDOW: usize = 4;
 pub const MAPHASH_LEN: usize = 4;
@@ -30,6 +32,9 @@ pub const LINK_PACKET_MDU: usize =
         - 1;
 pub const HASHMAP_MAX_LEN: usize =
     (LINK_PACKET_MDU.saturating_sub(ADVERTISEMENT_OVERHEAD)) / MAPHASH_LEN;
+pub const MAX_UNSOLICITED_RESOURCE_SIZE: usize = 4 * 1024 * 1024;
+pub const MAX_NEGOTIATED_RESOURCE_SIZE: usize = 32 * 1024 * 1024 + 64;
+const RESOURCE_WIRE_OVERHEAD: usize = 64 * 1024 + RANDOM_HASH_SIZE + 128;
 
 const FLAG_ENCRYPTED: u8 = 0x01;
 const FLAG_COMPRESSED: u8 = 0x02;
@@ -77,6 +82,28 @@ pub enum ResourceEventKind {
     Progress(ResourceProgress),
     Complete(ResourceComplete),
     OutboundComplete,
+    Failed(ResourceFailure),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceFailure {
+    Cancelled,
+    TimedOut,
+    LinkClosed,
+    Integrity,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResourceStateCounts {
+    pub pending_outgoing: usize,
+    pub outgoing: usize,
+    pub incoming: usize,
+}
+
+impl ResourceStateCounts {
+    pub fn total(self) -> usize {
+        self.pending_outgoing + self.outgoing + self.incoming
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +118,11 @@ pub struct ResourceProgress {
 pub struct ResourceComplete {
     pub data: Vec<u8>,
     pub metadata: Option<Vec<u8>>,
+    pub request_id: Option<[u8; ADDRESS_HASH_SIZE]>,
+    pub is_request: bool,
+    pub is_response: bool,
+    pub transfer_size: u64,
+    pub checksum_verified: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

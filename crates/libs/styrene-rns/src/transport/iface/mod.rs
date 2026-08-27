@@ -9,6 +9,7 @@ pub mod tcp_server;
 pub mod udp;
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -92,6 +93,162 @@ impl InterfaceChannel {
 
 pub trait Interface {
     fn mtu() -> usize;
+
+    fn descriptor(&self) -> InterfaceDescriptor {
+        InterfaceDescriptor::default()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum InterfaceKind {
+    TcpServer,
+    TcpClient,
+    Udp,
+    Serial,
+    Kiss,
+    #[default]
+    Unknown,
+}
+
+impl InterfaceKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TcpServer => "tcp_server",
+            Self::TcpClient => "tcp_client",
+            Self::Udp => "udp",
+            Self::Serial => "serial",
+            Self::Kiss => "kiss",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum InterfaceMode {
+    Full,
+    PointToPoint,
+    AccessPoint,
+    Roaming,
+    Boundary,
+    Gateway,
+    Internal,
+    #[default]
+    Unknown,
+}
+
+impl InterfaceMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::PointToPoint => "point_to_point",
+            Self::AccessPoint => "access_point",
+            Self::Roaming => "roaming",
+            Self::Boundary => "boundary",
+            Self::Gateway => "gateway",
+            Self::Internal => "internal",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum InterfaceState {
+    Starting,
+    Listening,
+    Connecting,
+    Connected,
+    Active,
+    Retrying,
+    Closed,
+    #[default]
+    Unknown,
+}
+
+impl InterfaceState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Listening => "listening",
+            Self::Connecting => "connecting",
+            Self::Connected => "connected",
+            Self::Active => "active",
+            Self::Retrying => "retrying",
+            Self::Closed => "closed",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InterfaceEndpoint {
+    Socket(SocketAddr),
+    Device { path: String, baud_rate: u32 },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InterfaceDescriptor {
+    pub kind: InterfaceKind,
+    pub mode: InterfaceMode,
+    pub local_endpoint: Option<InterfaceEndpoint>,
+    pub remote_endpoint: Option<InterfaceEndpoint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceSnapshot {
+    pub hash: AddressHash,
+    pub kind: InterfaceKind,
+    pub mode: InterfaceMode,
+    pub state: InterfaceState,
+    pub local_endpoint: Option<InterfaceEndpoint>,
+    pub remote_endpoint: Option<InterfaceEndpoint>,
+    pub parent: Option<AddressHash>,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+    pub connected_peers: u32,
+}
+
+#[derive(Debug)]
+struct InterfaceRuntimeMetadata {
+    descriptor: InterfaceDescriptor,
+    state: InterfaceState,
+    parent: Option<AddressHash>,
+}
+
+#[derive(Debug)]
+pub(crate) struct InterfaceRuntime {
+    metadata: Mutex<InterfaceRuntimeMetadata>,
+}
+
+impl InterfaceRuntime {
+    fn new(descriptor: InterfaceDescriptor, parent: Option<AddressHash>) -> Self {
+        Self {
+            metadata: Mutex::new(InterfaceRuntimeMetadata {
+                descriptor,
+                state: InterfaceState::Starting,
+                parent,
+            }),
+        }
+    }
+
+    pub(crate) fn set_state(&self, state: InterfaceState) {
+        self.metadata.lock().expect("interface runtime lock").state = state;
+    }
+
+    pub(crate) fn set_local_endpoint(&self, endpoint: InterfaceEndpoint) {
+        self.metadata.lock().expect("interface runtime lock").descriptor.local_endpoint =
+            Some(endpoint);
+    }
+
+    pub(crate) fn set_remote_endpoint(&self, endpoint: InterfaceEndpoint) {
+        self.metadata.lock().expect("interface runtime lock").descriptor.remote_endpoint =
+            Some(endpoint);
+    }
+
+    pub(crate) fn clear_endpoints(&self) {
+        let mut metadata = self.metadata.lock().expect("interface runtime lock");
+        metadata.descriptor.local_endpoint = None;
+        metadata.descriptor.remote_endpoint = None;
+    }
 }
 
 /// Per-interface byte counters for tx/rx traffic.
@@ -129,6 +286,7 @@ struct LocalInterface {
     tx_send: InterfaceTxSender,
     stop: CancellationToken,
     stats: Arc<InterfaceStats>,
+    runtime: Arc<InterfaceRuntime>,
 }
 
 pub struct InterfaceContext<T: Interface> {
@@ -138,6 +296,7 @@ pub struct InterfaceContext<T: Interface> {
     /// Optional IFAC configuration for this interface. When `Some`, all packets
     /// are wrapped/unwrapped with IFAC authentication at the stream boundary.
     pub ifac: Option<Arc<ifac::IfacConfig>>,
+    pub(crate) runtime: Arc<InterfaceRuntime>,
 }
 
 pub struct InterfaceManager {
@@ -146,6 +305,7 @@ pub struct InterfaceManager {
     rx_send: InterfaceRxSender,
     cancel: CancellationToken,
     ifaces: Vec<LocalInterface>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
     /// Shared stats map so callers can look up per-interface counters without
     /// holding the `InterfaceManager` tokio mutex.
     stats_map: Arc<Mutex<HashMap<AddressHash, Arc<InterfaceStats>>>>,
@@ -182,11 +342,17 @@ impl InterfaceManager {
             rx_send,
             cancel: CancellationToken::new(),
             ifaces: Vec::new(),
+            tasks: Vec::new(),
             stats_map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn new_channel(&mut self, tx_cap: usize) -> InterfaceChannel {
+    fn new_channel_with_runtime(
+        &mut self,
+        tx_cap: usize,
+        descriptor: InterfaceDescriptor,
+        parent: Option<AddressHash>,
+    ) -> InterfaceChannel {
         self.counter += 1;
 
         let counter_bytes = self.counter.to_le_bytes();
@@ -198,15 +364,31 @@ impl InterfaceManager {
 
         let stop = CancellationToken::new();
         let stats = Arc::new(InterfaceStats::new());
+        let runtime = Arc::new(InterfaceRuntime::new(descriptor, parent));
 
         self.stats_map.lock().expect("interface stats lock").insert(address, stats.clone());
-        self.ifaces.push(LocalInterface { address, tx_send, stop: stop.clone(), stats });
+        self.ifaces.push(LocalInterface { address, tx_send, stop: stop.clone(), stats, runtime });
 
         InterfaceChannel { rx_channel: self.rx_send.clone(), tx_channel: tx_recv, address, stop }
     }
 
+    pub fn new_channel(&mut self, tx_cap: usize) -> InterfaceChannel {
+        self.new_channel_with_runtime(tx_cap, InterfaceDescriptor::default(), None)
+    }
+
     pub fn new_context<T: Interface>(&mut self, inner: T) -> InterfaceContext<T> {
-        let channel = self.new_channel(DEFAULT_IFACE_TX_QUEUE_CAPACITY);
+        self.new_context_with_parent(inner, None)
+    }
+
+    fn new_context_with_parent<T: Interface>(
+        &mut self,
+        inner: T,
+        parent: Option<AddressHash>,
+    ) -> InterfaceContext<T> {
+        let descriptor = inner.descriptor();
+        let channel =
+            self.new_channel_with_runtime(DEFAULT_IFACE_TX_QUEUE_CAPACITY, descriptor, parent);
+        let runtime = self.ifaces.last().expect("newly registered interface").runtime.clone();
 
         let inner = Arc::new(Mutex::new(inner));
 
@@ -215,6 +397,7 @@ impl InterfaceManager {
             channel,
             cancel: self.cancel.clone(),
             ifac: None,
+            runtime,
         }
     }
 
@@ -238,7 +421,7 @@ impl InterfaceManager {
         context.ifac = ifac;
         let address = *context.channel.address();
 
-        task::spawn(worker(context));
+        self.tasks.push(task::spawn(worker(context)));
 
         address
     }
@@ -252,9 +435,97 @@ impl InterfaceManager {
         let context = self.new_context(inner);
         let address = *context.channel.address();
 
-        task::spawn(worker(context));
+        self.tasks.push(task::spawn(worker(context)));
 
         address
+    }
+
+    pub fn spawn_child_with_ifac<T: Interface, F, R>(
+        &mut self,
+        parent: AddressHash,
+        inner: T,
+        worker: F,
+        ifac: Option<Arc<ifac::IfacConfig>>,
+    ) -> AddressHash
+    where
+        F: FnOnce(InterfaceContext<T>) -> R,
+        R: std::future::Future<Output = ()> + Send + 'static,
+        R::Output: Send + 'static,
+    {
+        let mut context = self.new_context_with_parent(inner, Some(parent));
+        context.ifac = ifac;
+        let address = *context.channel.address();
+        self.tasks.push(task::spawn(worker(context)));
+        address
+    }
+
+    pub fn interface_snapshots(&self) -> Vec<InterfaceSnapshot> {
+        let metadata: Vec<_> = self
+            .ifaces
+            .iter()
+            .map(|interface| {
+                let runtime = interface.runtime.metadata.lock().expect("interface runtime lock");
+                (
+                    interface.address,
+                    runtime.descriptor.clone(),
+                    runtime.state,
+                    runtime.parent,
+                    interface.stats.tx_bytes.load(Ordering::Relaxed),
+                    interface.stats.rx_bytes.load(Ordering::Relaxed),
+                )
+            })
+            .collect();
+        let mut snapshots: Vec<_> = metadata
+            .iter()
+            .map(|(hash, descriptor, state, parent, tx_bytes, rx_bytes)| InterfaceSnapshot {
+                hash: *hash,
+                kind: descriptor.kind,
+                mode: descriptor.mode,
+                state: *state,
+                local_endpoint: descriptor.local_endpoint.clone(),
+                remote_endpoint: descriptor.remote_endpoint.clone(),
+                parent: *parent,
+                tx_bytes: *tx_bytes,
+                rx_bytes: *rx_bytes,
+                connected_peers: metadata
+                    .iter()
+                    .filter(|(_, _, child_state, child_parent, _, _)| {
+                        *child_parent == Some(*hash) && *child_state == InterfaceState::Connected
+                    })
+                    .count() as u32,
+            })
+            .collect();
+        snapshots.sort_by_key(|snapshot| snapshot.hash.as_slice().to_vec());
+        snapshots
+    }
+
+    pub fn interface_mode(&self, hash: &AddressHash) -> InterfaceMode {
+        self.ifaces
+            .iter()
+            .find(|interface| interface.address == *hash)
+            .map(|interface| {
+                interface.runtime.metadata.lock().expect("interface runtime lock").descriptor.mode
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn active_interface_hashes(&self) -> Vec<AddressHash> {
+        self.ifaces
+            .iter()
+            .filter(|interface| !interface.stop.is_cancelled())
+            .map(|interface| interface.address)
+            .collect()
+    }
+
+    /// Cancel one owned interface without stopping the transport.
+    #[cfg(feature = "testing")]
+    pub fn cancel_interface_for_test(&self, hash: &AddressHash) -> bool {
+        if let Some(interface) = self.ifaces.iter().find(|interface| interface.address == *hash) {
+            interface.stop.cancel();
+            true
+        } else {
+            false
+        }
     }
 
     pub fn receiver(&self) -> Arc<tokio::sync::Mutex<InterfaceRxReceiver>> {
@@ -270,6 +541,31 @@ impl InterfaceManager {
             }
             alive
         });
+    }
+
+    /// Cancel the manager and every interface currently attached to it.
+    pub fn shutdown(&self) {
+        self.cancel.cancel();
+        for interface in &self.ifaces {
+            interface.stop.cancel();
+        }
+    }
+
+    /// Clone the manager cancellation token for failure-path ownership guards.
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.cancel.clone()
+    }
+
+    /// Transfer ownership of spawned interface tasks to the shutdown caller.
+    pub fn take_tasks(&mut self) -> Vec<tokio::task::JoinHandle<()>> {
+        std::mem::take(&mut self.tasks)
+    }
+
+    /// Abort retained interface tasks when asynchronous cleanup is unavailable.
+    pub fn abort_tasks(&self) {
+        for task in &self.tasks {
+            task.abort();
+        }
     }
 
     pub async fn send(&self, message: TxMessage) -> TxDispatchTrace {
@@ -376,5 +672,22 @@ impl InterfaceManager {
     /// holding the `InterfaceManager` tokio mutex.
     pub fn stats_map(&self) -> Arc<Mutex<HashMap<AddressHash, Arc<InterfaceStats>>>> {
         self.stats_map.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shutdown_cancels_manager_and_local_interfaces() {
+        let mut manager = InterfaceManager::new(1);
+        let channel = manager.new_channel(1);
+        let local_stop = channel.stop.clone();
+
+        manager.shutdown();
+
+        assert!(manager.cancel.is_cancelled());
+        assert!(local_stop.is_cancelled());
     }
 }

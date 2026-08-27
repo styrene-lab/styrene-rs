@@ -375,8 +375,8 @@ async fn error_response_for_unimplemented_method() {
 
         let mut stream = UnixStream::connect(&socket_path).await.expect("connect");
 
-        // Terminal operations are not implemented — should get an error
-        let frame = request(&mut stream, MessageType::CmdTerminalOpen, &empty_payload()).await;
+        // Page regeneration remains unsupported and must return a typed error.
+        let frame = request(&mut stream, MessageType::CmdPageRegenerate, &empty_payload()).await;
         assert_eq!(frame.msg_type, MessageType::Error, "unimplemented method should return Error");
     })
     .await;

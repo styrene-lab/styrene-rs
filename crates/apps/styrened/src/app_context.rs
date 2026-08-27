@@ -10,7 +10,7 @@
 //! (Package I), which holds `Arc<AppContext>` and dispatches IPC calls
 //! through it after RBAC capability checks.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[cfg(feature = "i2p-proxy")]
 use crate::services::I2pProxyService;
@@ -18,19 +18,20 @@ use crate::services::I2pProxyService;
 use crate::services::TerminalService;
 use crate::services::{
     AutoReplyService, ConfigService, DiscoveryService, EventService, FleetService, IdentityService,
-    MessagingService, PageService, PolicyService, PropagationService, ProtocolService,
-    StatusService, TunnelService,
+    MessagingService, NativeNomadNetBrowseCoordinator, NetworkOperationService, PageService,
+    PolicyService, PropagationService, ProtocolService, StatusService, TunnelService,
 };
+use crate::standard_propagation::StandardPropagationRuntimeObservation;
+use crate::startup_contract::StartupContract;
 use crate::storage::messages::MessagesStore;
 use crate::transport::mesh_transport::MeshTransport;
 use rns_core::identity::PrivateIdentity;
-use styrene_services::conversations::ConversationStore;
 use styrene_services::node_store::NodeStore;
 
 /// Composition root — wires all daemon services together.
 ///
 /// Construction creates services in startup order (preserving the semantics
-/// of the Python daemon's 22-step startup sequence). Later packages will
+/// of the daemon startup sequence). Later packages will
 /// add constructor parameters as services gain real dependencies.
 pub struct AppContext {
     transport: Arc<dyn MeshTransport>,
@@ -46,22 +47,26 @@ pub struct AppContext {
     discovery: Arc<DiscoveryService>,
     protocol: Arc<ProtocolService>,
     events: Arc<EventService>,
+    network_operations: Arc<NetworkOperationService>,
     tunnel: Arc<TunnelService>,
     #[cfg(feature = "i2p-proxy")]
     i2p_proxy: Arc<I2pProxyService>,
     propagation: Arc<PropagationService>,
     pages: Arc<PageService>,
+    native_browse: Arc<NativeNomadNetBrowseCoordinator>,
     #[cfg(feature = "terminal")]
     terminal: Arc<TerminalService>,
-    conversations: Arc<ConversationStore>,
+    startup_contract: RwLock<Option<StartupContract>>,
+    standard_propagation: RwLock<Option<StandardPropagationRuntimeObservation>>,
 }
 
 impl AppContext {
     /// Construct all services with the given transport, identity hash, and store.
     ///
-    /// Services are created in startup order. Messaging and Discovery share
-    /// the same MessagesStore (single SQLite connection for both messages
-    /// and announces).
+    /// Services are created in startup order. This shared store is the
+    /// authoritative conversation/message persistence handle. Compatibility
+    /// adapters may open separate SQLite connections only to read or project
+    /// this state; they are not independent inbound writers.
     pub fn new(
         transport: Arc<dyn MeshTransport>,
         identity_hash: String,
@@ -122,6 +127,8 @@ impl AppContext {
 
         // Phase 10: Events (standalone pub/sub)
         let events = Arc::new(EventService::new());
+        messaging.set_events(events.clone());
+        let network_operations = NetworkOperationService::new(transport.clone(), events.clone());
 
         // Phase 11: Tunnel (depends on transport)
         let tunnel = Arc::new(TunnelService::new());
@@ -134,14 +141,12 @@ impl AppContext {
 
         // Phase 13: Page server (NomadNet-compatible page hosting)
         let pages = Arc::new(PageService::with_default_dir());
+        let native_browse =
+            Arc::new(NativeNomadNetBrowseCoordinator::new(transport.clone(), discovery.clone()));
 
         // Phase 14: Terminal sessions (local shell access for operators, desktop only)
         #[cfg(feature = "terminal")]
         let terminal = Arc::new(TerminalService::new());
-
-        // Phase 13: Conversation metadata (pin/mute)
-        let conversations =
-            Arc::new(ConversationStore::in_memory().expect("in-memory conversation store"));
 
         Self {
             transport,
@@ -157,15 +162,34 @@ impl AppContext {
             discovery,
             protocol,
             events,
+            network_operations,
             propagation,
             tunnel,
             #[cfg(feature = "i2p-proxy")]
             i2p_proxy,
             pages,
+            native_browse,
             #[cfg(feature = "terminal")]
             terminal,
-            conversations,
+            startup_contract: RwLock::new(None),
+            standard_propagation: RwLock::new(None),
         }
+    }
+
+    pub fn publish_startup_contract(&self, contract: StartupContract) {
+        *self.startup_contract.write().unwrap() = Some(contract);
+    }
+
+    pub fn startup_contract(&self) -> Option<StartupContract> {
+        self.startup_contract.read().unwrap().clone()
+    }
+
+    pub fn publish_standard_propagation(&self, observation: StandardPropagationRuntimeObservation) {
+        *self.standard_propagation.write().unwrap() = Some(observation);
+    }
+
+    pub fn standard_propagation(&self) -> Option<StandardPropagationRuntimeObservation> {
+        self.standard_propagation.read().unwrap().clone()
     }
 
     /// Wire a signing identity into services that need outbound delivery.
@@ -173,6 +197,7 @@ impl AppContext {
     /// Call after construction when the identity is available (after transport init).
     /// Enables MessagingService.send_chat() and FleetService RPC calls.
     pub fn set_signer(&self, signer: Arc<PrivateIdentity>) {
+        self.native_browse.set_identity(signer.clone());
         self.messaging.set_signer(self.transport.clone(), signer.clone());
         self.fleet.set_signer(self.transport.clone(), signer.clone());
         self.tunnel.set_signer(
@@ -273,6 +298,10 @@ impl AppContext {
         self.events.clone()
     }
 
+    pub fn network_operations(&self) -> &Arc<NetworkOperationService> {
+        &self.network_operations
+    }
+
     pub fn tunnel(&self) -> &TunnelService {
         &self.tunnel
     }
@@ -305,6 +334,10 @@ impl AppContext {
         &self.pages
     }
 
+    pub fn native_browse(&self) -> &Arc<NativeNomadNetBrowseCoordinator> {
+        &self.native_browse
+    }
+
     pub fn pages_arc(&self) -> Arc<PageService> {
         self.pages.clone()
     }
@@ -322,10 +355,5 @@ impl AppContext {
     /// The persistent node store.
     pub fn node_store(&self) -> &Arc<NodeStore> {
         &self.node_store
-    }
-
-    /// Conversation metadata store (pin/mute state).
-    pub fn conversations(&self) -> &ConversationStore {
-        &self.conversations
     }
 }

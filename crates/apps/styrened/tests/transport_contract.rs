@@ -184,6 +184,7 @@ async fn mock_inbound_fanout_reaches_multiple_subscribers() {
 
     let data = ReceivedData {
         destination: AddressHash::new([1u8; 16]),
+        link_id: None,
         data: PacketDataBuffer::new_from_slice(b"test"),
         payload_mode: ReceivedPayloadMode::FullWire,
         ratchet_used: false,

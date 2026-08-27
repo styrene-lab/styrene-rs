@@ -25,6 +25,9 @@ pub enum IpcError {
     #[error("conflict: {message}")]
     Conflict { message: String },
 
+    #[error("denied: {capability}")]
+    Denied { capability: String },
+
     #[error("internal error: {message}")]
     Internal { message: String },
 

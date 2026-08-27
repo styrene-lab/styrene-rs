@@ -54,6 +54,8 @@ pub struct PeerRecord {
     pub status: PeerStatus,
     /// IDs of active links to this peer.
     pub link_ids: Vec<String>,
+    /// Proven only by a canonical `nomadnetwork.node` announce.
+    pub native_page_host: bool,
 }
 
 impl PeerRecord {
@@ -66,6 +68,7 @@ impl PeerRecord {
             hop_count: 1,
             status: PeerStatus::Online,
             link_ids: Vec::new(),
+            native_page_host: false,
         }
     }
 
@@ -200,6 +203,8 @@ pub enum ActivityKind {
     Announce,
     LinkUp,
     LinkDown,
+    RouteDiscovered,
+    RouteLost,
     Receipt,
     ResourceStart,
     ResourceDone,
@@ -214,6 +219,8 @@ impl ActivityKind {
             Self::Announce => "⬡",
             Self::LinkUp => "⟺",
             Self::LinkDown => "✕",
+            Self::RouteDiscovered => "+",
+            Self::RouteLost => "-",
             Self::Receipt => "✓",
             Self::ResourceStart => "⬇",
             Self::ResourceDone => "●",

@@ -39,6 +39,7 @@ fn command(source: &str, target: &str) -> AgentEnvelope {
 }
 
 #[tokio::test]
+#[ignore = "requires a live MQTT 5 broker configured by STYRENE_MQTT_TEST_URL"]
 async fn retained_command_is_rejected_from_real_broker() {
     let Some((host, port)) = broker() else {
         eprintln!("skipping: no MQTT 5 broker");

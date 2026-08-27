@@ -1,28 +1,14 @@
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CompatibilityCase {
-    id: &'static str,
-    description: &'static str,
-}
-
-const HARNESS_CASES: [CompatibilityCase; 3] = [
-    CompatibilityCase { id: "direct", description: "Direct mixed Rust/Python delivery path" },
-    CompatibilityCase {
-        id: "opportunistic",
-        description: "Opportunistic mixed Rust/Python delivery path",
-    },
-    CompatibilityCase {
-        id: "propagated_resource_lxm",
-        description: "Propagation path with resource-sized payload and .lxm lifecycle checks",
-    },
-];
+use std::time::Duration;
+use styrene_interop_runner::{
+    python_lxmf_scenario, run_live_scenario, RunStatus, PINNED_SCENARIOS,
+};
 
 #[test]
 fn compatibility_matrix_covers_first_slice() {
-    assert_eq!(HARNESS_CASES.len(), 3);
+    assert_eq!(PINNED_SCENARIOS.len(), 3);
     assert_case_present("direct");
     assert_case_present("opportunistic");
     assert_case_present("propagated_resource_lxm");
@@ -54,31 +40,50 @@ fn run_case(case_id: &str) {
         panic!("python compatibility harness unavailable for '{case_id}': {reason}")
     });
 
-    let mut cmd = Command::new("bash");
-    cmd.arg(&script).arg("--scenario").arg(case_id);
-    cmd.env("PYTHON_BIN", &python_bin);
-    cmd.env(
-        "TIMEOUT_SECS",
-        env::var("LXMF_PY_COMPAT_TIMEOUT").unwrap_or_else(|_| "90".to_string()),
+    let timeout_secs =
+        env::var("LXMF_PY_COMPAT_TIMEOUT").ok().and_then(|value| value.parse().ok()).unwrap_or(90);
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let scenario_id = case_id.parse().expect("catalog uses a canonical pinned scenario ID");
+    let mut scenario = python_lxmf_scenario(
+        &repo_root,
+        scenario_id,
+        Duration::from_secs(timeout_secs),
+        &python_bin,
     );
+    scenario.program = PathBuf::from("bash");
+    scenario.args[0] = script.display().to_string();
+    scenario.env.insert("PYTHON_BIN".to_string(), python_bin);
+    scenario.env.insert("TIMEOUT_SECS".to_string(), timeout_secs.to_string());
     if let Some(path) = python_path {
-        cmd.env("PYTHONPATH", path);
+        scenario.env.insert("PYTHONPATH".to_string(), path.clone());
+        for probe in &mut scenario.revision_probes {
+            probe.env.insert("PYTHONPATH".to_string(), path.clone());
+        }
     }
-
-    let output = cmd.output().expect("failed to execute smoke script");
-    if !output.status.success() {
-        panic!(
-            "python compatibility case '{}' failed\nstdout:\n{}\nstderr:\n{}",
-            case_id,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    scenario.evidence_dir = repo_root.join(format!("target/interop/ci/{case_id}-artifacts"));
+    let evidence = run_live_scenario(&scenario).expect("failed to execute supervised smoke script");
+    let evidence_path = repo_root.join(format!("target/interop/ci/{case_id}.json"));
+    std::fs::create_dir_all(evidence_path.parent().expect("evidence path should have a parent"))
+        .expect("failed to create interoperability evidence directory");
+    std::fs::write(
+        &evidence_path,
+        serde_json::to_vec_pretty(&evidence).expect("failed to encode interoperability evidence"),
+    )
+    .expect("failed to retain interoperability evidence");
+    assert_eq!(
+        evidence.status,
+        RunStatus::Passed,
+        "python compatibility case '{case_id}' failed: {}\nevidence: {}\nstdout:\n{}\nstderr:\n{}",
+        evidence.failure.as_deref().unwrap_or("unknown failure"),
+        evidence_path.display(),
+        evidence.logs[0].text,
+        evidence.logs[1].text,
+    );
 }
 
 fn smoke_script_path() -> PathBuf {
     env::var("LXMF_PY_COMPAT_SMOKE").map(PathBuf::from).unwrap_or_else(|_| {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../scripts/python-styrened-smoke.sh")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../scripts/python-lxmf-smoke.sh")
     })
 }
 
@@ -132,7 +137,9 @@ fn ensure_environment(
 
 fn assert_case_present(case_id: &str) {
     assert!(
-        HARNESS_CASES.iter().any(|case| case.id == case_id && !case.description.is_empty()),
+        PINNED_SCENARIOS
+            .iter()
+            .any(|case| case.id.as_str() == case_id && !case.description.is_empty()),
         "missing compatibility case '{}'",
         case_id
     );

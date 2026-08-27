@@ -8,26 +8,80 @@
 //!
 //! Package C — see ownership-matrix.md §MeshTransport.
 
-use super::mesh_transport::{MeshTransport, TransportError, TransportLifecycleEvent};
+use super::mesh_transport::{
+    validate_link_representation, LinkOpenResult, LinkRepresentation, MeshTransport,
+    RequestLifecycleEvent, TransportError, TransportLifecycleEvent,
+};
 use rns_core::destination::DestinationDesc;
 use rns_core::hash::AddressHash;
 use rns_core::identity::Identity;
-use rns_core::transport::core_transport::{AnnounceEvent, ReceivedData, SendPacketOutcome};
+use rns_core::transport::core_transport::{
+    path_table::RouteEvent, AnnounceEvent, ReceivedData, SendPacketOutcome,
+};
 use rns_core::transport::delivery::LinkSendResult;
 use rns_core::transport::resource::ResourceEvent;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Notify};
 
 /// Recorded call for assertion.
 #[derive(Debug, Clone)]
 pub enum MockCall {
-    SendRaw { dest: AddressHash, data: Vec<u8> },
-    SendViaLink { dest_hash: AddressHash, data: Vec<u8>, timeout: Duration },
-    RequestPath { dest: AddressHash },
-    ResolveIdentity { dest: AddressHash },
-    Announce { app_data: Option<Vec<u8>> },
+    SendRaw {
+        dest: AddressHash,
+        data: Vec<u8>,
+    },
+    SendViaLink {
+        dest_hash: AddressHash,
+        data: Vec<u8>,
+        timeout: Duration,
+        representation: Option<LinkRepresentation>,
+    },
+    RequestPath {
+        dest: AddressHash,
+    },
+    ResolveIdentity {
+        dest: AddressHash,
+    },
+    Announce {
+        app_data: Option<Vec<u8>>,
+    },
+    OpenLink {
+        dest: AddressHash,
+    },
+    CancelLinkOpen {
+        link_id: AddressHash,
+    },
+    ProbeLink {
+        link_id: AddressHash,
+    },
+    CloseLink {
+        link_id: AddressHash,
+    },
+    IdentifyLink {
+        link_id: String,
+    },
+    SendOnLink {
+        link_id: AddressHash,
+        data: Vec<u8>,
+    },
+    CancelRequest {
+        request_id: String,
+    },
+    CancelRequestsByCorrelation {
+        correlation_id: String,
+    },
+    StartRequest {
+        correlation_id: Option<String>,
+        max_response_size: u64,
+    },
+    RequestReceipt {
+        request_id: String,
+    },
+    CancelResource {
+        hash: rns_core::hash::Hash,
+    },
     Shutdown,
 }
 
@@ -41,6 +95,14 @@ pub struct MockTransport {
     send_raw_results: Mutex<VecDeque<Result<SendPacketOutcome, TransportError>>>,
     send_link_results: Mutex<VecDeque<Result<LinkSendResult, TransportError>>>,
     resolve_results: Mutex<VecDeque<Option<Identity>>>,
+    open_link_results: Mutex<VecDeque<Result<LinkOpenResult, TransportError>>>,
+    cancel_open_results: Mutex<VecDeque<Result<(), TransportError>>>,
+    probe_results: Mutex<VecDeque<Result<(), TransportError>>>,
+    close_results: Mutex<VecDeque<Result<(), TransportError>>>,
+    request_results:
+        Mutex<VecDeque<Result<styrene_ipc::types::RequestObservationInfo, TransportError>>>,
+    cancel_request_delay: Mutex<Duration>,
+    paths: Mutex<HashMap<AddressHash, (u8, AddressHash)>>,
 
     // Default behavior for send_raw when queue is exhausted
     default_send_raw: Mutex<Result<SendPacketOutcome, TransportError>>,
@@ -50,9 +112,14 @@ pub struct MockTransport {
     announce_tx: broadcast::Sender<AnnounceEvent>,
     lifecycle_tx: broadcast::Sender<TransportLifecycleEvent>,
     resource_tx: broadcast::Sender<ResourceEvent>,
+    packet_receipt_tx: broadcast::Sender<[u8; 32]>,
+    route_tx: broadcast::Sender<RouteEvent>,
+    request_tx: broadcast::Sender<RequestLifecycleEvent>,
+    link_snapshots: Mutex<rns_core::transport::destination_ext::link::LinkLifecycleSnapshot>,
 
     // Call recording
     calls: Mutex<Vec<MockCall>>,
+    calls_changed: Notify,
 }
 
 impl MockTransport {
@@ -62,6 +129,9 @@ impl MockTransport {
         let (announce_tx, _) = broadcast::channel(64);
         let (lifecycle_tx, _) = broadcast::channel(16);
         let (resource_tx, _) = broadcast::channel(16);
+        let (packet_receipt_tx, _) = broadcast::channel(16);
+        let (route_tx, _) = broadcast::channel(16);
+        let (request_tx, _) = broadcast::channel(16);
 
         Self {
             identity_addr,
@@ -70,12 +140,24 @@ impl MockTransport {
             send_raw_results: Mutex::new(VecDeque::new()),
             send_link_results: Mutex::new(VecDeque::new()),
             resolve_results: Mutex::new(VecDeque::new()),
+            open_link_results: Mutex::new(VecDeque::new()),
+            cancel_open_results: Mutex::new(VecDeque::new()),
+            probe_results: Mutex::new(VecDeque::new()),
+            close_results: Mutex::new(VecDeque::new()),
+            request_results: Mutex::new(VecDeque::new()),
+            cancel_request_delay: Mutex::new(Duration::ZERO),
+            paths: Mutex::new(HashMap::new()),
             default_send_raw: Mutex::new(Ok(SendPacketOutcome::SentDirect)),
             inbound_tx,
             announce_tx,
             lifecycle_tx,
             resource_tx,
+            packet_receipt_tx,
+            route_tx,
+            request_tx,
+            link_snapshots: Mutex::new(Default::default()),
             calls: Mutex::new(Vec::new()),
+            calls_changed: Notify::new(),
         }
     }
 
@@ -96,9 +178,44 @@ impl MockTransport {
         self.send_link_results.lock().unwrap().push_back(result);
     }
 
+    pub fn set_cancel_request_delay(&self, delay: Duration) {
+        *self.cancel_request_delay.lock().unwrap() = delay;
+    }
+
     /// Queue a specific result for the next `resolve_identity` call.
     pub fn queue_resolve(&self, identity: Option<Identity>) {
         self.resolve_results.lock().unwrap().push_back(identity);
+    }
+
+    pub fn queue_open_link(&self, result: Result<AddressHash, TransportError>) {
+        self.open_link_results.lock().unwrap().push_back(result.map(LinkOpenResult::Created));
+    }
+
+    pub fn queue_reused_link(&self, link_id: AddressHash) {
+        self.open_link_results.lock().unwrap().push_back(Ok(LinkOpenResult::Reused(link_id)));
+    }
+
+    pub fn queue_probe(&self, result: Result<(), TransportError>) {
+        self.probe_results.lock().unwrap().push_back(result);
+    }
+
+    pub fn queue_cancel_open(&self, result: Result<(), TransportError>) {
+        self.cancel_open_results.lock().unwrap().push_back(result);
+    }
+
+    pub fn queue_close(&self, result: Result<(), TransportError>) {
+        self.close_results.lock().unwrap().push_back(result);
+    }
+
+    pub fn queue_request(
+        &self,
+        result: Result<styrene_ipc::types::RequestObservationInfo, TransportError>,
+    ) {
+        self.request_results.lock().unwrap().push_back(result);
+    }
+
+    pub fn set_path(&self, destination: AddressHash, hops: u8, next_hop: AddressHash) {
+        self.paths.lock().unwrap().insert(destination, (hops, next_hop));
     }
 
     /// Set the connected state.
@@ -113,6 +230,18 @@ impl MockTransport {
         let _ = self.inbound_tx.send(data);
     }
 
+    pub fn inject_route(&self, event: RouteEvent) {
+        let _ = self.route_tx.send(event);
+    }
+
+    pub fn inject_request_observation(&self, event: styrene_ipc::types::RequestObservationInfo) {
+        let _ = self.request_tx.send(RequestLifecycleEvent::Observation(Box::new(event)));
+    }
+
+    pub fn inject_request_reconcile_required(&self, dropped: u64) {
+        let _ = self.request_tx.send(RequestLifecycleEvent::ReconcileRequired { dropped });
+    }
+
     /// Inject an announce event (simulates receiving an announce from mesh).
     pub fn inject_announce(&self, event: AnnounceEvent) {
         let _ = self.announce_tx.send(event);
@@ -121,6 +250,29 @@ impl MockTransport {
     /// Inject a lifecycle event.
     pub fn inject_lifecycle(&self, event: TransportLifecycleEvent) {
         let _ = self.lifecycle_tx.send(event);
+    }
+
+    pub fn set_link_snapshots(
+        &self,
+        snapshots: Vec<rns_core::transport::destination_ext::link::LinkStateSnapshot>,
+    ) {
+        self.link_snapshots.lock().unwrap().active = snapshots;
+    }
+
+    pub fn set_terminal_link_snapshots(
+        &self,
+        snapshots: Vec<rns_core::transport::destination_ext::link::LinkStateSnapshot>,
+    ) {
+        self.link_snapshots.lock().unwrap().history = snapshots;
+    }
+
+    /// Inject a resource lifecycle event.
+    pub fn inject_resource(&self, event: ResourceEvent) {
+        let _ = self.resource_tx.send(event);
+    }
+
+    pub fn inject_packet_receipt(&self, packet_hash: [u8; 32]) {
+        let _ = self.packet_receipt_tx.send(packet_hash);
     }
 
     // --- Inspection ---
@@ -140,13 +292,78 @@ impl MockTransport {
         self.calls.lock().unwrap().clear();
     }
 
+    pub async fn wait_for_calls(&self, expected: usize, predicate: fn(&MockCall) -> bool) {
+        loop {
+            let changed = self.calls_changed.notified();
+            if self.calls.lock().unwrap().iter().filter(|call| predicate(call)).count() >= expected
+            {
+                return;
+            }
+            changed.await;
+        }
+    }
+
     fn record(&self, call: MockCall) {
         self.calls.lock().unwrap().push(call);
+        self.calls_changed.notify_one();
     }
 }
 
 #[async_trait::async_trait]
 impl MeshTransport for MockTransport {
+    async fn start_request(
+        &self,
+        request: styrene_ipc::types::StartRequestInfo,
+    ) -> Result<styrene_ipc::types::RequestObservationInfo, TransportError> {
+        self.record(MockCall::StartRequest {
+            correlation_id: request.correlation_id.clone(),
+            max_response_size: request.max_response_size,
+        });
+        if let Some(result) = self.request_results.lock().unwrap().pop_front() {
+            return result;
+        }
+        let mut receipt = styrene_ipc::types::RequestObservationInfo::default();
+        receipt.request_id = "55".repeat(16);
+        receipt.link_id = request.link_id;
+        receipt.state = styrene_ipc::types::RequestState::Pending;
+        receipt.observation.correlation_id = request.correlation_id;
+        Ok(receipt)
+    }
+
+    async fn request_receipt(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<styrene_ipc::types::RequestObservationInfo>, TransportError> {
+        self.record(MockCall::RequestReceipt { request_id: request_id.to_string() });
+        let mut receipt = styrene_ipc::types::RequestObservationInfo::default();
+        receipt.request_id = request_id.to_string();
+        receipt.state = styrene_ipc::types::RequestState::Pending;
+        Ok(Some(receipt))
+    }
+
+    async fn cancel_request(
+        &self,
+        request_id: &str,
+    ) -> Result<styrene_ipc::types::RequestObservationInfo, TransportError> {
+        self.record(MockCall::CancelRequest { request_id: request_id.to_string() });
+        let delay = *self.cancel_request_delay.lock().unwrap();
+        tokio::time::sleep(delay).await;
+        let mut receipt = styrene_ipc::types::RequestObservationInfo::default();
+        receipt.request_id = request_id.to_string();
+        receipt.state = styrene_ipc::types::RequestState::Cancelled;
+        Ok(receipt)
+    }
+
+    async fn cancel_requests_by_correlation(
+        &self,
+        correlation_id: &str,
+    ) -> Result<usize, TransportError> {
+        self.record(MockCall::CancelRequestsByCorrelation {
+            correlation_id: correlation_id.to_string(),
+        });
+        Ok(1)
+    }
+
     async fn send_raw(
         &self,
         dest: AddressHash,
@@ -170,11 +387,51 @@ impl MeshTransport for MockTransport {
             dest_hash: dest.address_hash,
             data: data.to_vec(),
             timeout,
+            representation: None,
         });
         self.send_link_results.lock().unwrap().pop_front().unwrap_or_else(|| {
             // Default: return Unavailable (no queued result)
             Err(TransportError::Unavailable)
         })
+    }
+
+    async fn send_via_link_selected(
+        &self,
+        dest: DestinationDesc,
+        data: &[u8],
+        timeout: Duration,
+        representation: LinkRepresentation,
+    ) -> Result<LinkSendResult, TransportError> {
+        validate_link_representation(representation, data.len())?;
+        let result = self
+            .send_link_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Err(TransportError::Unavailable));
+        if let Ok(delivered) = &result {
+            let actual = match delivered {
+                LinkSendResult::Packet(_) => LinkRepresentation::Packet,
+                LinkSendResult::Resource(_) => LinkRepresentation::Resource,
+            };
+            if actual != representation {
+                return Err(TransportError::SendFailed(format!(
+                    "mock refused {actual:?} result for selected {representation:?} representation"
+                )));
+            }
+        }
+        self.record(MockCall::SendViaLink {
+            dest_hash: dest.address_hash,
+            data: data.to_vec(),
+            timeout,
+            representation: Some(representation),
+        });
+        result
+    }
+
+    async fn cancel_resource(&self, hash: rns_core::hash::Hash) -> Result<bool, TransportError> {
+        self.record(MockCall::CancelResource { hash });
+        Ok(true)
     }
 
     async fn request_path(&self, dest: &AddressHash) {
@@ -188,6 +445,74 @@ impl MeshTransport for MockTransport {
 
     async fn announce(&self, app_data: Option<&[u8]>) {
         self.record(MockCall::Announce { app_data: app_data.map(|d| d.to_vec()) });
+    }
+
+    async fn dispatch_announce(&self, app_data: Option<&[u8]>) -> Result<(), TransportError> {
+        self.record(MockCall::Announce { app_data: app_data.map(|d| d.to_vec()) });
+        self.is_connected().then_some(()).ok_or(TransportError::Unavailable)
+    }
+
+    async fn open_link(
+        &self,
+        dest: &AddressHash,
+        cancellation: tokio_util::sync::CancellationToken,
+        _timeout: Duration,
+    ) -> Result<LinkOpenResult, TransportError> {
+        self.record(MockCall::OpenLink { dest: *dest });
+        if cancellation.is_cancelled() {
+            return Err(TransportError::Cancelled);
+        }
+        self.open_link_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Err(TransportError::Unavailable))
+    }
+
+    async fn cancel_link_open(&self, link_id: &AddressHash) -> Result<(), TransportError> {
+        self.record(MockCall::CancelLinkOpen { link_id: *link_id });
+        self.cancel_open_results.lock().unwrap().pop_front().unwrap_or(Ok(()))
+    }
+
+    async fn probe_link(&self, link_id: &AddressHash) -> Result<(), TransportError> {
+        self.record(MockCall::ProbeLink { link_id: *link_id });
+        self.probe_results.lock().unwrap().pop_front().unwrap_or(Err(TransportError::Unavailable))
+    }
+
+    async fn close_link(&self, link_id: &AddressHash) -> Result<(), TransportError> {
+        self.record(MockCall::CloseLink { link_id: *link_id });
+        self.close_results.lock().unwrap().pop_front().unwrap_or(Err(TransportError::Unavailable))
+    }
+
+    async fn open_named_link(
+        &self,
+        destination: DestinationDesc,
+        cancellation: tokio_util::sync::CancellationToken,
+        timeout: Duration,
+    ) -> Result<LinkOpenResult, TransportError> {
+        self.open_link(&destination.address_hash, cancellation, timeout).await
+    }
+
+    async fn identify_link(
+        &self,
+        link_id: &str,
+        _identity: &rns_core::identity::PrivateIdentity,
+    ) -> Result<(), TransportError> {
+        self.record(MockCall::IdentifyLink { link_id: link_id.to_string() });
+        Ok(())
+    }
+
+    async fn send_on_link(
+        &self,
+        link_id: &AddressHash,
+        data: &[u8],
+    ) -> Result<LinkSendResult, TransportError> {
+        self.record(MockCall::SendOnLink { link_id: *link_id, data: data.to_vec() });
+        self.send_link_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Err(TransportError::Unavailable))
     }
 
     fn subscribe_inbound(&self) -> broadcast::Receiver<ReceivedData> {
@@ -206,8 +531,20 @@ impl MeshTransport for MockTransport {
         self.resource_tx.subscribe()
     }
 
-    async fn query_path(&self, _dest: &AddressHash) -> Option<(u8, AddressHash)> {
-        None // Mock doesn't track paths
+    fn subscribe_packet_receipts(&self) -> broadcast::Receiver<[u8; 32]> {
+        self.packet_receipt_tx.subscribe()
+    }
+
+    fn subscribe_routes(&self) -> broadcast::Receiver<RouteEvent> {
+        self.route_tx.subscribe()
+    }
+
+    fn subscribe_request_observations(&self) -> broadcast::Receiver<RequestLifecycleEvent> {
+        self.request_tx.subscribe()
+    }
+
+    async fn query_path(&self, dest: &AddressHash) -> Option<(u8, AddressHash)> {
+        self.paths.lock().unwrap().get(dest).copied()
     }
 
     fn identity_hash(&self) -> AddressHash {
@@ -218,8 +555,22 @@ impl MeshTransport for MockTransport {
         self.destination_addr
     }
 
+    fn runtime_identity(&self) -> Option<(AddressHash, AddressHash)> {
+        Some((self.identity_addr, self.destination_addr))
+    }
+
     fn is_connected(&self) -> bool {
         *self.connected.lock().unwrap()
+    }
+
+    async fn interface_snapshots(&self) -> Vec<rns_core::transport::iface::InterfaceSnapshot> {
+        Vec::new()
+    }
+
+    async fn link_lifecycle_snapshot(
+        &self,
+    ) -> rns_core::transport::destination_ext::link::LinkLifecycleSnapshot {
+        self.link_snapshots.lock().unwrap().clone()
     }
 
     async fn shutdown(&self) -> Result<(), TransportError> {
@@ -285,6 +636,7 @@ mod tests {
 
         let data = ReceivedData {
             destination: AddressHash::new([3u8; 16]),
+            link_id: None,
             data: PacketDataBuffer::new_from_slice(b"test payload"),
             payload_mode: ReceivedPayloadMode::FullWire,
             ratchet_used: false,
@@ -364,5 +716,28 @@ mod tests {
         assert!(mock.is_connected());
         let result = mock.send_raw(AddressHash::new([5u8; 16]), b"test").await;
         assert!(matches!(result, Ok(SendPacketOutcome::SentDirect)));
+    }
+
+    #[tokio::test]
+    async fn selected_representation_is_rejected_before_mock_transmission() {
+        let mock = MockTransport::new_default();
+        let identity = rns_core::identity::PrivateIdentity::new_from_name("selected-boundary");
+        let destination = DestinationDesc {
+            identity: *identity.as_identity(),
+            address_hash: AddressHash::new([7; 16]),
+            name: rns_core::destination::DestinationName::new("lxmf", "delivery"),
+        };
+
+        let result = mock
+            .send_via_link_selected(
+                destination,
+                &vec![0; rns_core::transport::resource::LINK_PACKET_MDU + 1],
+                Duration::from_secs(1),
+                LinkRepresentation::Packet,
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert!(mock.calls().is_empty());
     }
 }

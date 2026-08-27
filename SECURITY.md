@@ -11,7 +11,6 @@ Until the project declares a stable support window, security fixes are made on t
 | Current release | Yes |
 | `main` | Yes, for reproduction and upcoming fixes |
 | Older snapshots | No |
-| Archived Python implementation | No |
 
 ## Reporting a vulnerability
 

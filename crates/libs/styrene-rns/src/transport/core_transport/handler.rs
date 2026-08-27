@@ -29,6 +29,12 @@ impl TransportHandler {
     }
 
     pub(super) async fn send_packet_with_trace(&mut self, mut packet: Packet) -> SendPacketTrace {
+        crate::transport_diagnostic!(
+            "[tp] send_packet dst={} ctx={:02x} len={}",
+            packet.destination,
+            packet.context as u8,
+            packet.data.len()
+        );
         if packet.header.packet_type == PacketType::Proof {
             crate::transport_diagnostic!(
                 "[tp] send_proof dst={} ctx={:02x}",
@@ -125,11 +131,16 @@ impl TransportHandler {
             }
         }
 
+        let destination = packet.destination;
         let (packet, maybe_iface) = self.path_table.handle_packet(&packet);
         if let Some(iface) = maybe_iface {
+            let routed = packet.header.header_type == HeaderType::Type2;
             let dispatch =
                 self.send(TxMessage { tx_type: TxMessageType::Direct(iface), packet }).await;
             let outcome = if dispatch.sent_ifaces > 0 {
+                if routed {
+                    self.path_table.refresh(&destination);
+                }
                 SendPacketOutcome::SentDirect
             } else {
                 SendPacketOutcome::DroppedNoRoute
@@ -217,7 +228,10 @@ impl TransportHandler {
                 allow_duplicate = true;
             }
             PacketType::Data => {
-                allow_duplicate = packet.context == PacketContext::KeepAlive;
+                allow_duplicate = matches!(
+                    packet.context,
+                    PacketContext::KeepAlive | PacketContext::Channel | PacketContext::CacheRequest
+                );
             }
             PacketType::Proof => {
                 if packet.context == PacketContext::LinkRequestProof {

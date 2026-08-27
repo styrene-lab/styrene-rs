@@ -2,7 +2,7 @@
 
 ## What It Does
 
-Post-quantum cryptographic (PQC) tunnel establishment for Styrene mesh communications. Provides ML-KEM-768 + X25519 hybrid key exchange, AES-256-GCM session encryption, and a 3-message handshake state machine matching the Python `styrened` implementation. Tunnel backends (strongSwan IPsec, WireGuard) and an orchestrator are feature-gated but currently stubs.
+Post-quantum cryptographic (PQC) tunnel establishment for Styrene mesh communications. Provides ML-KEM-768 + X25519 hybrid key exchange, AES-256-GCM session encryption, and a 3-message handshake state machine. Tunnel backends (strongSwan IPsec, WireGuard) and an orchestrator are feature-gated but currently stubs.
 
 ## Current Status
 

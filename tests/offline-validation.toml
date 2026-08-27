@@ -1,0 +1,116 @@
+schema_version = 1
+immutable_action_policy = "reusable-workflows"
+
+# All non-DX targets compile. Tests use the explicit matrix in `just test`;
+# only DX is a package-level platform exclusion.
+excluded_packages = ["styrene-dx"]
+
+selected_targets = [
+  "styrene-entropy:*",
+  "styrene-content:*",
+  "styrene-telemetry:*",
+  "styrene-rns:*",
+  "styrene-lxmf:*",
+  "styrene-mesh:*",
+  "styrene-ipc:*",
+  "styrene-identity:*",
+  "styrene-tunnel:*",
+  "styrene-micron:*",
+  "styrene-rbac:*",
+  "styrene-secrets:*",
+  "styrene-services:*",
+  "styrene-a2a:*",
+  "styrene-mqtt:*",
+  "styrene-forge:*",
+  "styrene-amcp:*",
+  "styrene-ipc-server:lib",
+  "styrene-ipc-server:test/wire_compat",
+  "styrened:lib",
+  "styrened:test/announce_names",
+  "styrened:test/config",
+  "styrened:test/identity_store",
+  "styrened:test/lxmf_bridge_tests",
+  "styrened:test/lxmf_fidelity_storage",
+  "styrened:test/nomadnet_pages_offline",
+  "styrened:test/receipt_bridge",
+  "styrened:test/receipt_mapping",
+  "styrened:test/rns_crypto",
+  "styrened:test/transport_contract",
+  "styrened:test/transport_null",
+  "styrened:test/worker_announce",
+  "styrened:test/worker_inbound",
+  "styrene-e2e:test/identity",
+  "styrene-e2e:test/lxmf_protocol",
+  "styrene-e2e:test/pqc_scenario",
+  "styrene-tui:lib",
+  "styrene:bin/styrene",
+  "styrene-mobile-ffi:lib",
+  "styrene-dx:bin/styrene-dx",
+]
+
+safe_sensitive_tests = [
+  "crates/apps/styrened/src/daemon.rs#canonical_hub_recovers_standard_queue_before_active_composition",
+  "crates/apps/styrened/src/services/pages.rs#registered_content_and_allowed_policy_cannot_be_replaced_with_symlink_escape",
+  "crates/apps/styrened/src/workers/native_nomadnet.rs#dynamic_page_timeout_cleans_up_descendants",
+  "crates/apps/styrened/src/workers/native_nomadnet.rs#successful_dynamic_page_returns_without_deadline_and_cleans_descendants",
+]
+
+[[sensitive_tests]]
+path = "crates/apps/styrene-dx"
+evidence = "excluded-package:styrene-dx; selected-target:styrene-dx-bin; live-socket-smoke-ignored"
+
+[[sensitive_tests]]
+path = "crates/tests/styrene-e2e"
+evidence = "excluded-targets:listener-and-peer-tests; selected-offline-targets:identity,lxmf_protocol,pqc_scenario; explicit-recipe:test-network"
+
+[[sensitive_tests]]
+path = "crates/tests/styrene-interop-runner"
+evidence = "excluded-target:runner; explicit-recipe:test-live-harness; manual-workflow:network-tests.yml"
+
+[[sensitive_tests]]
+path = "crates/apps/styrene-i2p"
+evidence = "excluded-test-target:styrene-i2p; compiled-by:check-offline; explicit-recipe:test-network"
+
+[[sensitive_tests]]
+path = "crates/apps/styrene"
+evidence = "selected-target:styrene-bin; host-supported-cli"
+
+[[sensitive_tests]]
+path = "crates/bindings/styrene-mobile-ffi"
+evidence = "selected-target:library; host-supported-mobile-ffi"
+
+[[sensitive_tests]]
+path = "crates/apps/styrened/src"
+evidence = "selected-target:library; sensitive production branches are not called by selected tests"
+
+[[sensitive_tests]]
+path = "crates/apps/styrened/tests/mobile_node.rs"
+evidence = "excluded-target:mobile_node; explicit-recipe:test-network; manual-workflow:network-tests.yml"
+
+[[sensitive_tests]]
+path = "crates/apps/styrened/tests/python_compat_matrix.rs"
+evidence = "excluded-target:python_compat_matrix; ignored-live-tests; manual-workflow:live-interop.yml"
+
+[[sensitive_tests]]
+path = "crates/libs/styrene-ipc-server/tests/server_integration.rs"
+evidence = "excluded-target:server_integration; explicit-package-exclusion:styrene-ipc-server"
+
+[[sensitive_tests]]
+path = "crates/libs/styrene-ipc-server/tests/ipc_contract_python.rs"
+evidence = "excluded-target:ipc_contract_python; ignored-live-test"
+
+[[sensitive_tests]]
+path = "crates/apps/styrene-tui/src/onboarding/detect.rs"
+evidence = "excluded-package:styrene-tui; subprocess-probe:which"
+
+[[sensitive_tests]]
+path = "crates/libs/styrene-mqtt/tests/mosquitto_roundtrip.rs"
+evidence = "ignored-live-test; explicit-recipe:test-mqtt-live"
+
+[[sensitive_tests]]
+path = "crates/libs/styrene-mqtt/tests/mosquitto_retained.rs"
+evidence = "ignored-live-test; explicit-recipe:test-mqtt-live"
+
+[[sensitive_tests]]
+path = "crates/libs/styrene-mqtt/tests/mosquitto_persistent_session.rs"
+evidence = "ignored-live-test; explicit-recipe:test-mqtt-live"

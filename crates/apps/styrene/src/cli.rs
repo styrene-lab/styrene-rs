@@ -92,6 +92,9 @@ pub enum Command {
         /// Message title
         #[arg(long)]
         title: Option<String>,
+        /// LXMF delivery method
+        #[arg(long, default_value = "direct", value_parser = ["direct", "opportunistic", "propagated", "paper"])]
+        delivery_method: String,
     },
 
     /// Show messages with a peer

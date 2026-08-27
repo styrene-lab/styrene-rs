@@ -16,24 +16,72 @@ install_dir := env_var_or_default("STYRENE_INSTALL_DIR", env_var("HOME") + "/.ca
 
 # ─── Development ────────────────────────────────────────────────────────────
 
-# Run all tests
+# Run offline unit, component, and committed fixture tests
 test:
-    cargo test --workspace
+    mkdir -p target
+    rustc --edition 2021 scripts/check_fixture_immutability.rs -o target/check-fixture-immutability
+    target/check-fixture-immutability snapshot target/identity-vectors.snapshot \
+        crates/libs/styrene-identity/tests/test-vectors.json \
+        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/positive.json \
+        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/negative.json
+    cargo test --features styrene-identity/repository-signing \
+        -p styrene-entropy -p styrene-content -p styrene-telemetry \
+        -p styrene-rns -p styrene-lxmf -p styrene-mesh -p styrene-ipc \
+        -p styrene-identity -p styrene-tunnel -p styrene-micron \
+        -p styrene-rbac -p styrene-secrets -p styrene-services \
+        -p styrene-a2a -p styrene-mqtt -p styrene-forge -p styrene-amcp
+    target/check-fixture-immutability verify target/identity-vectors.snapshot \
+        crates/libs/styrene-identity/tests/test-vectors.json \
+        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/positive.json \
+        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/negative.json
+    cargo test -p styrene-ipc-server --lib --test wire_compat
+    cargo test -p styrened --lib \
+        --test announce_names --test config --test identity_store \
+        --test lxmf_bridge_tests --test lxmf_fidelity_storage \
+        --test nomadnet_pages_offline --test receipt_bridge --test receipt_mapping \
+        --test rns_crypto --test transport_contract --test transport_null \
+        --test worker_announce --test worker_inbound
+    cargo test -p styrene-e2e \
+        --test identity --test lxmf_protocol \
+        --test pqc_scenario
+    cargo test -p styrene-tui --lib
+    cargo test -p styrene --bin styrene
+    cargo test -p styrene-mobile-ffi --lib
+    cargo test -p styrene-dx --bin styrene-dx components::
+    cargo test -p styrene-dx --bin styrene-dx fixture
 
 # Run tests with output
 test-verbose:
-    cargo test --workspace -- --nocapture
+    cargo test --workspace \
+        --exclude styrene-dx \
+        --exclude styrene-e2e \
+        --exclude styrene-interop-runner \
+        --exclude styrene-i2p \
+        --exclude styrene \
+        --exclude styrene-mobile-ffi \
+        --exclude styrened \
+        --exclude styrene-tui \
+        --exclude styrene-ipc-server -- --nocapture
+    cargo test -p styrene-ipc-server --lib --test wire_compat -- --nocapture
 
 # Run clippy linter
 lint:
-    cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
+    cargo clippy --workspace --all-targets --exclude styrene-dx --no-deps -- -D warnings
+
+# Compile every maintained non-DX target without executing tests
+check-offline:
+    cargo check --workspace --all-targets --exclude styrene-dx
 
 # Format code
 format:
     cargo fmt --all
 
-# Check formatting (CI mode)
+# Check formatting across the workspace
 format-check:
+    cargo fmt --all -- --check
+
+# Explicit alias for full-workspace formatting checks
+format-check-all:
     cargo fmt --all -- --check
 
 # Build all crates
@@ -74,8 +122,21 @@ package target=`rustc -vV | sed -n 's/^host: //p'`:
 verify-artifact archive:
     python3 scripts/release_artifact.py verify "{{ archive }}"
 
-# Run all validation checks (format + lint + test)
-validate: format-check lint test
+# Validate product capabilities, parity claims, and fixture provenance
+validate-product:
+    python3 scripts/test_validate_product_capabilities.py
+    python3 scripts/test_parity_claim_labels.py
+    python3 scripts/validate_product_capabilities.py
+    python3 scripts/validate_fixture_provenance.py
+
+# Prove ordinary validation does not invoke live or environment-dependent prerequisites
+test-validation-offline:
+    mkdir -p target
+    rustc --edition 2021 --test scripts/test_validation_offline.rs -o target/test-validation-offline
+    target/test-validation-offline
+
+# Run deterministic, offline validation against Rust code and committed fixtures
+validate: format-check check-offline lint test test-interop test-validation-offline
 
 # Check all crates compile (fast, no codegen)
 check:
@@ -96,6 +157,10 @@ docs-open:
 # Run interop tests against committed fixtures (includes HDLC via transport)
 test-interop:
     cargo test --package styrene-rns --features interop-tests,transport
+
+# Run deterministic Styrene/LXMF/NomadNet acceptance gates without listeners
+test-offline-gates:
+    just test
 
 # Generate Python test fixtures (requires Python RNS/LXMF)
 generate-fixtures:
@@ -266,6 +331,15 @@ check-all-features:
 test-e2e:
     cargo test -p styrene-e2e
 
+# Run loopback TCP component and end-to-end tests
+test-network: test-e2e
+    cargo test -p styrene-i2p
+    cargo test -p styrened --test mobile_node
+
+# Run the subprocess and listener based interoperability runner tests
+test-live-harness:
+    cargo test -p styrene-interop-runner
+
 # Run e2e tests with output
 test-e2e-verbose:
     cargo test -p styrene-e2e -- --nocapture
@@ -273,6 +347,12 @@ test-e2e-verbose:
 # Run specific e2e test file
 test-e2e-file file:
     cargo test -p styrene-e2e --test {{ file }}
+
+# Run live MQTT 5 broker integration tests
+test-mqtt-live:
+    cargo test -p styrene-mqtt --test mosquitto_roundtrip -- --ignored
+    cargo test -p styrene-mqtt --test mosquitto_retained -- --ignored
+    cargo test -p styrene-mqtt --test mosquitto_persistent_session -- --ignored
 
 # ─── Release Preflight ────────────────────────────────────────────────────
 

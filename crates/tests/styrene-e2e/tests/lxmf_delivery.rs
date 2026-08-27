@@ -36,23 +36,39 @@ async fn send_chat_delivers_with_correct_attribution() {
         // (the inbound decoder extracts the destination from the wire)
         assert!(!received.destination.is_empty(), "destination should be populated");
 
-        // Sender's store — outbound record with receipt status
-        {
-            let store = alice.app_context.store().lock().expect("lock");
-            let msg = store.get_message(&msg_id).expect("query");
-            // Message might have been overwritten by ID collision, but
-            // if it exists it should have correct fields
-            if let Some(msg) = msg {
-                assert_eq!(msg.direction, "out");
-                assert_eq!(msg.content, "hello bob");
-                assert_eq!(msg.destination, bob.delivery_hash);
-                assert!(
-                    msg.receipt_status.as_deref().map(|s| s.starts_with("sent")).unwrap_or(false),
-                    "outbound should have 'sent' receipt, got {:?}",
-                    msg.receipt_status
-                );
+        // Transport send acceptance is only Sent. The authenticated packet
+        // receipt must later advance this exact message to Delivered.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let status = alice
+                    .app_context
+                    .store()
+                    .lock()
+                    .expect("lock")
+                    .get_message(&msg_id)
+                    .expect("query")
+                    .expect("outbound message")
+                    .receipt_status;
+                if status.as_deref() == Some("delivered: packet-receipt") {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
-        }
+        })
+        .await
+        .expect("authenticated packet receipt deadline");
+
+        let msg = alice
+            .app_context
+            .store()
+            .lock()
+            .expect("lock")
+            .get_message(&msg_id)
+            .expect("query")
+            .expect("outbound message");
+        assert_eq!(msg.direction, "out");
+        assert_eq!(msg.content, "hello bob");
+        assert_eq!(msg.destination, bob.delivery_hash);
     })
     .await;
 }

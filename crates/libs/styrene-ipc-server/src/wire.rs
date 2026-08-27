@@ -1,4 +1,4 @@
-//! IPC wire protocol — frame encode/decode matching the Python `styrened.ipc.protocol`.
+//! IPC wire protocol for Styrene daemon clients.
 //!
 //! Wire format:
 //! ```text
@@ -21,7 +21,9 @@ pub const REQUEST_ID_SIZE: usize = 16;
 pub const HEADER_SIZE: usize = TYPE_SIZE + REQUEST_ID_SIZE; // 17
 
 /// Maximum payload size (4 MB).
-pub const MAX_PAYLOAD_SIZE: usize = 4 * 1024 * 1024;
+/// A single maximum-size LXMF record can project its wire, canonical component
+/// bytes, and lossy UTF-8 display content into one local IPC frame.
+pub const MAX_PAYLOAD_SIZE: usize = 12 * 1024 * 1024;
 
 /// Wire protocol errors.
 #[derive(Debug, Error)]
@@ -34,6 +36,8 @@ pub enum WireError {
 
     #[error("payload too large: {0} bytes (max {MAX_PAYLOAD_SIZE})")]
     PayloadTooLarge(usize),
+    #[error("declared frame length {0} is smaller than header size {HEADER_SIZE}")]
+    InvalidLength(usize),
 
     #[error("msgpack decode error: {0}")]
     MsgpackDecode(String),
@@ -94,6 +98,10 @@ pub enum MessageType {
     SubMessages = 0x31,
     SubActivity = 0x32,
     SubLinks = 0x33,
+    SubRoutes = 0x34,
+    SubRequests = 0x35,
+    SubNetworkOperations = 0x36,
+    SubResources = 0x37,
     Unsub = 0x3F,
 
     // Extended commands (0x40-0x4F)
@@ -136,6 +144,16 @@ pub enum MessageType {
     GetActivityHistory = 0x73,
     QueryPathTable = 0x74,
     QueryInterfaceStats = 0x75,
+    CmdCancelMessage = 0x76,
+    CmdPageNavigate = 0x77,
+    CmdFileDownloadStart = 0x78,
+    QueryFileDownload = 0x79,
+    CmdFileDownloadCancel = 0x7A,
+    CmdFileDownloadSave = 0x7B,
+    CmdPinConversation = 0x7C,
+    CmdUnpinConversation = 0x7D,
+    CmdMuteConversation = 0x7E,
+    CmdUnmuteConversation = 0x7F,
 
     // Tunnel queries (0x90-0x9F)
     QueryTunnels = 0x90,
@@ -145,6 +163,25 @@ pub enum MessageType {
     CmdFleetGrant = 0x94,
     CmdFleetRevoke = 0x95,
     CmdTunnelEstablish = 0x96,
+    QueryPropagation = 0x97,
+    QueryLinks = 0x98,
+    QueryRequest = 0x99,
+    QueryRequests = 0x9A,
+    CmdRequestStart = 0x9B,
+    CmdRequestCancel = 0x9C,
+    QueryNetworkOperation = 0x9D,
+    CmdNetworkOperationStart = 0x9E,
+    CmdNetworkOperationCancel = 0x9F,
+    QueryResources = 0xA0,
+    CmdResourceCancel = 0xA1,
+    QueryAttachmentTransfer = 0xA2,
+    CmdAttachmentTransferCancel = 0xA3,
+    QueryStandardPropagation = 0xA4,
+    CmdSendChatOutcome = 0xA5,
+    QueryDraft = 0xA6,
+    CmdSetDraft = 0xA7,
+    CmdClearDraft = 0xA8,
+    QueryMessage = 0xA9,
 
     // Responses (0x80-0x8F)
     Result = 0x81,
@@ -159,6 +196,13 @@ pub enum MessageType {
     EventTerminalReady = 0xC5,
     EventActivity = 0xC6,
     EventLink = 0xC7,
+    EventRoute = 0xC8,
+    EventRequest = 0xC9,
+    EventNetworkOperation = 0xCA,
+    EventResource = 0xCB,
+    EventReconcileRequired = 0xCC,
+    EventMessagingOperation = 0xCD,
+    EventStandardPropagationChanged = 0xCE,
 }
 
 impl MessageType {
@@ -202,6 +246,10 @@ impl MessageType {
             0x31 => Ok(Self::SubMessages),
             0x32 => Ok(Self::SubActivity),
             0x33 => Ok(Self::SubLinks),
+            0x34 => Ok(Self::SubRoutes),
+            0x35 => Ok(Self::SubRequests),
+            0x36 => Ok(Self::SubNetworkOperations),
+            0x37 => Ok(Self::SubResources),
             0x3F => Ok(Self::Unsub),
             0x40 => Ok(Self::CmdRemoteMessages),
             0x41 => Ok(Self::CmdSelfUpdate),
@@ -236,6 +284,16 @@ impl MessageType {
             0x73 => Ok(Self::GetActivityHistory),
             0x74 => Ok(Self::QueryPathTable),
             0x75 => Ok(Self::QueryInterfaceStats),
+            0x76 => Ok(Self::CmdCancelMessage),
+            0x77 => Ok(Self::CmdPageNavigate),
+            0x78 => Ok(Self::CmdFileDownloadStart),
+            0x79 => Ok(Self::QueryFileDownload),
+            0x7A => Ok(Self::CmdFileDownloadCancel),
+            0x7B => Ok(Self::CmdFileDownloadSave),
+            0x7C => Ok(Self::CmdPinConversation),
+            0x7D => Ok(Self::CmdUnpinConversation),
+            0x7E => Ok(Self::CmdMuteConversation),
+            0x7F => Ok(Self::CmdUnmuteConversation),
             0x90 => Ok(Self::QueryTunnels),
             0x91 => Ok(Self::QueryTunnelStatus),
             0x92 => Ok(Self::CmdTunnelTeardown),
@@ -243,6 +301,25 @@ impl MessageType {
             0x94 => Ok(Self::CmdFleetGrant),
             0x95 => Ok(Self::CmdFleetRevoke),
             0x96 => Ok(Self::CmdTunnelEstablish),
+            0x97 => Ok(Self::QueryPropagation),
+            0x98 => Ok(Self::QueryLinks),
+            0x99 => Ok(Self::QueryRequest),
+            0x9A => Ok(Self::QueryRequests),
+            0x9B => Ok(Self::CmdRequestStart),
+            0x9C => Ok(Self::CmdRequestCancel),
+            0x9D => Ok(Self::QueryNetworkOperation),
+            0x9E => Ok(Self::CmdNetworkOperationStart),
+            0x9F => Ok(Self::CmdNetworkOperationCancel),
+            0xA0 => Ok(Self::QueryResources),
+            0xA1 => Ok(Self::CmdResourceCancel),
+            0xA2 => Ok(Self::QueryAttachmentTransfer),
+            0xA3 => Ok(Self::CmdAttachmentTransferCancel),
+            0xA4 => Ok(Self::QueryStandardPropagation),
+            0xA5 => Ok(Self::CmdSendChatOutcome),
+            0xA6 => Ok(Self::QueryDraft),
+            0xA7 => Ok(Self::CmdSetDraft),
+            0xA8 => Ok(Self::CmdClearDraft),
+            0xA9 => Ok(Self::QueryMessage),
             0x80 => Ok(Self::Pong),
             0x81 => Ok(Self::Result),
             0x82 => Ok(Self::Error),
@@ -254,6 +331,13 @@ impl MessageType {
             0xC5 => Ok(Self::EventTerminalReady),
             0xC6 => Ok(Self::EventActivity),
             0xC7 => Ok(Self::EventLink),
+            0xC8 => Ok(Self::EventRoute),
+            0xC9 => Ok(Self::EventRequest),
+            0xCA => Ok(Self::EventNetworkOperation),
+            0xCB => Ok(Self::EventResource),
+            0xCC => Ok(Self::EventReconcileRequired),
+            0xCD => Ok(Self::EventMessagingOperation),
+            0xCE => Ok(Self::EventStandardPropagationChanged),
             other => Err(WireError::UnknownType(other)),
         }
     }
@@ -283,16 +367,34 @@ impl MessageType {
                 | Self::EventTerminalReady
                 | Self::EventActivity
                 | Self::EventLink
+                | Self::EventRoute
+                | Self::EventRequest
+                | Self::EventNetworkOperation
+                | Self::EventResource
+                | Self::EventReconcileRequired
+                | Self::EventMessagingOperation
+                | Self::EventStandardPropagationChanged
         )
     }
 }
 
 /// A decoded IPC frame.
-#[derive(Debug)]
 pub struct Frame {
     pub msg_type: MessageType,
     pub request_id: [u8; REQUEST_ID_SIZE],
     pub payload: HashMap<String, rmpv::Value>,
+}
+
+impl std::fmt::Debug for Frame {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let payload_len = rmp_serde::to_vec(&self.payload).map_or(0, |payload| payload.len());
+        formatter
+            .debug_struct("Frame")
+            .field("msg_type", &self.msg_type)
+            .field("request_id", &self.request_id)
+            .field("payload_len", &payload_len)
+            .finish()
+    }
 }
 
 /// Encode an IPC frame into wire bytes.
@@ -324,6 +426,10 @@ pub fn decode_frame(data: &[u8]) -> Result<Frame, WireError> {
     }
 
     let total_length = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+
+    if total_length < HEADER_SIZE {
+        return Err(WireError::InvalidLength(total_length));
+    }
 
     let needed = LENGTH_SIZE + total_length;
     if data.len() < needed {
@@ -359,6 +465,10 @@ pub async fn read_frame_async<R: tokio::io::AsyncReadExt + Unpin>(
     let mut len_buf = [0u8; LENGTH_SIZE];
     reader.read_exact(&mut len_buf).await?;
     let total_length = u32::from_be_bytes(len_buf) as usize;
+
+    if total_length < HEADER_SIZE {
+        return Err(WireError::InvalidLength(total_length));
+    }
 
     if total_length > MAX_PAYLOAD_SIZE + HEADER_SIZE {
         return Err(WireError::PayloadTooLarge(total_length));
@@ -444,6 +554,26 @@ mod tests {
     }
 
     #[test]
+    fn frame_debug_contains_metadata_only() {
+        let draft = "draft-sentinel-do-not-disclose";
+        let paper = "lxm://paper-sentinel-do-not-disclose";
+        let payload = HashMap::from([
+            ("draft".into(), rmpv::Value::from(draft)),
+            ("paper_uri".into(), rmpv::Value::from(paper)),
+        ]);
+        let frame = Frame { msg_type: MessageType::Result, request_id: request_id(), payload };
+
+        let debug = format!("{frame:?}");
+        assert!(debug.contains("msg_type"));
+        assert!(debug.contains("request_id"));
+        assert!(debug.contains("payload_len"));
+        assert!(!debug.contains(draft));
+        assert!(!debug.contains(paper));
+        assert!(!debug.contains("paper_uri"));
+        assert!(!debug.contains("draft"));
+    }
+
+    #[test]
     fn decode_truncated_frame() {
         let bytes =
             encode_frame(MessageType::Ping, &request_id(), &empty_payload()).expect("encode");
@@ -452,6 +582,28 @@ mod tests {
         match decode_frame(truncated) {
             Err(WireError::Incomplete { .. }) => {}
             other => panic!("expected Incomplete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sync_decoder_rejects_every_declared_short_header_length() {
+        for declared in 0..HEADER_SIZE {
+            let mut bytes = (declared as u32).to_be_bytes().to_vec();
+            bytes.resize(LENGTH_SIZE + declared, 0);
+            assert!(
+                matches!(decode_frame(&bytes), Err(WireError::InvalidLength(value)) if value == declared)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn async_decoder_rejects_every_declared_short_header_length_before_reading_body() {
+        for declared in 0..HEADER_SIZE {
+            let mut reader = std::io::Cursor::new((declared as u32).to_be_bytes().to_vec());
+            assert!(matches!(
+                read_frame_async(&mut reader).await,
+                Err(WireError::InvalidLength(value)) if value == declared
+            ));
         }
     }
 
@@ -500,11 +652,39 @@ mod tests {
         assert_eq!(MessageType::SubMessages as u8, 0x31);
         assert_eq!(MessageType::SubActivity as u8, 0x32);
         assert_eq!(MessageType::SubLinks as u8, 0x33);
+        assert_eq!(MessageType::SubRoutes as u8, 0x34);
+        assert_eq!(MessageType::SubNetworkOperations as u8, 0x36);
         assert_eq!(MessageType::Unsub as u8, 0x3F);
         assert_eq!(MessageType::EventLink as u8, 0xC7);
+        assert_eq!(MessageType::EventRoute as u8, 0xC8);
         assert_eq!(MessageType::EventDevice as u8, 0xC0);
         assert_eq!(MessageType::EventMessage as u8, 0xC1);
         assert_eq!(MessageType::EventActivity as u8, 0xC6);
+        assert_eq!(MessageType::QueryLinks as u8, 0x98);
+        assert_eq!(MessageType::QueryNetworkOperation as u8, 0x9D);
+        assert_eq!(MessageType::CmdNetworkOperationStart as u8, 0x9E);
+        assert_eq!(MessageType::CmdNetworkOperationCancel as u8, 0x9F);
+        assert_eq!(MessageType::EventNetworkOperation as u8, 0xCA);
+        assert_eq!(MessageType::CmdCancelMessage as u8, 0x76);
+        assert_eq!(MessageType::CmdSendChatOutcome as u8, 0xA5);
+        assert_eq!(MessageType::QueryDraft as u8, 0xA6);
+        assert_eq!(MessageType::CmdSetDraft as u8, 0xA7);
+        assert_eq!(MessageType::CmdClearDraft as u8, 0xA8);
+        assert_eq!(MessageType::QueryMessage as u8, 0xA9);
+        assert_eq!(MessageType::CmdPinConversation as u8, 0x7C);
+        assert_eq!(MessageType::CmdUnpinConversation as u8, 0x7D);
+        assert_eq!(MessageType::CmdMuteConversation as u8, 0x7E);
+        assert_eq!(MessageType::CmdUnmuteConversation as u8, 0x7F);
+        assert_eq!(MessageType::EventMessagingOperation as u8, 0xCD);
+        assert_eq!(MessageType::EventStandardPropagationChanged as u8, 0xCE);
+        assert_eq!(MessageType::CmdPageNavigate as u8, 0x77);
+        assert_eq!(MessageType::CmdFileDownloadStart as u8, 0x78);
+        assert_eq!(MessageType::QueryFileDownload as u8, 0x79);
+        assert_eq!(MessageType::CmdFileDownloadCancel as u8, 0x7A);
+        assert_eq!(MessageType::CmdFileDownloadSave as u8, 0x7B);
+        assert_eq!(MessageType::QueryStandardPropagation as u8, 0xA4);
+        assert!(MessageType::EventRoute.is_event());
+        assert!(!MessageType::EventRoute.is_request());
     }
 
     #[test]

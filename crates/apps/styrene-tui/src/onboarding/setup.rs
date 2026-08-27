@@ -263,17 +263,14 @@ fn sync_directory(_path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn sandbox() -> (PathBuf, StyrenePaths) {
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("styrene-setup-{}-{nonce}", std::process::id()));
+    fn sandbox() -> (tempfile::TempDir, StyrenePaths) {
+        let root = tempfile::tempdir().expect("isolated setup root");
         let paths = StyrenePaths::new(
-            root.join("config"),
-            root.join("data"),
-            root.join("run/styrene.sock"),
-            root.join("home"),
+            root.path().join("config"),
+            root.path().join("data"),
+            root.path().join("run/styrene.sock"),
+            root.path().join("home"),
         );
         (root, paths)
     }
@@ -291,18 +288,17 @@ mod tests {
 
     #[test]
     fn fresh_setup_is_complete_and_reparseable() {
-        let (root, paths) = sandbox();
+        let (_root, paths) = sandbox();
         result(IdentitySource::CreateNew).apply(&paths).unwrap();
         assert!(paths.identity_path().is_file());
         assert!(paths.setup_complete_path().is_file());
         styrened::config::DaemonConfig::from_path(paths.config_path()).unwrap();
         let _ = styrened::identity_store::load_or_create_identity(&paths.identity_path()).unwrap();
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn clean_room_check_is_idempotent_and_preserves_user_state() {
-        let (root, paths) = sandbox();
+        let (_root, paths) = sandbox();
         run_clean_room_check(&paths).unwrap();
         let identity = fs::read(paths.identity_path()).unwrap();
         let sentinel = paths.data_dir.join("operator-state");
@@ -312,7 +308,6 @@ mod tests {
 
         assert_eq!(fs::read(paths.identity_path()).unwrap(), identity);
         assert_eq!(fs::read(sentinel).unwrap(), b"preserve me");
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
@@ -320,7 +315,7 @@ mod tests {
     fn clean_room_check_repairs_private_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        let (root, paths) = sandbox();
+        let (_root, paths) = sandbox();
         run_clean_room_check(&paths).unwrap();
         fs::set_permissions(&paths.config_dir, fs::Permissions::from_mode(0o755)).unwrap();
         fs::set_permissions(paths.identity_path(), fs::Permissions::from_mode(0o644)).unwrap();
@@ -332,12 +327,11 @@ mod tests {
             fs::metadata(paths.identity_path()).unwrap().permissions().mode() & 0o777,
             0o600
         );
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn corrupt_existing_identity_invalidates_completion_marker() {
-        let (root, paths) = sandbox();
+        let (_root, paths) = sandbox();
         run_clean_room_check(&paths).unwrap();
         fs::write(paths.identity_path(), b"corrupt").unwrap();
 
@@ -345,19 +339,16 @@ mod tests {
 
         assert!(matches!(error.kind(), io::ErrorKind::InvalidData | io::ErrorKind::Other));
         assert!(!paths.setup_complete_path().exists());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn invalid_import_does_not_commit_setup() {
         let (root, paths) = sandbox();
-        fs::create_dir_all(&root).unwrap();
-        let source = root.join("invalid.identity");
+        let source = root.path().join("invalid.identity");
         fs::write(&source, b"not an identity").unwrap();
         let error = result(IdentitySource::ImportReticulum(source)).apply(&paths).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(!paths.identity_path().exists());
         assert!(!paths.setup_complete_path().exists());
-        fs::remove_dir_all(root).unwrap();
     }
 }

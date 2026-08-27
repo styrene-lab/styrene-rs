@@ -1,0 +1,41 @@
+schema_version = 1
+profile = "styrene-repository-signing-v1"
+status = "candidate"
+base_revision = "7cfa906e146684277a2cb4d3bd8623ef3e4904d5"
+generator_revision = "PENDING_CLEAN_COMMIT"
+generated_on = "2026-08-26"
+warning = "DANGER: All roots and private seeds in this corpus are public test material and MUST NEVER be used for real identities or repositories."
+notes = "The base revision does not contain the candidate profile. Replace generator_revision with the clean commit that contains these exact generators and artifacts before release."
+
+[[generators]]
+id = "legacy-derivation"
+path = "crates/libs/styrene-identity/examples/generate_derivation_vectors.rs"
+sha256 = "574cbf8e8ab5636218347612e84e393c9c12117241618fe65a237bfcac33314b"
+command = "cargo run -p styrene-identity --example generate_derivation_vectors -- --output <candidate-file>"
+
+[[generators]]
+id = "repository-signing-positive"
+path = "crates/libs/styrene-identity/examples/generate_repository_signing_vectors.rs"
+sha256 = "89b6f7d975ec65e58224bc1459916b98c5fadbb5e2e589debd1c1495fe865a47"
+command = "cargo run -p styrene-identity --features repository-signing --example generate_repository_signing_vectors -- --output <candidate-file>"
+
+[[generators]]
+id = "repository-signing-negative"
+path = "crates/libs/styrene-identity/examples/generate_repository_signing_negative_vectors.rs"
+sha256 = "9bfa64850f4182cd150968b218f785004034ad7b050bd9abcc9c8b1e0bc5014e"
+command = "cargo run -p styrene-identity --features repository-signing --example generate_repository_signing_negative_vectors -- --output <candidate-file>"
+
+[[artifacts]]
+id = "legacy-derivation"
+path = "crates/libs/styrene-identity/tests/test-vectors.json"
+sha256 = "040a5143e27fd81d407b689c98a69df360d33dde0793c4bf3fd30d5678a4886b"
+
+[[artifacts]]
+id = "repository-signing-positive"
+path = "crates/libs/styrene-identity/tests/vectors/repository-signing-v1/positive.json"
+sha256 = "360101239285cf44ef440bef11adb8f11d2a68449350b53dcef2d5a4418c3a79"
+
+[[artifacts]]
+id = "repository-signing-negative"
+path = "crates/libs/styrene-identity/tests/vectors/repository-signing-v1/negative.json"
+sha256 = "acaa21871855494c6c95267d722fc38f1ecc751af9f62a469d4bab435cdb365c"

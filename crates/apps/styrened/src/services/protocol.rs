@@ -59,6 +59,11 @@ impl ProtocolService {
     pub async fn registered_protocols(&self) -> Vec<String> {
         self.registry.registered_types().await
     }
+
+    /// Number of registered handlers, including handlers sharing a protocol ID.
+    pub async fn handler_count(&self) -> usize {
+        self.registry.handler_count().await
+    }
 }
 
 impl Default for ProtocolService {

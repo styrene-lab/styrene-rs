@@ -222,4 +222,4 @@ Suggested order:
 4. `source/mesh.rs` — MeshHubSource (requires IPC, implement after Hub entropy pool)
 5. Wire into `AppContext` when S5 lands
 
-Add to `PARITY_GAPS.md` priority table after 3.2 (PQC Integration) — entropy unblocks PQC, so it should precede it.
+Entropy must precede PQC integration because it supplies the required randomness boundary.

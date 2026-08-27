@@ -1,6 +1,7 @@
 pub mod announce_names;
 pub mod app_context;
 pub mod config;
+pub mod cursor;
 pub mod daemon;
 pub mod daemon_facade;
 pub mod diagnostics;
@@ -14,6 +15,8 @@ pub mod receipt_bridge;
 pub mod rns_crypto;
 pub mod rpc;
 pub mod services;
+pub mod standard_propagation;
+pub mod startup_contract;
 pub mod storage;
 pub mod transport;
 pub mod workers;

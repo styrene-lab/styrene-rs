@@ -1,5 +1,8 @@
 name: release-plz
 
+# validation-class: release-operation
+# Main-branch release automation does not make ordinary offline validation claims.
+
 # Auto-publishes crates.io releases when a release PR merges to main.
 #
 # ── How it works ─────────────────────────────────────────────────────

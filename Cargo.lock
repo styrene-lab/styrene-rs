@@ -6482,6 +6482,7 @@ dependencies = [
  "base64",
  "clap",
  "console",
+ "rmp-serde",
  "rmpv",
  "styrene-ipc",
  "styrene-ipc-server",
@@ -6531,14 +6532,19 @@ dependencies = [
 
 [[package]]
 name = "styrene-dx"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
+ "async-trait",
  "dioxus",
  "futures-util",
  "hex",
  "log",
  "rand_core 0.6.4",
+ "rmp-serde",
  "rmpv",
+ "serde",
+ "serde_json",
+ "styrene-interop-runner",
  "styrene-ipc",
  "styrene-ipc-server",
  "styrene-micron",
@@ -6577,6 +6583,7 @@ dependencies = [
  "styrened",
  "tempfile",
  "tokio",
+ "tokio-util",
  "x25519-dalek",
 ]
 
@@ -6658,9 +6665,23 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.8.2",
  "x25519-dalek",
  "x509-parser 0.16.0",
  "zeroize",
+]
+
+[[package]]
+name = "styrene-interop-runner"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "hex",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]
@@ -6668,6 +6689,7 @@ name = "styrene-ipc"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "rmp-serde",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -6690,6 +6712,7 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -6700,6 +6723,7 @@ dependencies = [
  "criterion",
  "ed25519-dalek",
  "hex",
+ "hkdf",
  "rand_core 0.6.4",
  "rmp-serde",
  "rmpv",
@@ -6728,6 +6752,7 @@ dependencies = [
  "styrene-rns",
  "tempfile",
  "thiserror 1.0.69",
+ "toml 0.8.2",
 ]
 
 [[package]]
@@ -6851,6 +6876,7 @@ dependencies = [
  "ratatui",
  "ratatui-textarea",
  "ratatui-toaster",
+ "rmp-serde",
  "rmpv",
  "serde",
  "serde_json",
@@ -6860,6 +6886,7 @@ dependencies = [
  "styrene-rns",
  "styrened",
  "tachyonfx",
+ "tempfile",
  "tokio",
  "toml 0.8.2",
  "tui-syntax-highlight",
@@ -6909,6 +6936,7 @@ dependencies = [
  "rmp-serde",
  "rmpv",
  "rusqlite",
+ "rustix",
  "rustls",
  "rustls-pemfile",
  "serde",
@@ -6916,14 +6944,17 @@ dependencies = [
  "sha2",
  "styrene-content",
  "styrene-identity",
+ "styrene-interop-runner",
  "styrene-ipc",
  "styrene-ipc-server",
  "styrene-lxmf",
  "styrene-mesh",
+ "styrene-micron",
  "styrene-rbac",
  "styrene-rns",
  "styrene-services",
  "styrene-tunnel",
+ "subtle",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",

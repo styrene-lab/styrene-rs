@@ -217,6 +217,7 @@ mod tests {
             dest_name: Some("Node A".into()),
             text: "hello".into(),
             delivery_status: DeliveryStatus::Sent,
+            lifecycle: Default::default(),
         }];
         let area = Rect::new(0, 0, 80, 10);
         let mut buf = Buffer::empty(area);

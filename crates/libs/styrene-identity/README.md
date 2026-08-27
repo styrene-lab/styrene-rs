@@ -1,9 +1,8 @@
 # styrene-identity
 
 Deterministic key hierarchy for Styrene mesh nodes. One root secret derives
-all protocol-specific keys — RNS, Yggdrasil, WireGuard, SSH, age, git
-signing, per-agent delegation keys, and identity-bound X.509 certificates
-via HKDF-SHA256 with domain separation.
+all protocol-specific keys, including Git commit signing and repository
+authority keys, via HKDF-SHA256 with domain separation.
 
 Published on [crates.io](https://crates.io/crates/styrene-identity).
 
@@ -36,7 +35,8 @@ let root_secret = [0x42u8; 32]; // in practice, from a signer
 let deriver = KeyDeriver::new(&root_secret);
 
 // Flat-purpose keys
-let git_seed = deriver.derive(KeyPurpose::GitSigning);   // Ed25519 seed
+let signing_seed = deriver.signing_seed();               // Identity/legacy commit signing
+let repository_seed = deriver.derive_repository_signing_key(0); // Repository epoch 0
 let age_key  = deriver.derive(KeyPurpose::Age);           // X25519 private key
 let ssh_seed = deriver.derive(KeyPurpose::SshHost);       // Ed25519 seed
 
@@ -119,7 +119,7 @@ root_secret (32 bytes)
   ├─ Expand(PRK, "styrene-wireguard-v1")            → WireGuard Curve25519
   ├─ Expand(PRK, "styrene-ssh-host-v1")             → SSH host Ed25519
   ├─ Expand(PRK, "styrene-age-v1")                  → age X25519
-  ├─ Expand(PRK, "styrene-git-signing-v1")          → git signing Ed25519
+  ├─ Expand(PRK, "styrene-rns-signing-v1")          → identity and legacy commit signing Ed25519
   │
   ├─ SSH user keys (two-level HKDF)
   │   salt="styrene-identity-ssh-user-v1"
@@ -130,6 +130,10 @@ root_secret (32 bytes)
   │   salt="styrene-identity-agent-v1"
   │   ├─ "omegon-primary"   → agent commit signing Ed25519
   │   └─ "omegon-cleave-0"  → worker commit signing Ed25519
+  │
+  ├─ Repository signing keys (two-level HKDF)
+  │   salt="styrene-identity-repository-signing-v1"
+  │   └─ "styrene-repository-signing-epoch-v1\0" || u32be(epoch)
   │
   └─ TLS certificate keys (two-level HKDF)
       salt="styrene-identity-tls-cert-v1"
@@ -203,6 +207,7 @@ let root = chain.root_secret().await?;
 |---------|---------|---------|
 | `file-signer` | **yes** | `FileSigner`, `IdentityVault` (argon2, chacha20poly1305) |
 | `signing` | via file-signer | `pubkey` module (ed25519-dalek, x25519-dalek) |
+| `repository-signing` | no | repository authority bindings and strict Ed25519 verification |
 | `pki` | no | identity-bound X.509 CA/client/server certificates (rcgen) |
 | `yubikey` | no | `YubiKeySigner` (FIDO2 hmac-secret) |
 | `ssh-agent` | no | `StyreneAgent` SSH agent protocol |
@@ -216,6 +221,9 @@ styrene-identity = { version = "0.3.2", default-features = false }
 
 # Derivation + public key helpers, no file signer
 styrene-identity = { version = "0.3.2", default-features = false, features = ["signing"] }
+
+# Repository authority profile, no signer storage or transport
+styrene-identity = { version = "0.3.2", default-features = false, features = ["repository-signing"] }
 
 # Deterministic X.509 issuance for control-plane TLS/mTLS
 styrene-identity = { version = "0.3.2", default-features = false, features = ["pki"] }
@@ -257,6 +265,11 @@ let identity_hash = hex::encode(&hash[..16]); // 32 hex chars
 
 ## Git commit signing
 
+Git commit signing authenticates an individual commit or tag. It does not
+grant Styrene repository authority. `KeyPurpose::GitSigning` is a deprecated
+alias for the canonical identity signing key and exists only for legacy commit
+signing integrations.
+
 Derived keys work with `git`'s SSH signing (`gpg.format = ssh`). Agent keys
 enable cryptographic distinction between human and agent commits:
 
@@ -266,6 +279,23 @@ enable cryptographic distinction between human and agent commits:
 | Agent | `Agent("omegon-primary")` | `styrene-agent:omegon-primary` |
 
 All keys trace back to the same root — one identity, multiple signers.
+
+## Repository authority
+
+Repository authority uses a separate epoch-indexed key family. An
+Identity-issued `RepositorySignerBinding` binds one repository public key to
+the canonical Identity ID, identity public key, epoch, purpose, and suite.
+Consumers must verify the canonical binding before they apply repository
+governance policy.
+
+Enable only the required profile:
+
+```toml
+styrene-identity = { version = "0.3.2", default-features = false, features = ["repository-signing"] }
+```
+
+`styrene-identity` verifies identity attribution and cryptographic validity.
+It does not select epochs, delegates, transitions, or publisher namespaces.
 
 ## Security properties
 
@@ -277,6 +307,8 @@ All keys trace back to the same root — one identity, multiple signers.
 - **Credential injection** — passphrases and PINs via traits, never environment variables
 
 See [SECURITY.md](SECURITY.md) for the full threat model and accepted risks.
+See [COMPATIBILITY.md](COMPATIBILITY.md) for repository-signing release and
+consumer support policy.
 
 ## Linkability warning
 

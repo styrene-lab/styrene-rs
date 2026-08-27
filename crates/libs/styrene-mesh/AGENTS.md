@@ -1,6 +1,6 @@
 # styrene-mesh
 
-Wire protocol envelope format for Styrene mesh communications. Shared contract between the Rust and Python (`styrened`) implementations -- both must produce byte-identical output.
+Wire protocol envelope format for Styrene mesh communications. The Rust contract governs rolling upgrades among Styrene nodes.
 
 ## Wire Format v2
 
@@ -50,7 +50,7 @@ cargo test -p styrene-mesh --features interop-tests
 
 ## Gotchas
 
-- Wire format must match Python `styrened/src/styrened/models/styrene_wire.py` byte-for-byte. Any changes require synchronized Python updates.
+- Wire changes require rolling-upgrade analysis and regression fixtures for supported versions.
 - `HEADER_SIZE` constant comment says 28 but value is 29 (11 + 1 + 1 + 16). The 29 is correct.
 - `StyreneMessage.version` doc comment says "currently always 0x01" but `WIRE_VERSION` is `0x02`. The code is correct, comment is stale.
 - PQC message types are compile-time gated -- `from_byte()` won't recognize 0xD0-0xD7 without `features = ["pqc"]`.

@@ -13,7 +13,7 @@ use styrene_ipc::StubDaemon;
 use styrene_ipc_server::{IpcServer, IpcServerConfig};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore] // TODO: debug msgpack decode mismatch between Python and Rust frame handling
+#[ignore = "requires Python with msgpack and a live local IPC contract harness"]
 async fn python_contract_tests() {
     // Check if python3 and msgpack are available
     let python_check =

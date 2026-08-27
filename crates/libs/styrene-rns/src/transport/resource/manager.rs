@@ -1,27 +1,73 @@
-#[derive(Debug)]
 pub struct ResourceManager {
     pending_outgoing: HashMap<Hash, ResourceSender>,
     outgoing: HashMap<Hash, ResourceSender>,
     incoming: HashMap<Hash, ResourceReceiver>,
+    incoming_limits: HashMap<Hash, usize>,
     events: Vec<ResourceEvent>,
     retry_interval: Duration,
     retry_limit: u8,
+    clock: Arc<dyn MonotonicClock>,
+}
+
+pub(crate) struct ResourceRetryRequest {
+    pub link_id: AddressHash,
+    pub request: ResourceRequest,
+}
+
+pub(crate) struct ResourceCancellation {
+    pub link_id: AddressHash,
+    pub hash: Hash,
+    pub context: PacketContext,
+}
+
+#[derive(Default)]
+pub(crate) struct ResourcePollActions {
+    pub requests: Vec<ResourceRetryRequest>,
+    pub packets: Vec<(AddressHash, Packet)>,
+    pub cancellations: Vec<ResourceCancellation>,
+    pub proof_requests: Vec<(AddressHash, Hash)>,
 }
 
 impl ResourceManager {
     pub fn new() -> Self {
-        Self::new_with_config(Duration::from_secs(2), 5)
+        Self::new_with_config_and_clock(
+            Duration::from_secs(2),
+            5,
+            Arc::new(SystemMonotonicClock),
+        )
     }
 
     pub fn new_with_config(retry_interval: Duration, retry_limit: u8) -> Self {
+        Self::new_with_config_and_clock(
+            retry_interval,
+            retry_limit,
+            Arc::new(SystemMonotonicClock),
+        )
+    }
+
+    pub(crate) fn new_with_config_and_clock(
+        retry_interval: Duration,
+        retry_limit: u8,
+        clock: Arc<dyn MonotonicClock>,
+    ) -> Self {
         Self {
             pending_outgoing: HashMap::new(),
             outgoing: HashMap::new(),
             incoming: HashMap::new(),
+            incoming_limits: HashMap::new(),
             events: Vec::new(),
             retry_interval,
             retry_limit,
+            clock,
         }
+    }
+
+    pub(crate) fn set_incoming_limit(&mut self, hash: Hash, maximum_data_size: usize) -> bool {
+        if maximum_data_size == 0 || maximum_data_size > MAX_NEGOTIATED_RESOURCE_SIZE {
+            return false;
+        }
+        self.incoming_limits.insert(hash, maximum_data_size);
+        true
     }
 
     pub fn start_send(
@@ -30,21 +76,65 @@ impl ResourceManager {
         data: Vec<u8>,
         metadata: Option<Vec<u8>>,
     ) -> Result<(Hash, Packet), RnsError> {
-        let sender = ResourceSender::new(link, data, metadata)?;
+        let sender =
+            ResourceSender::new(link, data, metadata, None, false, self.clock.now())?;
         let resource_hash = sender.resource_hash;
         let packet = sender.advertisement_packet();
         self.pending_outgoing.insert(resource_hash, sender);
         Ok((resource_hash, packet))
     }
 
-    pub fn confirm_outbound_dispatch(&mut self, resource_hash: Hash, sent: bool) {
+    pub fn start_response(
+        &mut self,
+        link: &Link,
+        data: Vec<u8>,
+        request_id: [u8; ADDRESS_HASH_SIZE],
+    ) -> Result<(Hash, Packet), RnsError> {
+        let sender = ResourceSender::new(
+            link,
+            data,
+            None,
+            Some(ByteBuf::from(request_id.to_vec())),
+            true,
+            self.clock.now(),
+        )?;
+        let resource_hash = sender.resource_hash;
+        let packet = sender.advertisement_packet();
+        self.pending_outgoing.insert(resource_hash, sender);
+        Ok((resource_hash, packet))
+    }
+
+    pub fn start_request(
+        &mut self,
+        link: &Link,
+        data: Vec<u8>,
+        request_id: [u8; ADDRESS_HASH_SIZE],
+    ) -> Result<(Hash, Packet), RnsError> {
+        let sender = ResourceSender::new(
+            link,
+            data,
+            None,
+            Some(ByteBuf::from(request_id.to_vec())),
+            false,
+            self.clock.now(),
+        )?;
+        let resource_hash = sender.resource_hash;
+        let packet = sender.advertisement_packet();
+        self.pending_outgoing.insert(resource_hash, sender);
+        Ok((resource_hash, packet))
+    }
+
+    pub fn confirm_outbound_dispatch(&mut self, resource_hash: Hash, sent: bool) -> bool {
         let Some(mut sender) = self.pending_outgoing.remove(&resource_hash) else {
-            return;
+            return false;
         };
 
         if sent {
-            sender.mark_advertised(self.retry_limit);
+            sender.mark_advertised(self.retry_limit, self.clock.now());
             self.outgoing.insert(resource_hash, sender);
+            true
+        } else {
+            false
         }
     }
 
@@ -52,51 +142,190 @@ impl ResourceManager {
         std::mem::take(&mut self.events)
     }
 
-    pub fn retry_requests(&mut self, now: Instant) -> Vec<(AddressHash, ResourceRequest)> {
-        let mut requests = Vec::new();
+    pub fn state_counts(&self) -> ResourceStateCounts {
+        ResourceStateCounts {
+            pending_outgoing: self.pending_outgoing.len(),
+            outgoing: self.outgoing.len(),
+            incoming: self.incoming.len(),
+        }
+    }
+
+    pub(crate) fn poll(&mut self) -> ResourcePollActions {
+        let now = self.clock.now();
+        let mut actions = ResourcePollActions::default();
+        let pending_timed_out = self
+            .pending_outgoing
+            .iter()
+            .filter_map(|(hash, sender)| {
+                (now.saturating_sub(sender.last_activity) >= self.retry_interval)
+                    .then_some((*hash, sender.link_id))
+            })
+            .collect::<Vec<_>>();
+        for (hash, link_id) in pending_timed_out {
+            self.pending_outgoing.remove(&hash);
+            self.events.push(ResourceEvent {
+                hash,
+                link_id,
+                kind: ResourceEventKind::Failed(ResourceFailure::TimedOut),
+            });
+            actions.cancellations.push(ResourceCancellation {
+                link_id,
+                hash,
+                context: PacketContext::ResourceInitiatorCancel,
+            });
+        }
         let mut failed = Vec::new();
         for (hash, receiver) in self.incoming.iter_mut() {
             if receiver.retry_due(now, self.retry_interval, self.retry_limit) {
                 let request = receiver.build_request();
-                receiver.mark_request();
-                requests.push((receiver.link_id, request));
+                receiver.mark_request_at(now);
+                actions.requests.push(ResourceRetryRequest { link_id: receiver.link_id, request });
             }
-            if receiver.retry_count >= self.retry_limit {
-                failed.push(*hash);
+            if receiver.timeout_due(now, self.retry_interval, self.retry_limit) {
+                failed.push((*hash, receiver.link_id));
             }
         }
-        for hash in failed {
+        for (hash, link_id) in failed {
             self.incoming.remove(&hash);
+            self.events.push(ResourceEvent {
+                hash,
+                link_id,
+                kind: ResourceEventKind::Failed(ResourceFailure::TimedOut),
+            });
+            actions.cancellations.push(ResourceCancellation {
+                link_id,
+                hash,
+                context: PacketContext::ResourceReceiverCancel,
+            });
         }
-        requests
-    }
 
-    pub fn poll_outgoing(&mut self, now: Instant) -> Vec<(AddressHash, Packet)> {
-        let mut packets = Vec::new();
         let mut failed = Vec::new();
-
         for (hash, sender) in self.outgoing.iter_mut() {
             match sender.poll(now, self.retry_interval) {
                 OutboundResourcePoll::Send(packet) => {
-                    packets.push((sender.link_id, *packet));
+                    actions.packets.push((sender.link_id, *packet));
+                }
+                OutboundResourcePoll::RequestProof(hash) => {
+                    actions.proof_requests.push((sender.link_id, hash));
                 }
                 OutboundResourcePoll::Failed => {
-                    failed.push(*hash);
+                    failed.push((*hash, sender.link_id));
                 }
                 OutboundResourcePoll::None => {}
             }
         }
 
-        for hash in failed {
+        for (hash, link_id) in failed {
             self.outgoing.remove(&hash);
+            self.events.push(ResourceEvent {
+                hash,
+                link_id,
+                kind: ResourceEventKind::Failed(ResourceFailure::TimedOut),
+            });
+            actions.cancellations.push(ResourceCancellation {
+                link_id,
+                hash,
+                context: PacketContext::ResourceInitiatorCancel,
+            });
         }
 
-        packets
+        actions
+    }
+
+    #[cfg(test)]
+    fn poll_outgoing(&mut self) -> Vec<(AddressHash, Packet)> {
+        self.poll().packets
+    }
+
+    pub(crate) fn cancel_local(&mut self, hash: Hash) -> Option<ResourceCancellation> {
+        let (link_id, context) = if let Some(receiver) = self.incoming.remove(&hash) {
+            (receiver.link_id, PacketContext::ResourceReceiverCancel)
+        } else if let Some(sender) = self.pending_outgoing.remove(&hash) {
+            (sender.link_id, PacketContext::ResourceInitiatorCancel)
+        } else {
+            let sender = self.outgoing.remove(&hash)?;
+            (sender.link_id, PacketContext::ResourceInitiatorCancel)
+        };
+        self.events.push(ResourceEvent {
+            hash,
+            link_id,
+            kind: ResourceEventKind::Failed(ResourceFailure::Cancelled),
+        });
+        Some(ResourceCancellation { link_id, hash, context })
+    }
+
+    pub(crate) fn remove_orphaned(&mut self, live_links: &[AddressHash]) {
+        let mut orphaned = Vec::new();
+        for (hash, sender) in self.pending_outgoing.iter().chain(self.outgoing.iter()) {
+            if !live_links.contains(&sender.link_id) {
+                orphaned.push((*hash, sender.link_id));
+            }
+        }
+        for (hash, receiver) in &self.incoming {
+            if !live_links.contains(&receiver.link_id) {
+                orphaned.push((*hash, receiver.link_id));
+            }
+        }
+        for (hash, link_id) in orphaned {
+            self.pending_outgoing.remove(&hash);
+            self.outgoing.remove(&hash);
+            self.incoming.remove(&hash);
+            self.events.push(ResourceEvent {
+                hash,
+                link_id,
+                kind: ResourceEventKind::Failed(ResourceFailure::LinkClosed),
+            });
+        }
+    }
+
+    pub(crate) fn cancel_link(&mut self, link_id: AddressHash) {
+        let hashes = self
+            .pending_outgoing
+            .iter()
+            .chain(self.outgoing.iter())
+            .filter_map(|(hash, sender)| (sender.link_id == link_id).then_some(*hash))
+            .chain(
+                self.incoming
+                    .iter()
+                    .filter_map(|(hash, receiver)| (receiver.link_id == link_id).then_some(*hash)),
+            )
+            .collect::<Vec<_>>();
+        for hash in hashes {
+            self.pending_outgoing.remove(&hash);
+            self.outgoing.remove(&hash);
+            self.incoming.remove(&hash);
+            self.events.push(ResourceEvent {
+                hash,
+                link_id,
+                kind: ResourceEventKind::Failed(ResourceFailure::LinkClosed),
+            });
+        }
     }
 
     pub fn handle_packet(&mut self, packet: &Packet, link: &mut Link) -> Vec<Packet> {
         let mut responses = Vec::new();
-        self.handle_packet_into(packet, link, &mut responses);
+        self.handle_packet_into(packet, link, &mut responses, None, None);
+        responses
+    }
+
+    pub(crate) fn handle_packet_with_ingress(
+        &mut self,
+        packet: &Packet,
+        link: &mut Link,
+        ingress: Option<(&crate::destination::IngressHandler, &crate::destination::IngressContext)>,
+        maximum_inbound_data_size: Option<usize>,
+    ) -> Vec<Packet> {
+        if !matches!(link.status(), crate::transport::destination_ext::link::LinkStatus::Active | crate::transport::destination_ext::link::LinkStatus::Stale) {
+            return Vec::new();
+        }
+        let mut responses = Vec::new();
+        self.handle_packet_into(
+            packet,
+            link,
+            &mut responses,
+            ingress,
+            maximum_inbound_data_size,
+        );
         responses
     }
 
@@ -105,17 +334,26 @@ impl ResourceManager {
         packet: &Packet,
         link: &mut Link,
         responses: &mut Vec<Packet>,
+        ingress: Option<(&crate::destination::IngressHandler, &crate::destination::IngressContext)>,
+        maximum_inbound_data_size: Option<usize>,
     ) {
         responses.clear();
         match packet.context {
             PacketContext::ResourceAdvrtisement => {
-                self.handle_advertisement_into(packet, link, responses)
+                self.handle_advertisement_into(
+                    packet,
+                    link,
+                    responses,
+                    maximum_inbound_data_size,
+                )
             }
             PacketContext::ResourceRequest => self.handle_request_into(packet, link, responses),
             PacketContext::ResourceHashUpdate => {
                 self.handle_hash_update_into(packet, link, responses)
             }
-            PacketContext::Resource => self.handle_resource_part_into(packet, link, responses),
+            PacketContext::Resource => {
+                self.handle_resource_part_into(packet, link, responses, ingress)
+            }
             PacketContext::ResourceProof => self.handle_proof_into(packet, responses),
             PacketContext::ResourceInitiatorCancel | PacketContext::ResourceReceiverCancel => {
                 self.cancel_into(packet, responses)
@@ -129,6 +367,7 @@ impl ResourceManager {
         packet: &Packet,
         link: &mut Link,
         responses: &mut Vec<Packet>,
+        maximum_inbound_data_size: Option<usize>,
     ) {
         let Ok(advertisement) = ResourceAdvertisement::unpack(packet.data.as_slice()) else {
             return;
@@ -140,16 +379,36 @@ impl ResourceManager {
             );
             return;
         }
+        if !advertisement.is_response()
+            && maximum_inbound_data_size
+                .is_some_and(|maximum| advertisement.data_size > maximum as u64)
+        {
+            log::warn!(
+                "resource: rejecting inbound advertisement above destination limit"
+            );
+            return;
+        }
         let resource_hash = advertisement.hash;
         if self.incoming.get(&resource_hash).is_some_and(|receiver| receiver.is_active()) {
             return;
         }
-        let Ok(mut receiver) = ResourceReceiver::new(&advertisement, *link.id()) else {
+        let now = self.clock.now();
+        let maximum_data_size = self
+            .incoming_limits
+            .remove(&resource_hash)
+            .unwrap_or(MAX_UNSOLICITED_RESOURCE_SIZE);
+        let Ok(mut receiver) = ResourceReceiver::new(
+            &advertisement,
+            *link.id(),
+            link.resource_sdu(),
+            maximum_data_size,
+            now,
+        ) else {
             log::warn!("resource: rejecting unreasonable advertisement");
             return;
         };
         let request = receiver.build_request();
-        receiver.mark_request();
+        receiver.mark_request_at(now);
         self.incoming.insert(resource_hash, receiver);
         match build_link_packet(
             link,
@@ -174,7 +433,13 @@ impl ResourceManager {
             return;
         };
         if let Some(sender) = self.outgoing.get_mut(&request.resource_hash) {
-            sender.handle_request_into(&request, link, responses);
+            crate::transport_diagnostic!(
+                "[resource] request hash={} requested={} exhausted={}",
+                request.resource_hash,
+                request.requested_hashes.len(),
+                request.hashmap_exhausted
+            );
+            sender.handle_request_into(&request, link, responses, self.clock.now());
         }
     }
 
@@ -209,29 +474,39 @@ impl ResourceManager {
         packet: &Packet,
         link: &mut Link,
         responses: &mut Vec<Packet>,
+        ingress: Option<(&crate::destination::IngressHandler, &crate::destination::IngressContext)>,
     ) {
         let mut completed: Option<Hash> = None;
         let mut proof_packet: Option<Packet> = None;
         let mut request_packet: Option<Packet> = None;
+        let mut rejection_packet: Option<Packet> = None;
         let mut payload: Option<ResourcePayload> = None;
-        let mut failed: Option<Hash> = None;
+        let mut failed: Option<(Hash, AddressHash)> = None;
+        let mut receiver_request_id = None;
+        let mut receiver_is_request = false;
+        let mut receiver_is_response = false;
+        let mut receiver_transfer_size = 0;
         for (hash, receiver) in self.incoming.iter_mut() {
             let before_received = receiver.received;
-            match receiver.handle_part(packet.data.as_slice(), link) {
+            match receiver.handle_part(packet.data.as_slice(), link, self.clock.now()) {
                 PartOutcome::NoMatch => continue,
                 PartOutcome::Failed => {
-                    failed = Some(*hash);
+                    failed = Some((*hash, receiver.link_id));
                     break;
                 }
                 PartOutcome::Complete(packet, data_payload) => {
                     completed = Some(*hash);
+                    receiver_request_id = receiver.request_id;
+                    receiver_is_request = receiver.is_request;
+                    receiver_is_response = receiver.is_response;
+                    receiver_transfer_size = receiver.total_bytes;
                     proof_packet = Some(packet);
                     payload = Some(data_payload);
                     break;
                 }
                 PartOutcome::Incomplete => {
                     let request = receiver.build_request();
-                    receiver.mark_request();
+                    receiver.mark_request_at(self.clock.now());
                     request_packet = match build_link_packet(
                         link,
                         PacketType::Data,
@@ -255,26 +530,61 @@ impl ResourceManager {
                 }
             }
         }
-        if let Some(hash) = failed {
+        if let Some((hash, link_id)) = failed {
             self.incoming.remove(&hash);
+            self.events.push(ResourceEvent {
+                hash,
+                link_id,
+                kind: ResourceEventKind::Failed(ResourceFailure::Integrity),
+            });
             return;
         }
         if let Some(hash) = completed {
             self.incoming.remove(&hash);
             if let Some(payload) = payload {
-                self.events.push(ResourceEvent {
-                    hash,
-                    link_id: *link.id(),
-                    kind: ResourceEventKind::Complete(ResourceComplete {
-                        data: payload.data,
-                        metadata: payload.metadata,
-                    }),
-                });
+                let complete = ResourceComplete {
+                    data: payload.data,
+                    metadata: payload.metadata,
+                    request_id: receiver_request_id,
+                    is_request: receiver_is_request,
+                    is_response: receiver_is_response,
+                    transfer_size: receiver_transfer_size,
+                    checksum_verified: true,
+                };
+                let unsolicited = complete.request_id.is_none()
+                    && !complete.is_request
+                    && !complete.is_response;
+                let accepted = !unsolicited
+                    || ingress.is_none_or(|(handler, context)| {
+                        crate::destination::invoke_ingress_handler(handler, &complete.data, context)
+                    });
+                if accepted {
+                    self.events.push(ResourceEvent {
+                        hash,
+                        link_id: *link.id(),
+                        kind: ResourceEventKind::Complete(complete),
+                    });
+                } else {
+                    proof_packet = None;
+                    rejection_packet = build_resource_cancel_packet(
+                        link,
+                        hash,
+                        PacketContext::ResourceReceiverCancel,
+                    )
+                    .ok();
+                    self.events.push(ResourceEvent {
+                        hash,
+                        link_id: *link.id(),
+                        kind: ResourceEventKind::Failed(ResourceFailure::Cancelled),
+                    });
+                }
             }
         }
         if let Some(packet) = proof_packet {
             responses.push(packet);
         } else if let Some(packet) = request_packet {
+            responses.push(packet);
+        } else if let Some(packet) = rejection_packet {
             responses.push(packet);
         }
     }
@@ -298,9 +608,21 @@ impl ResourceManager {
     fn cancel_into(&mut self, packet: &Packet, _responses: &mut Vec<Packet>) {
         if let Ok(hash_bytes) = copy_hash(packet.data.as_slice()) {
             let hash = Hash::new(hash_bytes);
-            self.incoming.remove(&hash);
-            self.pending_outgoing.remove(&hash);
-            self.outgoing.remove(&hash);
+            let removed = match packet.context {
+                PacketContext::ResourceInitiatorCancel => self.incoming.remove(&hash).is_some(),
+                PacketContext::ResourceReceiverCancel => {
+                    self.pending_outgoing.remove(&hash).is_some()
+                        || self.outgoing.remove(&hash).is_some()
+                }
+                _ => false,
+            };
+            if removed {
+                self.events.push(ResourceEvent {
+                    hash,
+                    link_id: packet.destination,
+                    kind: ResourceEventKind::Failed(ResourceFailure::Cancelled),
+                });
+            }
         }
     }
 }
