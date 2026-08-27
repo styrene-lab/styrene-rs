@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Async CasparCG AMCP protocol client"
+publish = false
 
 [dependencies]
 tokio = { workspace = true }

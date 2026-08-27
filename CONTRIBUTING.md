@@ -4,7 +4,8 @@ Styrene is systems and security software. Small, reviewable changes with explici
 
 ## Development setup
 
-Install Git, [Rustup](https://rustup.rs/), and [`just`](https://github.com/casey/just), then:
+Install Git, [Rustup](https://rustup.rs/), [`just`](https://github.com/casey/just),
+and Python 3.11 or newer for repository policy and product tooling, then:
 
 ```bash
 git clone https://github.com/styrene-lab/styrene-rs.git
@@ -45,6 +46,37 @@ just install                 # local release-build upgrade test
 - Do not commit secrets, private identities, databases, generated build output, or local Flynt/Omegon state.
 - Keep wire-format changes explicit and test them with fixtures.
 - Prefer narrow crate dependencies; protocol-core crates must not absorb application dependency trees.
+
+## Workspace boundaries
+
+`Cargo.toml` is the source of truth for crate layers and public package intent under
+`workspace.metadata.styrene`. Every workspace crate belongs to exactly one layer.
+Production dependencies must point to the same or a lower layer, while dev
+dependencies may cross layers for tests and harnesses.
+
+Run the policy check after adding a crate, changing an internal dependency, or
+changing publication metadata:
+
+```bash
+just check-workspace-policy
+```
+
+Internal crates must set `publish = false`. Public crates may depend only on other
+public workspace crates. Each such path dependency must declare the dependency's
+current package version; Cargo represents this repository convention as an exact
+caret requirement such as `^0.1.0`.
+
+Selected reusable crates must keep their host library target valid with default
+features disabled:
+
+```bash
+just check-library-minimal
+```
+
+This check proves feature isolation on the host; it does not prove a complete
+`no_std` dependency graph. Feature flags should be additive capabilities. Keep
+platform, hardware, and live service requirements out of ordinary validation
+unless a crate's documented default contract explicitly requires them.
 
 ## Commit and pull-request guidance
 

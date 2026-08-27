@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Entropy accumulator, HMAC-DRBG, and hardware source abstraction for Styrene mesh nodes"
 keywords = ["styrene", "entropy", "trng", "drbg", "cryptography"]
 categories = ["cryptography", "hardware-support"]
+publish = false
 
 [features]
 default = ["kernel"]

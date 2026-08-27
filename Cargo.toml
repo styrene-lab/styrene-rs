@@ -56,13 +56,55 @@ license = "MIT"
 repository = "https://github.com/styrene-lab/styrene-rs"
 authors = ["Styrene Labs"]
 
+[workspace.metadata.styrene]
+automated-release-crates = ["styrene-a2a", "styrene-mqtt"]
+public-crates = [
+  "styrene-rns",
+  "styrene-lxmf",
+  "styrene-mesh",
+  "styrene-ipc",
+  "styrene-ipc-server",
+  "styrene-identity",
+  "styrene-tunnel",
+  "styrene-secrets",
+  "styrene-a2a",
+  "styrene-mqtt",
+  "styrene-forge",
+]
+
+[workspace.metadata.styrene.layers]
+foundation = [
+  "styrene-entropy",
+  "styrene-content",
+  "styrene-telemetry",
+  "styrene-rns",
+  "styrene-micron",
+]
+protocol = ["styrene-lxmf", "styrene-mesh", "styrene-tunnel"]
+domain = [
+  "styrene-identity",
+  "styrene-rbac",
+  "styrene-secrets",
+  "styrene-services",
+  "styrene-a2a",
+  "styrene-mqtt",
+  "styrene-forge",
+  "styrene-amcp",
+]
+interface = ["styrene-ipc", "styrene-ipc-server"]
+runtime = ["styrened"]
+application = ["styrene", "styrene-dx", "styrene-i2p", "styrene-tui"]
+binding = ["styrene-mobile-ffi"]
+tooling = ["styrene-interop-runner"]
+test = ["styrene-e2e"]
+
 [workspace.dependencies]
 anyhow = "1"
 clap = { version = "4.5.29", features = ["derive"] }
 clap_complete = "4.5"
 criterion = "0.5"
 styrene-entropy = { version = "0.1.0", path = "crates/libs/styrene-entropy" }
-styrene-lxmf = { version = "0.1.0", path = "crates/libs/styrene-lxmf" }
+styrene-lxmf = { version = "0.1.1", path = "crates/libs/styrene-lxmf" }
 styrene-rns = { version = "0.1.0", path = "crates/libs/styrene-rns" }
 styrene-mesh = { version = "0.1.0", path = "crates/libs/styrene-mesh" }
 styrene-ipc = { version = "0.1.0", path = "crates/libs/styrene-ipc" }
@@ -70,7 +112,7 @@ styrene-ipc-server = { version = "0.1.0", path = "crates/libs/styrene-ipc-server
 styrene-tunnel = { version = "0.1.0", path = "crates/libs/styrene-tunnel" }
 styrene-micron = { version = "0.1.0", path = "crates/libs/styrene-micron" }
 styrene-rbac = { version = "0.1.0", path = "crates/libs/styrene-rbac" }
-styrene-secrets = { version = "0.1.0", path = "crates/libs/styrene-secrets" }
+styrene-secrets = { version = "0.1.1", path = "crates/libs/styrene-secrets" }
 aes = "0.8.4"
 aes-gcm = "0.10"
 ml-kem = "0.2.3"
@@ -111,7 +153,7 @@ rumqttd = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 futures-core = "0.3"
 pin-project-lite = "0.2"
-styrene-mqtt = { version = "0.1.0", path = "crates/libs/styrene-mqtt" }
+styrene-mqtt = { version = "0.2.0", path = "crates/libs/styrene-mqtt" }
 
 [profile.release]
 lto = true

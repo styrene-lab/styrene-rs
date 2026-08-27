@@ -1,3 +1,4 @@
+use alloc::vec;
 use alloc::vec::Vec;
 use hkdf::Hkdf;
 use rand_core::{OsRng, RngCore as _};
@@ -145,7 +146,7 @@ pub fn validate_propagation_stamp(
     target_cost: u32,
     flexibility: u32,
 ) -> Result<ValidatedPropagationStamp, PropagationStampError> {
-    let minimum_len = crate::propagation::MIN_PROPAGATED_LXMF_BYTES
+    let minimum_len = crate::MIN_PROPAGATED_LXMF_BYTES
         .checked_add(STAMP_LENGTH)
         .ok_or(PropagationStampError::InvalidLength)?;
     if stamped_payload.len() <= minimum_len {
@@ -351,7 +352,7 @@ mod tests {
 
     #[test]
     fn propagation_stamp_is_strictly_sized_and_uses_inclusive_flexibility_threshold() {
-        let mut lxmf_data = vec![0x31; crate::propagation::MIN_PROPAGATED_LXMF_BYTES + 1];
+        let mut lxmf_data = vec![0x31; crate::MIN_PROPAGATED_LXMF_BYTES + 1];
         lxmf_data[..16].copy_from_slice(&[0x32; 16]);
         let transient_id: [u8; 32] = Sha256::digest(&lxmf_data).into();
         let stamp = generate_material_stamp_with_control(
@@ -376,11 +377,7 @@ mod tests {
             Err(PropagationStampError::Invalid)
         );
         assert_eq!(
-            validate_propagation_stamp(
-                &[0; crate::propagation::MIN_PROPAGATED_LXMF_BYTES + STAMP_LENGTH],
-                0,
-                0,
-            ),
+            validate_propagation_stamp(&[0; crate::MIN_PROPAGATED_LXMF_BYTES + STAMP_LENGTH], 0, 0,),
             Err(PropagationStampError::InvalidLength)
         );
     }
@@ -392,14 +389,20 @@ mod tests {
         let mut material = [0u8; 32];
         material[..16].copy_from_slice(&local);
         material[16..].copy_from_slice(&remote);
-        let key = generate_material_stamp_with_control(
-            &material,
-            8,
-            PEERING_WORKBLOCK_ROUNDS,
-            1_000_000,
-            || false,
-        )
-        .unwrap();
+        let mut reversed_material = [0u8; 32];
+        reversed_material[..16].copy_from_slice(&remote);
+        reversed_material[16..].copy_from_slice(&local);
+        let workblock = stamp_workblock(&material, PEERING_WORKBLOCK_ROUNDS);
+        let reversed_workblock = stamp_workblock(&reversed_material, PEERING_WORKBLOCK_ROUNDS);
+        let key = (0u64..1_000_000)
+            .find_map(|nonce| {
+                let mut candidate = [0u8; STAMP_LENGTH];
+                candidate[..8].copy_from_slice(&nonce.to_be_bytes());
+                (stamp_valid(&candidate, 8, &workblock)
+                    && !stamp_valid(&candidate, 8, &reversed_workblock))
+                .then_some(candidate)
+            })
+            .expect("deterministic peering key");
         let value = validate_peering_key(&key, &local, &remote, 8).unwrap().value;
         assert!(value >= 8);
         assert_eq!(

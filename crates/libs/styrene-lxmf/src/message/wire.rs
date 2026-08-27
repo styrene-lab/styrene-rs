@@ -378,6 +378,8 @@ fn encrypt_for_identity<R: CryptoRngCore + Copy>(
 mod tests {
     use super::WireMessage;
     use crate::message::Payload;
+    use alloc::vec;
+    use alloc::vec::Vec;
     use rand_core::OsRng;
     use rns_core::identity::PrivateIdentity;
     use serde_bytes::ByteBuf;

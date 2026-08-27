@@ -6,6 +6,7 @@ rust-version.workspace = true
 license = "MIT"
 description = "Styrene mesh content distribution — P2P file sharing over RNS/Yggdrasil"
 repository = "https://github.com/styrene-lab/styrene-rs"
+publish = false
 
 [features]
 default = []

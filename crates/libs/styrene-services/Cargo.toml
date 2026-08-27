@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Domain service abstractions for the Styrene mesh daemon"
+publish = false
 
 [dependencies]
 async-trait = "0.1"

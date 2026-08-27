@@ -422,6 +422,7 @@ fn compute_message_id_hex(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn wire(payload: rmpv::Value) -> Vec<u8> {
         let mut wire = vec![0x11; 16];
@@ -500,7 +501,7 @@ mod tests {
         let mut deeply_nested = vec![0x94, 0xcb];
         deeply_nested.extend_from_slice(&1_700_000_000.5_f64.to_bits().to_be_bytes());
         deeply_nested.extend_from_slice(&[0xc4, 0x00, 0xc4, 0x00]);
-        deeply_nested.extend(std::iter::repeat_n(0x91, MAX_FIELD_DEPTH + 2));
+        deeply_nested.extend(core::iter::repeat_n(0x91, MAX_FIELD_DEPTH + 2));
         deeply_nested.push(0xc0);
         assert!(decode_inbound_message(
             [0x11; 16],

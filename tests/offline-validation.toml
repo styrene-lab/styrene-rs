@@ -11,6 +11,7 @@ selected_targets = [
   "styrene-telemetry:*",
   "styrene-rns:*",
   "styrene-lxmf:*",
+  "styrene-lxmf:lib",
   "styrene-mesh:*",
   "styrene-ipc:*",
   "styrene-identity:*",

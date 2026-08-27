@@ -22,6 +22,6 @@ pub mod wire_fields;
 #[cfg(feature = "sdk")]
 pub mod sdk;
 
-pub use constants::PAPER_MDU;
+pub use constants::{MIN_PROPAGATED_LXMF_BYTES, PAPER_MDU};
 pub use error::LxmfError;
 pub use message::{Message, Payload, WireMessage};

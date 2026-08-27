@@ -69,6 +69,7 @@ impl WireFields {
 mod tests {
     use super::{CommandEntry, WireFields};
     use crate::constants::FIELD_COMMANDS;
+    use alloc::vec;
 
     #[test]
     fn commands_encode_with_integer_field_ids() {

@@ -4,6 +4,8 @@ pub const DESTINATION_LENGTH: usize = 16;
 pub const SIGNATURE_LENGTH: usize = 64;
 pub const TIMESTAMP_SIZE: usize = 8;
 pub const STRUCT_OVERHEAD: usize = 8;
+/// Pinned LXMF's minimum accepted propagated-message length.
+pub const MIN_PROPAGATED_LXMF_BYTES: usize = 112;
 pub const LXMF_OVERHEAD: usize =
     (2 * DESTINATION_LENGTH) + SIGNATURE_LENGTH + TIMESTAMP_SIZE + STRUCT_OVERHEAD;
 
