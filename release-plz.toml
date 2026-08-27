@@ -12,10 +12,11 @@ release = false
 
 # ── Public ecosystem libraries ─────────────────────────────────────
 
+# Re-enable after the repository-signing-profile change is complete.
 [[package]]
 name = "styrene-identity"
-publish = true
-release = true
+publish = false
+release = false
 changelog_update = true
 git_release_enable = true
 git_tag_enable = true
