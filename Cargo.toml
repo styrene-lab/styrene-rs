@@ -153,7 +153,7 @@ rumqttd = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
 futures-core = "0.3"
 pin-project-lite = "0.2"
-styrene-mqtt = { version = "0.2.0", path = "crates/libs/styrene-mqtt" }
+styrene-mqtt = { version = "0.2.1", path = "crates/libs/styrene-mqtt" }
 
 [profile.release]
 lto = true

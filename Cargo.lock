@@ -6494,7 +6494,7 @@ dependencies = [
 
 [[package]]
 name = "styrene-a2a"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "a2a-lf",
  "chrono",
@@ -6772,7 +6772,7 @@ dependencies = [
 
 [[package]]
 name = "styrene-mqtt"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64",
  "bytes",
