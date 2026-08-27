@@ -26,6 +26,12 @@ hex.workspace = true
 default = ["android"]
 android = ["styrened/mobile-identity"]
 ios = ["styrened/mobile-keychain"]
+bindgen = ["uniffi/cli"]
+
+[[bin]]
+name = "styrene-uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
 
 [build-dependencies]
 uniffi = { version = "0.28", features = ["build"] }

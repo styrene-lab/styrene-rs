@@ -83,6 +83,12 @@ result-rpi-provenance
 result-rg35xxsp-bringup
 .builder-artifacts/
 
+# Android generated output
+.gradle/
+android/local.properties
+android/app/src/main/jniLibs/
+android/app/src/main/kotlin/uniffi/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 

@@ -270,7 +270,7 @@ build-android:
 
 # Build Android FFI bridge (shared library for Kotlin)
 build-android-ffi:
-    cargo ndk -t arm64-v8a -t armeabi-v7a \
+    cargo ndk -t arm64-v8a -P 28 \
         build -p styrene-mobile-ffi --no-default-features --features android --release
 
 # Generate Swift bindings from UniFFI
@@ -281,11 +281,12 @@ gen-swift: build-ios-ffi
         --out-dir bindings/swift/Sources/StyreneMobile/
 
 # Generate Kotlin bindings from UniFFI
-gen-kotlin: build-android-ffi
-    cargo run -p uniffi-bindgen -- generate \
-        --library target/aarch64-linux-android/release/libstyrene_mobile_ffi.so \
+gen-kotlin:
+    cargo build -p styrene-mobile-ffi
+    cargo run -p styrene-mobile-ffi --features bindgen --bin styrene-uniffi-bindgen -- generate \
+        --library target/debug/libstyrene_mobile_ffi.so \
         --language kotlin \
-        --out-dir bindings/kotlin/src/main/kotlin/io/styrene/mobile/
+        --out-dir android/app/src/main/kotlin/
 
 # Screenshot the desktop app for visual feedback
 screenshot-dx:
@@ -301,12 +302,14 @@ mobile-android: build-android-ffi gen-kotlin
     @echo "Android build complete — Kotlin bindings in bindings/kotlin/"
 
 # Copy .so to Android project jniLibs and build APK
-android-deploy: build-android-ffi
+android-deploy: build-android-ffi gen-kotlin
     @mkdir -p android/app/src/main/jniLibs/arm64-v8a
     cp target/aarch64-linux-android/release/libstyrene_mobile_ffi.so \
         android/app/src/main/jniLibs/arm64-v8a/
     @echo "Native library copied to android/app/src/main/jniLibs/arm64-v8a/"
-    cd android && ./gradlew assembleDebug
+    gradle -p android \
+        -Pandroid.aapt2FromMavenOverride="$ANDROID_HOME/build-tools/37.0.0/aapt2" \
+        assembleDebug
     @echo "APK built: android/app/build/outputs/apk/debug/app-debug.apk"
 
 # Install debug APK on connected device
