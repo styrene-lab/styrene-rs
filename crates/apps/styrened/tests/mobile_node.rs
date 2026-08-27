@@ -258,6 +258,16 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
     client.send_chat(&server_delivery, "yellow to red").await.unwrap();
     wait_for_content(&server, &client_identity, "yellow to red").await;
 
+    server.mark_read(&client_identity).await.unwrap();
+    let conversation = server
+        .list_conversations()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|conversation| conversation.peer_hash == client_identity)
+        .expect("read conversation remains visible");
+    assert_eq!(conversation.unread_count, 0);
+
     shutdown(client).await;
     shutdown(server).await;
 }
