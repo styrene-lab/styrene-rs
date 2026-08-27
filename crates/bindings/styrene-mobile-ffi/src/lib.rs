@@ -44,6 +44,8 @@ pub struct MobileConfig {
     pub identity_backend: Option<String>,
     /// Direct Reticulum TCP interfaces.
     pub interfaces: Vec<MobileTcpInterface>,
+    /// Enable the host-driven Android RNode packet channel.
+    pub enable_rnode_channel: bool,
 }
 
 #[derive(Clone, uniffi::Enum)]
@@ -111,8 +113,19 @@ pub struct ContactEntry {
 
 #[derive(uniffi::Object)]
 pub struct MobileNode {
-    inner: Mutex<Option<styrened::mobile::MobileNode>>,
+    inner: Mutex<Option<Arc<styrened::mobile::MobileNode>>>,
     rt: tokio::runtime::Handle,
+}
+
+impl MobileNode {
+    async fn node(&self) -> Result<Arc<styrened::mobile::MobileNode>, MobileError> {
+        self.inner
+            .lock()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or(MobileError::NotConnected { msg: "node shut down".into() })
+    }
 }
 
 #[uniffi::export]
@@ -153,6 +166,7 @@ impl MobileNode {
                     }
                 })
                 .collect(),
+            enable_rnode_channel: config.enable_rnode_channel,
         };
 
         let node = rt
@@ -162,15 +176,13 @@ impl MobileNode {
         // Keep runtime alive for process lifetime
         std::mem::forget(rt);
 
-        Ok(Arc::new(Self { inner: Mutex::new(Some(node)), rt: handle }))
+        Ok(Arc::new(Self { inner: Mutex::new(Some(Arc::new(node))), rt: handle }))
     }
 
     /// Poll the propagation hub for queued messages.
     pub fn poll_hub(&self) -> Result<PollResult, MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            let node =
-                guard.as_ref().ok_or(MobileError::NotConnected { msg: "node shut down".into() })?;
+            let node = self.node().await?;
 
             let result =
                 node.poll_hub().await.map_err(|e| MobileError::HubUnavailable { msg: e })?;
@@ -193,9 +205,7 @@ impl MobileNode {
     /// Send a chat message to a peer.
     pub fn send_chat(&self, peer_hash: String, content: String) -> Result<String, MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            let node =
-                guard.as_ref().ok_or(MobileError::NotConnected { msg: "node shut down".into() })?;
+            let node = self.node().await?;
 
             node.send_chat(&peer_hash, &content)
                 .await
@@ -206,9 +216,7 @@ impl MobileNode {
     /// Trigger a mesh announce.
     pub fn announce(&self) -> Result<(), MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            let node =
-                guard.as_ref().ok_or(MobileError::NotConnected { msg: "node shut down".into() })?;
+            let node = self.node().await?;
 
             node.announce().await.map_err(|e| MobileError::Internal { msg: e })
         })
@@ -217,9 +225,7 @@ impl MobileNode {
     /// Get current node status.
     pub fn status(&self) -> Result<NodeStatus, MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            let node =
-                guard.as_ref().ok_or(MobileError::NotConnected { msg: "node shut down".into() })?;
+            let node = self.node().await?;
 
             let id_hash = node.app_context.identity().identity_hash().to_string();
             let s = node.status().await.map_err(|e| MobileError::Internal { msg: e })?;
@@ -238,9 +244,7 @@ impl MobileNode {
     /// List known peers.
     pub fn list_peers(&self) -> Result<Vec<PeerInfo>, MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            let node =
-                guard.as_ref().ok_or(MobileError::NotConnected { msg: "node shut down".into() })?;
+            let node = self.node().await?;
 
             let devices = node.list_peers().await.map_err(|e| MobileError::Internal { msg: e })?;
 
@@ -257,13 +261,10 @@ impl MobileNode {
 
     /// Get the local node's identity hash.
     pub fn identity_hash(&self) -> String {
-        self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            guard
-                .as_ref()
-                .map(|n| n.app_context.identity().identity_hash().to_string())
-                .unwrap_or_default()
-        })
+        self.rt
+            .block_on(async { self.node().await.ok() })
+            .map(|node| node.app_context.identity().identity_hash().to_string())
+            .unwrap_or_default()
     }
 
     // ── Conversations & Contacts ──────────────────────────────────
@@ -271,9 +272,7 @@ impl MobileNode {
     /// List conversations with unread counts.
     pub fn list_conversations(&self) -> Result<Vec<ConversationInfo>, MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            let node =
-                guard.as_ref().ok_or(MobileError::NotConnected { msg: "node shut down".into() })?;
+            let node = self.node().await?;
             let convos =
                 node.list_conversations().await.map_err(|e| MobileError::Internal { msg: e })?;
             Ok(convos
@@ -295,9 +294,7 @@ impl MobileNode {
         limit: u32,
     ) -> Result<Vec<MessageEntry>, MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            let node =
-                guard.as_ref().ok_or(MobileError::NotConnected { msg: "node shut down".into() })?;
+            let node = self.node().await?;
             let msgs = node
                 .get_messages(&peer_hash, limit)
                 .await
@@ -319,9 +316,7 @@ impl MobileNode {
     /// Set a contact alias.
     pub fn set_contact(&self, peer_hash: String, alias: String) -> Result<(), MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            let node =
-                guard.as_ref().ok_or(MobileError::NotConnected { msg: "node shut down".into() })?;
+            let node = self.node().await?;
             node.set_contact(&peer_hash, &alias).await.map_err(|e| MobileError::Internal { msg: e })
         })
     }
@@ -329,9 +324,7 @@ impl MobileNode {
     /// List contacts.
     pub fn list_contacts(&self) -> Result<Vec<ContactEntry>, MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            let node =
-                guard.as_ref().ok_or(MobileError::NotConnected { msg: "node shut down".into() })?;
+            let node = self.node().await?;
             let contacts =
                 node.list_contacts().await.map_err(|e| MobileError::Internal { msg: e })?;
             Ok(contacts
@@ -348,9 +341,7 @@ impl MobileNode {
     /// Mark conversation as read.
     pub fn mark_read(&self, peer_hash: String) -> Result<(), MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            let node =
-                guard.as_ref().ok_or(MobileError::NotConnected { msg: "node shut down".into() })?;
+            let node = self.node().await?;
             node.mark_read(&peer_hash).await.map_err(|e| MobileError::Internal { msg: e })
         })
     }
@@ -358,26 +349,38 @@ impl MobileNode {
     /// Browse a Micron page from a peer.
     pub fn browse_page(&self, host: String, path: String) -> Result<String, MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            let node =
-                guard.as_ref().ok_or(MobileError::NotConnected { msg: "node shut down".into() })?;
+            let node = self.node().await?;
             node.browse_page(&host, &path).await.map_err(|e| MobileError::Internal { msg: e })
         })
     }
 
     /// Get the local node's delivery hash (share this with contacts).
     pub fn delivery_hash(&self) -> Option<String> {
-        self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            guard.as_ref().and_then(|n| n.app_context.identity().delivery_destination_hash())
-        })
+        self.rt
+            .block_on(async { self.node().await.ok() })
+            .and_then(|node| node.app_context.identity().delivery_destination_hash())
     }
 
     /// Check if transport is connected to the hub.
     pub fn is_connected(&self) -> bool {
+        self.rt
+            .block_on(async { self.node().await.ok() })
+            .is_some_and(|node| node.app_context.transport().is_connected())
+    }
+
+    /// Submit one unframed RNS packet received in an RNode KISS data frame.
+    pub fn submit_rnode_packet(&self, packet: Vec<u8>) -> Result<(), MobileError> {
         self.rt.block_on(async {
-            let guard = self.inner.lock().await;
-            guard.as_ref().map(|n| n.app_context.transport().is_connected()).unwrap_or(false)
+            let node = self.node().await?;
+            node.submit_rnode_packet(&packet).await.map_err(|msg| MobileError::Internal { msg })
+        })
+    }
+
+    /// Poll one unframed RNS packet for transmission in an RNode KISS data frame.
+    pub fn poll_rnode_packet(&self) -> Result<Option<Vec<u8>>, MobileError> {
+        self.rt.block_on(async {
+            let node = self.node().await?;
+            node.poll_rnode_packet().await.map_err(|msg| MobileError::Internal { msg })
         })
     }
 

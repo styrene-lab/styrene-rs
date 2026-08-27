@@ -57,9 +57,17 @@ use crate::startup_contract::{
 use crate::storage::messages::MessagesStore;
 use crate::transport::mesh_transport::MeshTransport;
 
+use rns_core::buffer::InputBuffer;
+use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
+use rns_core::packet::Packet;
+use rns_core::transport::iface::{
+    InterfaceChannel, InterfaceRxSender, InterfaceTxReceiver, RxMessage,
+};
 use styrene_ipc::traits::{Daemon, DaemonIdentity, DaemonStatus};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 /// Mobile node configuration — provided by the host app.
 /// How to store the identity private keys.
@@ -93,6 +101,8 @@ pub struct MobileConfig {
     pub identity_backend: IdentityBackend,
     /// Direct Reticulum TCP interfaces.
     pub interfaces: Vec<MobileInterfaceConfig>,
+    /// Create a host-driven channel for an Android-owned RNode interface.
+    pub enable_rnode_channel: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,9 +123,10 @@ pub struct MobileNode {
     pub facade: Arc<DaemonFacade>,
     paths: PlatformPaths,
     hub_delivery_hash: Option<String>,
-    workers: MobileWorkers,
+    workers: Mutex<MobileWorkers>,
     tcp_listen_addresses: Vec<SocketAddr>,
     startup_contract: StartupContract,
+    rnode: Option<RNodeBridge>,
 }
 
 struct MobileWorkers {
@@ -135,6 +146,14 @@ struct MobileTransportRuntime {
     tcp_listen_addresses: Vec<SocketAddr>,
     service_receipt_target:
         Option<Arc<std::sync::OnceLock<std::sync::Weak<crate::services::MessagingService>>>>,
+    rnode_channel: Option<InterfaceChannel>,
+}
+
+struct RNodeBridge {
+    address: AddressHash,
+    rx: InterfaceRxSender,
+    tx: AsyncMutex<InterfaceTxReceiver>,
+    _stop: CancellationToken,
 }
 
 impl MobileWorkers {
@@ -196,7 +215,9 @@ impl MobileWorkers {
 
 impl Drop for MobileNode {
     fn drop(&mut self) {
-        self.workers.abort();
+        if let Ok(workers) = self.workers.get_mut() {
+            workers.abort();
+        }
     }
 }
 
@@ -230,6 +251,7 @@ fn compose_mobile_node(
         delivery_hash,
         tcp_listen_addresses,
         service_receipt_target,
+        rnode_channel,
     } = transport_runtime;
     let transport_active = delivery_hash.is_some();
     let direct_capability_active = service_receipt_target.is_some();
@@ -357,14 +379,22 @@ fn compose_mobile_node(
     }
     let startup_contract = startup.finish();
     app_context.publish_startup_contract(startup_contract.clone());
+    let rnode = rnode_channel.map(|channel| RNodeBridge {
+        address: channel.address,
+        rx: channel.rx_channel,
+        tx: AsyncMutex::new(channel.tx_channel),
+        _stop: channel.stop,
+    });
+
     MobileNode {
         app_context,
         facade,
         paths,
         hub_delivery_hash,
-        workers,
+        workers: Mutex::new(workers),
         tcp_listen_addresses,
         startup_contract,
+        rnode,
     }
 }
 
@@ -463,8 +493,8 @@ impl MobileNode {
         let announce_app_data =
             display_name.as_deref().and_then(encode_delivery_display_name_app_data);
 
-        // All configured interfaces share one transport identity and delivery destination.
-        let transport_runtime = if !interfaces.is_empty() {
+        // Host-driven RNode and TCP profiles share one transport identity and destination.
+        let transport_runtime = if config.enable_rnode_channel || !interfaces.is_empty() {
             use rns_core::destination::DestinationName;
             use rns_core::transport::core_transport::{Transport, TransportConfig};
             use rns_core::transport::iface::tcp_client::TcpClient;
@@ -488,6 +518,11 @@ impl MobileNode {
                 .await;
 
             let iface_mgr = transport_instance.iface_manager();
+            let rnode_channel = if config.enable_rnode_channel {
+                Some(iface_mgr.lock().await.new_channel(128))
+            } else {
+                None
+            };
             let mut server_bindings = Vec::new();
             for interface in &interfaces {
                 if let ValidatedMobileInterface::TcpServer(bind_address) = interface {
@@ -546,6 +581,7 @@ impl MobileNode {
                 delivery_hash: Some(hex::encode(delivery_addr.as_slice())),
                 tcp_listen_addresses: bound,
                 service_receipt_target: Some(receipt_target),
+                rnode_channel,
             }
         } else {
             MobileTransportRuntime {
@@ -553,6 +589,7 @@ impl MobileNode {
                 delivery_hash: None,
                 tcp_listen_addresses: Vec::new(),
                 service_receipt_target: None,
+                rnode_channel: None,
             }
         };
 
@@ -582,11 +619,43 @@ impl MobileNode {
     }
 
     /// Stop retained workers and dispatch transport shutdown.
-    pub async fn shutdown(
-        mut self,
-    ) -> Result<(), crate::transport::mesh_transport::TransportError> {
-        self.workers.shutdown().await;
+    pub async fn shutdown(&self) -> Result<(), crate::transport::mesh_transport::TransportError> {
+        if let Ok(mut workers) = self.workers.lock() {
+            workers.abort();
+        }
         self.app_context.transport().shutdown().await
+    }
+
+    /// Submit unframed RNS bytes received from an Android-owned RNode.
+    pub async fn submit_rnode_packet(&self, packet: &[u8]) -> Result<(), String> {
+        if packet.first().is_some_and(|byte| byte & 0x80 != 0) {
+            return Err("IFAC packet received on open RNode interface".to_string());
+        }
+        let packet = Packet::deserialize(&mut InputBuffer::new(packet))
+            .map_err(|error| format!("invalid RNS packet ({} bytes): {error:?}", packet.len()))?;
+
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        rnode
+            .rx
+            .send(RxMessage { address: rnode.address, packet })
+            .await
+            .map_err(|_| "RNode receive channel closed".to_string())
+    }
+
+    /// Poll the next unframed RNS packet destined for the Android-owned RNode.
+    pub async fn poll_rnode_packet(&self) -> Result<Option<Vec<u8>>, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        match rnode.tx.lock().await.try_recv() {
+            Ok(message) => message
+                .packet
+                .to_bytes()
+                .map(Some)
+                .map_err(|error| format!("RNS packet serialization failed: {error:?}")),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Ok(None),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                Err("RNode transmit channel closed".to_string())
+            }
+        }
     }
 
     /// Poll the propagation hub for queued messages.
@@ -973,6 +1042,7 @@ mod tests {
                 delivery_hash: Some(delivery_hash),
                 tcp_listen_addresses: Vec::new(),
                 service_receipt_target: None,
+                rnode_channel: None,
             },
             display_name,
             None,
@@ -989,7 +1059,7 @@ mod tests {
         assert_eq!(node.delivery_hash(), Some(hex::encode(destination.as_slice())));
         assert_eq!(node.app_context.identity().display_name().as_deref(), Some("Classroom Yellow"));
         assert!(node.startup_contract().has_component(startup_component::ROUTE_WORKER));
-        assert!(!node.workers.all_finished());
+        assert!(!node.workers.lock().unwrap().all_finished());
 
         mock.inject_lifecycle(TransportLifecycleEvent::LinkActivated {
             link_id: "1234567890abcdef".into(),
@@ -1048,11 +1118,11 @@ mod tests {
     #[tokio::test]
     async fn explicit_shutdown_aborts_workers_and_dispatches_transport_shutdown_once() {
         let mock = Arc::new(MockTransport::new_default());
-        let mut node = compose_with_mock(mock.clone(), None);
+        let node = compose_with_mock(mock.clone(), None);
 
-        node.workers.abort();
+        node.workers.lock().unwrap().abort();
         tokio::task::yield_now().await;
-        assert!(node.workers.all_finished());
+        assert!(node.workers.lock().unwrap().all_finished());
 
         node.shutdown().await.unwrap();
         let shutdowns =
@@ -1063,11 +1133,64 @@ mod tests {
     #[tokio::test]
     async fn dropping_node_aborts_every_retained_worker() {
         let node = compose_with_mock(Arc::new(MockTransport::new_default()), None);
-        let handles = node.workers.abort_handles();
+        let handles = node.workers.lock().unwrap().abort_handles();
 
         drop(node);
         tokio::task::yield_now().await;
 
         assert!(handles.iter().all(tokio::task::AbortHandle::is_finished));
+    }
+
+    #[tokio::test]
+    async fn boot_publishes_delivery_hash_and_announce() {
+        let root = tempfile::tempdir().unwrap();
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("test mobile".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: true,
+        })
+        .await
+        .unwrap();
+
+        let delivery_hash = node.app_context.identity().delivery_destination_hash().unwrap();
+        assert_eq!(delivery_hash.len(), 32);
+
+        node.announce().await.unwrap();
+        let packet = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                if let Some(packet) = node.poll_rnode_packet().await.unwrap() {
+                    break packet;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!packet.is_empty());
+    }
+
+    #[tokio::test]
+    async fn oversized_rnode_packet_reports_wire_length() {
+        let root = tempfile::tempdir().unwrap();
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("test mobile".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: true,
+        })
+        .await
+        .unwrap();
+
+        let error = node.submit_rnode_packet(&[0; 484]).await.unwrap_err();
+        assert_eq!(error, "invalid RNS packet (484 bytes): OutOfMemory");
     }
 }

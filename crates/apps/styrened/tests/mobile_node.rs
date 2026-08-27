@@ -13,6 +13,7 @@ fn config(root: &std::path::Path, hub_address: Option<String>) -> MobileConfig {
         display_name: Some("  Classroom Red  ".into()),
         identity_backend: IdentityBackend::PlaintextFile,
         interfaces: Vec::new(),
+        enable_rnode_channel: false,
     }
 }
 
@@ -116,6 +117,7 @@ fn mobile_config_paths_remain_host_owned() {
         display_name: None,
         identity_backend: IdentityBackend::PlaintextFile,
         interfaces: Vec::new(),
+        enable_rnode_channel: false,
     };
 
     assert_eq!(config.config_dir, PathBuf::from("/app/config"));
