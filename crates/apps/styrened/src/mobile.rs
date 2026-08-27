@@ -123,7 +123,7 @@ pub struct MobileNode {
     pub facade: Arc<DaemonFacade>,
     paths: PlatformPaths,
     hub_delivery_hash: Option<String>,
-    workers: Mutex<MobileWorkers>,
+    workers: Mutex<Option<MobileWorkers>>,
     tcp_listen_addresses: Vec<SocketAddr>,
     startup_contract: StartupContract,
     rnode: Option<RNodeBridge>,
@@ -216,7 +216,9 @@ impl MobileWorkers {
 impl Drop for MobileNode {
     fn drop(&mut self) {
         if let Ok(workers) = self.workers.get_mut() {
-            workers.abort();
+            if let Some(workers) = workers.as_mut() {
+                workers.abort();
+            }
         }
     }
 }
@@ -391,7 +393,7 @@ fn compose_mobile_node(
         facade,
         paths,
         hub_delivery_hash,
-        workers: Mutex::new(workers),
+        workers: Mutex::new(Some(workers)),
         tcp_listen_addresses,
         startup_contract,
         rnode,
@@ -620,8 +622,9 @@ impl MobileNode {
 
     /// Stop retained workers and dispatch transport shutdown.
     pub async fn shutdown(&self) -> Result<(), crate::transport::mesh_transport::TransportError> {
-        if let Ok(mut workers) = self.workers.lock() {
-            workers.abort();
+        let mut workers = self.workers.lock().ok().and_then(|mut workers| workers.take());
+        if let Some(workers) = workers.as_mut() {
+            workers.shutdown().await;
         }
         self.app_context.transport().shutdown().await
     }
@@ -1059,7 +1062,7 @@ mod tests {
         assert_eq!(node.delivery_hash(), Some(hex::encode(destination.as_slice())));
         assert_eq!(node.app_context.identity().display_name().as_deref(), Some("Classroom Yellow"));
         assert!(node.startup_contract().has_component(startup_component::ROUTE_WORKER));
-        assert!(!node.workers.lock().unwrap().all_finished());
+        assert!(!node.workers.lock().unwrap().as_ref().unwrap().all_finished());
 
         mock.inject_lifecycle(TransportLifecycleEvent::LinkActivated {
             link_id: "1234567890abcdef".into(),
@@ -1120,9 +1123,9 @@ mod tests {
         let mock = Arc::new(MockTransport::new_default());
         let node = compose_with_mock(mock.clone(), None);
 
-        node.workers.lock().unwrap().abort();
+        node.workers.lock().unwrap().as_mut().unwrap().abort();
         tokio::task::yield_now().await;
-        assert!(node.workers.lock().unwrap().all_finished());
+        assert!(node.workers.lock().unwrap().as_ref().unwrap().all_finished());
 
         node.shutdown().await.unwrap();
         let shutdowns =
@@ -1133,7 +1136,7 @@ mod tests {
     #[tokio::test]
     async fn dropping_node_aborts_every_retained_worker() {
         let node = compose_with_mock(Arc::new(MockTransport::new_default()), None);
-        let handles = node.workers.lock().unwrap().abort_handles();
+        let handles = node.workers.lock().unwrap().as_ref().unwrap().abort_handles();
 
         drop(node);
         tokio::task::yield_now().await;
