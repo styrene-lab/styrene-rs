@@ -1,5 +1,6 @@
 use crate::LxmfError;
 use alloc::string::{String, ToString};
+use alloc::vec;
 use alloc::vec::Vec;
 use rmpv::Value;
 

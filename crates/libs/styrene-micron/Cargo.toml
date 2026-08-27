@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Micron markup parser for NomadNet/Reticulum page rendering"
 keywords = ["micron", "nomadnet", "reticulum", "markup", "parser"]
 categories = ["parsing", "text-processing"]
+publish = false
 
 [dependencies]
 

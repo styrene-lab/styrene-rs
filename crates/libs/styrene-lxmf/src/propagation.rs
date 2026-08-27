@@ -3,8 +3,7 @@
 use alloc::vec::Vec;
 use sha2::{Digest, Sha256};
 
-/// Pinned LXMF's minimum accepted propagated-message length.
-pub const MIN_PROPAGATED_LXMF_BYTES: usize = 112;
+pub use crate::MIN_PROPAGATED_LXMF_BYTES;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PropagationEnvelopeError {

@@ -56,7 +56,7 @@ src/
 |---------|----------------|
 | `default` | `std` |
 | `std` | Standard library, serde_json, wire_fields module |
-| `alloc` | Alloc-only (no std) |
+| `alloc` | Reserved marker; currently enables no additional API and does not guarantee a no-std dependency closure |
 | `sdk` | Higher-level domain types, thiserror errors (implies std) |
 
 ## Test Commands
@@ -81,6 +81,8 @@ cargo test -p styrene-lxmf --all-features
 - Depends on `rns_core` (styrene-rns) via path dependency. Changes to rns_core identity or crypto can break this crate.
 - There are two error modules: `error.rs` (private, re-exported as `LxmfError`) and `errors.rs` (public, additional error types). This is confusing -- be aware of which one you are working with.
 - `wire_fields.rs` is only available with the `std` feature.
+- `--no-default-features` is a supported host profile, but transitive dependencies
+  still enable `std`; it is not evidence of a bare-metal or alloc-only build.
 - Serialization uses MessagePack (`rmp-serde` / `rmpv`), not CBOR. This crate predates the CBOR migration decision.
 
 ## Known Issues

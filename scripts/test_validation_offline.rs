@@ -949,6 +949,7 @@ fn every_workflow_obeys_trigger_and_reuse_boundaries() {
         let triggers = workflow_triggers(&workflow);
         let scheduled = triggers.contains("schedule");
         let release_operation = workflow.contains("# validation-class: release-operation");
+        let repository_policy = workflow.contains("# validation-class: repository-policy");
         let validation_behavior = lower.contains("cargo test")
             || lower.contains("cargo check")
             || lower.contains("cargo clippy");
@@ -1098,7 +1099,7 @@ fn every_workflow_obeys_trigger_and_reuse_boundaries() {
         ]
         .iter()
         .any(|token| lower.contains(token));
-        if sensitive && !release_operation && !ordinary_validation {
+        if sensitive && !release_operation && !ordinary_validation && !repository_policy {
             assert!(
                 has_trigger(&workflow, "workflow_dispatch"),
                 "sensitive workflow {path} is not manual"

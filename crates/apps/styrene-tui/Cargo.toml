@@ -26,7 +26,6 @@ unicode-width = "0.2"
 
 # Protocol crates (no transport — pure data types)
 styrene-rns = { workspace = true }
-rns-core = { package = "styrene-rns", path = "../../libs/styrene-rns" }
 styrene-micron = { workspace = true }
 
 # Daemon integration

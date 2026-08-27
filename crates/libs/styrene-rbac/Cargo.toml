@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Role-based access control for the Styrene mesh — shared by styrened and aether"
+publish = false
 
 [features]
 default = ["std"]

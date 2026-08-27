@@ -1,3 +1,7 @@
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
 pub fn normalize_display_name(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {

@@ -72,6 +72,16 @@ lint:
 check-offline:
     cargo check --workspace --all-targets --exclude styrene-dx
 
+# Compile reusable host library contracts with default features disabled
+check-library-minimal:
+    cargo check --lib --no-default-features -p styrene-content
+    cargo check --lib --no-default-features -p styrene-telemetry
+    cargo test --lib --no-default-features -p styrene-lxmf
+    cargo check --lib --no-default-features -p styrene-mesh
+    cargo check --lib --no-default-features -p styrene-rbac
+    cargo check --lib --no-default-features -p styrene-identity
+    cargo check --lib --no-default-features -p styrene-secrets
+
 # Format code
 format:
     cargo fmt --all
@@ -79,6 +89,11 @@ format:
 # Check formatting across the workspace
 format-check:
     cargo fmt --all -- --check
+
+# Enforce crate layering, publication intent, and internal dependency versions
+check-workspace-policy:
+    python3 scripts/test_check_workspace_policy.py
+    python3 scripts/check_workspace_policy.py
 
 # Explicit alias for full-workspace formatting checks
 format-check-all:
@@ -136,7 +151,7 @@ test-validation-offline:
     target/test-validation-offline
 
 # Run deterministic, offline validation against Rust code and committed fixtures
-validate: format-check check-offline lint test test-interop test-validation-offline
+validate: format-check check-library-minimal check-offline lint test test-interop test-validation-offline
 
 # Check all crates compile (fast, no codegen)
 check:

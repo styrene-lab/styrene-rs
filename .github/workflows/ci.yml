@@ -120,6 +120,22 @@ jobs:
       - name: "Check: ${{ matrix.name }}"
         run: cargo check -p styrened ${{ matrix.features }}
 
+  library-minimal:
+    name: Reusable Libraries (defaults disabled)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo check --lib --no-default-features -p styrene-content
+          cargo check --lib --no-default-features -p styrene-telemetry
+          cargo test --lib --no-default-features -p styrene-lxmf
+          cargo check --lib --no-default-features -p styrene-mesh
+          cargo check --lib --no-default-features -p styrene-rbac
+          cargo check --lib --no-default-features -p styrene-identity
+          cargo check --lib --no-default-features -p styrene-secrets
+
   # UniFFI bridge compilation
   ffi-bridge:
     name: FFI Bridge

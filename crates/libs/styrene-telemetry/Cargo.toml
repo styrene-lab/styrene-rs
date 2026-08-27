@@ -6,6 +6,7 @@ rust-version.workspace = true
 license = "MIT"
 description = "Styrene mesh telemetry schema — typed observations over LXMF FIELD_TELEMETRY"
 repository = "https://github.com/styrene-lab/styrene-rs"
+publish = false
 
 [features]
 default = []

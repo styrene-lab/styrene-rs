@@ -48,6 +48,13 @@ jobs:
           token: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Enforce workspace boundaries
+        run: |
+          python3 scripts/test_check_workspace_policy.py
+          python3 scripts/check_workspace_policy.py
       - name: release-plz release
         uses: release-plz/action@v0.5
         with:
@@ -70,6 +77,13 @@ jobs:
           fetch-depth: 0
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Enforce workspace boundaries
+        run: |
+          python3 scripts/test_check_workspace_policy.py
+          python3 scripts/check_workspace_policy.py
       - name: release-plz release-pr
         uses: release-plz/action@v0.5
         with:

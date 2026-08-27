@@ -35,16 +35,37 @@ jobs:
   validate:
     name: Validate tag
     runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.release_commit.outputs.commit }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag_name || github.ref }}
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Enforce workspace boundaries
+        run: |
+          python3 scripts/test_check_workspace_policy.py
+          python3 scripts/check_workspace_policy.py
       - name: Verify release tag matches product versions
         run: python3 scripts/check_release_version.py "$RELEASE_TAG"
       - name: Verify tag is on main/master
+        id: release_commit
         run: |
           git fetch origin main master 2>/dev/null || true
           TAG_COMMIT=$(git rev-parse HEAD)
+          EXPECTED_TAG_COMMIT=$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}") || {
+            echo "ERROR: release tag $RELEASE_TAG does not exist"
+            exit 1
+          }
+          if [ "$TAG_COMMIT" != "$EXPECTED_TAG_COMMIT" ]; then
+            echo "ERROR: checked out $TAG_COMMIT, but $RELEASE_TAG points to $EXPECTED_TAG_COMMIT"
+            exit 1
+          fi
+          echo "commit=$TAG_COMMIT" >> "$GITHUB_OUTPUT"
           for branch in main master; do
             if git rev-parse "origin/$branch" >/dev/null 2>&1; then
               if git merge-base --is-ancestor "$TAG_COMMIT" "origin/$branch"; then
@@ -65,6 +86,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.validate.outputs.commit }}
       - uses: dtolnay/rust-toolchain@1.97.0
         with:
           components: rustfmt, clippy
@@ -77,32 +99,43 @@ jobs:
   # ── Publish library crates ────────────────────────────────────
   publish:
     name: Publish to crates.io
-    needs: test
+    needs: [validate, test]
     runs-on: ubuntu-latest
     environment: crates-io
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.validate.outputs.commit }}
       - uses: dtolnay/rust-toolchain@1.97.0
       - name: Publish crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo publish -p styrene-rns --allow-dirty || echo "styrene-rns already published"
+          publish_if_needed() {
+            crate="$1"
+            package_id=$(cargo pkgid -p "$crate")
+            version="${package_id##*#}"
+            if cargo info --registry crates-io "$crate@$version" >/dev/null 2>&1; then
+              echo "$crate $version is already published"
+              return
+            fi
+            cargo publish -p "$crate"
+          }
+          publish_if_needed styrene-rns
           sleep 30
-          cargo publish -p styrene-lxmf --allow-dirty || echo "styrene-lxmf already published"
+          publish_if_needed styrene-lxmf
           sleep 30
-          cargo publish -p styrene-mesh --allow-dirty || echo "styrene-mesh already published"
+          publish_if_needed styrene-mesh
           sleep 30
-          cargo publish -p styrene-ipc --allow-dirty || echo "styrene-ipc already published"
+          publish_if_needed styrene-ipc
           sleep 30
-          cargo publish -p styrene-ipc-server --allow-dirty || echo "styrene-ipc-server already published"
+          publish_if_needed styrene-ipc-server
 
   # ── Primary builds (macOS + Linux x86_64) ─────────────────────
   build:
     name: Build ${{ matrix.target }}
-    needs: test
+    needs: [validate, test]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -125,7 +158,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag_name || github.ref }}
+          ref: ${{ needs.validate.outputs.commit }}
 
       - uses: dtolnay/rust-toolchain@1.97.0
         with:
@@ -279,13 +312,13 @@ jobs:
   # ── Extended build (Linux ARM — slow cross-compile) ──────────
   build-extended:
     name: Build aarch64-unknown-linux-gnu
-    needs: test
+    needs: [validate, test]
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag_name || github.ref }}
+          ref: ${{ needs.validate.outputs.commit }}
 
       - uses: dtolnay/rust-toolchain@1.97.0
         with:
@@ -369,7 +402,7 @@ jobs:
   # ── Release ──────────────────────────────────────────────────
   release:
     name: Create release
-    needs: [build, linux-abi-validation]
+    needs: [validate, build, linux-abi-validation]
     # build-extended (linux arm64) runs in parallel but doesn't block release.
     # Its artifacts are included if available.
     runs-on: ubuntu-latest
@@ -380,6 +413,8 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -401,7 +436,7 @@ jobs:
             --checksums artifacts/checksums.sha256 \
             --output artifacts/release-manifest.json \
             --repo "${{ github.repository }}" \
-            --commit "${{ github.sha }}"
+            --commit "${{ needs.validate.outputs.commit }}"
           cat artifacts/release-manifest.json
 
       - name: Install cosign
@@ -419,6 +454,7 @@ jobs:
       - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN || github.token }}
+          VALIDATED_COMMIT: ${{ needs.validate.outputs.commit }}
         run: |
           set -euo pipefail
           IS_NIGHTLY=false
@@ -438,6 +474,15 @@ jobs:
           ASSET_FILES+=(artifacts/styrene-*.tar.gz.sig artifacts/styrene-*.tar.gz.pem)
           ASSET_FILES+=(artifacts/checksums.sha256 artifacts/release-manifest.json)
 
+          REMOTE_TAG_COMMIT=$(git ls-remote origin "refs/tags/${RELEASE_TAG}^{}" | cut -f1)
+          if [ -z "$REMOTE_TAG_COMMIT" ]; then
+            REMOTE_TAG_COMMIT=$(git ls-remote origin "refs/tags/${RELEASE_TAG}" | cut -f1)
+          fi
+          if [ "$REMOTE_TAG_COMMIT" != "$VALIDATED_COMMIT" ]; then
+            echo "ERROR: remote tag $RELEASE_TAG moved or was deleted after validation"
+            exit 1
+          fi
+
           if gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release delete "${RELEASE_TAG}" --repo "${{ github.repository }}" --yes || true
             sleep 3
@@ -447,6 +492,7 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "${RELEASE_TAG}" \
             --generate-notes \
+            --verify-tag \
             $PRERELEASE_FLAG $DRAFT_FLAG \
             "${ASSET_FILES[@]}"
 
@@ -459,7 +505,7 @@ jobs:
   # ── OCI images (stable only) ─────────────────────────────────
   oci-images:
     name: OCI images
-    needs: release
+    needs: [validate, release]
     if: ${{ !contains(inputs.tag_name || github.ref_name, '-nightly.') && !contains(inputs.tag_name || github.ref_name, '-rc.') }}
     runs-on: ubuntu-latest
     permissions:
@@ -475,7 +521,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag_name || github.ref }}
+          ref: ${{ needs.validate.outputs.commit }}
 
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@v17
