@@ -36,9 +36,7 @@ final class RNodeBluetoothController: NSObject, ObservableObject {
     private var sessionTimeoutTimer: Timer?
     private var scanRequested = false
     private var reconnectingApproved = false
-    private var writeQueue: [RNodeQueuedWrite] = []
-    private var activeWrite: RNodeQueuedWrite?
-    private var writeInProgress = false
+    private let writes = RNodeWriteQueue()
     private let outbound = RNodeOutboundRetention()
     private var pollInProgress = false
     private var decoder = RNodeKissDecoder()
@@ -259,26 +257,22 @@ final class RNodeBluetoothController: NSObject, ObservableObject {
             summary = "RNode reported an invalid Bluetooth write limit"
             return
         }
-        var offset = 0
-        while offset < framed.count {
-            let end = min(offset + chunkSize, framed.count)
-            writeQueue.append(
-                RNodeQueuedWrite(
-                    data: Data(framed[offset..<end]),
-                    completesOutbound: completesOutbound && end == framed.count
-                )
-            )
-            offset = end
+        guard writes.enqueue(
+            Data(framed),
+            chunkSize: chunkSize,
+            completesOutbound: completesOutbound
+        ) else {
+            summary = "RNode Bluetooth write queue is at capacity"
+            central.cancelPeripheralConnection(peripheral)
+            return
         }
         writeNext()
     }
 
     private func writeNext() {
-        guard !writeInProgress, !writeQueue.isEmpty,
-              let peripheral, let writeCharacteristic else { return }
-        writeInProgress = true
-        activeWrite = writeQueue.removeFirst()
-        peripheral.writeValue(activeWrite!.data, for: writeCharacteristic, type: .withResponse)
+        guard let peripheral, let writeCharacteristic,
+              let write = writes.startNext() else { return }
+        peripheral.writeValue(write.data, for: writeCharacteristic, type: .withResponse)
     }
 
     private func resetSession() {
@@ -289,9 +283,7 @@ final class RNodeBluetoothController: NSObject, ObservableObject {
         peripheral = nil
         writeCharacteristic = nil
         notifyCharacteristic = nil
-        writeQueue = []
-        activeWrite = nil
-        writeInProgress = false
+        writes.reset()
         outbound.markNotEnqueued()
         decoder = RNodeKissDecoder()
         detected = false
@@ -514,14 +506,12 @@ extension RNodeBluetoothController: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         guard peripheral === self.peripheral, characteristic === writeCharacteristic else { return }
-        let completedWrite = activeWrite
-        activeWrite = nil
-        writeInProgress = false
         if let error, isPairingError(error) {
-            if let completedWrite { writeQueue.insert(completedWrite, at: 0) }
+            writes.finishActive(retry: true)
             summary = "Complete the RNode pairing request on this iPhone"
             return
         }
+        let completedWrite = writes.finishActive(retry: false)
         if let error {
             summary = "RNode Bluetooth write failed: \(error.localizedDescription)"
             central.cancelPeripheralConnection(peripheral)
@@ -536,9 +526,55 @@ extension RNodeBluetoothController: CBPeripheralDelegate {
     }
 }
 
-private struct RNodeQueuedWrite {
+struct RNodeQueuedWrite {
     let data: Data
     let completesOutbound: Bool
+}
+
+final class RNodeWriteQueue {
+    static let maximumPendingChunks = 64
+
+    private var pending: [RNodeQueuedWrite] = []
+    private(set) var active: RNodeQueuedWrite?
+
+    var pendingCount: Int { pending.count }
+
+    func enqueue(_ data: Data, chunkSize: Int, completesOutbound: Bool) -> Bool {
+        guard chunkSize > 0, !data.isEmpty else { return false }
+        let chunkCount = (data.count + chunkSize - 1) / chunkSize
+        guard pending.count + chunkCount <= Self.maximumPendingChunks else { return false }
+        var offset = 0
+        while offset < data.count {
+            let end = min(offset + chunkSize, data.count)
+            pending.append(
+                RNodeQueuedWrite(
+                    data: Data(data[offset..<end]),
+                    completesOutbound: completesOutbound && end == data.count
+                )
+            )
+            offset = end
+        }
+        return true
+    }
+
+    func startNext() -> RNodeQueuedWrite? {
+        guard active == nil, !pending.isEmpty else { return nil }
+        active = pending.removeFirst()
+        return active
+    }
+
+    @discardableResult
+    func finishActive(retry: Bool) -> RNodeQueuedWrite? {
+        let completed = active
+        active = nil
+        if retry, let completed { pending.insert(completed, at: 0) }
+        return completed
+    }
+
+    func reset() {
+        pending.removeAll(keepingCapacity: true)
+        active = nil
+    }
 }
 
 struct RNodeKissFrame {
