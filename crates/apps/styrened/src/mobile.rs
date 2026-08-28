@@ -1,10 +1,9 @@
 //! Mobile embedding — lightweight daemon boot and background poll.
 //!
-//! Provides the in-process daemon API for iOS/Android apps. No IPC server,
-//! no PTY terminal, no Unix sockets. The host app calls these functions
-//! directly via FFI or Rust → Swift/Kotlin bridge.
+//! Provides the in-process daemon API for the shared Rust/Dioxus mobile app.
+//! There is no IPC server, PTY terminal, or Unix socket in this composition.
 //!
-//! # Usage (from Swift via UniFFI or C bridge)
+//! # Usage
 //!
 //! ```ignore
 //! use styrened::mobile::{MobileNode, MobileConfig};
@@ -32,13 +31,8 @@
 //! # }
 //! ```
 //!
-//! # iOS Integration
-//!
-//! The host app should:
-//! 1. Call `MobileNode::boot()` on first launch (stores identity in app container)
-//! 2. Keep the `MobileNode` alive for the foreground session
-//! 3. In `BGAppRefreshTask` handler: boot a fresh `MobileNode`, call `poll_hub()`, drop
-//! 4. Post local notifications for new messages from `poll_hub()` results
+//! The application should boot one node, retain it for the session, and route
+//! foreground and best-effort background operations through that owner.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -62,8 +56,10 @@ use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use rns_core::packet::Packet;
 use rns_core::transport::iface::{
-    InterfaceChannel, InterfaceRxSender, InterfaceTxReceiver, RxMessage,
+    InterfaceChannel, InterfaceKind, InterfaceRxSender, InterfaceState, InterfaceTxReceiver,
+    RxMessage,
 };
+use serde::{Deserialize, Serialize};
 use styrene_ipc::traits::{Daemon, DaemonIdentity, DaemonStatus};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
@@ -111,6 +107,76 @@ pub enum MobileInterfaceConfig {
     TcpClient { remote_address: String },
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileConnectionPhase {
+    Stopped,
+    Starting,
+    Connecting,
+    Connected,
+    Reconnecting,
+    Degraded,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileBearerKind {
+    Tcp,
+    BluetoothRnode,
+    AndroidUsb,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileBearerState {
+    Connecting,
+    Connected,
+    Disconnected,
+    Reconnecting,
+    Unavailable,
+    Unverified,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileFailureCode {
+    InvalidTcpEndpoint,
+    TcpRetrying,
+    TransportUnavailable,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobileFailure {
+    pub code: MobileFailureCode,
+    pub retryable: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobileBearerObservation {
+    pub kind: MobileBearerKind,
+    pub state: MobileBearerState,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobileSessionSnapshot {
+    pub phase: MobileConnectionPhase,
+    pub endpoint: Option<String>,
+    pub generation: u64,
+    pub failure: Option<MobileFailure>,
+    pub bearers: Vec<MobileBearerObservation>,
+}
+
+impl MobileSessionSnapshot {
+    #[must_use]
+    pub fn bearer(&self, kind: MobileBearerKind) -> Option<&MobileBearerObservation> {
+        self.bearers.iter().find(|bearer| bearer.kind == kind)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ValidatedMobileInterface {
     TcpServer(SocketAddr),
@@ -127,6 +193,8 @@ pub struct MobileNode {
     tcp_listen_addresses: Vec<SocketAddr>,
     startup_contract: StartupContract,
     rnode: Option<RNodeBridge>,
+    tcp_endpoint: Option<String>,
+    generation: u64,
 }
 
 struct MobileWorkers {
@@ -247,6 +315,7 @@ async fn compose_mobile_node(
     transport_runtime: MobileTransportRuntime,
     display_name: Option<String>,
     hub_delivery_hash: Option<String>,
+    tcp_endpoint: Option<String>,
 ) -> anyhow::Result<MobileNode> {
     let MobileTransportRuntime {
         transport,
@@ -414,6 +483,8 @@ async fn compose_mobile_node(
         tcp_listen_addresses,
         startup_contract,
         rnode,
+        tcp_endpoint,
+        generation: 1,
     })
 }
 
@@ -525,6 +596,10 @@ impl MobileNode {
     /// Does NOT start an IPC server or PTY terminal.
     pub async fn boot(config: MobileConfig) -> anyhow::Result<Self> {
         let interfaces = validate_interfaces(&config)?;
+        let tcp_endpoint = interfaces.iter().find_map(|interface| match interface {
+            ValidatedMobileInterface::TcpClient(endpoint) => Some(endpoint.clone()),
+            ValidatedMobileInterface::TcpServer(_) => None,
+        });
         let paths = PlatformPaths::new(config.config_dir.clone(), config.data_dir.clone());
         paths.ensure_dirs()?;
 
@@ -648,6 +723,7 @@ impl MobileNode {
             transport_runtime,
             display_name,
             config.hub_delivery_hash,
+            tcp_endpoint,
         )
         .await
     }
@@ -660,6 +736,66 @@ impl MobileNode {
     /// Whether the configured transport is operational.
     pub fn is_connected(&self) -> bool {
         self.app_context.transport().is_connected()
+    }
+
+    pub async fn session_snapshot(&self) -> MobileSessionSnapshot {
+        let interfaces = self.app_context.transport().interface_snapshots().await;
+        let tcp_states = interfaces
+            .iter()
+            .filter(|interface| {
+                matches!(interface.kind, InterfaceKind::TcpClient | InterfaceKind::TcpServer)
+            })
+            .map(|interface| interface.state)
+            .collect::<Vec<_>>();
+        let tcp = if tcp_states.iter().any(|state| {
+            matches!(
+                state,
+                InterfaceState::Listening | InterfaceState::Connected | InterfaceState::Active
+            )
+        }) {
+            MobileBearerState::Connected
+        } else if tcp_states.contains(&InterfaceState::Retrying) {
+            MobileBearerState::Reconnecting
+        } else if tcp_states
+            .iter()
+            .any(|state| matches!(state, InterfaceState::Starting | InterfaceState::Connecting))
+        {
+            MobileBearerState::Connecting
+        } else {
+            MobileBearerState::Unavailable
+        };
+        let rnode = if self.rnode.is_some() {
+            MobileBearerState::Unverified
+        } else {
+            MobileBearerState::Unavailable
+        };
+        let failure = (tcp == MobileBearerState::Reconnecting)
+            .then_some(MobileFailure { code: MobileFailureCode::TcpRetrying, retryable: true });
+        let phase = match tcp {
+            MobileBearerState::Connected => MobileConnectionPhase::Connected,
+            MobileBearerState::Connecting => MobileConnectionPhase::Connecting,
+            MobileBearerState::Reconnecting => MobileConnectionPhase::Reconnecting,
+            MobileBearerState::Unavailable if rnode == MobileBearerState::Unverified => {
+                MobileConnectionPhase::Degraded
+            }
+            MobileBearerState::Unavailable
+            | MobileBearerState::Unverified
+            | MobileBearerState::Disconnected => MobileConnectionPhase::Stopped,
+        };
+        MobileSessionSnapshot {
+            phase,
+            endpoint: self.tcp_endpoint.clone(),
+            generation: self.generation,
+            failure,
+            bearers: vec![
+                MobileBearerObservation { kind: MobileBearerKind::Tcp, state: tcp },
+                MobileBearerObservation { kind: MobileBearerKind::BluetoothRnode, state: rnode },
+                MobileBearerObservation {
+                    kind: MobileBearerKind::AndroidUsb,
+                    state: MobileBearerState::Unavailable,
+                },
+            ],
+        }
     }
 
     /// Actual addresses bound by configured TCP server profiles.
@@ -1099,6 +1235,7 @@ mod tests {
             },
             display_name,
             None,
+            None,
         )
         .await
         .unwrap()
@@ -1120,6 +1257,7 @@ mod tests {
                 service_receipt_target: Some(receipt_target),
                 rnode_channel: None,
             },
+            None,
             None,
             None,
         )
