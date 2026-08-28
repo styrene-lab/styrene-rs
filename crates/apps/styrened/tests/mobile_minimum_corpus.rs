@@ -92,10 +92,10 @@ struct Message {
     content: String,
     requested_method: DeliveryMethod,
     actual_method: DeliveryMethod,
-    persisted: bool,
-    transport_accepted: bool,
-    propagation_uploaded: bool,
-    delivered: bool,
+    persistence: PersistenceState,
+    transport: TransportEvidence,
+    propagation: PropagationEvidence,
+    delivery: DeliveryEvidence,
     correlation_id: String,
     failure: Option<TypedFailure>,
 }
@@ -180,6 +180,33 @@ enum BearerState {
 enum DeliveryMethod {
     Direct,
     Propagated,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum PersistenceState {
+    Durable,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum TransportEvidence {
+    Accepted,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum PropagationEvidence {
+    Uploaded,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum DeliveryEvidence {
+    Pending,
+    Delivered,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -300,16 +327,26 @@ fn mobile_minimum_fixture_contract_is_strict_and_complete() {
             let _ = (conversation.unread_count, &conversation.draft);
         }
         for message in &fixture.messages {
-            assert!(message.persisted, "{}: presented message must be durable", fixture.id);
+            assert_eq!(
+                message.persistence,
+                PersistenceState::Durable,
+                "{}: presented message must be durable",
+                fixture.id
+            );
             assert!(!message.id.is_empty(), "{}: message ID", fixture.id);
             assert!(!message.peer_hash.is_empty(), "{}: message peer", fixture.id);
             assert!(!message.content.is_empty(), "{}: message content", fixture.id);
             assert!(!message.correlation_id.is_empty(), "{}: correlation", fixture.id);
             assert_eq!(message.requested_method, message.actual_method);
-            if message.delivered {
-                assert!(message.transport_accepted, "{}: delivered transport evidence", fixture.id);
+            if message.delivery == DeliveryEvidence::Delivered {
+                assert_eq!(
+                    message.transport,
+                    TransportEvidence::Accepted,
+                    "{}: delivered transport evidence",
+                    fixture.id
+                );
             }
-            if message.propagation_uploaded {
+            if message.propagation == PropagationEvidence::Uploaded {
                 assert_eq!(message.actual_method, DeliveryMethod::Propagated);
             }
             if message.failure.is_some() {
@@ -370,7 +407,7 @@ fn propagation_upload_is_not_recipient_delivery() {
         .expect("required propagation upload fixture");
     let message = fixture.messages.first().expect("propagated message");
 
-    assert!(message.propagation_uploaded);
-    assert!(!message.delivered);
+    assert_eq!(message.propagation, PropagationEvidence::Uploaded);
+    assert_eq!(message.delivery, DeliveryEvidence::Pending);
     assert_eq!(message.actual_method, DeliveryMethod::Propagated);
 }
