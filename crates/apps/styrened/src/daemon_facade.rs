@@ -487,6 +487,11 @@ impl DaemonIdentity for DaemonFacade {
     async fn announce(&self) -> Result<bool, IpcError> {
         self.require(Capability::NETWORK_ANNOUNCE)?;
         self.ctx.identity().announce(None).await;
+        self.ctx
+            .network_operations()
+            .announce_propagation(tokio::time::Instant::now() + std::time::Duration::from_secs(10))
+            .await
+            .map_err(|error| IpcError::Transport { message: error.to_string() })?;
         Ok(true)
     }
 }
@@ -2674,6 +2679,25 @@ mod tests {
         );
         let result = facade.announce().await.unwrap();
         assert!(result);
+    }
+
+    #[tokio::test]
+    async fn identity_announce_waits_for_hub_propagation_announce() {
+        let facade = make_facade_for_role(
+            styrene_rbac::Role::Operator,
+            Arc::new(crate::transport::mock_transport::MockTransport::new_default()),
+        );
+        let (trigger, mut requests) =
+            crate::standard_propagation::standard_propagation_announce_test_channel();
+        facade.ctx.network_operations().set_propagation_announce_trigger(trigger);
+
+        let announce = tokio::spawn(async move { facade.announce().await });
+        let response = requests.recv().await.expect("propagation announce request");
+        response
+            .send(Ok(rns_core::transport::core_transport::SendPacketOutcome::SentBroadcast))
+            .expect("identity announce still waiting");
+
+        assert!(announce.await.unwrap().unwrap());
     }
 
     #[tokio::test]
