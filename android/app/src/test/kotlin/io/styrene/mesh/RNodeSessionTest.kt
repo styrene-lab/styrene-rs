@@ -84,6 +84,37 @@ class RNodeSessionTest {
         assertEquals(null, buffer.next())
     }
 
+    @Test
+    fun failedWriteIsRetainedForReplacementSession() {
+        val packet = byteArrayOf(0x51, 0x52)
+        val node = FakePacketChannel().apply { outbound += packet }
+        val outbound = RNodeOutboundBuffer(node)
+        val failedSession = session(node, outbound)
+
+        runCatching { failedSession.pumpOnce(FakeRNodeLink(failDataWrites = true)) }
+            .onSuccess { error("Data write should fail") }
+
+        val replacementLink = FakeRNodeLink()
+        session(node, outbound).pumpOnce(replacementLink)
+
+        assertContentEquals(
+            packet,
+            replacementLink.commands.single { it.command == RNodeProtocol.CMD_DATA }.payload,
+        )
+        assertEquals(null, outbound.next())
+    }
+
+    private fun session(node: RNodePacketChannel, outbound: RNodeOutboundBuffer) = RNodeSession(
+        node = node,
+        outbound = outbound,
+        profile = RNodeRadioProfile.US_915_DEVELOPMENT,
+        onState = { _, _ -> },
+        onTraffic = { _, _ -> },
+        commandDelay = {},
+        logInfo = {},
+        logWarning = { _, _ -> },
+    )
+
     private class FakePacketChannel : RNodePacketChannel {
         var announces = 0
         val submitted = mutableListOf<ByteArray>()
@@ -100,7 +131,7 @@ class RNodeSessionTest {
         override fun poll(): ByteArray? = outbound.pollFirst()
     }
 
-    private class FakeRNodeLink : RNodeByteLink {
+    private class FakeRNodeLink(private val failDataWrites: Boolean = false) : RNodeByteLink {
         override val bearerName = "test"
         val commands = mutableListOf<RNodeFrame>()
         private val reads = ArrayDeque<ByteArray>()
@@ -113,6 +144,7 @@ class RNodeSessionTest {
 
         override fun write(data: ByteArray, timeoutMs: Int) {
             val command = RNodeProtocol.Decoder().feed(data).single()
+            if (failDataWrites && command.command == RNodeProtocol.CMD_DATA) error("write failed")
             commands += command
             when (command.command) {
                 RNodeProtocol.CMD_DETECT -> enqueue(

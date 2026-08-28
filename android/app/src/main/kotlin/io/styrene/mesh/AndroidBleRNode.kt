@@ -47,6 +47,7 @@ class AndroidBleRNodeDiscovery(
 
     private val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    private val approval = RNodeApprovalPolicy(preferences.getString(KEY_APPROVED_ID, null))
     private val handler = Handler(Looper.getMainLooper())
     private val candidates = linkedMapOf<String, BluetoothDevice>()
     private var scanning = false
@@ -62,7 +63,7 @@ class AndroidBleRNodeDiscovery(
         override fun onScanFailed(errorCode: Int) {
             scanning = false
             listener.onState("Bluetooth scan failed: $errorCode")
-            if (approvedId() != null) listener.onApprovedDeviceUnavailable()
+            if (approval.hasApproval()) listener.onApprovedDeviceUnavailable()
         }
     }
 
@@ -70,7 +71,7 @@ class AndroidBleRNodeDiscovery(
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
                 if (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR) ==
-                    BluetoothAdapter.STATE_ON && approvedId() != null
+                    BluetoothAdapter.STATE_ON && approval.hasApproval()
                 ) {
                     scan()
                 }
@@ -78,7 +79,7 @@ class AndroidBleRNodeDiscovery(
             }
             if (intent.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
             val device = intent.bluetoothDevice() ?: return
-            if (device.address != approvedId()) return
+            if (!approval.isApproved(device.address)) return
             when (device.bondState) {
                 BluetoothDevice.BOND_BONDED -> {
                     listener.onState("Paired with ${device.displayName()}; reconnecting")
@@ -130,6 +131,7 @@ class AndroidBleRNodeDiscovery(
             listener.onState("RNode is no longer discoverable; scan again")
             return
         }
+        approval.approve(id)
         preferences.edit().putString(KEY_APPROVED_ID, id).apply()
         stopScan(reportEmpty = false)
         if (device.bondState == BluetoothDevice.BOND_BONDED) {
@@ -141,12 +143,13 @@ class AndroidBleRNodeDiscovery(
     }
 
     fun forgetApproval() {
+        approval.forget()
         preferences.edit().remove(KEY_APPROVED_ID).apply()
     }
 
     private fun observe(device: BluetoothDevice) {
         val id = device.address
-        if (id == approvedId() && device.bondState == BluetoothDevice.BOND_BONDED) {
+        if (approval.shouldReconnect(id, device.bondState == BluetoothDevice.BOND_BONDED)) {
             stopScan(reportEmpty = false)
             listener.onApprovedDevice(device)
             return
@@ -164,15 +167,13 @@ class AndroidBleRNodeDiscovery(
         if (!scanning) return
         runCatching { adapter?.bluetoothLeScanner?.stopScan(scanCallback) }
         scanning = false
-        if (reportEmpty && approvedId() != null) {
+        if (reportEmpty && approval.hasApproval()) {
             listener.onState("Approved Bluetooth RNode is not currently available")
             listener.onApprovedDeviceUnavailable()
         } else if (reportEmpty && candidates.isEmpty()) {
             listener.onState("No Bluetooth RNodes found")
         }
     }
-
-    private fun approvedId() = preferences.getString(KEY_APPROVED_ID, null)
 
     private fun BluetoothDevice.displayName() = name?.takeIf(String::isNotBlank) ?: "RNode"
 

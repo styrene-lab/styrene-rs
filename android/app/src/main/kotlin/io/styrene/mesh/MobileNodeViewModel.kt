@@ -23,8 +23,7 @@ class MobileNodeViewModel(configuration: MobileNodeConfiguration) : ViewModel() 
         },
         onStateChanged = { state = it },
     )
-    private var outboundChannel: RNodePacketChannel? = null
-    private var outboundBuffer: RNodeOutboundBuffer? = null
+    private val bearerState = RNodeBearerState()
 
     fun boot() = holder.boot()
     fun announce() = holder.announce()
@@ -36,14 +35,7 @@ class MobileNodeViewModel(configuration: MobileNodeConfiguration) : ViewModel() 
     fun sendMessage() = holder.sendMessage()
     fun browsePage(host: String, path: String) = holder.browsePage(host, path)
     fun rnodePacketChannel() = holder.rnodePacketChannel()
-    @Synchronized
-    fun rnodeOutboundBuffer(channel: RNodePacketChannel): RNodeOutboundBuffer {
-        if (outboundChannel !== channel) {
-            outboundChannel = channel
-            outboundBuffer = RNodeOutboundBuffer(channel)
-        }
-        return requireNotNull(outboundBuffer)
-    }
+    fun rnodeOutboundBuffer(channel: RNodePacketChannel) = bearerState.outboundBuffer(channel)
     fun updateUsbSummary(usbSummary: String, transportSummary: String, available: Boolean = false) =
         holder.updateUsbSummary(usbSummary, transportSummary, available)
     fun updateBluetoothSummary(summary: String) = holder.updateBluetoothSummary(summary)
@@ -53,8 +45,7 @@ class MobileNodeViewModel(configuration: MobileNodeConfiguration) : ViewModel() 
     fun scheduleRefresh() = holder.scheduleRefresh()
 
     override fun onCleared() {
-        outboundChannel = null
-        outboundBuffer = null
+        bearerState.clear()
         holder.close()
     }
 

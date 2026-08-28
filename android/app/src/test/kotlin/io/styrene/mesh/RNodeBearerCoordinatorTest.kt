@@ -3,6 +3,7 @@ package io.styrene.mesh
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -51,7 +52,19 @@ class RNodeBearerCoordinatorTest {
         coordinator.close()
     }
 
-    private fun coordinator() = RNodeBearerCoordinator(
+    @Test
+    fun workerFailureReleasesBearerForReconnect() {
+        val stopped = CountDownLatch(1)
+        val coordinator = coordinator { stopped.countDown() }
+
+        assertTrue(coordinator.connect("Bluetooth") { error("natural link failure") })
+        assertTrue(stopped.await(1, TimeUnit.SECONDS))
+        assertEquals(null, coordinator.activeBearer())
+        assertTrue(coordinator.connect("Bluetooth") { FakeRNodeLink() })
+        coordinator.close()
+    }
+
+    private fun coordinator(onBearerStopped: (String) -> Unit = {}) = RNodeBearerCoordinator(
         node = FakePacketChannel(),
         outbound = RNodeOutboundBuffer(FakePacketChannel()),
         radioProfile = RNodeRadioProfile.US_915_DEVELOPMENT,
@@ -59,6 +72,7 @@ class RNodeBearerCoordinatorTest {
             override fun onState(message: String, online: Boolean) = Unit
             override fun onTraffic(rxPackets: Long, txPackets: Long) = Unit
         },
+        onBearerStopped = onBearerStopped,
     )
 
     private class FakePacketChannel : RNodePacketChannel {
