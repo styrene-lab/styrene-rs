@@ -84,6 +84,7 @@
 - [x] 8.6 Add typed peer, offer, fetch, download, sync, policy, and failure observations
 - [x] 8.7 Correlate outbound and inbound messages with propagation queue records
 - [ ] 8.8 Add Python/Rust discovery, offer, fetch, offline delivery, expiry, capacity, and restart gates
+- [x] 8.9 Schedule fresh propagation announces and include them in operator-triggered network announces
 
 ## 9. Native NomadNet Host
 <!-- specs: nomadnet-pages, reticulum-operations, production-composition -->
