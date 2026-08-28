@@ -37,6 +37,6 @@
 
 - [x] 5.1 Run Android unit tests, lint, assembly, emulator install, cold launch, and fatal-log checks
 - [x] 5.2 Run iOS simulator tests, signed device build, install, and cold launch
-- [ ] 5.3 Verify physical iOS automatically reconnects and configures the approved RNode
+- [x] 5.3 Verify physical iOS automatically reconnects and configures the approved RNode
 - [x] 5.4 Run physical Android Bluetooth and USB checks when hardware is available, or retain the explicit evidence gap
 - [x] 5.5 Run formatting, `git diff --check`, documentation lint, and applicable workspace validation
