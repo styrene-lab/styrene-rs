@@ -78,6 +78,19 @@ impl NetworkOperationService {
         *self.propagation_announce.lock().unwrap() = Some(trigger);
     }
 
+    pub async fn announce_propagation(
+        &self,
+        deadline: tokio::time::Instant,
+    ) -> Result<bool, TransportError> {
+        let trigger = self.propagation_announce.lock().unwrap().clone();
+        let Some(trigger) = trigger else { return Ok(false) };
+        tokio::time::timeout_at(deadline, trigger.announce())
+            .await
+            .map_err(|_| TransportError::TimedOut)?
+            .map_err(TransportError::SendFailed)?;
+        Ok(true)
+    }
+
     pub fn start(
         self: &Arc<Self>,
         request: StartNetworkOperationInfo,
@@ -256,13 +269,7 @@ impl NetworkOperationService {
                 self.progress(operation_id, NetworkOperationProgress::Dispatched, None);
                 ensure_before_deadline(deadline)?;
                 self.transport.dispatch_announce(None).await?;
-                let propagation_announce = self.propagation_announce.lock().unwrap().clone();
-                if let Some(trigger) = propagation_announce {
-                    tokio::time::timeout_at(deadline, trigger.announce())
-                        .await
-                        .map_err(|_| TransportError::TimedOut)?
-                        .map_err(TransportError::SendFailed)?;
-                }
+                self.announce_propagation(deadline).await?;
                 Ok(OperationCompletion::Dispatched(
                     "configured announces accepted by local transport; remote reception is unconfirmed",
                 ))
