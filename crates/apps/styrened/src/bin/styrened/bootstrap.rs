@@ -826,6 +826,8 @@ async fn bootstrap_with_transport_override(
             startup.record(startup_component::STANDARD_LXMF_PROPAGATION_SYNC_SCHEDULER);
             styrened::workers::standard_propagation::spawn_standard_propagation_sync_worker(
                 app_context.messaging_arc(),
+                app_context.transport().subscribe_lifecycle(),
+                app_context.transport().is_connected(),
             )
         });
     let service_announce = styrened::workers::announce::spawn_announce_worker(

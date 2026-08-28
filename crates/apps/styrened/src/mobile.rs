@@ -496,6 +496,9 @@ pub struct MobilePropagationSnapshot {
     pub new_messages: u32,
     pub in_flight: Option<MobilePropagationProgress>,
     pub failure: Option<MobilePropagationFailure>,
+    pub automatic_sync_enabled: bool,
+    pub automatic_sync_cooldown_secs: u64,
+    pub sync_deadline_secs: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -936,6 +939,8 @@ async fn compose_mobile_node(
         startup.record(startup_component::STANDARD_LXMF_PROPAGATION_SYNC_SCHEDULER);
         crate::workers::standard_propagation::spawn_standard_propagation_sync_worker(
             app_context.messaging_arc(),
+            app_context.transport().subscribe_lifecycle(),
+            app_context.transport().is_connected(),
         )
     });
     let mut workers = MobileWorkers {
@@ -1595,6 +1600,12 @@ impl MobileNode {
     pub async fn propagation_snapshot(
         &self,
     ) -> Result<MobilePropagationSnapshot, MobilePropagationFailure> {
+        let sync_policy = self.workers.lock().ok().and_then(|workers| {
+            workers
+                .as_ref()
+                .and_then(|workers| workers.standard_propagation_sync.as_ref())
+                .map(crate::workers::standard_propagation::StandardPropagationSyncWorker::policy)
+        });
         let observed_at = rns_core::transport::time::now_epoch_secs_i64();
         let runtime_policy =
             crate::standard_propagation::StandardPropagationRuntimeObservation::client().policy();
@@ -1705,6 +1716,9 @@ impl MobileNode {
             new_messages,
             in_flight,
             failure,
+            automatic_sync_enabled: sync_policy.is_some_and(|policy| policy.automatic),
+            automatic_sync_cooldown_secs: sync_policy.map_or(0, |policy| policy.cooldown.as_secs()),
+            sync_deadline_secs: sync_policy.map_or(0, |policy| policy.deadline.as_secs()),
         })
     }
 
@@ -1799,19 +1813,46 @@ impl MobileNode {
                 message: "selected propagation destination is not ready".into(),
             });
         }
-        let count = self
-            .app_context
-            .messaging()
-            .sync_standard_propagation_once(
-                std::time::Instant::now() + deadline,
-                CancellationToken::new(),
-            )
-            .await
-            .map_err(mobile_propagation_transport_failure)?;
+        let trigger = {
+            self.workers
+                .lock()
+                .map_err(|_| MobilePropagationFailure {
+                    code: MobilePropagationFailureCode::Unavailable,
+                    retryable: true,
+                    message: "mobile propagation worker lock poisoned".into(),
+                })?
+                .as_ref()
+                .and_then(|workers| workers.standard_propagation_sync.as_ref())
+                .map(crate::workers::standard_propagation::StandardPropagationSyncWorker::trigger)
+        };
+        let count = if let Some(trigger) = trigger {
+            trigger.manual(deadline).await.map_err(mobile_propagation_transport_failure)?
+        } else {
+            self.app_context
+                .messaging()
+                .sync_standard_propagation_once(
+                    std::time::Instant::now() + deadline,
+                    CancellationToken::new(),
+                )
+                .await
+                .map_err(mobile_propagation_transport_failure)?
+        };
         Ok(MobilePropagationSyncOutcome {
             generation: self.session_snapshot().await.generation,
             new_messages: u32::try_from(count).unwrap_or(u32::MAX),
         })
+    }
+
+    pub fn propagation_foreground_opportunity(&self) -> bool {
+        self.workers
+            .lock()
+            .ok()
+            .and_then(|workers| {
+                workers.as_ref().and_then(|workers| workers.standard_propagation_sync.as_ref()).map(
+                    crate::workers::standard_propagation::StandardPropagationSyncWorker::trigger,
+                )
+            })
+            .is_some_and(|trigger| trigger.foreground_opportunity())
     }
 
     pub async fn set_draft(
