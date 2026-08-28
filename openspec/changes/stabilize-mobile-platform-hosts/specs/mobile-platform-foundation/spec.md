@@ -4,7 +4,7 @@
 
 ### Requirement: Mobile hosts own deterministic embedded-node lifecycle
 
-Each mobile host must restore valid persisted configuration, start one embedded
+Each mobile host MUST restore valid persisted configuration, start one embedded
 node, expose its actual lifecycle state, and shut down all owned work explicitly.
 
 #### Scenario: Persisted configuration is valid
@@ -21,8 +21,8 @@ And exposes a recoverable failure instead of a running state
 
 ### Requirement: Bluetooth is the default mobile RNode bearer
 
-Mobile hosts must use the approved Bluetooth RNode as the default radio bearer.
-Android USB must remain an explicit fallback and must not preempt Bluetooth.
+Mobile hosts MUST use the approved Bluetooth RNode as the default radio bearer.
+Android USB MUST remain an explicit fallback and MUST NOT preempt Bluetooth.
 
 #### Scenario: Approved Bluetooth RNode is available
 Given the user approved an RNode and Bluetooth is available
@@ -38,7 +38,7 @@ And USB remains available through an explicit fallback action
 
 ### Requirement: Bearer interruption preserves bounded outbound work
 
-A temporary mobile bearer interruption must not discard accepted outbound
+A temporary mobile bearer interruption MUST NOT discard accepted outbound
 packets or allow an unbounded pending queue.
 
 #### Scenario: Bearer reconnects
@@ -55,8 +55,8 @@ And does not allocate an unbounded queue
 
 ### Requirement: Mobile evidence identifies its execution boundary
 
-Validation records must distinguish simulator, emulator, physical iOS, physical
-Android, and fixture evidence. A lower evidence class must not imply a higher
+Validation records MUST distinguish simulator, emulator, physical iOS, physical
+Android, and fixture evidence. A lower evidence class MUST NOT imply a higher
 one.
 
 #### Scenario: Physical Android hardware is unavailable

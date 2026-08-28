@@ -4,7 +4,7 @@
 
 ### Requirement: Mobile product workflows use shared Dioxus source
 
-iOS and Android must render Messages, People, Network, and More from the same
+iOS and Android MUST render Messages, People, Network, and More from the same
 maintained Dioxus components and presentation reducers.
 
 #### Scenario: Shared workflow changes
@@ -21,8 +21,8 @@ And does not expose desktop-only Lab or Admin controls
 
 ### Requirement: Shared UI consumes authoritative backend state
 
-The mobile Dioxus application must use the shared typed frontend session and
-must not infer protocol, route, bearer, or delivery outcomes from display text.
+The mobile Dioxus application MUST use the shared typed frontend session and
+MUST NOT infer protocol, route, bearer, or delivery outcomes from display text.
 
 #### Scenario: Message lifecycle changes
 Given the backend reports a typed message lifecycle event
@@ -40,7 +40,7 @@ And the UI does not emulate the operation
 
 Swift and Kotlin may implement OS lifecycle, Bluetooth, Android USB, secure
 storage, notifications, permissions, and packaging behind typed platform-service
-interfaces. Native code must not own product navigation or daemon domain state.
+interfaces. Native code MUST NOT own product navigation or daemon domain state.
 
 #### Scenario: Platform permission is requested
 Given a shared Dioxus action requires an OS permission
@@ -56,7 +56,7 @@ And the UI remains operational for unaffected workflows
 
 ### Requirement: Mobile RNode behavior survives renderer migration
 
-The Dioxus mobile application must preserve approved-peripheral reconnect,
+The Dioxus mobile application MUST preserve approved-peripheral reconnect,
 Bluetooth-first bearer selection, KISS packet-channel attachment, bounded
 retention, and explicit Android USB fallback.
 
@@ -74,7 +74,7 @@ And the UI does not report USB active before the adapter confirms it
 
 ### Requirement: Native screens retire only after parity evidence
 
-Duplicate SwiftUI and Compose product screens must remain available as reference
+Duplicate SwiftUI and Compose product screens MUST remain available as reference
 targets until the corresponding Dioxus workflows pass declared automated and
 physical-device gates.
 

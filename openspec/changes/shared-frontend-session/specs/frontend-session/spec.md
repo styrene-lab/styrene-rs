@@ -4,7 +4,7 @@
 
 ### Requirement: Frontends use one typed daemon client
 
-Interactive frontends must invoke daemon commands, queries, and subscriptions
+Interactive frontends MUST invoke daemon commands, queries, and subscriptions
 through a reusable typed client instead of parsing raw wire maps independently.
 
 #### Scenario: Two frontends query the same daemon
@@ -21,7 +21,7 @@ And the frontend does not substitute a different protocol operation
 
 ### Requirement: Session profiles preserve explicit lifecycle ownership
 
-The frontend session boundary must expose explicit Live, Embedded, and Fixture
+The frontend session boundary MUST expose explicit Live, Embedded, and Fixture
 profiles without implicit fallback between them.
 
 #### Scenario: Live connection fails
@@ -44,7 +44,7 @@ And opens no daemon process or external network interface
 
 ### Requirement: Requests and events are bounded and generation-safe
 
-The shared client must correlate concurrent requests, fan out subscriptions,
+The shared client MUST correlate concurrent requests, fan out subscriptions,
 enforce bounds and deadlines, and reject state from prior connection generations.
 
 #### Scenario: Long request overlaps a status query
@@ -67,7 +67,7 @@ And does not allocate an unbounded request queue
 
 ### Requirement: Embedded and remote sessions preserve daemon semantics
 
-An operation must retain its daemon-defined capability, lifecycle, correlation,
+An operation MUST retain its daemon-defined capability, lifecycle, correlation,
 and evidence semantics across remote IPC and in-process Embedded sessions.
 
 #### Scenario: Message operation uses two session types
