@@ -7,9 +7,6 @@
 
 project_root := justfile_directory()
 install_dir := env_var_or_default("STYRENE_INSTALL_DIR", env_var("HOME") + "/.cargo/bin")
-android_sdk := env_var_or_default("ANDROID_HOME", env_var("HOME") + "/Library/Android/sdk")
-android_cli := android_sdk + "/cmdline-tools/latest/bin/android"
-android_adb := android_sdk + "/platform-tools/adb"
 
 # ─── Help ───────────────────────────────────────────────────────────────────
 
@@ -50,7 +47,6 @@ test:
         --test pqc_scenario
     cargo test -p styrene-tui --lib
     cargo test -p styrene --bin styrene
-    cargo test -p styrene-mobile-ffi --lib
     cargo test -p styrene-dx --bin styrene-dx components::
     cargo test -p styrene-dx --bin styrene-dx fixture
 
@@ -62,7 +58,6 @@ test-verbose:
         --exclude styrene-interop-runner \
         --exclude styrene-i2p \
         --exclude styrene \
-        --exclude styrene-mobile-ffi \
         --exclude styrened \
         --exclude styrene-tui \
         --exclude styrene-ipc-server -- --nocapture
@@ -252,153 +247,10 @@ check-mobile-keychain:
 check-mobile-identity:
     cargo check -p styrened --no-default-features --features mobile-identity
 
-# Check UniFFI bridge compiles
-check-ffi:
-    cargo check -p styrene-mobile-ffi
-
-# Install Rust targets used by the iOS device and universal simulator builds
-ios-targets:
-    rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
-
-# Build iOS static library (requires Xcode + iOS SDK)
-build-ios:
-    cargo build -p styrened --no-default-features --features mobile-keychain \
-        --target aarch64-apple-ios --release
-
-# Build iOS simulator library
-build-ios-sim:
-    cargo build -p styrened --no-default-features --features mobile-keychain \
-        --target aarch64-apple-ios-sim --release
-
-# Build iOS FFI bridge (static library for Swift)
-build-ios-ffi:
-    cargo build -p styrene-mobile-ffi \
-        --no-default-features --features ios \
-        --target aarch64-apple-ios --release
-
-# Build iOS simulator FFI bridges
-build-ios-sim-ffi:
-    cargo build -p styrene-mobile-ffi \
-        --no-default-features --features ios \
-        --target aarch64-apple-ios-sim --release
-    cargo build -p styrene-mobile-ffi \
-        --no-default-features --features ios \
-        --target x86_64-apple-ios --release
-
-# Build Android library (requires cargo-ndk + NDK)
-build-android:
-    cargo ndk -t arm64-v8a -t armeabi-v7a \
-        build -p styrened --no-default-features --features mobile-identity,bundled-sqlite --release
-
-# Build Android FFI bridge (shared library for Kotlin)
-build-android-ffi:
-    cargo ndk -t arm64-v8a -P 28 \
-        build -p styrene-mobile-ffi --no-default-features --features android --release
-
-# Generate Swift bindings from UniFFI
-gen-swift: build-ios-ffi
-    cargo run -p styrene-mobile-ffi --no-default-features --features ios,bindgen \
-        --bin styrene-uniffi-bindgen -- generate \
-        --library target/aarch64-apple-ios/release/libstyrene_mobile_ffi.a \
-        --language swift \
-        --out-dir target/ios-bindings
-
-# Generate Kotlin bindings from UniFFI
-gen-kotlin:
-    cargo build -p styrene-mobile-ffi
-    cargo run -p styrene-mobile-ffi --features bindgen --bin styrene-uniffi-bindgen -- generate \
-        --library target/debug/libstyrene_mobile_ffi.so \
-        --language kotlin \
-        --out-dir android/app/src/main/kotlin/
-
 # Screenshot the desktop app for visual feedback
 screenshot-dx:
     @./scripts/screenshot-dx.sh /tmp/styrene-dx-screenshot.png
     @echo "View: open /tmp/styrene-dx-screenshot.png"
-
-# Full iOS build: compile + generate Swift bindings
-mobile-ios: ios-targets
-    ./scripts/build-ios-ffi.sh
-    @echo "iOS native artifacts are ready for the Xcode project"
-
-# Build and link the iOS app for a simulator without signing
-ios-simulator: mobile-ios
-    xcodebuild \
-        -project ios/StyreneMobile.xcodeproj \
-        -scheme StyreneMobile \
-        -configuration Debug \
-        -sdk iphonesimulator \
-        -destination 'generic/platform=iOS Simulator' \
-        -derivedDataPath target/ios-derived-data \
-        CODE_SIGNING_ALLOWED=NO \
-        build
-
-# Generate native artifacts and open the app in Xcode for USB deployment
-ios-open: mobile-ios
-    open ios/StyreneMobile.xcodeproj
-
-# Build, sign, and install on a connected iPhone
-ios-install device team: mobile-ios
-    xcodebuild \
-        -project ios/StyreneMobile.xcodeproj \
-        -scheme StyreneMobile \
-        -configuration Debug \
-        -destination 'id={{ device }}' \
-        -derivedDataPath target/ios-device-derived-data \
-        DEVELOPMENT_TEAM='{{ team }}' \
-        CODE_SIGN_STYLE=Automatic \
-        -allowProvisioningUpdates \
-        build
-    xcrun devicectl device install app \
-        --device '{{ device }}' \
-        target/ios-device-derived-data/Build/Products/Debug-iphoneos/StyreneMobile.app
-
-# Full Android build: compile + generate Kotlin bindings
-mobile-android: build-android-ffi gen-kotlin
-    @echo "Android build complete — Kotlin bindings in bindings/kotlin/"
-
-# Copy .so to Android project jniLibs and build APK
-android-deploy: build-android-ffi gen-kotlin
-    @mkdir -p android/app/src/main/jniLibs/arm64-v8a
-    cp target/aarch64-linux-android/release/libstyrene_mobile_ffi.so \
-        android/app/src/main/jniLibs/arm64-v8a/
-    @echo "Native library copied to android/app/src/main/jniLibs/arm64-v8a/"
-    gradle -p android \
-        -Pandroid.aapt2FromMavenOverride="$ANDROID_HOME/build-tools/37.0.0/aapt2" \
-        assembleDebug
-    @echo "APK built: android/app/build/outputs/apk/debug/app-debug.apk"
-
-# Install debug APK on connected device
-android-install: android-deploy
-    adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-    @echo "Installed on device. Launch: adb shell am start -n io.styrene.mesh.debug/io.styrene.mesh.MainActivity"
-
-# Create the local ARM64 Android virtual device if it does not exist
-android-emulator-setup profile="medium_phone":
-    @if "{{ android_cli }}" --sdk="{{ android_sdk }}" emulator list | grep -qx "{{ profile }}"; then \
-        echo "Android virtual device {{ profile }} already exists"; \
-    else \
-        "{{ android_cli }}" --sdk="{{ android_sdk }}" emulator create "{{ profile }}"; \
-    fi
-
-# Start an Android virtual device and wait until it is ready
-android-emulator-start profile="medium_phone":
-    "{{ android_cli }}" --sdk="{{ android_sdk }}" emulator start "{{ profile }}"
-
-# Stop an Android virtual device
-android-emulator-stop profile="medium_phone":
-    "{{ android_cli }}" --sdk="{{ android_sdk }}" emulator stop "{{ profile }}"
-
-# Install and launch the current debug APK on a running Android emulator
-android-emulator-install serial="emulator-5554":
-    "{{ android_adb }}" -s "{{ serial }}" wait-for-device
-    "{{ android_adb }}" -s "{{ serial }}" install -r android/app/build/outputs/apk/debug/app-debug.apk
-    "{{ android_adb }}" -s "{{ serial }}" shell am force-stop io.styrene.mesh.debug
-    "{{ android_adb }}" -s "{{ serial }}" shell am start -W -n io.styrene.mesh.debug/io.styrene.mesh.MainActivity
-
-# Print the running Android app's semantic UI tree
-android-emulator-ui serial="emulator-5554":
-    "{{ android_adb }}" -s "{{ serial }}" exec-out uiautomator dump /dev/tty
 
 # Build and start the isolated hub used by mobile simulator tests
 mobile-hub-start:
@@ -409,19 +261,6 @@ mobile-hub-start:
 mobile-hub-status:
     ./scripts/local-mobile-hub.sh status
 
-# Verify an Android emulator can reach the host-local hub transport
-mobile-hub-android-probe serial="emulator-5554":
-    ./scripts/local-mobile-hub.sh android-probe "{{ serial }}"
-
-# Launch Android with an isolated local-hub integration profile
-android-emulator-integration-start profile="android-a" display_name="Android A" reset="true" serial="emulator-5554":
-    "{{ android_adb }}" -s "{{ serial }}" shell am force-stop io.styrene.mesh
-    "{{ android_adb }}" -s "{{ serial }}" shell am start -W -n io.styrene.mesh/.MainActivity \
-        --es io.styrene.mesh.integration.PROFILE "{{ profile }}" \
-        --es io.styrene.mesh.integration.HUB_ADDRESS "10.0.2.2:4242" \
-        --es io.styrene.mesh.integration.DISPLAY_NAME "'{{ display_name }}'" \
-        --ez io.styrene.mesh.integration.RESET_STATE "{{ reset }}"
-
 # Show recent local mobile hub logs
 mobile-hub-logs:
     ./scripts/local-mobile-hub.sh logs
@@ -430,16 +269,8 @@ mobile-hub-logs:
 mobile-hub-stop:
     ./scripts/local-mobile-hub.sh stop
 
-# Run the correlated iOS-to-Android local-hub acceptance lane
-mobile-integration-cross-platform serial="emulator-5554":
-    python3 scripts/mobile_cross_platform_runner.py --android-serial "{{ serial }}"
-
-# Test pure helpers used by the cross-platform mobile runner
-test-mobile-integration-runner:
-    python3 -m unittest scripts/test_mobile_cross_platform_runner.py
-
-# Validate all mobile profiles compile
-check-mobile-all: check-mobile check-mobile-keychain check-mobile-identity check-ffi
+# Validate all backend mobile profiles compile
+check-mobile-all: check-mobile check-mobile-keychain check-mobile-identity
     @echo "All mobile profiles compile ✓"
 
 # ─── Feature Matrix ───────────────────────────────────────────────────────
@@ -458,8 +289,6 @@ check-all-features:
     cargo check -p styrened --no-default-features --features terminal
     @echo "Checking ipc-server only..."
     cargo check -p styrened --no-default-features --features ipc-server
-    @echo "Checking FFI bridge..."
-    cargo check -p styrene-mobile-ffi
     @echo "Checking TUI..."
     cargo check -p styrene-tui
     @echo "All feature combinations compile ✓"
@@ -583,10 +412,6 @@ hub-destroy:
 # Clean build artifacts
 clean:
     cargo clean
-
-# Clean mobile binding outputs
-clean-bindings:
-    rm -rf bindings/swift/Sources bindings/kotlin/src ios/Generated ios/Frameworks/StyreneMobileFFI.xcframework
 
 # ─── Release ───────────────────────────────────────────────────────────────
 

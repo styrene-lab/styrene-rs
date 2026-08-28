@@ -1,7 +1,7 @@
 # Extract Styrene UI Repository Tasks
 
 ## 1. Extraction Preparation
-<!-- specs: gui-repository -->
+<!-- specs: gui-repository/spec -->
 
 - [ ] 1.1 Confirm `styrene-lab/styrene-ui` ownership, visibility, licensing, maintainers, and branch protections
 - [ ] 1.2 Record the immutable `styrene-rs` source revision and extraction path set
@@ -9,7 +9,7 @@
 - [ ] 1.4 Define desktop acceptance commands and the authority-switch rollback condition
 
 ## 2. History-Preserving Extraction
-<!-- specs: gui-repository -->
+<!-- specs: gui-repository/spec -->
 
 - [ ] 2.1 Create the new repository without modifying either protected Styrene checkout
 - [ ] 2.2 Extract `crates/apps/styrene-dx` history from an isolated temporary clone
@@ -17,7 +17,7 @@
 - [ ] 2.4 Verify representative files retain history or explicit source mappings
 
 ## 3. Independent Workspace
-<!-- specs: gui-repository -->
+<!-- specs: gui-repository/spec -->
 
 - [ ] 3.1 Establish the `styrene-ui` workspace, toolchain, licenses, repository guidance, and generated-artifact exclusions
 - [ ] 3.2 Pin application-facing `styrene-rs` crates to one immutable full revision
@@ -26,7 +26,7 @@
 - [ ] 3.5 Keep native mobile directories reserved and empty of generated platform output
 
 ## 4. Desktop And Lab Validation
-<!-- specs: gui-repository -->
+<!-- specs: gui-repository/spec -->
 
 - [ ] 4.1 Run formatting, warning-denied Clippy, unit, reducer, and component tests
 - [ ] 4.2 Run desktop Fixture, Live-failure, and Embedded smoke scenarios
@@ -35,7 +35,7 @@
 - [ ] 4.5 Verify a clean checkout resolves without local path dependencies
 
 ## 5. Authority Switch
-<!-- specs: gui-repository -->
+<!-- specs: gui-repository/spec -->
 
 - [ ] 5.1 Publish the validated GUI revision and record its tested `styrene-rs` revision
 - [ ] 5.2 Remove the maintained `styrene-dx` source from `styrene-rs` in a separate commit

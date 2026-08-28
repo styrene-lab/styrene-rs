@@ -14,10 +14,9 @@ bounded request brokering, and contract fixtures. It migrates `styrene-tui` and
 the in-tree `styrene-dx` application to that boundary.
 
 This change excludes creating the new GUI repository, redesigning either UI,
-moving protocol behavior into a frontend crate, and replacing native mobile UI.
+and moving protocol behavior into a frontend crate.
 
-This change depends on `stabilize-mobile-platform-hosts` and is the prerequisite
-for `extract-styrene-ui-repository`.
+This change is the prerequisite for `extract-styrene-ui-repository`.
 
 ## Success criteria
 

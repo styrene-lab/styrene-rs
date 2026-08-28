@@ -21,10 +21,9 @@ styrene-session / styrene-ipc typed contracts
               |
 Embedded Styrene runtime
               |
-Platform-service traits
-       +------+------+
-       |             |
-  Swift adapters  Kotlin adapters
+Rust platform-service traits
+              |
+Rust mobile implementations
 ```
 
 The Rust application owns navigation, selection, drafts, filters, capability
@@ -33,7 +32,7 @@ identity, protocol, storage, routing, delivery, and transport truth.
 
 ## Platform Services
 
-`styrene-ui-platform` defines typed asynchronous services for:
+`styrene-ui-platform` defines typed Rust asynchronous services for:
 
 - Bluetooth discovery, approval, reconnect, GATT access, and byte transport.
 - Android USB discovery, permission, and byte transport.
@@ -49,9 +48,8 @@ apply adapter results to presentation state and backend sessions.
 ## Embedded Runtime
 
 Dioxus mobile uses the shared Embedded session directly in Rust. It does not use
-a local daemon socket unless a selected product mode requires one. Existing
-UniFFI remains available for the native reference hosts during migration, but it
-is not the new Dioxus application's daemon contract.
+a local daemon socket unless a selected product mode requires one, and it does
+not use a generated-language bridge as its daemon contract.
 
 Platform RNode adapters exchange bounded byte or packet-channel events with the
 Rust host boundary. Rust retains KISS framing, configuration semantics, outbound
@@ -74,11 +72,8 @@ cannot enter live backend stores.
 2. Connect Embedded session startup and read-only identity/network state.
 3. Migrate conversation list, thread, composition, and delivery evidence.
 4. Migrate People, settings, propagation entry points, and experimental pages.
-5. Integrate Bluetooth, Android USB fallback, secure storage, notifications, and lifecycle.
-6. Run parity gates and remove duplicate native product screens by workflow.
-
-The native reference hosts remain buildable until slice-specific parity is
-accepted. Removal is incremental rather than a single cutover.
+5. Integrate Bluetooth, Android USB fallback, secure storage, notifications, and lifecycle in Rust.
+6. Run release gates on the Dioxus application.
 
 ## Testing And Evidence
 
@@ -98,6 +93,5 @@ A platform adapter failure degrades only the affected capability. It must not
 fabricate backend state or crash unrelated workflows. Embedded startup failure
 returns to a recoverable setup state after owned resources shut down.
 
-If a migrated workflow fails parity, its native reference remains available and
-the Dioxus route stays behind a development or migration gate. The backend and
-stored user data do not roll back with the renderer.
+If a workflow fails its release gate, the Dioxus route stays behind a development
+gate. The backend and stored user data do not roll back with the renderer.

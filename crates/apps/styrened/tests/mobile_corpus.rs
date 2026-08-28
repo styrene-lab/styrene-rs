@@ -187,7 +187,6 @@ enum EvidenceScope {
 #[serde(rename_all = "snake_case")]
 enum Platform {
     Rust,
-    Ffi,
     IosSimulator,
     IosDevice,
     AndroidJvm,

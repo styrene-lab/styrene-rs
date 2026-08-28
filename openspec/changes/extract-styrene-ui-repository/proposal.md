@@ -8,11 +8,11 @@ preserving history and keeping protocol and daemon authority in `styrene-rs`.
 ## Scope
 
 This change creates the GUI repository and extracts `styrene-dx` history. It
-establishes workspace, dependency, compatibility, testing, and release boundaries.
+establishes workspace, dependency, compatibility, testing, and release
+boundaries. Native mobile hosts are removed as part of that authority transfer.
 
-This change excludes mobile feature parity, removal of native mobile hosts,
-moving `styrene-tui`, moving daemon or protocol implementation, and duplicating
-the interoperability runner.
+This change excludes mobile feature parity, moving `styrene-tui`, moving daemon
+or protocol implementation, and duplicating the interoperability runner.
 
 This change depends on `shared-frontend-session` and is the prerequisite for
 `shared-dioxus-mobile-ui`.
