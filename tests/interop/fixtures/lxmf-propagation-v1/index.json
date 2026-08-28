@@ -1,0 +1,121 @@
+{
+  "artifacts": [
+    {
+      "path": "announce_app_data.msgpack",
+      "sha256": "4073795ef83d2488493c9d4f3b625e523c21df365acb41d025ac5e214d1698af",
+      "size": 54
+    },
+    {
+      "path": "announce_packet.bin",
+      "sha256": "81303172110bb9527d639cfd82703d3623441e69b2667e395de0e8fbc8e6796e",
+      "size": 221
+    },
+    {
+      "path": "encrypted_lxmf.bin",
+      "sha256": "7e70ccd5635d596c967a96c99ad2ff1af1969cb2dc2cf223b1deb022b06043fa",
+      "size": 256
+    },
+    {
+      "path": "plaintext_lxmf_body.bin",
+      "sha256": "05d7fcc82d2d9f45e37eaa1503bed5e902dce435cc7eb62df04d6220e588f698",
+      "size": 157
+    },
+    {
+      "path": "propagation_transfer.msgpack",
+      "sha256": "5cf2b9bae184dce879814b606b904a095ef91d15b813fd4de8864e2417dfa3d6",
+      "size": 302
+    },
+    {
+      "path": "offer_request.msgpack",
+      "sha256": "d277aab5d212c9523752443cfb113f046a99fbbeb643098fab63d97c8e2f1d37",
+      "size": 104
+    },
+    {
+      "path": "offer_accept_all.msgpack",
+      "sha256": "ae3f4619b0413d70d3004b9131c3752153074e45725be13b9a148978895e359e",
+      "size": 1
+    },
+    {
+      "path": "offer_accept_some.msgpack",
+      "sha256": "0d4414e90de523dac02ee96c5d517fd3cf9b2ddf53a5fbff21be024a3570c0d8",
+      "size": 35
+    },
+    {
+      "path": "offer_accept_none.msgpack",
+      "sha256": "c557e71380112b980eaf1145fa80621130dfbdfa1e375d87ae0018b7c60ac16b",
+      "size": 1
+    },
+    {
+      "path": "message_list_request.msgpack",
+      "sha256": "725fe1ad7083cceec29e2ed9bcaaf03130001abeece811ce2808c565be16966c",
+      "size": 3
+    },
+    {
+      "path": "message_get_request.msgpack",
+      "sha256": "ac9ba335f57e1e9f6ec99418ab735c21ad61222f441a98506a9c7b7ca8c90ca5",
+      "size": 74
+    },
+    {
+      "path": "message_list_response.msgpack",
+      "sha256": "68d85b4e3514f72736bcb372b8f619539555ca663e2b7191b95e28de5bc96018",
+      "size": 69
+    },
+    {
+      "path": "message_get_response.msgpack",
+      "sha256": "e2c4d8bfc22b3f375aa41125d6ac6c3220b155a888583d370e2a2c64c91db86d",
+      "size": 260
+    },
+    {
+      "path": "authorization_no_identity.msgpack",
+      "sha256": "c145b1aa872c082661ed186c5b63e5c0a5057492661b7816eebeb825ba6b8471",
+      "size": 2
+    },
+    {
+      "path": "authorization_no_access.msgpack",
+      "sha256": "ecc85ab67ce527060f02f861906f4fccc126d7e0d2a97b43006ff4a51b397f81",
+      "size": 2
+    }
+  ],
+  "destination": {
+    "hash_hex": "f6e70a8e918a2f15713b875fc82473de",
+    "metadata_name_key": 1,
+    "name": "lxmf.propagation",
+    "private_key_hex": "d70bd5fa330489e838a22c0461bc3aea2338caf6bfe8c7a97ce017ff39a01ad6c4c4dbe126601041057cf5a176a9b065d9859068cd7f9388d35265bf54d5457b"
+  },
+  "fixed_unix_time": 1750000000.0,
+  "generator": "tests/interop/python/generate_lxmf_propagation_fixtures.py",
+  "message": {
+    "duplicate_transient_id_hex": "304dd89d739ca54d80cb9dc71d9f3ff71389836ff9bd73abf74f63832f13fc8c",
+    "peering_key_cost": 1,
+    "peering_key_hex": "bb8e516da049a892aa19c4dd05ae154fe09108997e5e939df8bff1a9ab445144",
+    "peering_key_value": 1,
+    "propagation_stamp_cost": 1,
+    "propagation_stamp_hex": "9feeeaf184c0147d9498a86d880cd287d0a1e9345b36f9d36a4ae739dabfa384",
+    "propagation_stamp_value": 3,
+    "recipient_destination_hash_hex": "131cb6b8a0e4d8c5d4df1e70b78d25c7",
+    "recipient_private_key_hex": "6b63993dfd022b0a3334114efea2704cb20b0a14de44a6296e609bab51d8f8cb10bfd68a6585e15f2f1157eda31ad399ae715bd26512e20d00e475fdeebab0b2",
+    "sender_destination_hash_hex": "ff10ced1bf260aaf74da0e6b81432c1a",
+    "transient_id_hex": "7e70ccd5635d596c967a96c99ad2ff1af1969cb2dc2cf223b1deb022b06043fa"
+  },
+  "request_paths": {
+    "get": {
+      "hash_hex": "9dc1a72883468f57fed571e796e9ce98",
+      "path": "/get"
+    },
+    "offer": {
+      "hash_hex": "94fd9fd7b04a5caae5882616446bb9ef",
+      "path": "/offer"
+    }
+  },
+  "schema_version": 1,
+  "upstreams": {
+    "lxmf": {
+      "revision": "795fdaa2b0777c13033787d933d1afc94a2377cb",
+      "version": "1.1.0"
+    },
+    "rns": {
+      "revision": "b48b96e61676504e0a4e527b33b9a0b4495c6872",
+      "version": "1.4.2"
+    }
+  }
+}
