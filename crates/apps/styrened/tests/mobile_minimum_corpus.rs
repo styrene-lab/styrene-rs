@@ -74,6 +74,8 @@ struct Peer {
     display_name: Option<String>,
     observed_at: i64,
     age_secs: u64,
+    source: PeerSource,
+    announce_count: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,6 +182,12 @@ enum BearerState {
 enum DeliveryMethod {
     Direct,
     Propagated,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum PeerSource {
+    CanonicalAnnounce,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -320,6 +328,8 @@ fn mobile_minimum_fixture_contract_is_strict_and_complete() {
             assert_eq!(peer.destination_hash.len(), 32, "{}: peer hash", fixture.id);
             assert!(!peer.aspect.is_empty(), "{}: peer aspect", fixture.id);
             assert!(peer.observed_at > 0, "{}: peer observation", fixture.id);
+            assert_eq!(peer.source, PeerSource::CanonicalAnnounce);
+            assert!(peer.announce_count > 0, "{}: peer announce count", fixture.id);
             let _ = (&peer.display_name, peer.age_secs);
         }
         for conversation in &fixture.conversations {

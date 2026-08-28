@@ -205,6 +205,8 @@ pub struct InterfaceSnapshot {
     pub tx_bytes: u64,
     pub rx_bytes: u64,
     pub connected_peers: u32,
+    /// Monotonic count of operational connection/listener generations.
+    pub generation: u64,
 }
 
 #[derive(Debug)]
@@ -212,6 +214,7 @@ struct InterfaceRuntimeMetadata {
     descriptor: InterfaceDescriptor,
     state: InterfaceState,
     parent: Option<AddressHash>,
+    generation: u64,
 }
 
 #[derive(Debug)]
@@ -226,12 +229,23 @@ impl InterfaceRuntime {
                 descriptor,
                 state: InterfaceState::Starting,
                 parent,
+                generation: 0,
             }),
         }
     }
 
     pub(crate) fn set_state(&self, state: InterfaceState) {
-        self.metadata.lock().expect("interface runtime lock").state = state;
+        let mut metadata = self.metadata.lock().expect("interface runtime lock");
+        let operational = |value| {
+            matches!(
+                value,
+                InterfaceState::Listening | InterfaceState::Connected | InterfaceState::Active
+            )
+        };
+        if operational(state) && !operational(metadata.state) {
+            metadata.generation = metadata.generation.saturating_add(1);
+        }
+        metadata.state = state;
     }
 
     pub(crate) fn set_local_endpoint(&self, endpoint: InterfaceEndpoint) {
@@ -470,6 +484,7 @@ impl InterfaceManager {
                     runtime.descriptor.clone(),
                     runtime.state,
                     runtime.parent,
+                    runtime.generation,
                     interface.stats.tx_bytes.load(Ordering::Relaxed),
                     interface.stats.rx_bytes.load(Ordering::Relaxed),
                 )
@@ -477,22 +492,26 @@ impl InterfaceManager {
             .collect();
         let mut snapshots: Vec<_> = metadata
             .iter()
-            .map(|(hash, descriptor, state, parent, tx_bytes, rx_bytes)| InterfaceSnapshot {
-                hash: *hash,
-                kind: descriptor.kind,
-                mode: descriptor.mode,
-                state: *state,
-                local_endpoint: descriptor.local_endpoint.clone(),
-                remote_endpoint: descriptor.remote_endpoint.clone(),
-                parent: *parent,
-                tx_bytes: *tx_bytes,
-                rx_bytes: *rx_bytes,
-                connected_peers: metadata
-                    .iter()
-                    .filter(|(_, _, child_state, child_parent, _, _)| {
-                        *child_parent == Some(*hash) && *child_state == InterfaceState::Connected
-                    })
-                    .count() as u32,
+            .map(|(hash, descriptor, state, parent, generation, tx_bytes, rx_bytes)| {
+                InterfaceSnapshot {
+                    hash: *hash,
+                    kind: descriptor.kind,
+                    mode: descriptor.mode,
+                    state: *state,
+                    local_endpoint: descriptor.local_endpoint.clone(),
+                    remote_endpoint: descriptor.remote_endpoint.clone(),
+                    parent: *parent,
+                    tx_bytes: *tx_bytes,
+                    rx_bytes: *rx_bytes,
+                    connected_peers: metadata
+                        .iter()
+                        .filter(|(_, _, child_state, child_parent, _, _, _)| {
+                            *child_parent == Some(*hash)
+                                && *child_state == InterfaceState::Connected
+                        })
+                        .count() as u32,
+                    generation: *generation,
+                }
             })
             .collect();
         snapshots.sort_by_key(|snapshot| snapshot.hash.as_slice().to_vec());

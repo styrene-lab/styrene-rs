@@ -58,6 +58,7 @@ fn spawn_announce_worker_inner(
 
     // Pre-compute aspect name hashes for classification
     let nomadnet_hash = aspect_hash_prefix("nomadnetwork", "node");
+    let delivery_hash = aspect_hash_prefix("lxmf", "delivery");
     let propagation_hash = aspect_hash_prefix("lxmf", "propagation");
 
     tokio::spawn(async move {
@@ -74,6 +75,7 @@ fn spawn_announce_worker_inner(
 
                     // Classify by aspect
                     let is_page_host = event.name_hash == nomadnet_hash;
+                    let is_delivery = event.name_hash == delivery_hash;
                     let is_propagation_host = event.name_hash == propagation_hash;
 
                     let timestamp = now_epoch_secs_i64();
@@ -96,13 +98,17 @@ fn spawn_announce_worker_inner(
                                     &metadata,
                                 )
                             })
-                    } else {
+                    } else if is_delivery {
+                        discovery.accept_delivery_announce(peer_hash.clone(), timestamp, app_data)
+                    } else if is_page_host {
                         discovery.accept_announce_with_type(
                             peer_hash.clone(),
                             timestamp,
                             app_data,
                             device_type,
                         )
+                    } else {
+                        Err(std::io::Error::other("unsupported announce aspect"))
                     };
                     match result {
                         Ok(record) => {

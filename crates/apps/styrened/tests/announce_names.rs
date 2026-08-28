@@ -67,7 +67,10 @@ fn normalize_display_name_rejects_control_chars() {
 #[test]
 fn encode_delivery_display_name_round_trips() {
     let app_data = encode_delivery_display_name_app_data("Alice Router").expect("encoded");
+    let canonical = lxmf::announce::delivery_announce_metadata(&app_data)
+        .expect("canonical three-element LXMF delivery metadata");
     let parsed = parse_peer_name_from_app_data(&app_data).expect("parsed");
+    assert_eq!(canonical.display_name.as_deref(), Some("Alice Router"));
     assert_eq!(parsed.0, "Alice Router");
     assert_eq!(parsed.1, "delivery_app_data");
 }

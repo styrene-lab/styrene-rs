@@ -20,10 +20,10 @@
 ## 3. Canonical Discovery
 <!-- specs: mobile-network-session -->
 
-- [ ] 3.1 Add failing Rust tests for canonical delivery-announce decoding, destination-keyed upsert, freshness, and generation-scoped snapshots and events
-- [ ] 3.2 Expose typed peer aspect, destination, name, observed time, age, and source through the mobile boundary
-- [ ] 3.3 Add failing Rust reducer and Dioxus component tests for repeated announces, stale generation events, empty live directories, and local announce outcomes
-- [ ] 3.4 Implement event-driven People and Network updates without duplicate peers or remote-reception claims
+- [x] 3.1 Add failing Rust tests for canonical delivery-announce decoding, destination-keyed upsert, freshness, and generation-scoped snapshots and events
+- [x] 3.2 Expose typed peer aspect, destination, name, observed time, age, and source through the mobile boundary
+- [x] 3.3 Add failing Rust reducer and Dioxus component tests for repeated announces, stale generation events, empty live directories, and local announce outcomes
+- [x] 3.4 Implement event-driven People and Network updates without duplicate peers or remote-reception claims
 
 ## 4. Durable Text Messaging
 <!-- specs: mobile-messaging -->

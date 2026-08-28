@@ -6,7 +6,7 @@ use styrene_ipc::types::InterfaceDetail;
 use styrened::mobile::{
     load_mobile_tcp_endpoint, persist_mobile_tcp_endpoint, IdentityBackend, MobileBearerKind,
     MobileBearerState, MobileConfig, MobileConnectionPhase, MobileFailureCode,
-    MobileInterfaceConfig, MobileNode,
+    MobileInterfaceConfig, MobileNode, MobilePeerAspect, MobilePeerSource,
 };
 use styrened::startup_contract::{RuntimeKind, capabilities, components};
 
@@ -52,6 +52,20 @@ async fn wait_for_interface_status(
     })
     .await
     .unwrap_or_else(|_| panic!("TCP client did not enter {status}"))
+}
+
+async fn wait_for_generation(node: &MobileNode, minimum: u64, deadline: Duration) -> u64 {
+    tokio::time::timeout(deadline, async {
+        loop {
+            let generation = node.session_snapshot().await.generation;
+            if generation >= minimum {
+                return generation;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("mobile session did not reach generation {minimum}"))
 }
 
 #[tokio::test]
@@ -366,6 +380,7 @@ async fn established_tcp_interruption_reconnects_without_replacing_node() {
         .expect("initial TCP connection timed out")
         .unwrap();
     let first = wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+    let first_generation = node.session_snapshot().await.generation;
     let identity = node.app_context.identity().identity_hash().to_string();
 
     drop(first_stream);
@@ -374,8 +389,10 @@ async fn established_tcp_interruption_reconnects_without_replacing_node() {
         .expect("established TCP interruption did not reconnect")
         .unwrap();
     let second = wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+    let second_generation = node.session_snapshot().await.generation;
 
     assert_eq!(second.hash, first.hash);
+    assert_eq!(second_generation, first_generation + 1);
     assert_eq!(node.app_context.identity().identity_hash(), identity);
     shutdown(node).await;
     drop(second_stream);
@@ -415,6 +432,127 @@ fn malformed_persisted_endpoint_is_a_recoverable_typed_failure() {
 
     assert_eq!(error.code(), MobileFailureCode::InvalidTcpEndpoint);
     assert!(error.retryable());
+}
+
+#[tokio::test]
+async fn peer_snapshot_is_destination_keyed_fresh_and_durable() {
+    let root = tempfile::tempdir().unwrap();
+    let node = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let destination = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let first = lxmf::announce::encode_delivery_display_name_app_data("First Name").unwrap();
+    let second = lxmf::announce::encode_delivery_display_name_app_data("Current Name").unwrap();
+    node.app_context.discovery().accept_delivery_announce(destination.into(), 100, &first).unwrap();
+    node.app_context
+        .discovery()
+        .accept_delivery_announce(destination.into(), 105, &second)
+        .unwrap();
+
+    let snapshot = node.peer_snapshot_at(110).await.expect("mobile peer snapshot");
+
+    assert_eq!(snapshot.generation, 1);
+    assert_eq!(snapshot.observed_at, 110);
+    assert_eq!(snapshot.peers.len(), 1);
+    let peer = &snapshot.peers[0];
+    assert_eq!(peer.destination_hash, destination);
+    assert_eq!(peer.aspect, MobilePeerAspect::LxmfDelivery);
+    assert_eq!(peer.display_name.as_deref(), Some("Current Name"));
+    assert_eq!(peer.observed_at, 105);
+    assert_eq!(peer.age_secs, 5);
+    assert_eq!(peer.source, MobilePeerSource::CanonicalAnnounce);
+    assert_eq!(peer.announce_count, 2);
+    shutdown(node).await;
+
+    let restored = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let restored_snapshot = restored.peer_snapshot_at(120).await.expect("restored peer snapshot");
+    assert_eq!(restored_snapshot.peers.len(), 1);
+    assert_eq!(restored_snapshot.peers[0].destination_hash, destination);
+    assert_eq!(restored_snapshot.peers[0].display_name.as_deref(), Some("Current Name"));
+    shutdown(restored).await;
+}
+
+#[tokio::test]
+async fn local_announce_reports_dispatch_acceptance_without_remote_receipt() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("announce transport connection timed out")
+        .unwrap();
+    wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+
+    let outcome = node.announce_outcome().await.expect("local announce dispatch");
+
+    assert!(outcome.local_dispatch_accepted);
+    assert!(!outcome.remote_reception_confirmed);
+    assert_eq!(outcome.generation, node.session_snapshot().await.generation);
+    assert!(outcome.accepted_at > 0);
+    drop(stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn local_announce_returns_typed_failure_without_transport() {
+    let root = tempfile::tempdir().unwrap();
+    let node = MobileNode::boot(config(root.path(), None)).await.unwrap();
+
+    let error = node.announce_outcome().await.expect_err("offline announce must fail");
+
+    assert_eq!(error.code(), MobileFailureCode::TransportUnavailable);
+    assert!(error.retryable());
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn peer_event_retains_subscription_generation_across_reconnect() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (first_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("initial peer-event connection timed out")
+        .unwrap();
+    wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+    let mut subscription = node.subscribe_peer_events().await;
+    let subscription_generation = node.session_snapshot().await.generation;
+
+    drop(first_stream);
+    let (second_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("peer-event reconnect timed out")
+        .unwrap();
+    let current_generation =
+        wait_for_generation(&node, subscription_generation + 1, Duration::from_secs(1)).await;
+    assert!(current_generation > subscription_generation);
+
+    let destination = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let app_data = lxmf::announce::encode_delivery_display_name_app_data("Event Peer").unwrap();
+    node.app_context
+        .discovery()
+        .accept_delivery_announce(destination.into(), 100, &app_data)
+        .unwrap();
+    let device = node.app_context.discovery().device(destination).unwrap();
+    node.app_context.events().emit_device(device);
+    let event = tokio::time::timeout(Duration::from_secs(1), subscription.recv())
+        .await
+        .expect("peer event timeout")
+        .expect("peer event");
+
+    assert_eq!(event.generation, subscription_generation);
+    assert_ne!(event.generation, current_generation);
+    assert_eq!(event.peer.destination_hash, destination);
+    drop(second_stream);
+    shutdown(node).await;
 }
 
 #[tokio::test]
