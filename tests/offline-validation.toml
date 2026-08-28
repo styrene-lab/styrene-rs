@@ -32,6 +32,7 @@ selected_targets = [
   "styrened:test/identity_store",
   "styrened:test/lxmf_bridge_tests",
   "styrened:test/lxmf_fidelity_storage",
+  "styrened:test/mobile_corpus",
   "styrened:test/nomadnet_pages_offline",
   "styrened:test/receipt_bridge",
   "styrened:test/receipt_mapping",

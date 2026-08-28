@@ -1,5 +1,6 @@
 use std::fs;
-use styrened::config::{DaemonConfig, InterfaceConfig};
+use std::path::{Path, PathBuf};
+use styrened::config::{DaemonConfig, InterfaceConfig, NodeRole};
 use tempfile::NamedTempFile;
 
 #[test]
@@ -61,4 +62,24 @@ interfaces = [
     assert_eq!(endpoints.len(), 1);
     assert_eq!(endpoints[0].0, "rmap.world");
     assert_eq!(endpoints[0].1, 4242);
+}
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
+}
+
+#[test]
+fn checked_in_hub_deployments_use_hub_role_and_tcp_listener() {
+    for relative_path in ["deploy/hub.toml", "tests/mesh/configs/hub.toml"] {
+        let path = workspace_root().join(relative_path);
+        let config = DaemonConfig::from_path(&path)
+            .unwrap_or_else(|error| panic!("failed to load {}: {error}", path.display()));
+
+        assert_eq!(config.role, NodeRole::Hub, "{relative_path} must run in hub mode");
+        assert_eq!(
+            config.tcp_server_endpoint().as_deref(),
+            Some("0.0.0.0:4242"),
+            "{relative_path} must expose the standard hub transport"
+        );
+    }
 }

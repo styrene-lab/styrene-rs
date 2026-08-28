@@ -7,6 +7,9 @@
 
 project_root := justfile_directory()
 install_dir := env_var_or_default("STYRENE_INSTALL_DIR", env_var("HOME") + "/.cargo/bin")
+android_sdk := env_var_or_default("ANDROID_HOME", env_var("HOME") + "/Library/Android/sdk")
+android_cli := android_sdk + "/cmdline-tools/latest/bin/android"
+android_adb := android_sdk + "/platform-tools/adb"
 
 # ─── Help ───────────────────────────────────────────────────────────────────
 
@@ -38,6 +41,7 @@ test:
     cargo test -p styrened --lib \
         --test announce_names --test config --test identity_store \
         --test lxmf_bridge_tests --test lxmf_fidelity_storage \
+        --test mobile_corpus \
         --test nomadnet_pages_offline --test receipt_bridge --test receipt_mapping \
         --test rns_crypto --test transport_contract --test transport_null \
         --test worker_announce --test worker_inbound
@@ -232,6 +236,10 @@ upstream-sync-report:
 
 # ─── Mobile ────────────────────────────────────────────────────────────────
 
+# Validate the committed mobile integration corpus and its repository references
+test-mobile-corpus:
+    cargo test -p styrened --test mobile_corpus
+
 # Check mobile library compiles (no desktop deps)
 check-mobile:
     cargo check -p styrened --no-default-features
@@ -364,6 +372,71 @@ android-deploy: build-android-ffi gen-kotlin
 android-install: android-deploy
     adb install -r android/app/build/outputs/apk/debug/app-debug.apk
     @echo "Installed on device. Launch: adb shell am start -n io.styrene.mesh/.MainActivity"
+
+# Create the local ARM64 Android virtual device if it does not exist
+android-emulator-setup profile="medium_phone":
+    @if "{{ android_cli }}" --sdk="{{ android_sdk }}" emulator list | grep -qx "{{ profile }}"; then \
+        echo "Android virtual device {{ profile }} already exists"; \
+    else \
+        "{{ android_cli }}" --sdk="{{ android_sdk }}" emulator create "{{ profile }}"; \
+    fi
+
+# Start an Android virtual device and wait until it is ready
+android-emulator-start profile="medium_phone":
+    "{{ android_cli }}" --sdk="{{ android_sdk }}" emulator start "{{ profile }}"
+
+# Stop an Android virtual device
+android-emulator-stop profile="medium_phone":
+    "{{ android_cli }}" --sdk="{{ android_sdk }}" emulator stop "{{ profile }}"
+
+# Install and launch the current debug APK on a running Android emulator
+android-emulator-install serial="emulator-5554":
+    "{{ android_adb }}" -s "{{ serial }}" wait-for-device
+    "{{ android_adb }}" -s "{{ serial }}" install -r android/app/build/outputs/apk/debug/app-debug.apk
+    "{{ android_adb }}" -s "{{ serial }}" shell am force-stop io.styrene.mesh
+    "{{ android_adb }}" -s "{{ serial }}" shell am start -W -n io.styrene.mesh/.MainActivity
+
+# Print the running Android app's semantic UI tree
+android-emulator-ui serial="emulator-5554":
+    "{{ android_adb }}" -s "{{ serial }}" exec-out uiautomator dump /dev/tty
+
+# Build and start the isolated hub used by mobile simulator tests
+mobile-hub-start:
+    cargo build -p styrened --bin styrened
+    ./scripts/local-mobile-hub.sh start
+
+# Verify local hub role, propagation activation, RPC, and transport readiness
+mobile-hub-status:
+    ./scripts/local-mobile-hub.sh status
+
+# Verify an Android emulator can reach the host-local hub transport
+mobile-hub-android-probe serial="emulator-5554":
+    ./scripts/local-mobile-hub.sh android-probe "{{ serial }}"
+
+# Launch Android with an isolated local-hub integration profile
+android-emulator-integration-start profile="android-a" display_name="Android A" reset="true" serial="emulator-5554":
+    "{{ android_adb }}" -s "{{ serial }}" shell am force-stop io.styrene.mesh
+    "{{ android_adb }}" -s "{{ serial }}" shell am start -W -n io.styrene.mesh/.MainActivity \
+        --es io.styrene.mesh.integration.PROFILE "{{ profile }}" \
+        --es io.styrene.mesh.integration.HUB_ADDRESS "10.0.2.2:4242" \
+        --es io.styrene.mesh.integration.DISPLAY_NAME "'{{ display_name }}'" \
+        --ez io.styrene.mesh.integration.RESET_STATE "{{ reset }}"
+
+# Show recent local mobile hub logs
+mobile-hub-logs:
+    ./scripts/local-mobile-hub.sh logs
+
+# Stop the isolated mobile simulator hub
+mobile-hub-stop:
+    ./scripts/local-mobile-hub.sh stop
+
+# Run the correlated iOS-to-Android local-hub acceptance lane
+mobile-integration-cross-platform serial="emulator-5554":
+    python3 scripts/mobile_cross_platform_runner.py --android-serial "{{ serial }}"
+
+# Test pure helpers used by the cross-platform mobile runner
+test-mobile-integration-runner:
+    python3 -m unittest scripts/test_mobile_cross_platform_runner.py
 
 # Validate all mobile profiles compile
 check-mobile-all: check-mobile check-mobile-keychain check-mobile-identity check-ffi
