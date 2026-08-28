@@ -3,21 +3,25 @@
 ## Intent
 
 Deliver a useful Rust-owned Dioxus Reticulum and LXMF mobile product with the
-smallest defensible interoperability claim. The
-mobile product must preserve one identity, connect to a configured public TCP
-interface, discover canonical peers, exchange durable text messages, and use a
-selected standard LXMF propagation node for offline delivery.
+smallest defensible interoperability claim and an evidence-backed product floor.
+The mobile product must preserve one identity, connect to a configured public
+TCP interface, discover canonical peers, exchange durable text messages, and use
+a selected standard LXMF propagation node for offline delivery.
 
-Skywave provides the observed connectivity and discovery floor. The pinned
-Python LXMF round trip against Brutus provides the propagation behavior target.
+A versioned corpus of RNS-compatible messaging applications provides observed
+workflow floors. Skywave provides the currently recorded connectivity and
+discovery evidence. Pinned Python RNS and LXMF remain the protocol authorities,
+and the Python LXMF round trip against Brutus provides the propagation behavior
+target. Interaction-only references cannot establish protocol compatibility.
 
 ## Scope
 
-This change adds persistent network and propagation-node configuration, truthful
-connection and discovery state, durable text conversation workflows, explicit
-delivery evidence, standard propagation upload and synchronization controls, and
-one shared cross-platform acceptance corpus. One Dioxus application and its
-Rust-owned embedded runtime deliver the behavior on iOS and Android.
+This change adds persistent network and propagation-node configuration. It adds
+truthful connection and discovery state, durable text conversations, explicit
+delivery evidence, and standard propagation controls. A versioned
+application-parity corpus complements the shared cross-platform state corpus.
+One Dioxus application and its Rust-owned embedded runtime deliver the behavior
+on iOS and Android.
 
 No Swift or Kotlin mobile host is retained. This change excludes mobile
 propagation hosting, automatic propagation-node selection, attachments, Paper
@@ -40,3 +44,6 @@ the applicable physical-device gates.
   message once.
 - The same deterministic state and behavior corpus passes against the Dioxus iOS
   and Android targets, followed by public-Brutus and applicable physical-device gates.
+- Every required mobile journey has a provenance-backed application-parity row.
+  The row is matched or records an accepted intentional difference. Deferred,
+  unsupported, and unevidenced rows remain explicit and block the affected claim.

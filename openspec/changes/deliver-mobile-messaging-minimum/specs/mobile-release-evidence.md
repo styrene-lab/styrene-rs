@@ -20,6 +20,18 @@ When a user views or acts on that data
 Then the application marks the session as fixture or preview
 And it opens no external network interface or message transmission
 
+### Requirement: Application parity evidence is independently attributable
+
+Release evidence must identify the application-parity corpus version and row for
+each claimed mobile workflow without treating application observation as
+protocol or packaged-target evidence.
+
+#### Scenario: Workflow parity is reported
+Given a required workflow has passed its applicable acceptance gates
+When release evidence is assembled
+Then the result identifies the application-parity row, state fixtures, protocol scenarios, and packaged artifacts used
+And each evidence class retains its own outcome and limitations
+
 ### Requirement: Release claims follow executed evidence
 
 Mobile release evidence must identify revision, platform, OS, runtime profile,
@@ -39,8 +51,8 @@ Then TCP messaging support can be reported for that platform
 And RNode support remains explicitly unverified
 
 #### Scenario: Physical RNode support is claimed
-Given a reference host has complete physical RNode acceptance evidence
-When the Dioxus release candidate repeats the applicable scenario on that platform
+Given the Dioxus release candidate is eligible for physical RNode acceptance
+When it completes the applicable scenario on that platform
 Then the evidence records NUS properties, MTU or write limit, radio profile, jurisdiction, bidirectional correlation, packet counts, interruption, retained replay, reconnect, and terminal outcome
 And the claim applies only to the exercised platform, bearer, RNode board, and firmware class
 

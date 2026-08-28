@@ -62,11 +62,12 @@
 - [ ] 7.3 Verify dynamic text, contrast, reduced motion, keyboard or switch access, and screen-reader semantics where supported
 - [ ] 7.4 Record exact GUI revision, backend revision, platform, OS, fixture, and artifact provenance
 - [ ] 7.5 Preserve partial outcomes when physical hardware or platform services are unavailable
+- [ ] 7.6 Replay every applicable accepted application-parity journey on both packaged targets and retain the backend corpus row in evidence
 
 ## 8. Physical Acceptance
 <!-- specs: mobile-ui/spec -->
 
-- [ ] 8.1 Verify each workflow against the shared state corpus and backend contract
+- [ ] 8.1 Verify each workflow against the application-parity corpus, shared state corpus, and backend contract
 - [ ] 8.2 Run physical iOS Bluetooth, secure storage, notification, and lifecycle scenarios
 - [ ] 8.3 Run physical Android Bluetooth, USB, secure storage, notification, and lifecycle scenarios
 - [ ] 8.4 Approve or reject each workflow based on recorded Dioxus evidence

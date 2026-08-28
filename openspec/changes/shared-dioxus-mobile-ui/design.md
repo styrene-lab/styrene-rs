@@ -87,6 +87,12 @@ notification activation, and lifecycle behavior that simulators cannot prove.
 Evidence reports identify the exact application revision, backend revision,
 device class, OS, bearer, scenario, and outcome.
 
+The backend-owned application-parity corpus supplies observed workflow floors.
+The mobile-minimum state corpus supplies deterministic typed states. Dioxus
+package tests replay accepted application journeys. Pinned Python RNS and LXMF
+tests remain the separate protocol authority. Passing one evidence class cannot
+substitute for another.
+
 ## Failure And Rollback
 
 A platform adapter failure degrades only the affected capability. It must not
