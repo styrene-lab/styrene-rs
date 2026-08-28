@@ -51,7 +51,35 @@ that were exercised.
 An operator-observed iOS Bluetooth run reached reconnect, configuration, and
 packet transmission. It lacks the complete committed acceptance record required
 for physical acceptance. Physical iOS, Android Bluetooth, and Android USB
-acceptance remain open.
+acceptance remain open. An Android phone is connected by USB, but ADB must be
+authorized on the phone before it can provide physical execution evidence.
+
+## RNode Evidence Closure
+
+The host link layers must be injectable before physical acceptance. Fake iOS
+CoreBluetooth and Android GATT or USB adapters must drive service discovery,
+characteristic validation, protected-access failure, negotiated write limits,
+fragmented notifications, serialized writes, disconnects, and retries without
+physical timing dependencies.
+
+Every host queue must have a declared bound. A full queue returns an explicit
+capacity outcome. A failed or interrupted write retains accepted outbound work
+until the same packet channel reconnects. Channel detachment pauses packet
+pumping and preserves Bluetooth approval. Replacing the packet channel does not
+replay work owned by the previous channel.
+
+A physical acceptance record identifies the mobile device and OS, RNode board
+and firmware, advertised name, NUS characteristic properties, negotiated MTU or
+write limit, radio profile, jurisdiction, packet hashes or correlation IDs,
+bidirectional packet counts, deadlines, disconnect and reconnect result, and
+terminal outcome. Raw logs, generated applications, bindings, and native
+libraries remain outside source control. Only a sanitized evidence summary can
+be committed.
+
+The temporary SwiftUI and Compose hosts establish hardware-boundary evidence.
+An RNode product claim also requires the Dioxus release candidate to repeat the
+applicable physical scenario through the same Rust-owned packet-channel and
+bearer-state contracts.
 
 ## Dependency And Rollout
 

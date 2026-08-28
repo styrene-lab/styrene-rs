@@ -49,7 +49,7 @@
 
 - [x] 6.1 Add failing Rust platform-service and Dioxus tests proving TCP remains operational when Bluetooth or USB is unavailable, denied, interrupted, or unverified
 - [x] 6.2 Implement Rust-owned platform services and present TCP, Bluetooth RNode, and Android USB as independent backend-confirmed bearer states
-- [ ] 6.3 Complete applicable `stabilize-mobile-platform-hosts` channel-detachment, approved-device, fragmentation, serialization, and retention gates before enabling an RNode support claim
+- [ ] 6.3 Complete applicable `stabilize-mobile-platform-hosts` channel-detachment, approved-device, queue-bound, fragmentation, serialization, retention, and physical acceptance gates before enabling an RNode support claim
 - [x] 6.4 Preserve explicit Android USB fallback and prevent it from preempting an approved Bluetooth bearer
 
 ## 7. Cross-Platform Acceptance
@@ -59,8 +59,9 @@
 - [ ] 7.2 Run iOS Simulator and Android emulator cold-launch, endpoint failure, reconnect, discovery, conversation, retry, and propagation-state scenarios
 - [ ] 7.3 Run public-Brutus discovery, direct text, propagated upload, offline retrieval, acknowledgement, repeat sync, and hub-restart scenarios with bounded evidence
 - [ ] 7.4 Run applicable physical iOS and Android TCP lifecycle scenarios and retain explicit gaps for unavailable hardware or background execution
-- [ ] 7.5 Run physical RNode scenarios only for platform claims that include RNode support
+- [ ] 7.5 Run complete physical RNode scenarios for each claimed platform, including NUS properties, MTU or write limit, fragmented traffic, bidirectional correlation, interruption, retained replay, and reconnect
 - [ ] 7.6 Record exact application, backend, hub, platform, OS, endpoint class, bearer, correlation, deadline, and outcome for every live gate
+- [ ] 7.7 Repeat each passing reference-host RNode scenario on the Dioxus release candidate before publishing the product capability
 
 ## 8. Release Verification
 <!-- specs: mobile-network-session, mobile-messaging, mobile-propagation-client, mobile-release-evidence -->
