@@ -88,6 +88,10 @@ result-rg35xxsp-bringup
 android/local.properties
 android/app/src/main/jniLibs/
 android/app/src/main/kotlin/uniffi/
+android/**/*.apk
+android/**/*.aab
+android/**/*.jks
+android/**/*.keystore
 
 # Xcode user state and generated iOS native bindings
 DerivedData/
@@ -95,6 +99,10 @@ DerivedData/
 **/xcuserdata/
 ios/Generated/
 ios/Frameworks/*.xcframework/
+ios/**/*.ipa
+ios/**/*.mobileprovision
+ios/**/*.xcarchive/
+ios/**/*.xcresult/
 
 # Jupyter Notebook
 .ipynb_checkpoints
