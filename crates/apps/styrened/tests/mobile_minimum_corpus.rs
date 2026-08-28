@@ -84,6 +84,7 @@ struct Conversation {
     peer_hash: String,
     unread_count: u32,
     draft: String,
+    draft_revision: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -334,7 +335,7 @@ fn mobile_minimum_fixture_contract_is_strict_and_complete() {
         }
         for conversation in &fixture.conversations {
             assert!(!conversation.peer_hash.is_empty(), "{}: conversation peer", fixture.id);
-            let _ = (conversation.unread_count, &conversation.draft);
+            let _ = (conversation.unread_count, &conversation.draft, conversation.draft_revision);
         }
         for message in &fixture.messages {
             assert_eq!(
