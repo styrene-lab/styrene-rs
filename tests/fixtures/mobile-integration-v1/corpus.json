@@ -1,0 +1,982 @@
+{
+  "schema_version": 1,
+  "corpus": "styrene-mobile-integration-v1",
+  "description": "Acceptance inventory for the shared Styrene iOS and Android communicator",
+  "topologies": [
+    {"id": "offline-single", "kind": "offline", "nodes": 1, "description": "One embedded node without a routable interface"},
+    {"id": "loopback-pair", "kind": "loopback", "nodes": 2, "description": "Two embedded mobile nodes over direct loopback TCP"},
+    {"id": "hub-pair", "kind": "loopback", "nodes": 3, "description": "Two mobile nodes connected through one local Styrene hub"},
+    {"id": "ios-dual-simulator", "kind": "simulator", "nodes": 2, "description": "Two isolated iOS Simulator app instances"},
+    {"id": "cross-platform-simulator", "kind": "simulator", "nodes": 3, "description": "iOS Simulator and Android emulator through a local hub"},
+    {"id": "android-rnode-device", "kind": "hardware", "nodes": 2, "description": "Android device, physical RNode, and remote radio peer"},
+    {"id": "wireguard-underlay", "kind": "device", "nodes": 2, "description": "Direct TCP carried through a pre-created WireGuard tunnel"},
+    {"id": "propagation-hub", "kind": "loopback", "nodes": 3, "description": "Sender, receiver, and propagation service with the direct path unavailable"},
+    {"id": "micron-host", "kind": "loopback", "nodes": 2, "description": "Mobile node and controlled native Micron page host"},
+    {"id": "host-fixture", "kind": "offline", "nodes": 1, "description": "Deterministic native-host state and accessibility fixture"},
+    {"id": "upstream-live", "kind": "live_interop", "nodes": 2, "description": "Styrene and pinned upstream Python implementations"}
+  ],
+  "required_areas": [
+    "identity", "lifecycle", "messaging", "delivery", "attachments", "people",
+    "network", "propagation", "pages", "settings", "diagnostics", "persistence",
+    "accessibility", "parity"
+  ],
+  "cases": [
+    {
+      "id": "mobile.identity.offline-create",
+      "area": "identity",
+      "priority": "p0",
+      "title": "Offline boot creates a stable local identity without inventing a delivery route",
+      "maturity": "partial",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.identity-anchor", "more.identity"],
+      "actions": ["boot", "inspect-identity", "restart"],
+      "assertions": [
+        {"source": "daemon", "claim": "Identity hash is stable and delivery hash is absent without a delivery-capable interface", "oracle": "crates/apps/styrened/tests/mobile_node.rs#offline_boot_reports_no_routable_destination"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#offline_boot_reports_no_routable_destination"],
+      "missing_capabilities": ["Rust restart identity stability assertion", "typed mobile identity custody status", "native host restart automation"],
+      "not_proven": ["device key custody"]
+    },
+    {
+      "id": "mobile.identity.normalized-display-name",
+      "area": "identity",
+      "priority": "p0",
+      "title": "Display names are normalized before they become announce identity data",
+      "maturity": "partial",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.identity-anchor", "more.identity", "network.connection-setup"],
+      "actions": ["boot", "announce", "inspect-peer"],
+      "assertions": [
+        {"source": "daemon", "claim": "The announced display name equals the normalized configured value", "oracle": "crates/apps/styrened/tests/mobile_node.rs#hub_boot_publishes_destination_and_normalized_display_name"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#hub_boot_publishes_destination_and_normalized_display_name"],
+      "missing_capabilities": ["typed mobile identity query and edit operation"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.identity.copy-public-destination",
+      "area": "identity",
+      "priority": "p0",
+      "title": "The identity anchor copies only the public LXMF delivery destination",
+      "maturity": "partial",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "ios-dual-simulator",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.identity-anchor", "more.identity"],
+      "actions": ["open-identity", "copy-public-hash", "read-clipboard"],
+      "assertions": [
+        {"source": "platform", "claim": "Clipboard content equals the public delivery destination and contains no private key material", "oracle": "docs/mobile-ui-contract.md#operator-priority"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["stable native test identifiers", "iOS and Android clipboard integration tests"],
+      "not_proven": ["secure custody"]
+    },
+    {
+      "id": "mobile.identity.device-custody",
+      "area": "identity",
+      "priority": "p0",
+      "title": "Production identities use platform secure storage and survive restart",
+      "maturity": "blocked",
+      "kind": "device",
+      "evidence_scope": "host_device",
+      "topology": "cross-platform-simulator",
+      "platforms": ["ios_device", "android_device"],
+      "ui_surfaces": ["more.identity", "more.settings"],
+      "actions": ["boot", "terminate-app", "restart", "inspect-identity"],
+      "assertions": [
+        {"source": "platform", "claim": "The same identity is loaded from the declared secure backend after restart", "oracle": "docs/mobile-integration-test-corpus.md#cross-platform-and-device-integration"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["Android secure identity backend", "device custody status projection", "device test lane"],
+      "not_proven": ["backup and recovery", "biometric access policy"]
+    },
+    {
+      "id": "mobile.lifecycle.offline-ready",
+      "area": "lifecycle",
+      "priority": "p0",
+      "title": "A booted node without a routable interface reports ready rather than connected",
+      "maturity": "partial",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.status", "network.posture"],
+      "actions": ["boot", "query-status", "inspect-status"],
+      "assertions": [
+        {"source": "daemon", "claim": "The local runtime exists while transport activity and connectivity remain false", "oracle": "crates/apps/styrened/tests/mobile_node.rs#offline_boot_reports_no_routable_destination"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#offline_boot_reports_no_routable_destination"],
+      "missing_capabilities": ["shared typed host lifecycle projection"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.lifecycle.explicit-shutdown",
+      "area": "lifecycle",
+      "priority": "p0",
+      "title": "Explicit shutdown stops workers and releases listeners within the deadline",
+      "maturity": "executable",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi"],
+      "ui_surfaces": ["network.connection-setup"],
+      "actions": ["boot", "shutdown", "probe-listener"],
+      "assertions": [
+        {"source": "daemon", "claim": "Shutdown completes within five seconds and the listener rejects new connections", "oracle": "crates/apps/styrened/tests/mobile_node.rs#tcp_server_reports_actual_ephemeral_listener"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#tcp_server_reports_actual_ephemeral_listener"],
+      "missing_capabilities": [],
+      "not_proven": ["OS forced termination"]
+    },
+    {
+      "id": "mobile.lifecycle.generation-isolation",
+      "area": "lifecycle",
+      "priority": "p0",
+      "title": "Late work from a stopped node cannot mutate a replacement host session",
+      "maturity": "partial",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages", "network", "pages"],
+      "actions": ["start-operation", "shutdown", "restart", "complete-old-operation"],
+      "assertions": [
+        {"source": "host_state", "claim": "Old results, errors, loading flags, and navigation state do not enter the new generation", "oracle": "docs/mobile-integration-test-corpus.md#native-host-tests"}
+      ],
+      "existing_tests": ["ios/StyreneMobileTests/StyreneNodeModelTests.swift", "android/app/src/test/kotlin/io/styrene/mesh/MobileNodeStateHolderTest.kt"],
+      "missing_capabilities": ["native stale page and refresh assertions", "host restart-generation acceptance test"],
+      "not_proven": ["daemon cancellation"]
+    },
+    {
+      "id": "mobile.lifecycle.partial-boot-retry",
+      "area": "lifecycle",
+      "priority": "p0",
+      "title": "A partial boot failure cleans up and permits a later retry",
+      "maturity": "partial",
+      "kind": "offline",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.status", "network.posture"],
+      "actions": ["inject-boot-failure", "observe-error", "retry-boot"],
+      "assertions": [
+        {"source": "daemon", "claim": "Failed composition leaves no retained workers or listeners", "oracle": "crates/apps/styrened/src/mobile.rs"},
+        {"source": "host_state", "claim": "Retry enters starting and reaches ready or connected", "oracle": "docs/mobile-ui-contract.md#shared-states"}
+      ],
+      "existing_tests": ["ios/StyreneMobileTests/StyreneNodeModelTests.swift", "android/app/src/test/kotlin/io/styrene/mesh/MobileNodeStateHolderTest.kt"],
+      "missing_capabilities": ["Android hydration-failure cleanup and retry assertion", "boot-stage fault injection", "typed boot failure stage"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.messaging.direct-bidirectional",
+      "area": "messaging",
+      "priority": "p0",
+      "title": "Two mobile nodes discover each other and exchange direct LXMF in both directions",
+      "maturity": "executable",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust"],
+      "ui_surfaces": ["messages.inbox", "messages.thread", "people.directory"],
+      "actions": ["boot-pair", "announce-pair", "send-a-to-b", "send-b-to-a"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Each receiver stores exactly one inbound message with the expected source and content", "oracle": "crates/apps/styrened/tests/mobile_node.rs#two_mobile_nodes_exchange_lxmf_directly_without_hub"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#two_mobile_nodes_exchange_lxmf_directly_without_hub"],
+      "missing_capabilities": [],
+      "not_proven": ["native host rendering", "upstream interoperability"]
+    },
+    {
+      "id": "mobile.messaging.dual-simulator-roundtrip",
+      "area": "messaging",
+      "priority": "p0",
+      "title": "Two simulator app instances complete a visible message and reply round trip",
+      "maturity": "blocked",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "ios-dual-simulator",
+      "platforms": ["ios_simulator"],
+      "ui_surfaces": ["messages.inbox", "messages.thread", "messages.composer"],
+      "actions": ["launch-pair", "send-a-to-b", "observe-b-unread", "reply-b-to-a"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Both messages exist once with matching correlation IDs", "oracle": "docs/mobile-integration-test-corpus.md#dual-simulator-integration"},
+        {"source": "accessibility", "claim": "Each host exposes the expected conversation and message semantics", "oracle": "docs/mobile-integration-test-corpus.md#native-host-tests"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["deterministic iOS launch profiles", "XCTest target", "dual-simulator runner", "send-result and message-ID correlation projection", "host evidence query"],
+      "not_proven": ["device background delivery"]
+    },
+    {
+      "id": "mobile.messaging.cross-platform-roundtrip",
+      "area": "messaging",
+      "priority": "p0",
+      "title": "iOS and Android complete a message and reply round trip through a local hub",
+      "maturity": "partial",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "cross-platform-simulator",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.inbox", "messages.thread"],
+      "actions": ["launch-cross-platform-pair", "send-a-to-b", "reply-b-to-a"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Each host stores one inbound and one outbound record with matching correlation IDs", "oracle": "docs/mobile-integration-test-corpus.md#cross-platform-and-device-integration"}
+      ],
+      "existing_tests": ["ios/StyreneMobileUITests/CrossPlatformHubUITests.swift#testIOSQueuesCorrelatedMessageForAndroid", "scripts/mobile_cross_platform_runner.py"],
+      "missing_capabilities": ["Android-to-iOS reply automation", "send-result and message-ID correlation projection"],
+      "not_proven": ["upstream interoperability"]
+    },
+    {
+      "id": "mobile.messaging.unread-and-mark-read",
+      "area": "messaging",
+      "priority": "p0",
+      "title": "Inbound messages increment unread state and opening the thread marks it read",
+      "maturity": "partial",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.inbox", "messages.thread"],
+      "actions": ["receive-message", "query-conversations", "open-thread", "query-conversations"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Unread count changes from one to zero without deleting the conversation", "oracle": "crates/apps/styrened/tests/mobile_node.rs#two_mobile_nodes_exchange_lxmf_directly_without_hub"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#two_mobile_nodes_exchange_lxmf_directly_without_hub", "scripts/mobile_cross_platform_runner.py"],
+      "missing_capabilities": ["iOS native host unread semantic assertions"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.messaging.draft-preserved-on-failure",
+      "area": "messaging",
+      "priority": "p0",
+      "title": "A failed send preserves the current composer draft for recovery",
+      "maturity": "partial",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.composer"],
+      "actions": ["enter-draft", "inject-send-failure", "inspect-composer"],
+      "assertions": [
+        {"source": "host_state", "claim": "The exact draft remains editable and one failure is visible", "oracle": "docs/mobile-ui-contract.md#message-composition"}
+      ],
+      "existing_tests": ["ios/StyreneMobileTests/StyreneNodeModelTests.swift", "android/app/src/test/kotlin/io/styrene/mesh/MobileNodeStateHolderTest.kt"],
+      "missing_capabilities": ["host send-failure fixture assertions"],
+      "not_proven": ["daemon retry"]
+    },
+    {
+      "id": "mobile.messaging.concurrent-send-serialization",
+      "area": "messaging",
+      "priority": "p0",
+      "title": "Repeated send actions cannot enqueue duplicate content accidentally",
+      "maturity": "partial",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.composer"],
+      "actions": ["enter-draft", "tap-send-repeatedly", "complete-send"],
+      "assertions": [
+        {"source": "host_state", "claim": "Only one send operation starts and the composer clears only for its own successful operation", "oracle": "docs/mobile-integration-test-corpus.md#native-host-tests"}
+      ],
+      "existing_tests": ["ios/StyreneMobileTests/StyreneNodeModelTests.swift", "android/app/src/test/kotlin/io/styrene/mesh/MobileNodeStateHolderTest.kt"],
+      "missing_capabilities": ["iOS repeated-send assertion"],
+      "not_proven": ["network deduplication"]
+    },
+    {
+      "id": "mobile.messaging.history-order-and-pagination",
+      "area": "messaging",
+      "priority": "p1",
+      "title": "Threads render oldest to newest and load bounded older history",
+      "maturity": "blocked",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.thread"],
+      "actions": ["seed-history", "open-thread", "scroll-to-oldest", "load-older"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Every message appears once in canonical timestamp order", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile message cursor or pagination API", "deterministic history fixture"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.delivery.queued-is-not-delivered",
+      "area": "delivery",
+      "priority": "p0",
+      "title": "Host acceptance is labeled queued or outgoing and never fabricated as delivered",
+      "maturity": "partial",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.thread"],
+      "actions": ["send-message", "withhold-receipt", "inspect-message"],
+      "assertions": [
+        {"source": "daemon", "claim": "Accepted send has no terminal delivery evidence", "oracle": "crates/libs/styrene-ipc/src/types.rs"},
+        {"source": "accessibility", "claim": "The host does not expose delivered semantics", "oracle": "docs/mobile-ui-contract.md#message-composition"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["complete mobile message lifecycle projection"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.delivery.lifecycle-and-receipt",
+      "area": "delivery",
+      "priority": "p0",
+      "title": "Lifecycle state and packet or resource evidence are shown from typed daemon observations",
+      "maturity": "blocked",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.thread", "messages.delivery-details"],
+      "actions": ["send-message", "observe-attempt", "receive-evidence", "inspect-details"],
+      "assertions": [
+        {"source": "daemon", "claim": "Lifecycle, attempt, terminal state, and exact evidence kind agree", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile lifecycle record", "mobile receipt and resource evidence", "delivery details UI"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.delivery.requested-actual-fallback",
+      "area": "delivery",
+      "priority": "p0",
+      "title": "Requested method, actual method, and fallback reason remain separate",
+      "maturity": "blocked",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.delivery-options", "messages.delivery-details"],
+      "actions": ["select-method", "send-message", "trigger-fallback", "inspect-details"],
+      "assertions": [
+        {"source": "daemon", "claim": "Requested and actual methods match the router outcome and preserve the fallback reason", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile delivery method input", "mobile send outcome", "method and fallback projection"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.delivery.route-bearer-separation",
+      "area": "delivery",
+      "priority": "p0",
+      "title": "LXMF method, network bearer, and receipt evidence are independent labels",
+      "maturity": "blocked",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.route-evidence", "network.interfaces"],
+      "actions": ["send-message", "query-route", "query-interface", "inspect-message"],
+      "assertions": [
+        {"source": "daemon", "claim": "Method comes from message routing while bearer and hops come from path and interface evidence", "oracle": "docs/mobile-ui-contract.md#message-composition"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile path projection", "mobile interface projection", "message-to-route correlation"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.delivery.public-tcp-bearer",
+      "area": "delivery",
+      "priority": "p1",
+      "title": "A direct message over an Internet-reachable TCP interface identifies public TCP as the bearer",
+      "maturity": "blocked",
+      "kind": "device",
+      "evidence_scope": "host_device",
+      "topology": "hub-pair",
+      "platforms": ["ios_device", "android_device"],
+      "ui_surfaces": ["messages.route-evidence", "network.interfaces"],
+      "actions": ["connect-public-tcp", "send-message", "inspect-route"],
+      "assertions": [
+        {"source": "daemon", "claim": "The correlated interface is the configured TCP client and not an inferred delivery method", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["typed mobile interface evidence", "message-to-interface correlation", "device network lane"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.delivery.wireguard-bearer",
+      "area": "delivery",
+      "priority": "p1",
+      "title": "Direct TCP carried through a WireGuard tunnel identifies the tunnel underlay",
+      "maturity": "blocked",
+      "kind": "device",
+      "evidence_scope": "host_device",
+      "topology": "wireguard-underlay",
+      "platforms": ["ios_device", "android_device"],
+      "ui_surfaces": ["messages.route-evidence", "network.interfaces"],
+      "actions": ["establish-underlay", "send-message", "inspect-route", "partition-underlay"],
+      "assertions": [
+        {"source": "platform", "claim": "The active TCP path is correlated to the pre-created tunnel interface", "oracle": "docs/mobile-ui-contract.md#message-composition"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["working tunnel backend or external test adapter", "typed underlay correlation"],
+      "not_proven": ["Styrene tunnel negotiation"]
+    },
+    {
+      "id": "mobile.attachments.small-inline",
+      "area": "attachments",
+      "priority": "p1",
+      "title": "A small attachment preserves name, type, size, checksum, and bytes",
+      "maturity": "blocked",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.composer", "messages.thread"],
+      "actions": ["pick-attachment", "send-message", "open-attachment"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Receiver attachment metadata and checksum match the sent bytes", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile attachment input", "mobile attachment projection", "host file picker adapters"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.attachments.resource-progress",
+      "area": "attachments",
+      "priority": "p1",
+      "title": "A resource attachment reports bounded progress and verified completion",
+      "maturity": "blocked",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.thread", "messages.attachment-transfer"],
+      "actions": ["send-large-attachment", "observe-progress", "verify-integrity"],
+      "assertions": [
+        {"source": "daemon", "claim": "Transferred bytes are monotonic and completion includes checksum verification", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile attachment transfer projection", "progress subscription", "bounded download API"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.attachments.cancel-and-retry",
+      "area": "attachments",
+      "priority": "p1",
+      "title": "Interrupted attachment transfer can be cancelled or retried without corrupt availability",
+      "maturity": "blocked",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.attachment-transfer"],
+      "actions": ["start-transfer", "partition-path", "cancel-transfer", "retry-transfer"],
+      "assertions": [
+        {"source": "daemon", "claim": "Cancelled or failed transfer never becomes available and retry creates coherent evidence", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile transfer cancellation", "mobile retry operation", "attachment integrity projection"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.people.saved-and-discovered",
+      "area": "people",
+      "priority": "p0",
+      "title": "Saved contacts remain visible when they are not currently discovered",
+      "maturity": "partial",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["people.directory", "people.person"],
+      "actions": ["seed-contact", "omit-announce", "open-people"],
+      "assertions": [
+        {"source": "daemon", "claim": "Contact and discovery records remain separate facts", "oracle": "crates/libs/styrene-ipc/src/types.rs"},
+        {"source": "accessibility", "claim": "The saved contact remains actionable without an online claim", "oracle": "docs/mobile-ui-contract.md#shared-states"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["shared native directory fixture", "full device discovery projection"],
+      "not_proven": ["route availability"]
+    },
+    {
+      "id": "mobile.people.discovery-not-connectivity",
+      "area": "people",
+      "priority": "p0",
+      "title": "An announce marks a peer discovered without claiming route or link state",
+      "maturity": "partial",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["people.directory", "people.person"],
+      "actions": ["receive-announce", "remove-route", "inspect-person"],
+      "assertions": [
+        {"source": "daemon", "claim": "Discovery observation exists while route and link evidence are absent", "oracle": "docs/mobile-ui-contract.md#shared-states"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile discovery observation age", "mobile route and link projection"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.people.alias-edit",
+      "area": "people",
+      "priority": "p0",
+      "title": "Editing a contact alias updates both People and conversation display names",
+      "maturity": "partial",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["people.person", "messages.inbox", "messages.thread"],
+      "actions": ["save-contact", "edit-alias", "open-conversation"],
+      "assertions": [
+        {"source": "daemon", "claim": "The contact store returns the new alias for the same peer hash", "oracle": "crates/bindings/styrene-mobile-ffi/src/lib.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["native alias editor", "contact mutation host tests"],
+      "not_proven": ["notes", "trust", "block state"]
+    },
+    {
+      "id": "mobile.network.tcp-profile-validation",
+      "area": "network",
+      "priority": "p0",
+      "title": "Invalid, malformed, and duplicate TCP profiles fail before workers start",
+      "maturity": "partial",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["network.connection-setup", "more.settings"],
+      "actions": ["boot-invalid-profile", "boot-malformed-profile", "boot-duplicate-profile"],
+      "assertions": [
+        {"source": "daemon", "claim": "Each invalid profile is rejected before runtime composition with a descriptive boot error", "oracle": "crates/apps/styrened/tests/mobile_node.rs#invalid_and_duplicate_tcp_profiles_fail_before_boot"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#invalid_and_duplicate_tcp_profiles_fail_before_boot"],
+      "missing_capabilities": ["typed profile validation errors", "UniFFI profile conversion tests", "native profile validation fixtures"],
+      "not_proven": ["native form validation"]
+    },
+    {
+      "id": "mobile.network.ephemeral-listener",
+      "area": "network",
+      "priority": "p0",
+      "title": "A TCP server profile reports its actual bound listener",
+      "maturity": "partial",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["network.interfaces"],
+      "actions": ["boot-tcp-server", "query-listeners", "shutdown"],
+      "assertions": [
+        {"source": "daemon", "claim": "The listener has a nonzero bound port and closes on shutdown", "oracle": "crates/apps/styrened/tests/mobile_node.rs#tcp_server_reports_actual_ephemeral_listener"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#tcp_server_reports_actual_ephemeral_listener"],
+      "missing_capabilities": ["UniFFI listener projection test", "native listener acceptance fixtures"],
+      "not_proven": ["native interface card"]
+    },
+    {
+      "id": "mobile.network.interface-observations",
+      "area": "network",
+      "priority": "p0",
+      "title": "Interface cards show typed status, endpoints, traffic, freshness, and failures",
+      "maturity": "blocked",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["network.interfaces", "messages.route-evidence"],
+      "actions": ["boot-interface", "transfer-packets", "query-interface", "disconnect-interface"],
+      "assertions": [
+        {"source": "daemon", "claim": "Every displayed interface field matches the typed observation and generation", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile interface detail projection", "interface observation generation", "failure reason projection"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.network.rnode-permission-and-config",
+      "area": "network",
+      "priority": "p0",
+      "title": "Android reports USB permission, RNode configuration, and online state without conflation",
+      "maturity": "partial",
+      "kind": "hardware",
+      "evidence_scope": "hardware_observation",
+      "topology": "android-rnode-device",
+      "platforms": ["android_jvm", "android_device", "rnode_hardware"],
+      "ui_surfaces": ["network.interfaces", "more.settings"],
+      "actions": ["attach-rnode", "deny-usb", "grant-usb", "configure-radio", "unplug-rnode"],
+      "assertions": [
+        {"source": "platform", "claim": "Permission and device states follow Android USB observations", "oracle": "android/app/src/main/kotlin/io/styrene/mesh/RNodeController.kt"},
+        {"source": "daemon", "claim": "Online state requires successful radio configuration and packet bridge startup", "oracle": "crates/apps/styrened/src/mobile.rs"}
+      ],
+      "existing_tests": ["android/app/src/test/kotlin/io/styrene/mesh/RNodeProtocolTest.kt"],
+      "missing_capabilities": ["device-in-loop RNode harness", "typed RNode failure projection", "secure Android identity backend"],
+      "not_proven": ["RF delivery"]
+    },
+    {
+      "id": "mobile.network.rnode-lora-roundtrip",
+      "area": "network",
+      "priority": "p1",
+      "title": "Two LoRa peers exchange LXMF and identify RNode LoRa as the bearer",
+      "maturity": "blocked",
+      "kind": "hardware",
+      "evidence_scope": "hardware_observation",
+      "topology": "android-rnode-device",
+      "platforms": ["android_device", "rnode_hardware"],
+      "ui_surfaces": ["messages.thread", "messages.route-evidence", "network.interfaces"],
+      "actions": ["configure-radios", "announce-pair", "send-message", "receive-message"],
+      "assertions": [
+        {"source": "hardware", "claim": "Receiver durable message and correlated interface evidence identify the RNode path", "oracle": "docs/mobile-integration-test-corpus.md#cross-platform-and-device-integration"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["two-radio hardware rig", "message-to-RNode correlation", "typed signal and hop evidence"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.propagation.explicit-hub-poll",
+      "area": "propagation",
+      "priority": "p0",
+      "title": "An explicit hub poll persists accepted messages before reporting the fetched count",
+      "maturity": "partial",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "propagation-hub",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.propagation", "messages.inbox"],
+      "actions": ["queue-at-hub", "poll-hub", "query-messages"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Accepted messages exist before the poll result is exposed", "oracle": "crates/apps/styrened/src/mobile.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["native propagation configuration", "native projection of per-message poll results"],
+      "not_proven": ["standard LXMF propagation parity"]
+    },
+    {
+      "id": "mobile.propagation.queue-sync-state",
+      "area": "propagation",
+      "priority": "p0",
+      "title": "Propagation UI shows selected peer, queue, attempts, checkpoints, retries, and failures",
+      "maturity": "blocked",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "propagation-hub",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.propagation"],
+      "actions": ["queue-message", "start-sync", "interrupt-sync", "inspect-propagation"],
+      "assertions": [
+        {"source": "daemon", "claim": "Every queue and synchronization field comes from the standard propagation snapshot", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile standard propagation snapshot", "mobile sync operation", "propagation event stream"],
+      "not_proven": ["upstream propagation parity"]
+    },
+    {
+      "id": "mobile.propagation.no-implicit-fallback-claim",
+      "area": "propagation",
+      "priority": "p0",
+      "title": "A configured legacy hub does not imply automatic standard propagation fallback",
+      "maturity": "partial",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.delivery-options", "more.propagation"],
+      "actions": ["configure-legacy-hub", "fail-direct-send", "inspect-delivery"],
+      "assertions": [
+        {"source": "platform", "claim": "The host does not announce propagated or fallback without typed router evidence", "oracle": "docs/mobile-ui-contract.md#message-composition"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["native semantic fixture for propagation failure"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.pages.raw-source-success",
+      "area": "pages",
+      "priority": "p1",
+      "title": "The experimental browser displays raw Micron source with request provenance",
+      "maturity": "partial",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "micron-host",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.pages"],
+      "actions": ["enter-page-address", "fetch-page", "inspect-source"],
+      "assertions": [
+        {"source": "daemon", "claim": "Returned source corresponds to the requested destination and native path", "oracle": "crates/bindings/styrene-mobile-ffi/src/lib.rs"},
+        {"source": "accessibility", "claim": "The host exposes the address and complete raw source", "oracle": "docs/mobile-ui-contract.md#pages"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/nomadnet_pages_offline.rs"],
+      "missing_capabilities": ["native page-host integration fixture"],
+      "not_proven": ["structured rendering", "native NomadNet interoperability"]
+    },
+    {
+      "id": "mobile.pages.validation-and-timeout",
+      "area": "pages",
+      "priority": "p1",
+      "title": "Invalid addresses, invalid paths, unavailable hosts, and timeouts remain distinct failures",
+      "maturity": "partial",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "micron-host",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.pages"],
+      "actions": ["fetch-invalid-address", "fetch-invalid-path", "fetch-unavailable-host", "trigger-timeout"],
+      "assertions": [
+        {"source": "daemon", "claim": "Each failure has the expected typed class and no stale source remains", "oracle": "crates/libs/styrene-ipc/src/pages.rs"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/nomadnet_pages_offline.rs"],
+      "missing_capabilities": ["typed mobile page error", "host failure fixture"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.pages.structured-session",
+      "area": "pages",
+      "priority": "p1",
+      "title": "Typed page sessions support rendering, links, history, reload, and forms",
+      "maturity": "blocked",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "micron-host",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.pages"],
+      "actions": ["open-page-session", "follow-link", "navigate-back", "submit-form", "reload-page"],
+      "assertions": [
+        {"source": "daemon", "claim": "Rendered content, navigation, stages, warnings, and form results belong to one typed session", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["typed mobile page session", "render projection", "navigation and form operations"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.pages.file-transfer",
+      "area": "pages",
+      "priority": "p1",
+      "title": "Page file downloads expose progress, integrity, cancellation, and save outcome",
+      "maturity": "blocked",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "micron-host",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.pages", "pages.download"],
+      "actions": ["open-file-link", "observe-progress", "cancel-download", "retry-download", "save-file"],
+      "assertions": [
+        {"source": "daemon", "claim": "Transfer bytes, checksum, terminal state, and saved path are coherent", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile page download operations", "host save adapter", "transfer progress projection"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.settings.local-preferences",
+      "area": "settings",
+      "priority": "p0",
+      "title": "Host-owned display preferences persist and alter only presentation",
+      "maturity": "partial",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.settings", "messages.route-evidence", "more.pages"],
+      "actions": ["toggle-route-evidence", "restart-app", "inspect-message", "toggle-pages"],
+      "assertions": [
+        {"source": "platform", "claim": "Preferences persist in host storage and do not mutate daemon protocol state", "oracle": "docs/mobile-ui-contract.md#capability-settings"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["native preference tests", "deterministic preview fixture launch"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.settings.capability-availability",
+      "area": "settings",
+      "priority": "p0",
+      "title": "Enabled actions and disabled reasons follow typed active capabilities",
+      "maturity": "blocked",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.settings", "more.about", "messages.delivery-options"],
+      "actions": ["load-capabilities", "inspect-settings", "change-generation", "inspect-settings"],
+      "assertions": [
+        {"source": "daemon", "claim": "Availability, degradation, authorization, and reason match the active capability generation", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile active capability projection", "typed disabled reasons", "capability generation"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.settings.background-and-notifications",
+      "area": "settings",
+      "priority": "p1",
+      "title": "Background receive and notification controls reflect real platform authorization",
+      "maturity": "blocked",
+      "kind": "device",
+      "evidence_scope": "host_device",
+      "topology": "cross-platform-simulator",
+      "platforms": ["ios_device", "android_device"],
+      "ui_surfaces": ["more.settings", "messages.inbox"],
+      "actions": ["request-notification-permission", "background-app", "receive-message", "open-notification"],
+      "assertions": [
+        {"source": "platform", "claim": "Control state and notification delivery match OS authorization and background execution", "oracle": "docs/mobile-integration-test-corpus.md#cross-platform-and-device-integration"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["iOS background tasks", "Android foreground service", "OS notification integration", "conversation mute projection"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.diagnostics.redacted-bounded-export",
+      "area": "diagnostics",
+      "priority": "p0",
+      "title": "Diagnostic evidence is bounded, chronological, correlated, and redacted",
+      "maturity": "blocked",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.diagnostics"],
+      "actions": ["seed-diagnostic-events", "open-diagnostics", "export-diagnostics"],
+      "assertions": [
+        {"source": "daemon", "claim": "Events are bounded and preserve source, time, generation, stage, and correlation", "oracle": "docs/mobile-ui-contract.md#required-backend-projections"},
+        {"source": "platform", "claim": "Export contains no keys, credentials, canonical wire, or message payloads", "oracle": "docs/mobile-integration-test-corpus.md#evidence-rules"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["bounded mobile diagnostic projection", "redacted export operation", "host share adapter"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.persistence.identity-messages-contacts",
+      "area": "persistence",
+      "priority": "p0",
+      "title": "Identity, messages, contacts, and read state survive graceful restart",
+      "maturity": "partial",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "loopback-pair",
+      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages", "people", "more.identity"],
+      "actions": ["seed-state", "shutdown", "restart", "query-state"],
+      "assertions": [
+        {"source": "durable_store", "claim": "All durable records and the identity reappear once with unchanged keys", "oracle": "docs/mobile-integration-test-corpus.md#cross-platform-and-device-integration"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs"],
+      "missing_capabilities": ["Rust complete-state restart test", "native restart acceptance test", "mobile storage health projection"],
+      "not_proven": ["schema migration"]
+    },
+    {
+      "id": "mobile.persistence.forced-termination",
+      "area": "persistence",
+      "priority": "p0",
+      "title": "Forced host termination does not duplicate or lose committed state",
+      "maturity": "blocked",
+      "kind": "device",
+      "evidence_scope": "host_device",
+      "topology": "cross-platform-simulator",
+      "platforms": ["ios_device", "android_device"],
+      "ui_surfaces": ["messages", "people", "more.identity"],
+      "actions": ["commit-state", "terminate-process", "restart", "query-state"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Committed records survive exactly once and incomplete work has an explicit outcome", "oracle": "docs/mobile-integration-test-corpus.md#cross-platform-and-device-integration"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["device process-control lane", "storage commit evidence", "migration and recovery status"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.accessibility.shared-semantics",
+      "area": "accessibility",
+      "priority": "p1",
+      "title": "Core communicator controls expose stable shared semantics",
+      "maturity": "blocked",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages", "people", "network", "more"],
+      "actions": ["inspect-accessibility-tree", "navigate-tabs", "open-thread", "open-identity"],
+      "assertions": [
+        {"source": "accessibility", "claim": "Tabs, identity, conversations, composer, preview state, route evidence, and disabled reasons have stable names and roles", "oracle": "docs/mobile-integration-test-corpus.md#native-host-tests"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["stable accessibility identifiers", "XCUITest target", "Compose instrumentation target"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.accessibility.large-text-and-targets",
+      "area": "accessibility",
+      "priority": "p1",
+      "title": "Large text and screen-reader layouts preserve actions and minimum targets",
+      "maturity": "blocked",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "host-fixture",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages", "people", "network", "more.settings", "more.pages"],
+      "actions": ["set-largest-text", "inspect-layout", "enable-screen-reader", "navigate-actions"],
+      "assertions": [
+        {"source": "accessibility", "claim": "Text does not hide required actions and touch targets remain at least 44pt or 48dp", "oracle": "docs/mobile-integration-test-corpus.md#native-host-tests"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["native accessibility automation", "deterministic high-information fixtures"],
+      "not_proven": []
+    },
+    {
+      "id": "mobile.parity.navigation-and-terminology",
+      "area": "parity",
+      "priority": "p0",
+      "title": "iOS and Android share navigation, terminology, ordering, and capability reasons",
+      "maturity": "blocked",
+      "kind": "simulator",
+      "evidence_scope": "host_simulator",
+      "topology": "cross-platform-simulator",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages", "people", "network", "more"],
+      "actions": ["load-shared-fixture", "capture-semantic-tree", "compare-platforms"],
+      "assertions": [
+        {"source": "accessibility", "claim": "Shared states, actions, preview labels, and disabled reasons match the mobile UI contract", "oracle": "docs/mobile-ui-contract.md"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["shared fixture injection", "semantic parity comparator", "native test targets"],
+      "not_proven": ["pixel identity"]
+    },
+    {
+      "id": "mobile.parity.preview-never-proves-live",
+      "area": "parity",
+      "priority": "p0",
+      "title": "Preview rows and route examples remain visibly and semantically non-live",
+      "maturity": "partial",
+      "kind": "simulator",
+      "evidence_scope": "internal_fixture",
+      "topology": "host-fixture",
+      "platforms": ["ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.inbox", "messages.thread", "network.field-map"],
+      "actions": ["launch-empty-state", "open-preview-thread", "compose-preview-message"],
+      "assertions": [
+        {"source": "accessibility", "claim": "Every synthetic row and route example exposes Preview and no packet action reaches the daemon", "oracle": "docs/mobile-ui-contract.md#shared-states"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["native semantic fixture tests"],
+      "not_proven": ["delivery", "route", "bearer", "interoperability"]
+    },
+    {
+      "id": "mobile.parity.upstream-direct",
+      "area": "parity",
+      "priority": "p1",
+      "title": "A mobile direct message interoperates with pinned Python RNS and LXMF",
+      "maturity": "blocked",
+      "kind": "live_interop",
+      "evidence_scope": "upstream_interop",
+      "topology": "upstream-live",
+      "platforms": ["ios_device", "android_device", "python_upstream"],
+      "ui_surfaces": ["messages.thread", "messages.delivery-details"],
+      "actions": ["launch-pinned-upstream", "announce-pair", "send-bidirectional", "retain-evidence"],
+      "assertions": [
+        {"source": "upstream", "claim": "Both implementations decode and persist the same authenticated LXMF content", "oracle": "tests/interop/python/requirements.txt"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["mobile live-interoperability adapter", "device runner integration", "complete message evidence export"],
+      "not_proven": ["propagation parity", "NomadNet parity"]
+    }
+  ]
+}
