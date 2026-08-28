@@ -4,8 +4,9 @@ use std::time::Duration;
 use styrene_ipc::traits::DaemonStatus;
 use styrene_ipc::types::InterfaceDetail;
 use styrened::mobile::{
-    IdentityBackend, MobileBearerKind, MobileBearerState, MobileConfig, MobileConnectionPhase,
-    MobileFailureCode, MobileInterfaceConfig, MobileNode,
+    load_mobile_tcp_endpoint, persist_mobile_tcp_endpoint, IdentityBackend, MobileBearerKind,
+    MobileBearerState, MobileConfig, MobileConnectionPhase, MobileFailureCode,
+    MobileInterfaceConfig, MobileNode,
 };
 use styrened::startup_contract::{RuntimeKind, capabilities, components};
 
@@ -269,6 +270,151 @@ async fn refused_session_snapshot_exposes_recoverable_typed_failure() {
         MobileBearerState::Unavailable
     );
     shutdown(node).await;
+}
+
+#[tokio::test]
+async fn cold_boot_restores_the_persisted_tcp_endpoint_and_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut first_config = config(root.path(), None);
+    first_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+
+    let first = MobileNode::boot(first_config).await.unwrap();
+    let (first_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("first persisted endpoint connection timed out")
+        .unwrap();
+    wait_for_interface_status(&first, "connected", Duration::from_secs(2)).await;
+    let identity = first.app_context.identity().identity_hash().to_string();
+    shutdown(first).await;
+    drop(first_stream);
+
+    let second = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let (second_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("restored endpoint did not connect automatically")
+        .unwrap();
+    wait_for_interface_status(&second, "connected", Duration::from_secs(2)).await;
+    let snapshot = second.session_snapshot().await;
+
+    assert_eq!(snapshot.endpoint.as_deref(), Some(address.to_string().as_str()));
+    assert_eq!(second.app_context.identity().identity_hash(), identity);
+    drop(second_stream);
+    shutdown(second).await;
+}
+
+#[tokio::test]
+async fn explicit_endpoint_edit_replaces_the_persisted_endpoint() {
+    let root = tempfile::tempdir().unwrap();
+    let first_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let first_address = first_listener.local_addr().unwrap();
+    let mut first_config = config(root.path(), None);
+    first_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: first_address.to_string() });
+    let first = MobileNode::boot(first_config).await.unwrap();
+    let (first_stream, _) = tokio::time::timeout(Duration::from_secs(2), first_listener.accept())
+        .await
+        .expect("initial endpoint connection timed out")
+        .unwrap();
+    shutdown(first).await;
+    drop(first_stream);
+
+    let second_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let second_address = second_listener.local_addr().unwrap();
+    let mut edited_config = config(root.path(), None);
+    edited_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: second_address.to_string() });
+    let edited = MobileNode::boot(edited_config).await.unwrap();
+    let (edited_stream, _) = tokio::time::timeout(Duration::from_secs(2), second_listener.accept())
+        .await
+        .expect("edited endpoint connection timed out")
+        .unwrap();
+    shutdown(edited).await;
+    drop(edited_stream);
+
+    let restored = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let (restored_stream, _) =
+        tokio::time::timeout(Duration::from_secs(2), second_listener.accept())
+            .await
+            .expect("edited endpoint was not restored")
+            .unwrap();
+    let snapshot = restored.session_snapshot().await;
+
+    assert_eq!(snapshot.endpoint.as_deref(), Some(second_address.to_string().as_str()));
+    drop(restored_stream);
+    shutdown(restored).await;
+}
+
+#[tokio::test]
+async fn established_tcp_interruption_reconnects_without_replacing_node() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (first_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("initial TCP connection timed out")
+        .unwrap();
+    let first = wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+    let identity = node.app_context.identity().identity_hash().to_string();
+
+    drop(first_stream);
+    let (second_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("established TCP interruption did not reconnect")
+        .unwrap();
+    let second = wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+
+    assert_eq!(second.hash, first.hash);
+    assert_eq!(node.app_context.identity().identity_hash(), identity);
+    shutdown(node).await;
+    drop(second_stream);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), listener.accept()).await.is_err(),
+        "shutdown client reconnected after ownership ended"
+    );
+}
+
+#[test]
+fn malformed_endpoint_edit_is_typed_and_preserves_the_durable_endpoint() {
+    let root = tempfile::tempdir().unwrap();
+    let endpoint = persist_mobile_tcp_endpoint(root.path(), "rns.styrene.io:4242")
+        .expect("valid endpoint persists");
+
+    let error = persist_mobile_tcp_endpoint(root.path(), "not an endpoint")
+        .expect_err("malformed endpoint must fail");
+
+    assert_eq!(error.code(), MobileFailureCode::InvalidTcpEndpoint);
+    assert!(error.retryable());
+    assert_eq!(
+        load_mobile_tcp_endpoint(root.path()).expect("persisted endpoint loads"),
+        Some(endpoint)
+    );
+}
+
+#[test]
+fn malformed_persisted_endpoint_is_a_recoverable_typed_failure() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("mobile.toml"),
+        "schema_version = 1\ntcp_endpoint = 'not an endpoint'\n",
+    )
+    .unwrap();
+
+    let error = load_mobile_tcp_endpoint(root.path()).expect_err("malformed persisted endpoint");
+
+    assert_eq!(error.code(), MobileFailureCode::InvalidTcpEndpoint);
+    assert!(error.retryable());
 }
 
 #[tokio::test]

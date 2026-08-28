@@ -41,7 +41,7 @@ use std::time::Duration;
 
 use crate::announce_names::{encode_delivery_display_name_app_data, normalize_display_name};
 use crate::app_context::AppContext;
-use crate::config::PlatformPaths;
+use crate::config::{atomic_write_private, PlatformPaths};
 use crate::daemon_facade::DaemonFacade;
 use crate::services::messaging::InboundAcceptOutcome;
 use crate::startup_contract::{
@@ -146,6 +146,29 @@ pub enum MobileFailureCode {
     TransportUnavailable,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum MobileEndpointError {
+    #[error("{message}")]
+    Invalid { message: String },
+    #[error("persist mobile TCP endpoint: {message}")]
+    Persistence { message: String },
+}
+
+impl MobileEndpointError {
+    #[must_use]
+    pub const fn code(&self) -> MobileFailureCode {
+        match self {
+            Self::Invalid { .. } => MobileFailureCode::InvalidTcpEndpoint,
+            Self::Persistence { .. } => MobileFailureCode::TransportUnavailable,
+        }
+    }
+
+    #[must_use]
+    pub const fn retryable(&self) -> bool {
+        true
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MobileFailure {
@@ -169,6 +192,15 @@ pub struct MobileSessionSnapshot {
     pub failure: Option<MobileFailure>,
     pub bearers: Vec<MobileBearerObservation>,
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedMobileConfig {
+    schema_version: u32,
+    tcp_endpoint: String,
+}
+
+const MOBILE_CONFIG_SCHEMA_VERSION: u32 = 1;
 
 impl MobileSessionSnapshot {
     #[must_use]
@@ -562,6 +594,56 @@ fn parse_tcp_client_address(value: &str) -> anyhow::Result<String> {
     Ok(format!("{}:{port}", host.to_ascii_lowercase()))
 }
 
+pub fn load_mobile_tcp_endpoint(
+    config_dir: &std::path::Path,
+) -> Result<Option<String>, MobileEndpointError> {
+    let path = config_dir.join("mobile.toml");
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(MobileEndpointError::Persistence {
+                message: format!("read {}: {error}", path.display()),
+            });
+        }
+    };
+    let persisted: PersistedMobileConfig = toml::from_str(&contents).map_err(|error| {
+        MobileEndpointError::Invalid { message: format!("parse {}: {error}", path.display()) }
+    })?;
+    if persisted.schema_version != MOBILE_CONFIG_SCHEMA_VERSION {
+        return Err(MobileEndpointError::Invalid {
+            message: format!(
+                "unsupported mobile config schema {} in {}",
+                persisted.schema_version,
+                path.display()
+            ),
+        });
+    }
+    parse_tcp_client_address(&persisted.tcp_endpoint)
+        .map(Some)
+        .map_err(|error| MobileEndpointError::Invalid { message: error.to_string() })
+}
+
+pub fn persist_mobile_tcp_endpoint(
+    config_dir: &std::path::Path,
+    endpoint: &str,
+) -> Result<String, MobileEndpointError> {
+    let endpoint = parse_tcp_client_address(endpoint)
+        .map_err(|error| MobileEndpointError::Invalid { message: error.to_string() })?;
+    let persisted = PersistedMobileConfig {
+        schema_version: MOBILE_CONFIG_SCHEMA_VERSION,
+        tcp_endpoint: endpoint.clone(),
+    };
+    let encoded = toml::to_string_pretty(&persisted).map_err(|error| {
+        MobileEndpointError::Persistence { message: format!("encode config: {error}") }
+    })?;
+    let path = config_dir.join("mobile.toml");
+    atomic_write_private(&path, encoded.as_bytes()).map_err(|error| {
+        MobileEndpointError::Persistence { message: format!("write {}: {error}", path.display()) }
+    })?;
+    Ok(endpoint)
+}
+
 async fn await_tcp_binding(
     mut receiver: tokio::sync::watch::Receiver<Option<SocketAddr>>,
 ) -> anyhow::Result<SocketAddr> {
@@ -595,13 +677,26 @@ impl MobileNode {
     /// Creates identity if needed, opens SQLite, starts transport.
     /// Does NOT start an IPC server or PTY terminal.
     pub async fn boot(config: MobileConfig) -> anyhow::Result<Self> {
-        let interfaces = validate_interfaces(&config)?;
-        let tcp_endpoint = interfaces.iter().find_map(|interface| match interface {
-            ValidatedMobileInterface::TcpClient(endpoint) => Some(endpoint.clone()),
-            ValidatedMobileInterface::TcpServer(_) => None,
-        });
+        let mut interfaces = validate_interfaces(&config)?;
         let paths = PlatformPaths::new(config.config_dir.clone(), config.data_dir.clone());
         paths.ensure_dirs()?;
+        let explicit_tcp_endpoints = interfaces
+            .iter()
+            .filter_map(|interface| match interface {
+                ValidatedMobileInterface::TcpClient(endpoint) => Some(endpoint.clone()),
+                ValidatedMobileInterface::TcpServer(_) => None,
+            })
+            .collect::<Vec<_>>();
+        let tcp_endpoint = match explicit_tcp_endpoints.as_slice() {
+            [] => load_mobile_tcp_endpoint(&paths.config_dir)?,
+            [endpoint] => Some(persist_mobile_tcp_endpoint(&paths.config_dir, endpoint)?),
+            _ => explicit_tcp_endpoints.first().cloned(),
+        };
+        if explicit_tcp_endpoints.is_empty() {
+            if let Some(endpoint) = &tcp_endpoint {
+                interfaces.push(ValidatedMobileInterface::TcpClient(endpoint.clone()));
+            }
+        }
 
         // Load or create identity via the configured backend.
         let identity = load_or_create_identity(&config.identity_backend, &paths).await?;

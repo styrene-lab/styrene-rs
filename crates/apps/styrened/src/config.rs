@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use styrene_rbac::RbacPolicy;
+
+static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn home_dir() -> PathBuf {
     std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."))
@@ -61,6 +66,10 @@ impl PlatformPaths {
         self.config_dir.join("config.toml")
     }
 
+    pub fn mobile_config_path(&self) -> PathBuf {
+        self.config_dir.join("mobile.toml")
+    }
+
     pub fn db_path(&self) -> PathBuf {
         self.data_dir.join("messages.db")
     }
@@ -79,6 +88,50 @@ impl PlatformPaths {
         fs::create_dir_all(&self.data_dir)?;
         Ok(())
     }
+}
+
+pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| io::Error::other("path has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("state");
+    let temporary = loop {
+        let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(".{name}.tmp-{}-{sequence}", std::process::id()));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&candidate) {
+            Ok(file) => break (candidate, file),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    };
+    let (temporary_path, mut file) = temporary;
+    let result = (|| {
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&temporary_path, path)?;
+        sync_directory(parent)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
+    }
+    result
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// Default config file path: ~/.config/styrene/config.toml
