@@ -411,6 +411,102 @@ pub struct MobileRetryOutcome {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum MobilePropagationReadiness {
+    Unselected,
+    Ready,
+    Unavailable,
+    Inactive,
+    InvalidMetadata,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobilePropagationSyncState {
+    Idle,
+    InProgress,
+    Complete,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobilePropagationPolicy {
+    pub transfer_limit_kb: u64,
+    pub sync_limit_kb: u64,
+    pub stamp_cost: u32,
+    pub stamp_flexibility: u32,
+    pub peering_cost: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobilePropagationCandidate {
+    pub identity_hash: String,
+    pub destination_hash: String,
+    pub active: bool,
+    pub observed_at: i64,
+    pub age_secs: u64,
+    pub policy: Option<MobilePropagationPolicy>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobilePropagationProgress {
+    pub attempt_id: String,
+    pub started_at: i64,
+    pub deadline_at: Option<i64>,
+    pub received_count: u64,
+    pub received_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobilePropagationFailureCode {
+    InvalidDestination,
+    NotAnnounced,
+    Inactive,
+    InvalidMetadata,
+    Unavailable,
+    Timeout,
+    Cancelled,
+    Transport,
+    Internal,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, thiserror::Error)]
+#[error("{message}")]
+#[serde(deny_unknown_fields)]
+pub struct MobilePropagationFailure {
+    pub code: MobilePropagationFailureCode,
+    pub retryable: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobilePropagationSnapshot {
+    pub generation: u64,
+    pub observed_at: i64,
+    pub selected_destination: Option<String>,
+    pub readiness: MobilePropagationReadiness,
+    pub ready: bool,
+    pub selected_policy: Option<MobilePropagationPolicy>,
+    pub candidates: Vec<MobilePropagationCandidate>,
+    pub sync_state: MobilePropagationSyncState,
+    pub new_messages: u32,
+    pub in_flight: Option<MobilePropagationProgress>,
+    pub failure: Option<MobilePropagationFailure>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobilePropagationSyncOutcome {
+    pub generation: u64,
+    pub new_messages: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobileMessageEventKind {
     New,
     StatusChanged,
@@ -503,6 +599,41 @@ fn mobile_messaging_failure(error: styrene_ipc::IpcError) -> MobileMessagingFail
         _ => MobileMessagingFailureCode::Internal,
     };
     MobileMessagingFailure { code, retryable: error.is_retryable(), message: error.to_string() }
+}
+
+fn mobile_propagation_policy(
+    peer: &crate::storage::standard_propagation::StandardPropagationPeerObservation,
+) -> Option<MobilePropagationPolicy> {
+    Some(MobilePropagationPolicy {
+        transfer_limit_kb: u64::try_from(peer.transfer_limit_kb?).ok()?,
+        sync_limit_kb: u64::try_from(peer.sync_limit_kb?).ok()?,
+        stamp_cost: peer.stamp_cost?,
+        stamp_flexibility: peer.stamp_flexibility?,
+        peering_cost: peer.peering_cost?,
+    })
+}
+
+fn decode_mobile_hash(value: &str) -> Result<[u8; 16], String> {
+    let bytes =
+        hex::decode(value).map_err(|_| "destination hash must be hexadecimal".to_string())?;
+    bytes.try_into().map_err(|_| "destination hash must contain exactly 16 bytes".to_string())
+}
+
+fn mobile_propagation_transport_failure(
+    error: crate::transport::mesh_transport::TransportError,
+) -> MobilePropagationFailure {
+    use crate::transport::mesh_transport::TransportError;
+
+    let (code, retryable) = match &error {
+        TransportError::TimedOut => (MobilePropagationFailureCode::Timeout, true),
+        TransportError::Cancelled => (MobilePropagationFailureCode::Cancelled, true),
+        TransportError::Unavailable => (MobilePropagationFailureCode::Unavailable, true),
+        TransportError::SendFailed(_)
+        | TransportError::LinkFailed(_)
+        | TransportError::CleanupFailed(_) => (MobilePropagationFailureCode::Transport, true),
+        TransportError::ShutdownFailed(_) => (MobilePropagationFailureCode::Internal, false),
+    };
+    MobilePropagationFailure { code, retryable, message: error.to_string() }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1461,6 +1592,228 @@ impl MobileNode {
         })
     }
 
+    pub async fn propagation_snapshot(
+        &self,
+    ) -> Result<MobilePropagationSnapshot, MobilePropagationFailure> {
+        let observed_at = rns_core::transport::time::now_epoch_secs_i64();
+        let runtime_policy =
+            crate::standard_propagation::StandardPropagationRuntimeObservation::client().policy();
+        let storage_policy = crate::storage::standard_propagation::StandardPropagationPolicy {
+            queue_max_count: runtime_policy.queue_max_count,
+            queue_max_bytes: runtime_policy.queue_max_bytes,
+            expiry_secs: runtime_policy.expiry_secs,
+        };
+        let observation = self
+            .app_context
+            .store()
+            .lock()
+            .map_err(|_| MobilePropagationFailure {
+                code: MobilePropagationFailureCode::Unavailable,
+                retryable: true,
+                message: "mobile propagation store lock poisoned".into(),
+            })?
+            .standard_propagation_observation(observed_at, storage_policy)
+            .map_err(|error| MobilePropagationFailure {
+                code: MobilePropagationFailureCode::Internal,
+                retryable: false,
+                message: format!("mobile propagation snapshot: {error}"),
+            })?;
+
+        let selected_peer = observation.selection.as_ref().and_then(|selection| selection.peer);
+        let selected = selected_peer.and_then(|identity| {
+            observation.peers.iter().find(|peer| peer.identity_hash == identity)
+        });
+        let selected_destination =
+            selected.and_then(|peer| peer.propagation_destination).map(hex::encode);
+        let selected_policy = selected.and_then(mobile_propagation_policy);
+        let readiness = match (selected_peer, selected) {
+            (None, _) => MobilePropagationReadiness::Unselected,
+            (Some(_), None) => MobilePropagationReadiness::Unavailable,
+            (Some(_), Some(peer)) if !peer.enabled => MobilePropagationReadiness::Inactive,
+            (Some(_), Some(peer)) if peer.propagation_destination.is_none() => {
+                MobilePropagationReadiness::Unavailable
+            }
+            (Some(_), Some(_)) if selected_policy.is_none() => {
+                MobilePropagationReadiness::InvalidMetadata
+            }
+            (Some(_), Some(_)) => MobilePropagationReadiness::Ready,
+        };
+        let in_flight = observation
+            .attempts
+            .iter()
+            .find(|attempt| attempt.state == "running" && attempt.direction == "sync")
+            .map(|attempt| MobilePropagationProgress {
+                attempt_id: hex::encode(attempt.attempt_id),
+                started_at: attempt.started_at,
+                deadline_at: attempt.deadline_at,
+                received_count: attempt.accepted_count as u64,
+                received_bytes: attempt.accepted_bytes as u64,
+            });
+        let latest_inbound = observation
+            .attempts
+            .iter()
+            .filter(|attempt| attempt.direction == "sync")
+            .max_by_key(|attempt| (attempt.updated_at, attempt.started_at));
+        let sync_state = if in_flight.is_some() {
+            MobilePropagationSyncState::InProgress
+        } else {
+            match latest_inbound.map(|attempt| attempt.state.as_str()) {
+                Some("completed") => MobilePropagationSyncState::Complete,
+                Some("failed" | "interrupted") => MobilePropagationSyncState::Failed,
+                _ => MobilePropagationSyncState::Idle,
+            }
+        };
+        let failure = (sync_state == MobilePropagationSyncState::Failed).then(|| {
+            let code = latest_inbound
+                .and_then(|attempt| attempt.failure_code.clone())
+                .unwrap_or_else(|| "client_sync_failed".into());
+            MobilePropagationFailure {
+                code: MobilePropagationFailureCode::Transport,
+                retryable: true,
+                message: code,
+            }
+        });
+        let new_messages = latest_inbound
+            .filter(|attempt| attempt.state == "completed")
+            .map(|attempt| u32::try_from(attempt.accepted_count).unwrap_or(u32::MAX))
+            .unwrap_or(0);
+        let candidates = observation
+            .peers
+            .iter()
+            .filter_map(|peer| {
+                let destination = peer.propagation_destination?;
+                Some(MobilePropagationCandidate {
+                    identity_hash: hex::encode(peer.identity_hash),
+                    destination_hash: hex::encode(destination),
+                    active: peer.enabled,
+                    observed_at: peer.last_seen_at,
+                    age_secs: observed_at.saturating_sub(peer.last_seen_at).max(0) as u64,
+                    policy: mobile_propagation_policy(peer),
+                })
+            })
+            .collect();
+
+        Ok(MobilePropagationSnapshot {
+            generation: self.session_snapshot().await.generation,
+            observed_at,
+            selected_destination,
+            readiness,
+            ready: readiness == MobilePropagationReadiness::Ready,
+            selected_policy,
+            candidates,
+            sync_state,
+            new_messages,
+            in_flight,
+            failure,
+        })
+    }
+
+    pub async fn select_propagation_destination(
+        &self,
+        destination_hash: &str,
+    ) -> Result<MobilePropagationSnapshot, MobilePropagationFailure> {
+        let destination =
+            decode_mobile_hash(destination_hash).map_err(|message| MobilePropagationFailure {
+                code: MobilePropagationFailureCode::InvalidDestination,
+                retryable: false,
+                message,
+            })?;
+        let snapshot = self.propagation_snapshot().await?;
+        let candidate = snapshot
+            .candidates
+            .iter()
+            .find(|candidate| candidate.destination_hash == hex::encode(destination))
+            .ok_or_else(|| MobilePropagationFailure {
+                code: MobilePropagationFailureCode::NotAnnounced,
+                retryable: true,
+                message: "propagation destination has no current canonical announce".into(),
+            })?;
+        if !candidate.active {
+            return Err(MobilePropagationFailure {
+                code: MobilePropagationFailureCode::Inactive,
+                retryable: true,
+                message: "propagation destination is inactive".into(),
+            });
+        }
+        if candidate.policy.is_none() {
+            return Err(MobilePropagationFailure {
+                code: MobilePropagationFailureCode::InvalidMetadata,
+                retryable: true,
+                message: "propagation destination metadata is incomplete".into(),
+            });
+        }
+        let identity = decode_mobile_hash(&candidate.identity_hash).map_err(|message| {
+            MobilePropagationFailure {
+                code: MobilePropagationFailureCode::Internal,
+                retryable: false,
+                message,
+            }
+        })?;
+        self.app_context
+            .store()
+            .lock()
+            .map_err(|_| MobilePropagationFailure {
+                code: MobilePropagationFailureCode::Unavailable,
+                retryable: true,
+                message: "mobile propagation store lock poisoned".into(),
+            })?
+            .standard_propagation_set_selection(Some(identity), "manual", snapshot.observed_at)
+            .map_err(|error| MobilePropagationFailure {
+                code: MobilePropagationFailureCode::Internal,
+                retryable: false,
+                message: format!("persist mobile propagation selection: {error}"),
+            })?;
+        self.propagation_snapshot().await
+    }
+
+    pub async fn clear_propagation_destination(
+        &self,
+    ) -> Result<MobilePropagationSnapshot, MobilePropagationFailure> {
+        let now = rns_core::transport::time::now_epoch_secs_i64();
+        self.app_context
+            .store()
+            .lock()
+            .map_err(|_| MobilePropagationFailure {
+                code: MobilePropagationFailureCode::Unavailable,
+                retryable: true,
+                message: "mobile propagation store lock poisoned".into(),
+            })?
+            .standard_propagation_set_selection(None, "disabled", now)
+            .map_err(|error| MobilePropagationFailure {
+                code: MobilePropagationFailureCode::Internal,
+                retryable: false,
+                message: format!("clear mobile propagation selection: {error}"),
+            })?;
+        self.propagation_snapshot().await
+    }
+
+    pub async fn sync_propagation_once(
+        &self,
+        deadline: Duration,
+    ) -> Result<MobilePropagationSyncOutcome, MobilePropagationFailure> {
+        let snapshot = self.propagation_snapshot().await?;
+        if !snapshot.ready {
+            return Err(MobilePropagationFailure {
+                code: MobilePropagationFailureCode::Unavailable,
+                retryable: true,
+                message: "selected propagation destination is not ready".into(),
+            });
+        }
+        let count = self
+            .app_context
+            .messaging()
+            .sync_standard_propagation_once(
+                std::time::Instant::now() + deadline,
+                CancellationToken::new(),
+            )
+            .await
+            .map_err(mobile_propagation_transport_failure)?;
+        Ok(MobilePropagationSyncOutcome {
+            generation: self.session_snapshot().await.generation,
+            new_messages: u32::try_from(count).unwrap_or(u32::MAX),
+        })
+    }
+
     pub async fn set_draft(
         &self,
         destination_hash: &str,
@@ -1943,6 +2296,7 @@ mod tests {
     use super::*;
     use crate::transport::mesh_transport::TransportLifecycleEvent;
     use crate::transport::mock_transport::{MockCall, MockTransport};
+    use rns_core::destination::{DestinationName, SingleOutputDestination};
     use rns_core::hash::AddressHash;
     use rns_core::transport::core_transport::{ReceivedData, ReceivedPayloadMode};
     use styrene_ipc::types::DaemonEvent;
@@ -1972,6 +2326,202 @@ mod tests {
         )
         .await
         .unwrap()
+    }
+
+    fn propagation_candidate(
+        node: &MobileNode,
+        name: &str,
+        active: bool,
+        observed_at: i64,
+    ) -> (PrivateIdentity, [u8; 16], String) {
+        let identity = PrivateIdentity::new_from_name(name);
+        let destination = SingleOutputDestination::new(
+            *identity.as_identity(),
+            DestinationName::new("lxmf", "propagation"),
+        )
+        .desc
+        .address_hash;
+        let mut destination_bytes = [0; 16];
+        destination_bytes.copy_from_slice(destination.as_slice());
+        let mut identity_bytes = [0; 16];
+        identity_bytes.copy_from_slice(identity.address_hash().as_slice());
+        let mut metadata = if active {
+            lxmf::propagation_announce::StandardPropagationAnnounce::active(
+                observed_at,
+                Some(name),
+                256,
+                4_000,
+            )
+            .unwrap()
+        } else {
+            lxmf::propagation_announce::StandardPropagationAnnounce::inactive(
+                observed_at,
+                Some(name),
+            )
+            .unwrap()
+        };
+        metadata.stamp_cost = 0;
+        metadata.stamp_cost_flexibility = 0;
+        metadata.peering_cost = 0;
+        node.app_context
+            .discovery()
+            .accept_standard_propagation_announce(
+                hex::encode(destination_bytes),
+                identity_bytes,
+                destination_bytes,
+                observed_at,
+                &metadata,
+            )
+            .unwrap();
+        (identity, destination_bytes, hex::encode(destination_bytes))
+    }
+
+    fn propagation_response(value: rmpv::Value) -> styrene_ipc::types::RequestObservationInfo {
+        let mut response = styrene_ipc::types::RequestObservationInfo::default();
+        response.request_id = "55".repeat(16);
+        response.state = styrene_ipc::types::RequestState::Succeeded;
+        response.response = Some(rmp_serde::to_vec(&value).unwrap());
+        response
+    }
+
+    #[tokio::test]
+    async fn selected_propagation_destination_and_policy_survive_mobile_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let mobile_config = MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("mobile propagation client".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: false,
+        };
+        let first = MobileNode::boot(mobile_config.clone()).await.unwrap();
+        let now = rns_core::transport::time::now_epoch_secs_i64();
+        let (_, _, destination) =
+            propagation_candidate(&first, "selected propagation node", true, now);
+
+        let selected = first.select_propagation_destination(&destination).await.unwrap();
+        assert!(selected.ready);
+        assert_eq!(selected.readiness, MobilePropagationReadiness::Ready);
+        assert_eq!(selected.selected_destination.as_deref(), Some(destination.as_str()));
+        assert_eq!(selected.selected_policy.as_ref().unwrap().sync_limit_kb, 4_000);
+        first.shutdown().await.unwrap();
+
+        let second = MobileNode::boot(mobile_config).await.unwrap();
+        let restored = second.propagation_snapshot().await.unwrap();
+        assert!(restored.ready);
+        assert_eq!(restored.selected_destination, Some(destination));
+        second.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn inactive_or_missing_propagation_metadata_never_reports_ready() {
+        let node = compose_with_mock(Arc::new(MockTransport::new_default()), None).await;
+        let now = rns_core::transport::time::now_epoch_secs_i64();
+        let (_, _, inactive) =
+            propagation_candidate(&node, "inactive propagation node", false, now);
+
+        let failure = node.select_propagation_destination(&inactive).await.unwrap_err();
+        assert_eq!(failure.code, MobilePropagationFailureCode::Inactive);
+        assert!(!node.propagation_snapshot().await.unwrap().ready);
+
+        let missing = "ab".repeat(16);
+        let failure = node.select_propagation_destination(&missing).await.unwrap_err();
+        assert_eq!(failure.code, MobilePropagationFailureCode::NotAnnounced);
+        node.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn manual_propagation_sync_identifies_then_requests_inventory() {
+        let mock = Arc::new(MockTransport::new_default());
+        let node = compose_with_mock(mock.clone(), None).await;
+        let now = rns_core::transport::time::now_epoch_secs_i64();
+        let (identity, _, destination) =
+            propagation_candidate(&node, "inventory propagation node", true, now);
+        node.select_propagation_destination(&destination).await.unwrap();
+        mock.queue_resolve(Some(*identity.as_identity()));
+        mock.queue_open_link(Ok(AddressHash::new([0x42; 16])));
+        mock.queue_request(Ok(propagation_response(rmpv::Value::Array(Vec::new()))));
+
+        let outcome = node.sync_propagation_once(Duration::from_secs(1)).await.unwrap();
+        assert_eq!(outcome.new_messages, 0);
+        let calls = mock.calls();
+        let identified =
+            calls.iter().position(|call| matches!(call, MockCall::IdentifyLink { .. }));
+        let inventory = calls.iter().position(|call| matches!(call, MockCall::StartRequest { .. }));
+        assert!(identified.is_some_and(|index| inventory.is_some_and(|request| index < request)));
+        let snapshot = node.propagation_snapshot().await.unwrap();
+        assert_eq!(snapshot.sync_state, MobilePropagationSyncState::Complete);
+        assert_eq!(snapshot.new_messages, 0);
+        node.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_manual_propagation_sync_is_retryable_and_durable() {
+        let mock = Arc::new(MockTransport::new_default());
+        let node = compose_with_mock(mock.clone(), None).await;
+        let now = rns_core::transport::time::now_epoch_secs_i64();
+        let (identity, _, destination) =
+            propagation_candidate(&node, "failing propagation node", true, now);
+        node.select_propagation_destination(&destination).await.unwrap();
+        mock.queue_resolve(Some(*identity.as_identity()));
+        mock.queue_open_link(Ok(AddressHash::new([0x43; 16])));
+        mock.queue_request(Ok(propagation_response(rmpv::Value::Boolean(true))));
+
+        let failure = node.sync_propagation_once(Duration::from_secs(1)).await.unwrap_err();
+        assert!(failure.retryable);
+        let snapshot = node.propagation_snapshot().await.unwrap();
+        assert_eq!(snapshot.sync_state, MobilePropagationSyncState::Failed);
+        assert!(snapshot.failure.as_ref().is_some_and(|failure| failure.retryable));
+        node.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn explicit_mobile_propagated_send_records_upload_without_claiming_delivery() {
+        let mock = Arc::new(MockTransport::new_default());
+        let node = compose_with_mock(mock.clone(), None).await;
+        let now = rns_core::transport::time::now_epoch_secs_i64();
+        let (propagation_identity, _, propagation_destination) =
+            propagation_candidate(&node, "upload propagation node", true, now);
+        node.select_propagation_destination(&propagation_destination).await.unwrap();
+        let recipient = PrivateIdentity::new_from_name("mobile propagated recipient");
+        let recipient_destination = SingleOutputDestination::new(
+            *recipient.as_identity(),
+            DestinationName::new("lxmf", "delivery"),
+        )
+        .desc
+        .address_hash;
+        mock.queue_resolve(Some(*recipient.as_identity()));
+        mock.queue_resolve(Some(*propagation_identity.as_identity()));
+        mock.queue_open_link(Ok(AddressHash::new([0x44; 16])));
+        mock.queue_request(Ok(propagation_response(rmpv::Value::Boolean(false))));
+        mock.queue_close(Ok(()));
+
+        let outcome = node
+            .send_text(MobileSendRequest {
+                destination_hash: hex::encode(recipient_destination.as_slice()),
+                content: "store this for offline delivery".into(),
+                requested_method: MobileDeliveryMethod::Propagated,
+                draft_revision: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.disposition, MobileSendDisposition::Accepted);
+        assert_eq!(outcome.actual_method, MobileDeliveryMethod::Propagated);
+        assert!(outcome.message.delivery_evidence.is_empty());
+        assert_eq!(outcome.message.propagation_correlations.len(), 1);
+        let correlation = &outcome.message.propagation_correlations[0];
+        assert_eq!(correlation.state, "accepted");
+        assert_eq!(
+            correlation.peer_hash.as_deref(),
+            Some(hex::encode(propagation_identity.address_hash().as_slice()).as_str())
+        );
+        assert!(!correlation.transient_id.is_empty());
+        assert!(correlation.attempt_id.is_some());
+        node.shutdown().await.unwrap();
     }
 
     #[tokio::test]
