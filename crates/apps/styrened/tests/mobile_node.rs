@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use styrene_ipc::traits::DaemonStatus;
 use styrened::mobile::{IdentityBackend, MobileConfig, MobileInterfaceConfig, MobileNode};
-use styrened::startup_contract::{capabilities, components, RuntimeKind};
+use styrened::startup_contract::{RuntimeKind, capabilities, components};
 
 fn config(root: &std::path::Path, hub_address: Option<String>) -> MobileConfig {
     MobileConfig {
@@ -36,11 +36,10 @@ async fn offline_boot_reports_no_routable_destination() {
     let contract = node.startup_contract();
     assert!(contract.advertises(capabilities::LOCAL_CONFIG.id()));
     assert!(contract.advertises(capabilities::LOCAL_POLICY.id()));
-    assert!(contract.advertised_capabilities().iter().all(|capability| [
-        capabilities::LOCAL_CONFIG.id(),
-        capabilities::LOCAL_POLICY.id()
-    ]
-    .contains(&capability.id())));
+    assert!(contract.advertised_capabilities().iter().all(|capability| {
+        [capabilities::LOCAL_CONFIG.id(), capabilities::LOCAL_POLICY.id()]
+            .contains(&capability.id())
+    }));
     assert!(!contract.advertises(capabilities::LXMF_DIRECT.id()));
     assert!(!contract.advertises(capabilities::STYRENE_RPC.id()));
     assert!(!contract.advertises(capabilities::NETWORK_OPERATIONS.id()));

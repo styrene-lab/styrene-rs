@@ -219,12 +219,11 @@ impl RpcDaemon {
 
         for sink in &self.event_sink_bridges {
             let sink_kind = sink.sink_kind().trim().to_ascii_lowercase();
-            if let Some(allowed) = allowed_kinds.as_ref() {
-                if !allowed.contains(&sink_kind) {
+            if let Some(allowed) = allowed_kinds.as_ref()
+                && !allowed.contains(&sink_kind) {
                     self.metrics_record_event_sink_skipped();
                     continue;
                 }
-            }
             match sink.publish(&envelope) {
                 Ok(()) => self.metrics_record_event_sink_publish(sink_kind.as_str()),
                 Err(_) => self.metrics_record_event_sink_error(sink_kind.as_str()),

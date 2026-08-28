@@ -25,10 +25,10 @@ pub fn load_or_create_identity(path: &Path) -> io::Result<PrivateIdentity> {
 }
 
 fn write_identity_file(path: &Path, key_bytes: &[u8]) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
     }
 
     let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();

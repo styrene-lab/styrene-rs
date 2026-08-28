@@ -133,20 +133,20 @@ impl AnnounceCache {
     }
 
     fn evict_one(&mut self) {
-        if let Some(ref mut older) = self.older {
-            if let Some(first_key) = older.keys().next().cloned() {
-                older.remove(&first_key);
-                if older.is_empty() {
-                    self.older = None;
-                }
-                return;
+        if let Some(ref mut older) = self.older
+            && let Some(first_key) = older.keys().next().cloned()
+        {
+            older.remove(&first_key);
+            if older.is_empty() {
+                self.older = None;
             }
+            return;
         }
 
-        if let Some(ref mut newer) = self.newer {
-            if let Some(first_key) = newer.keys().next().cloned() {
-                newer.remove(&first_key);
-            }
+        if let Some(ref mut newer) = self.newer
+            && let Some(first_key) = newer.keys().next().cloned()
+        {
+            newer.remove(&first_key);
         }
     }
 
@@ -245,20 +245,14 @@ impl AnnounceTable {
     ) -> Option<TxMessage> {
         let message = {
             let entry = self.map.get_mut(dest_hash)?;
-            if entry.retries > self.retry_limit {
-                None
-            } else {
-                entry.retransmit(transport_id)
-            }
+            if entry.retries > self.retry_limit { None } else { entry.retransmit(transport_id) }
         };
 
         let should_cache =
             self.map.get(dest_hash).map(|entry| entry.retries > self.retry_limit).unwrap_or(false);
 
-        if should_cache {
-            if let Some(announce) = self.map.remove(dest_hash) {
-                self.cache.insert(*dest_hash, announce);
-            }
+        if should_cache && let Some(announce) = self.map.remove(dest_hash) {
+            self.cache.insert(*dest_hash, announce);
         }
 
         message

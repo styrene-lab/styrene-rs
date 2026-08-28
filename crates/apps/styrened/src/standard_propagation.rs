@@ -12,8 +12,8 @@ use rns_core::packet::Packet;
 use rns_core::transport::core_transport::{
     DestinationRegistrationError, SendPacketOutcome, Transport,
 };
-use rns_core::transport::resource::ResourceEventKind;
 use rns_core::transport::resource::MAX_UNSOLICITED_RESOURCE_SIZE;
+use rns_core::transport::resource::ResourceEventKind;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -680,12 +680,10 @@ impl StandardPropagationCoordinator {
                 )
             });
         }
-        if owned {
-            if let Err(error) = self.transport.close_link(&link_id).await {
-                crate::daemon_diagnostic!(
-                    "[standard-propagation] owned upload link cleanup failed: {error}"
-                );
-            }
+        if owned && let Err(error) = self.transport.close_link(&link_id).await {
+            crate::daemon_diagnostic!(
+                "[standard-propagation] owned upload link cleanup failed: {error}"
+            );
         }
         result
     }
@@ -968,25 +966,22 @@ impl StandardPropagationCoordinator {
             Ok(acknowledged.len())
         }
         .await;
-        if result.is_err() {
-            if let Some(attempt_id) = active_attempt {
-                if let Ok(mut store) = self.store.lock() {
-                    let _ = store.standard_propagation_record_attempt_failure(
-                        attempt_id,
-                        peer.identity_hash,
-                        "client_sync_failed",
-                        None,
-                        unix_time().unwrap_or(0),
-                    );
-                }
-            }
+        if result.is_err()
+            && let Some(attempt_id) = active_attempt
+            && let Ok(mut store) = self.store.lock()
+        {
+            let _ = store.standard_propagation_record_attempt_failure(
+                attempt_id,
+                peer.identity_hash,
+                "client_sync_failed",
+                None,
+                unix_time().unwrap_or(0),
+            );
         }
-        if owned {
-            if let Err(error) = self.transport.close_link(&link_id).await {
-                crate::daemon_diagnostic!(
-                    "[standard-propagation] owned sync link cleanup failed: {error}"
-                );
-            }
+        if owned && let Err(error) = self.transport.close_link(&link_id).await {
+            crate::daemon_diagnostic!(
+                "[standard-propagation] owned sync link cleanup failed: {error}"
+            );
         }
         result
     }
@@ -1624,11 +1619,7 @@ fn optional_decimal_kb_limit(value: &rmpv::Value) -> Option<usize> {
         return Some(0);
     }
     let bytes = value * DECIMAL_KB as f64;
-    if bytes >= usize::MAX as f64 {
-        Some(usize::MAX)
-    } else {
-        Some(bytes as usize)
-    }
+    if bytes >= usize::MAX as f64 { Some(usize::MAX) } else { Some(bytes as usize) }
 }
 
 fn handle_get(
@@ -1798,11 +1789,10 @@ fn spawn_ingress_worker(
                 _ = deadline_tick.tick() => {
                     let now = clock.now();
                     shared.lock().unwrap().expire(now, policy);
-                    if let Ok(mut store) = store.lock() {
-                        if store.standard_propagation_reconcile_deadlines(now).unwrap_or(0) > 0 {
+                    if let Ok(mut store) = store.lock()
+                        && store.standard_propagation_reconcile_deadlines(now).unwrap_or(0) > 0 {
                             emit_changed(&events, now);
                         }
-                    }
                 }
             }
         }
@@ -1820,10 +1810,10 @@ fn process_transfer(
     events: &Arc<OnceLock<Arc<EventService>>>,
 ) -> bool {
     let sync_limit = policy.sync_limit_kb.saturating_mul(DECIMAL_KB);
-    if let Ok(mut store) = store.lock() {
-        if store.standard_propagation_reconcile_deadlines(now).unwrap_or(0) > 0 {
-            emit_changed(events, now);
-        }
+    if let Ok(mut store) = store.lock()
+        && store.standard_propagation_reconcile_deadlines(now).unwrap_or(0) > 0
+    {
+        emit_changed(events, now);
     }
     let (pending, validated_remote) = {
         let mut state = shared.lock().unwrap();
@@ -1970,8 +1960,8 @@ fn record_pending_failure(
     events: &Arc<OnceLock<Arc<EventService>>>,
 ) {
     let Some(pending) = pending else { return };
-    if let Ok(mut store) = store.lock() {
-        if store
+    if let Ok(mut store) = store.lock()
+        && store
             .standard_propagation_record_attempt_failure(
                 pending.attempt_id,
                 pending.remote_identity,
@@ -1980,9 +1970,8 @@ fn record_pending_failure(
                 now.max(0),
             )
             .is_ok()
-        {
-            emit_changed(events, now);
-        }
+    {
+        emit_changed(events, now);
     }
 }
 
@@ -2056,7 +2045,7 @@ impl From<IngressRegistrationError> for StandardPropagationActivationError {
 mod tests {
     use super::*;
     use lxmf::propagation::transient_id;
-    use rns_core::destination::{request_path_hash, DestinationAnnounce, RequestLinkContext};
+    use rns_core::destination::{DestinationAnnounce, RequestLinkContext, request_path_hash};
     use rns_core::transport::core_transport::TransportConfig;
 
     fn transport(identity: &PrivateIdentity) -> Transport {
@@ -2352,25 +2341,31 @@ mod tests {
         let second = transient(&wire);
         assert_ne!(first.0, second.0);
         let validation = transient(&wire);
-        assert!(decrypt_fetched_wire(
-            &PrivateIdentity::new_from_name("wrong-fetch-key"),
-            delivery,
-            &BTreeSet::from([validation.0]),
-            &validation.1,
-        )
-        .is_err());
-        assert!(decrypt_fetched_wire(local.as_ref(), delivery, &BTreeSet::new(), &validation.1)
-            .is_err());
+        assert!(
+            decrypt_fetched_wire(
+                &PrivateIdentity::new_from_name("wrong-fetch-key"),
+                delivery,
+                &BTreeSet::from([validation.0]),
+                &validation.1,
+            )
+            .is_err()
+        );
+        assert!(
+            decrypt_fetched_wire(local.as_ref(), delivery, &BTreeSet::new(), &validation.1)
+                .is_err()
+        );
         let mut wrong_destination = validation.1.clone();
         wrong_destination[..16].copy_from_slice(&[0x99; 16]);
         let wrong_destination_id = lxmf::propagation::transient_id(&wrong_destination);
-        assert!(decrypt_fetched_wire(
-            local.as_ref(),
-            delivery,
-            &BTreeSet::from([wrong_destination_id]),
-            &wrong_destination,
-        )
-        .is_err());
+        assert!(
+            decrypt_fetched_wire(
+                local.as_ref(),
+                delivery,
+                &BTreeSet::from([wrong_destination_id]),
+                &wrong_destination,
+            )
+            .is_err()
+        );
 
         for (index, (transient_id, payload)) in [first, second].into_iter().enumerate() {
             transport.queue_resolve(Some(*peer.as_identity()));
@@ -2539,10 +2534,9 @@ mod tests {
             let store = endpoint.store.lock().unwrap();
             let state = store.standard_propagation_attempt_state_for_test(attempt_id).unwrap();
             assert_eq!(state, "running");
-            assert!(store
-                .standard_propagation_checkpoint(remote_hash, "ingress")
-                .unwrap()
-                .is_none());
+            assert!(
+                store.standard_propagation_checkpoint(remote_hash, "ingress").unwrap().is_none()
+            );
         }
         process_transfer(
             &endpoint.shared,
@@ -2594,11 +2588,13 @@ mod tests {
         let state = store.standard_propagation_attempt_state_for_test(attempt_id).unwrap();
         assert_eq!(state, "running");
         assert!(store.standard_propagation_checkpoint(remote_hash, "ingress").unwrap().is_none());
-        assert!(store
-            .standard_propagation_failures(10)
-            .unwrap()
-            .iter()
-            .any(|failure| failure.attempt_id == Some(attempt_id)));
+        assert!(
+            store
+                .standard_propagation_failures(10)
+                .unwrap()
+                .iter()
+                .any(|failure| failure.attempt_id == Some(attempt_id))
+        );
     }
 
     #[tokio::test]
@@ -3404,12 +3400,8 @@ mod tests {
         assert!(!process(&endpoint, link, &transfer([stamped(&data)])));
         assert!(endpoint.queue_snapshot().is_empty());
         assert!(endpoint.shared.lock().unwrap().link_throttled.contains_key(&link));
-        assert!(endpoint
-            .store
-            .lock()
-            .unwrap()
-            .standard_propagation_failures(10)
-            .unwrap()
-            .is_empty());
+        assert!(
+            endpoint.store.lock().unwrap().standard_propagation_failures(10).unwrap().is_empty()
+        );
     }
 }

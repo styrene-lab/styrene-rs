@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use styrene_interop_runner::{
-    python_lxmf_scenario, run_live_scenario, RunStatus, PINNED_SCENARIOS,
+    PINNED_SCENARIOS, RunStatus, python_lxmf_scenario, run_live_scenario,
 };
 
 #[test]

@@ -1,11 +1,11 @@
 use std::{
     cmp::min,
     collections::{HashMap, VecDeque},
-    panic::{catch_unwind, AssertUnwindSafe},
+    panic::{AssertUnwindSafe, catch_unwind},
     time::{Duration, Instant},
 };
 
-use ed25519_dalek::{Signature, SigningKey, VerifyingKey, PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH};
+use ed25519_dalek::{PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH, Signature, SigningKey, VerifyingKey};
 use rand_core::OsRng;
 use sha2::Digest;
 use x25519_dalek::StaticSecret;
@@ -14,10 +14,10 @@ use crate::crypt::fernet::{CachedFernet, PlainText, Token};
 use crate::transport::error::RnsError;
 use crate::{
     buffer::OutputBuffer,
-    hash::{AddressHash, Hash, ADDRESS_HASH_SIZE, HASH_SIZE},
+    hash::{ADDRESS_HASH_SIZE, AddressHash, HASH_SIZE, Hash},
     identity::{DecryptIdentity, DerivedKey, EncryptIdentity, Identity, PrivateIdentity},
     packet::{
-        DestinationType, Header, Packet, PacketContext, PacketDataBuffer, PacketType, PACKET_MDU,
+        DestinationType, Header, PACKET_MDU, Packet, PacketContext, PacketDataBuffer, PacketType,
     },
     transport::channel::{
         ChannelError, Envelope as ChannelEnvelope, Handler as ChannelHandler, HandlerId,
@@ -545,16 +545,16 @@ impl Link {
     }
 
     fn iface_matches(&self, iface: AddressHash) -> bool {
-        if let Some(expected_iface) = self.ingress_iface {
-            if expected_iface != iface {
-                log::warn!(
-                    "link({}): dropping packet from iface {} expected {}",
-                    self.id,
-                    iface,
-                    expected_iface
-                );
-                return false;
-            }
+        if let Some(expected_iface) = self.ingress_iface
+            && expected_iface != iface
+        {
+            log::warn!(
+                "link({}): dropping packet from iface {} expected {}",
+                self.id,
+                iface,
+                expected_iface
+            );
+            return false;
         }
 
         true
@@ -571,16 +571,17 @@ impl Link {
         match packet.header.packet_type {
             PacketType::Data => return self.handle_data_packet(packet),
             PacketType::Proof => {
-                if self.status == LinkStatus::Active && packet.context == PacketContext::LinkProof {
-                    if let Ok(hash) = self.validate_packet_proof(packet) {
-                        self.note_inbound(packet.context);
-                        if let Some(pending) = self.channel_pending.remove(&hash) {
-                            self.channel_states
-                                .insert(pending.sequence, ChannelMessageState::Delivered);
-                            self.note_channel_delivery();
-                        }
-                        return LinkHandleResult::None;
+                if self.status == LinkStatus::Active
+                    && packet.context == PacketContext::LinkProof
+                    && let Ok(hash) = self.validate_packet_proof(packet)
+                {
+                    self.note_inbound(packet.context);
+                    if let Some(pending) = self.channel_pending.remove(&hash) {
+                        self.channel_states
+                            .insert(pending.sequence, ChannelMessageState::Delivered);
+                        self.note_channel_delivery();
                     }
+                    return LinkHandleResult::None;
                 }
                 if self.status == LinkStatus::Pending
                     && packet.context == PacketContext::LinkRequestProof
@@ -1180,11 +1181,11 @@ impl Link {
                 let stale_timeout = Duration::from_secs_f32(
                     (self.rtt.as_secs_f32() * KEEPALIVE_TIMEOUT_FACTOR) + STALE_GRACE_SECS,
                 );
-                if let Some(stale_since) = self.stale_since {
-                    if now.duration_since(stale_since) >= stale_timeout {
-                        self.close_with_reason(LinkCloseReason::StaleTimeout);
-                        return LinkWatchdogAction::Close;
-                    }
+                if let Some(stale_since) = self.stale_since
+                    && now.duration_since(stale_since) >= stale_timeout
+                {
+                    self.close_with_reason(LinkCloseReason::StaleTimeout);
+                    return LinkWatchdogAction::Close;
                 }
                 LinkWatchdogAction::None
             }
@@ -1452,13 +1453,17 @@ mod tests {
 
         let probe = outbound.probe_packet().expect("active probe packet");
         assert!(matches!(inbound.handle_packet(&probe, iface), LinkHandleResult::KeepAlive));
-        assert!(!std::iter::from_fn(|| events.try_recv().ok())
-            .any(|event| matches!(event.event, LinkEvent::RttUpdated)));
+        assert!(
+            !std::iter::from_fn(|| events.try_recv().ok())
+                .any(|event| matches!(event.event, LinkEvent::RttUpdated))
+        );
         let response = inbound.keep_alive_packet(0xFE);
         outbound.handle_packet(&response, iface);
 
-        assert!(std::iter::from_fn(|| events.try_recv().ok())
-            .any(|event| matches!(event.event, LinkEvent::RttUpdated)));
+        assert!(
+            std::iter::from_fn(|| events.try_recv().ok())
+                .any(|event| matches!(event.event, LinkEvent::RttUpdated))
+        );
     }
 
     #[test]

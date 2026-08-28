@@ -335,15 +335,15 @@ impl DiscoveryService {
         let name_lower = name.to_lowercase();
         let nodes = self.node_store.list(None).unwrap_or_default();
         for node in &nodes {
-            if let Some(ref display_name) = node.display_name {
-                if display_name.to_lowercase() == name_lower {
-                    if let Some(pfx) = prefix {
-                        if node.identity_hash.starts_with(pfx) {
-                            return Some(node.identity_hash.clone());
-                        }
-                    } else {
+            if let Some(ref display_name) = node.display_name
+                && display_name.to_lowercase() == name_lower
+            {
+                if let Some(pfx) = prefix {
+                    if node.identity_hash.starts_with(pfx) {
                         return Some(node.identity_hash.clone());
                     }
+                } else {
+                    return Some(node.identity_hash.clone());
                 }
             }
         }

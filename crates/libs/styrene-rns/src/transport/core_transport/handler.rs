@@ -41,14 +41,14 @@ impl TransportHandler {
                 packet.destination,
                 packet.context as u8
             );
-            if packet.context == PacketContext::LinkRequestProof {
-                if let Ok(raw) = packet.to_bytes() {
-                    crate::transport_diagnostic!(
-                        "[tp] lrproof_raw len={} hex={}",
-                        raw.len(),
-                        bytes_to_hex(&raw)
-                    );
-                }
+            if packet.context == PacketContext::LinkRequestProof
+                && let Ok(raw) = packet.to_bytes()
+            {
+                crate::transport_diagnostic!(
+                    "[tp] lrproof_raw len={} hex={}",
+                    raw.len(),
+                    bytes_to_hex(&raw)
+                );
             }
         }
         if should_encrypt_packet(&packet) {
@@ -234,12 +234,11 @@ impl TransportHandler {
                 );
             }
             PacketType::Proof => {
-                if packet.context == PacketContext::LinkRequestProof {
-                    if let Some(link) = self.in_links.get(&packet.destination) {
-                        if link.lock().await.status().not_yet_active() {
-                            allow_duplicate = true;
-                        }
-                    }
+                if packet.context == PacketContext::LinkRequestProof
+                    && let Some(link) = self.in_links.get(&packet.destination)
+                    && link.lock().await.status().not_yet_active()
+                {
+                    allow_duplicate = true;
                 }
             }
         }

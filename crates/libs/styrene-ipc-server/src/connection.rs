@@ -10,14 +10,14 @@ use std::sync::Arc;
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::task::JoinSet;
 
 use styrene_ipc::traits::Daemon;
 use styrene_ipc::types::DaemonEvent;
 
 use crate::dispatch;
-use crate::wire::{self, MessageType, WireError, REQUEST_ID_SIZE};
+use crate::wire::{self, MessageType, REQUEST_ID_SIZE, WireError};
 
 const MAX_IN_FLIGHT_REQUESTS: usize = 64;
 
@@ -60,7 +60,8 @@ impl Drop for OwnerCleanupGuard {
         self.cancellation.cancel();
         let daemon = Arc::clone(&self.daemon);
         let owner = self.owner;
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        let current_runtime = tokio::runtime::Handle::try_current();
+        if let Ok(runtime) = current_runtime {
             runtime.spawn(async move {
                 if let Err(error) = daemon.cleanup_page_owner(owner).await {
                     log::warn!("IPC page-owner cleanup failed after connection task exit: {error}");
@@ -174,11 +175,9 @@ pub async fn handle_client_with_generation(
                     let payload = error_payload("too many in-flight IPC requests".into());
                     if let Some(bytes) =
                         encode_response(MessageType::Error, &frame.request_id, &payload)
-                    {
-                        if frame_tx.send(bytes).await.is_err() {
+                        && frame_tx.send(bytes).await.is_err() {
                             break;
                         }
-                    }
                     continue;
                 }
                 let daemon = Arc::clone(&daemon);

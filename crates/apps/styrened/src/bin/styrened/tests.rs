@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use styrene_ipc::traits::DaemonStatus;
 use styrened::rpc::{RpcRequest, RpcResponse};
-use styrened::startup_contract::{capabilities, components, RuntimeKind};
+use styrened::startup_contract::{RuntimeKind, capabilities, components};
 use styrened::transport::mock_transport::MockTransport;
 
 #[test]
@@ -116,12 +116,16 @@ fn propagation_stats_encode_python_status_schema_with_runtime_values() {
     assert_eq!(value("stamp_cost_flexibility").as_u64(), Some(3));
     assert_eq!(value("peering_cost").as_u64(), Some(18));
     let message_store = value("messagestore").as_map().expect("messagestore map");
-    assert!(message_store
-        .iter()
-        .any(|(key, value)| { key.as_str() == Some("count") && value.as_u64() == Some(7) }));
-    assert!(message_store
-        .iter()
-        .any(|(key, value)| { key.as_str() == Some("bytes") && value.as_u64() == Some(8192) }));
+    assert!(
+        message_store
+            .iter()
+            .any(|(key, value)| { key.as_str() == Some("count") && value.as_u64() == Some(7) })
+    );
+    assert!(
+        message_store
+            .iter()
+            .any(|(key, value)| { key.as_str() == Some("bytes") && value.as_u64() == Some(8192) })
+    );
     assert!(message_store.iter().any(|(key, value)| {
         key.as_str() == Some("limit") && value.as_u64() == Some(16 * 1024 * 1024)
     }));
@@ -208,23 +212,25 @@ async fn standalone_hub_activates_complete_standard_propagation_composition() {
         socket: Some(root.path().join("daemon.sock")),
     })
     .await;
-    assert!(context
-        .startup_contract
-        .has_component(components::STANDARD_LXMF_PROPAGATION_DESTINATION));
-    assert!(context
-        .startup_contract
-        .has_component(components::PARTIAL_PROPAGATION_STATS_DESTINATION));
+    assert!(
+        context.startup_contract.has_component(components::STANDARD_LXMF_PROPAGATION_DESTINATION)
+    );
+    assert!(
+        context.startup_contract.has_component(components::PARTIAL_PROPAGATION_STATS_DESTINATION)
+    );
     assert!(context.startup_contract.has_component(components::PARTIAL_PROPAGATION_STATS_WORKER));
     assert!(context.startup_contract.has_component(components::STANDARD_LXMF_PROPAGATION_ANNOUNCE));
-    assert!(context
-        .startup_contract
-        .has_component(components::STANDARD_LXMF_PROPAGATION_OFFER_HANDLER));
-    assert!(context
-        .startup_contract
-        .has_component(components::STANDARD_LXMF_PROPAGATION_GET_HANDLER));
-    assert!(context
-        .startup_contract
-        .has_component(components::STANDARD_LXMF_PROPAGATION_INGRESS_WORKER));
+    assert!(
+        context.startup_contract.has_component(components::STANDARD_LXMF_PROPAGATION_OFFER_HANDLER)
+    );
+    assert!(
+        context.startup_contract.has_component(components::STANDARD_LXMF_PROPAGATION_GET_HANDLER)
+    );
+    assert!(
+        context
+            .startup_contract
+            .has_component(components::STANDARD_LXMF_PROPAGATION_INGRESS_WORKER)
+    );
     assert!(context.startup_contract.advertises(capabilities::STANDARD_LXMF_PROPAGATION.id()));
     assert!(context.standard_propagation.is_some());
     let status = context.daemon_facade.query_status().await.unwrap();

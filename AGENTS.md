@@ -82,4 +82,4 @@ crates/
 - **Workspace lints** enforced: `unsafe_code = "forbid"`, `clippy::unwrap_used = "warn"`
 - **Boundary checks** prevent unauthorized inter-crate dependencies
 - Wire protocol evolution answers to rolling-upgrade compatibility among Styrene Rust nodes
-- All crates inherit `rust-version` from the workspace (pinned to latest stable; see rust-toolchain.toml). Editions are per-crate (`2021` for most, `2024` for styrene-tui)
+- All workspace crates inherit Rust `2024` edition and `rust-version` from the workspace, which is pinned to latest stable in `rust-toolchain.toml`.

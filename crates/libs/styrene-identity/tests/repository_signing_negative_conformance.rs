@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use styrene_identity::{verify_repository_signer_binding, RepositorySignerBindingErrorClass};
+use styrene_identity::{RepositorySignerBindingErrorClass, verify_repository_signer_binding};
 
 #[test]
 fn committed_negative_corpus_has_stable_rejection_classes() {

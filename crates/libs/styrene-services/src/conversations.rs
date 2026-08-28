@@ -9,7 +9,7 @@
 //! Uses SQLite directly (not the daemon's `MessagesStore`) so this crate
 //! remains independent of the app layer. Tables are created on first use.
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 

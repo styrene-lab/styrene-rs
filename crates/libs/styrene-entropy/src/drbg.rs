@@ -170,7 +170,7 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pool::{EntropyPool, SourceId, MIN_POOL_BYTES};
+    use crate::pool::{EntropyPool, MIN_POOL_BYTES, SourceId};
 
     fn seeded_drbg() -> Drbg {
         let mut pool = EntropyPool::new();

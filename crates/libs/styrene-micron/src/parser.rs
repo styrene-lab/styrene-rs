@@ -146,11 +146,7 @@ impl ParseContext {
                 let char_count = line.chars().count();
                 let symbol = if char_count == 2 {
                     let ch = line.chars().nth(1).unwrap();
-                    if (ch as u32) < 32 {
-                        '\u{2500}'
-                    } else {
-                        ch
-                    }
+                    if (ch as u32) < 32 { '\u{2500}' } else { ch }
                 } else {
                     '\u{2500}'
                 };

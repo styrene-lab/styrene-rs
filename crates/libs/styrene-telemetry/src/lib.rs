@@ -66,18 +66,18 @@ pub mod types;
 // Flat re-exports
 // ---------------------------------------------------------------------------
 
-pub use encode::{decode, DecodeError, EncodeError, MAX_ENCODED_BYTES};
+pub use encode::{DecodeError, EncodeError, MAX_ENCODED_BYTES, decode};
 
 #[cfg(feature = "alloc")]
 pub use encode::encode;
 
 pub use records::{
-    AircraftPosition, AprsPosition, MeshtasticNode, NodeStatus, SatellitePass, ServiceAnnouncement,
-    ShipPosition, WeatherObservation, MAX_STR, MAX_TEXT,
+    AircraftPosition, AprsPosition, MAX_STR, MAX_TEXT, MeshtasticNode, NodeStatus, SatellitePass,
+    ServiceAnnouncement, ShipPosition, WeatherObservation,
 };
 
 pub use encode::encode_to_heapless;
 #[allow(unused_imports)]
 pub use types::{
-    TelemetryBatch, TelemetryRecord, TelemetryType, MAX_BATCH_RECORDS, MAX_UNKNOWN_BYTES,
+    MAX_BATCH_RECORDS, MAX_UNKNOWN_BYTES, TelemetryBatch, TelemetryRecord, TelemetryType,
 };

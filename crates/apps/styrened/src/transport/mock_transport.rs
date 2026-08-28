@@ -9,21 +9,21 @@
 //! Package C — see ownership-matrix.md §MeshTransport.
 
 use super::mesh_transport::{
-    validate_link_representation, LinkOpenResult, LinkRepresentation, MeshTransport,
-    RequestLifecycleEvent, TransportError, TransportLifecycleEvent,
+    LinkOpenResult, LinkRepresentation, MeshTransport, RequestLifecycleEvent, TransportError,
+    TransportLifecycleEvent, validate_link_representation,
 };
 use rns_core::destination::DestinationDesc;
 use rns_core::hash::AddressHash;
 use rns_core::identity::Identity;
 use rns_core::transport::core_transport::{
-    path_table::RouteEvent, AnnounceEvent, ReceivedData, SendPacketOutcome,
+    AnnounceEvent, ReceivedData, SendPacketOutcome, path_table::RouteEvent,
 };
 use rns_core::transport::delivery::LinkSendResult;
 use rns_core::transport::resource::ResourceEvent;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::time::Duration;
-use tokio::sync::{broadcast, Notify};
+use tokio::sync::{Notify, broadcast};
 
 /// Recorded call for assertion.
 #[derive(Debug, Clone)]

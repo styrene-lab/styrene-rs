@@ -4,9 +4,9 @@
 //! process-global writes corrupting their renderer. The standalone daemon keeps
 //! diagnostics enabled by default.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(test)]
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static ENABLED: AtomicBool = AtomicBool::new(true);
 #[cfg(test)]
@@ -32,11 +32,11 @@ pub fn should_emit() -> bool {
 
 pub fn emit(arguments: std::fmt::Arguments<'_>) {
     #[cfg(test)]
-    if let Ok(mut captured) = CAPTURED.lock() {
-        if let Some(lines) = captured.as_mut() {
-            lines.push(arguments.to_string());
-            return;
-        }
+    if let Ok(mut captured) = CAPTURED.lock()
+        && let Some(lines) = captured.as_mut()
+    {
+        lines.push(arguments.to_string());
+        return;
     }
     eprintln!("{arguments}");
 }

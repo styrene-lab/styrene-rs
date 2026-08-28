@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bzip2::write::BzEncoder;
 use bzip2::Compression;
-use tokio::time::{sleep, Instant};
+use bzip2::write::BzEncoder;
+use tokio::time::{Instant, sleep};
 
 use crate::packet::PACKET_MDU;
 use crate::transport::channel::{ChannelError, HandlerId, SystemMessageTypes, TypedMessage};
@@ -435,9 +435,9 @@ mod tests {
     use crate::transport::core_transport::{Transport, TransportConfig};
     use crate::transport::destination_ext::link::{Link, LinkHandleResult};
     use rand_core::OsRng;
+    use std::sync::Mutex as StdMutex;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
-    use std::sync::Mutex as StdMutex;
     use tokio::sync::Mutex;
     use tokio::time::timeout;
 
@@ -553,16 +553,18 @@ mod tests {
         assert!(matches!(result, LinkHandleResult::Proof(_)));
         assert_eq!(reader.ready_len(), b"async".len());
         assert_eq!(reader.read(32).expect("chunk"), b"async".to_vec());
-        assert!(timeout(Duration::from_secs(1), async move {
-            loop {
-                if callback_started.load(Ordering::SeqCst) {
-                    break;
+        assert!(
+            timeout(Duration::from_secs(1), async move {
+                loop {
+                    if callback_started.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
                 }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .is_ok());
+            })
+            .await
+            .is_ok()
+        );
         assert_eq!(rx.recv_timeout(Duration::from_secs(1)).expect("ready callback"), 5);
     }
 

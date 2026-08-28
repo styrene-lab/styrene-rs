@@ -19,8 +19,8 @@ use styrene_ipc::traits::*;
 use styrene_ipc::types::*;
 
 use crate::app_context::AppContext;
-use crate::services::messaging::attachment_record_to_info;
 use crate::services::AutoReplyMode;
+use crate::services::messaging::attachment_record_to_info;
 use crate::storage::messages::MessageRecord;
 use styrene_rbac::Capability;
 
@@ -2290,12 +2290,12 @@ impl DaemonPages for DaemonFacade {
         request: FileDownloadRequest,
     ) -> Result<FileDownloadInfo, IpcError> {
         self.require(Capability::PAGE_BROWSE)?;
-        if let Some(checksum) = request.expected_sha256.as_deref() {
-            if checksum.len() != 64 || !checksum.as_bytes().iter().all(u8::is_ascii_hexdigit) {
-                return Err(IpcError::invalid_request(
-                    "expected SHA-256 must be 64 hexadecimal characters",
-                ));
-            }
+        if let Some(checksum) = request.expected_sha256.as_deref()
+            && (checksum.len() != 64 || !checksum.as_bytes().iter().all(u8::is_ascii_hexdigit))
+        {
+            return Err(IpcError::invalid_request(
+                "expected SHA-256 must be 64 hexadecimal characters",
+            ));
         }
         self.ctx
             .native_browse()
@@ -2558,10 +2558,12 @@ mod tests {
         assert_eq!(outcome.disposition, SendChatDisposition::Failed);
         assert!(!outcome.message_id.is_empty());
         assert_eq!(outcome.message.id, outcome.message_id);
-        assert!(outcome
-            .terminal_error
-            .as_deref()
-            .is_some_and(|error| error.contains("injected post-commit failure")));
+        assert!(
+            outcome
+                .terminal_error
+                .as_deref()
+                .is_some_and(|error| error.contains("injected post-commit failure"))
+        );
         assert!(outcome.paper_uri.is_none());
     }
 
@@ -2736,8 +2738,8 @@ mod tests {
         assert_eq!(status.device_count, 0);
     }
 
-    fn test_standard_propagation_policy(
-    ) -> crate::standard_propagation::StandardPropagationRuntimePolicy {
+    fn test_standard_propagation_policy()
+    -> crate::standard_propagation::StandardPropagationRuntimePolicy {
         crate::standard_propagation::StandardPropagationRuntimePolicy {
             target_cost: 16,
             flexibility: 3,

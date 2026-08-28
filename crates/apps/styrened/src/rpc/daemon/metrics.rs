@@ -53,8 +53,8 @@ impl RpcDaemon {
             }
             "sdk_poll_events_v2" => {
                 metrics.sdk_poll_latency_ms.observe(elapsed_ms);
-                if let Some(result) = response.result.as_ref() {
-                    if let Some(events) = result.get("events").and_then(JsonValue::as_array) {
+                if let Some(result) = response.result.as_ref()
+                    && let Some(events) = result.get("events").and_then(JsonValue::as_array) {
                         metrics.sdk_poll_events_total = metrics
                             .sdk_poll_events_total
                             .saturating_add(events.len() as u64);
@@ -67,7 +67,6 @@ impl RpcDaemon {
                                 metrics.sdk_poll_batches_with_gap_total.saturating_add(1);
                         }
                     }
-                }
             }
             "sdk_cancel_message_v2" => {
                 if let Some(result) = response.result.as_ref() {

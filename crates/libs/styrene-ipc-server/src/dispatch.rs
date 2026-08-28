@@ -2956,21 +2956,27 @@ mod conversation_projection_tests {
     #[test]
     fn unread_only_and_legacy_alias_have_consistent_filter_semantics() {
         assert!(!conversation_unread_only(&Payload::new()).unwrap());
-        assert!(conversation_unread_only(&Payload::from([(
-            "unread_only".into(),
-            rmpv::Value::Boolean(true),
-        )]))
-        .unwrap());
-        assert!(!conversation_unread_only(&Payload::from([(
-            "unread_only".into(),
-            rmpv::Value::Boolean(false),
-        )]))
-        .unwrap());
-        assert!(conversation_unread_only(&Payload::from([(
-            "include_unread".into(),
-            rmpv::Value::Boolean(true),
-        )]))
-        .unwrap());
+        assert!(
+            conversation_unread_only(&Payload::from([(
+                "unread_only".into(),
+                rmpv::Value::Boolean(true),
+            )]))
+            .unwrap()
+        );
+        assert!(
+            !conversation_unread_only(&Payload::from([(
+                "unread_only".into(),
+                rmpv::Value::Boolean(false),
+            )]))
+            .unwrap()
+        );
+        assert!(
+            conversation_unread_only(&Payload::from([(
+                "include_unread".into(),
+                rmpv::Value::Boolean(true),
+            )]))
+            .unwrap()
+        );
     }
 
     #[test]

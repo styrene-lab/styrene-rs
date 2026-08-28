@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use ed25519_dalek::SigningKey;
-use serde_json::{json, Value};
-use styrene_identity::{derive::KeyDeriver, IdentityId, RepositorySignerBinding};
+use serde_json::{Value, json};
+use styrene_identity::{IdentityId, RepositorySignerBinding, derive::KeyDeriver};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = output_path()?;

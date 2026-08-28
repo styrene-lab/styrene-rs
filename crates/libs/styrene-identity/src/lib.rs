@@ -136,29 +136,29 @@ pub mod vault;
 pub mod yubikey_signer;
 
 pub use derive::{
-    derive_key, derive_keys, validate_label, DeriveError, DerivedKeys, KeyDeriver, KeyPurpose,
+    DeriveError, DerivedKeys, KeyDeriver, KeyPurpose, derive_key, derive_keys, validate_label,
 };
-pub use discover::{discover, DiscoveredIdentity};
+pub use discover::{DiscoveredIdentity, discover};
 #[cfg(feature = "signing")]
 pub use export::AllPublicKeys;
 #[cfg(feature = "signing")]
 #[allow(deprecated)]
 pub use identity::{
-    identity_hash, identity_pubkey, identity_sign, identity_verify, IdentityInfo, PublicIdentity,
-    SignedAttestation, IDENTITY_HASH_BYTES,
+    IDENTITY_HASH_BYTES, IdentityInfo, PublicIdentity, SignedAttestation, identity_hash,
+    identity_pubkey, identity_sign, identity_verify,
 };
 pub use identity_id::{IdentityId, IdentityIdError};
 #[cfg(feature = "pki")]
 pub use pki::{
-    derive_ca_certificate, derive_ca_certificate_with_profile, derive_client_certificate_chain,
-    derive_client_certificate_chain_with_profile, derive_server_certificate_chain,
-    derive_server_certificate_chain_with_profile, styrene_agent_uri, styrene_ca_uri,
-    styrene_client_uri, CertificateRole, StyreneCertificate, StyreneCertificateChain,
-    StyreneCertificateProfile, StyrenePkiError,
+    CertificateRole, StyreneCertificate, StyreneCertificateChain, StyreneCertificateProfile,
+    StyrenePkiError, derive_ca_certificate, derive_ca_certificate_with_profile,
+    derive_client_certificate_chain, derive_client_certificate_chain_with_profile,
+    derive_server_certificate_chain, derive_server_certificate_chain_with_profile,
+    styrene_agent_uri, styrene_ca_uri, styrene_client_uri,
 };
 #[cfg(feature = "repository-signing")]
 pub use repository_signing::{
-    verify_repository_signer_binding, RepositorySignerBinding, RepositorySignerBindingError,
-    RepositorySignerBindingErrorClass, VerifiedRepositorySignerBinding,
+    RepositorySignerBinding, RepositorySignerBindingError, RepositorySignerBindingErrorClass,
+    VerifiedRepositorySignerBinding, verify_repository_signer_binding,
 };
 pub use signer::{IdentitySigner, SignerChain, SignerError, SignerTier};

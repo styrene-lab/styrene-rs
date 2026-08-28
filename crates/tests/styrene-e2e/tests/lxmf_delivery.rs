@@ -6,8 +6,8 @@
 
 use std::time::Duration;
 use styrene_e2e::helpers::{
-    await_identity_resolved, await_inbound_count, await_inbound_message, two_connected_nodes,
-    with_timeout, SETTLE,
+    SETTLE, await_identity_resolved, await_inbound_count, await_inbound_message,
+    two_connected_nodes, with_timeout,
 };
 use styrene_e2e::node::TestNodeBuilder;
 

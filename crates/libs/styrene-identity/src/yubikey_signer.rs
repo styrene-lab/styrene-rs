@@ -36,7 +36,7 @@
 //! YubiKey must be present for each `root_secret()` call — there is no
 //! caching across calls.
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use rand_core::RngCore;
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;

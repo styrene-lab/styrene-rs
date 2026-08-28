@@ -11,7 +11,7 @@ use tokio::net::UnixStream;
 
 use styrene_e2e::helpers::with_timeout;
 use styrene_ipc_server::wire::{self, MessageType, REQUEST_ID_SIZE};
-use styrened::daemon::{start, DaemonConfig2};
+use styrened::daemon::{DaemonConfig2, start};
 
 fn random_request_id() -> [u8; REQUEST_ID_SIZE] {
     let mut id = [0u8; 16];

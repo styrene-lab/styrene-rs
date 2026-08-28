@@ -564,11 +564,7 @@ fn extract_json_name(s: &str) -> String {
         }
     }
     // Fallback: truncate the raw string
-    if s.len() > 24 {
-        format!("{}...", &s[..24])
-    } else {
-        s.to_string()
-    }
+    if s.len() > 24 { format!("{}...", &s[..24]) } else { s.to_string() }
 }
 
 #[cfg(test)]

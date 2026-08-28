@@ -225,10 +225,10 @@ impl RouterCoordinator {
     }
 
     pub fn record_initialization_error(&self, error: impl Into<String>) {
-        if let Ok(mut initialization_error) = self.initialization_error.lock() {
-            if initialization_error.is_none() {
-                *initialization_error = Some(error.into());
-            }
+        if let Ok(mut initialization_error) = self.initialization_error.lock()
+            && initialization_error.is_none()
+        {
+            *initialization_error = Some(error.into());
         }
     }
 
@@ -1037,12 +1037,14 @@ mod tests {
 
     fn poison_store(store: &Arc<Mutex<MessagesStore>>) {
         let store = store.clone();
-        assert!(std::thread::spawn(move || {
-            let _guard = store.lock().expect("router test store lock");
-            panic!("poison router store");
-        })
-        .join()
-        .is_err());
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = store.lock().expect("router test store lock");
+                panic!("poison router store");
+            })
+            .join()
+            .is_err()
+        );
     }
 
     #[test]
@@ -1050,11 +1052,9 @@ mod tests {
         let startup_store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
         poison_store(&startup_store);
         let startup = RouterCoordinator::new(startup_store);
-        assert!(startup
-            .route("missing")
-            .unwrap_err()
-            .to_string()
-            .contains("initialization failed"));
+        assert!(
+            startup.route("missing").unwrap_err().to_string().contains("initialization failed")
+        );
 
         let outbound_store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
         let outbound = RouterCoordinator::new(outbound_store.clone());
@@ -1066,9 +1066,11 @@ mod tests {
         receipt.queue(&message("poison-receipt"), None, 1, 1, None).unwrap();
         poison_store(&receipt_store);
         assert!(receipt.track_evidence("evidence", "poison-receipt", "packet").is_err());
-        assert!(receipt
-            .apply_evidence("poison-receipt", LifecycleEvidence::PacketDeliveryReceipt)
-            .is_err());
+        assert!(
+            receipt
+                .apply_evidence("poison-receipt", LifecycleEvidence::PacketDeliveryReceipt)
+                .is_err()
+        );
     }
 
     fn message(id: &str) -> MessageRecord {
@@ -1240,9 +1242,11 @@ mod tests {
             assert_ne!(delivery.join().unwrap(), cancellation.join().unwrap());
             let terminal = router.message(message_id).unwrap().state;
             assert!(matches!(terminal, OutboundState::Delivered | OutboundState::Cancelled));
-            assert!(!router
-                .apply_evidence(message_id, LifecycleEvidence::Failed("late".into()))
-                .unwrap());
+            assert!(
+                !router
+                    .apply_evidence(message_id, LifecycleEvidence::Failed("late".into()))
+                    .unwrap()
+            );
             assert_eq!(router.message(message_id).unwrap().state, terminal);
         }
     }
@@ -1459,10 +1463,12 @@ mod tests {
         let recovered_message = reopened.message("first").unwrap();
         assert_eq!(recovered_message.requested_method, DeliveryMethod::Opportunistic);
         assert_eq!(recovered_message.actual_method, DeliveryMethod::Direct);
-        assert!(recovered_message
-            .fallback_reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("packet limit")));
+        assert!(
+            recovered_message
+                .fallback_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("packet limit"))
+        );
         assert_eq!(recovered_message.correlation_id, "send-correlation");
         assert_eq!(recovered_message.total_attempts, 1);
 

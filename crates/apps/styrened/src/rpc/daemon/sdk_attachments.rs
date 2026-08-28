@@ -199,11 +199,10 @@ impl RpcDaemon {
             let Some(record) = attachments_guard.get(attachment_id).cloned() else {
                 continue;
             };
-            if let Some(topic_id) = parsed.topic_id.as_deref() {
-                if !record.topic_ids.iter().any(|current| current == topic_id) {
+            if let Some(topic_id) = parsed.topic_id.as_deref()
+                && !record.topic_ids.iter().any(|current| current == topic_id) {
                     continue;
                 }
-            }
             attachments.push(record);
             if attachments.len() >= limit {
                 break;

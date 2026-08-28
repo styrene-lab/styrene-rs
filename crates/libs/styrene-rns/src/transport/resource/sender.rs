@@ -193,8 +193,8 @@ impl ResourceSender {
         let mut sent_any = false;
         let mut scratch_packet = Packet::default();
         for hash in &request.requested_hashes {
-            if let Some(index) = self.map_hashes.iter().position(|entry| entry == hash) {
-                if let Some(part) = self.parts.get(index) {
+            if let Some(index) = self.map_hashes.iter().position(|entry| entry == hash)
+                && let Some(part) = self.parts.get(index) {
                     crate::transport_diagnostic!(
                         "[resource] sending part index={} bytes={} hash={}",
                         index,
@@ -217,12 +217,11 @@ impl ResourceSender {
                         log::warn!("resource: failed to build resource packet");
                     }
                 }
-            }
         }
 
-        if request.hashmap_exhausted {
-            if let Some(last_hash) = request.last_map_hash {
-                if let Some(last_index) =
+        if request.hashmap_exhausted
+            && let Some(last_hash) = request.last_map_hash
+                && let Some(last_index) =
                     self.map_hashes.iter().position(|entry| *entry == last_hash)
                 {
                     let next_segment = (last_index / HASHMAP_MAX_LEN) + 1;
@@ -246,8 +245,6 @@ impl ResourceSender {
                         }
                     }
                 }
-            }
-        }
 
         if self.status == ResourceStatus::Advertised
             || self.status == ResourceStatus::Transferring

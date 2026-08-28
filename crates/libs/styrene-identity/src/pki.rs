@@ -5,8 +5,8 @@
 //! through the TLS certificate key family, then encoded as Ed25519 PKCS#8 for `rcgen`.
 
 use rcgen::{
-    date_time_ymd, BasicConstraints, CertificateParams, DistinguishedName, DnType,
-    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SanType, SerialNumber,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose, SanType, SerialNumber, date_time_ymd,
 };
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -654,19 +654,20 @@ mod tests {
         let parsed = parse_cert(&chain.leaf);
         let sans = parsed.subject_alternative_name().unwrap().unwrap();
 
-        assert!(sans
-            .value
-            .general_names
-            .iter()
-            .any(|name| matches!(name, GeneralName::URI(uri) if *uri == chain.leaf.uri_san)));
+        assert!(
+            sans.value
+                .general_names
+                .iter()
+                .any(|name| matches!(name, GeneralName::URI(uri) if *uri == chain.leaf.uri_san))
+        );
         assert!(sans.value.general_names.iter().any(|name| {
             matches!(name, GeneralName::DNSName(name) if *name == "omegon-primary.default.svc")
         }));
-        assert!(sans
-            .value
-            .general_names
-            .iter()
-            .any(|name| matches!(name, GeneralName::IPAddress(bytes) if *bytes == [127, 0, 0, 1])));
+        assert!(
+            sans.value.general_names.iter().any(
+                |name| matches!(name, GeneralName::IPAddress(bytes) if *bytes == [127, 0, 0, 1])
+            )
+        );
         assert!(chain.cert_chain_pem().starts_with(&chain.leaf.cert_pem));
         assert_eq!(chain.ca_bundle_pem(), chain.ca_cert_pem);
         assert_eq!(chain.ca_fingerprint_sha256, fingerprint_sha256(&chain.ca_cert_der));
@@ -860,11 +861,12 @@ mod tests {
         let sans = parsed.subject_alternative_name().unwrap().unwrap();
         let eku = parsed.extended_key_usage().unwrap().unwrap();
 
-        assert!(sans
-            .value
-            .general_names
-            .iter()
-            .any(|name| matches!(name, GeneralName::URI(uri) if *uri == chain.leaf.uri_san)));
+        assert!(
+            sans.value
+                .general_names
+                .iter()
+                .any(|name| matches!(name, GeneralName::URI(uri) if *uri == chain.leaf.uri_san))
+        );
         assert!(eku.value.client_auth);
     }
 

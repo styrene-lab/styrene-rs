@@ -2,8 +2,8 @@ use rns_core::transport::core_transport::{DeliveryReceipt, ReceiptHandler};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use styrened::receipt_bridge::{
-    register_receipt_waiter, CompositeReceiptHandler, ReceiptBridge, ReceiptWaiters,
-    ServiceReceiptBridge,
+    CompositeReceiptHandler, ReceiptBridge, ReceiptWaiters, ServiceReceiptBridge,
+    register_receipt_waiter,
 };
 use styrened::services::MessagingService;
 use styrened::storage::messages::{MessageRecord, MessagesStore};

@@ -7,6 +7,6 @@ pub(crate) mod aead;
 pub(crate) mod kdf;
 pub(crate) mod kem;
 
-pub use aead::{SessionCipher, CONFIRM_ROLE_INITIATOR, CONFIRM_ROLE_RESPONDER};
+pub use aead::{CONFIRM_ROLE_INITIATOR, CONFIRM_ROLE_RESPONDER, SessionCipher};
 pub use kdf::HybridKdf;
 pub use kem::{MlKemEncapsulated, MlKemKeyPair};

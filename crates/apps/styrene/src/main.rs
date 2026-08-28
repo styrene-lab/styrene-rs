@@ -108,34 +108,30 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(feature = "cli")]
         Some(Command::Tunnel { ref action }) => match action {
             cli::TunnelAction::List => commands::tunnel_list(socket).await,
-            cli::TunnelAction::Status { ref peer } => commands::tunnel_status(socket, peer).await,
-            cli::TunnelAction::Establish { ref peer } => {
-                commands::tunnel_establish(socket, peer).await
-            }
-            cli::TunnelAction::Offer { ref peer } => commands::tunnel_offer(socket, peer).await,
-            cli::TunnelAction::Teardown { ref peer } => {
-                commands::tunnel_teardown(socket, peer).await
-            }
+            cli::TunnelAction::Status { peer } => commands::tunnel_status(socket, peer).await,
+            cli::TunnelAction::Establish { peer } => commands::tunnel_establish(socket, peer).await,
+            cli::TunnelAction::Offer { peer } => commands::tunnel_offer(socket, peer).await,
+            cli::TunnelAction::Teardown { peer } => commands::tunnel_teardown(socket, peer).await,
         },
 
         #[cfg(feature = "cli")]
         Some(Command::Fleet { ref action }) => match action {
-            cli::FleetAction::Status { ref node, timeout } => {
+            cli::FleetAction::Status { node, timeout } => {
                 commands::fleet_status(socket, node.as_deref(), *timeout).await
             }
-            cli::FleetAction::Exec { ref node, ref cmd, ref args, timeout } => {
+            cli::FleetAction::Exec { node, cmd, args, timeout } => {
                 commands::fleet_exec(socket, node, cmd, args, *timeout).await
             }
-            cli::FleetAction::Reboot { ref node, delay } => {
+            cli::FleetAction::Reboot { node, delay } => {
                 commands::fleet_reboot(socket, node, *delay).await
             }
-            cli::FleetAction::Apply { ref node, ref profile, no_verify, timeout } => {
+            cli::FleetAction::Apply { node, profile, no_verify, timeout } => {
                 commands::fleet_apply(socket, node, profile, !no_verify, *timeout).await
             }
-            cli::FleetAction::Grant { ref node, ref role, ref label, ref grants } => {
+            cli::FleetAction::Grant { node, role, label, grants } => {
                 commands::fleet_grant(socket, node, role, label.as_deref(), grants).await
             }
-            cli::FleetAction::Revoke { ref node } => commands::fleet_revoke(socket, node).await,
+            cli::FleetAction::Revoke { node } => commands::fleet_revoke(socket, node).await,
         },
     }
 }

@@ -132,7 +132,7 @@ pub trait DaemonPages: Send + Sync {
 
     /// List known pages on a remote node (if the node advertises a page index).
     async fn list_pages(&self, host: &str, timeout: Option<u64>)
-        -> Result<Vec<PageInfo>, IpcError>;
+    -> Result<Vec<PageInfo>, IpcError>;
 
     /// List all nodes that advertise page hosting capability.
     async fn page_hosts(&self) -> Result<Vec<DeviceInfo>, IpcError>;

@@ -1,8 +1,8 @@
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
 use super::messages::{
-    stage_attachment_blobs, AttachmentBlobInput, CanonicalInboundRecord, LxmfTicketRecord,
-    MessageRecord, MessagesStore,
+    AttachmentBlobInput, CanonicalInboundRecord, LxmfTicketRecord, MessageRecord, MessagesStore,
+    stage_attachment_blobs,
 };
 
 pub const STAMP_COST_EXPIRY_SECS: i64 = 45 * 24 * 60 * 60;
@@ -129,17 +129,17 @@ impl MessagesStore {
             "INSERT INTO canonical_inbound_inspection (message_id, stamp_target) VALUES (?1, ?2)",
             params![&canonical.message_id, canonical.stamp_target],
         )?;
-        if canonical.authentication_state == "verified" {
-            if let Some(ticket) = received_ticket {
-                validate_ticket(ticket)?;
-                transaction.execute(
-                    "INSERT INTO lxmf_tickets (peer, ticket, expires_at, direction)
+        if canonical.authentication_state == "verified"
+            && let Some(ticket) = received_ticket
+        {
+            validate_ticket(ticket)?;
+            transaction.execute(
+                "INSERT INTO lxmf_tickets (peer, ticket, expires_at, direction)
                      VALUES (?1, ?2, ?3, 'received')
                      ON CONFLICT(peer, direction, ticket)
                      DO UPDATE SET expires_at = excluded.expires_at",
-                    params![&ticket.peer, &ticket.ticket, ticket.expires_at],
-                )?;
-            }
+                params![&ticket.peer, &ticket.ticket, ticket.expires_at],
+            )?;
         }
         if let Some(issue) = attachment_issue {
             transaction.execute(
@@ -225,17 +225,18 @@ impl MessagesStore {
              WHERE message_id = ?1 AND authentication_state = 'unknown_identity'",
             params![message_id, state],
         )?;
-        if changed > 0 && state == "verified" {
-            if let Some(ticket) = ticket {
-                validate_ticket(ticket)?;
-                transaction.execute(
-                    "INSERT INTO lxmf_tickets (peer, ticket, expires_at, direction)
+        if changed > 0
+            && state == "verified"
+            && let Some(ticket) = ticket
+        {
+            validate_ticket(ticket)?;
+            transaction.execute(
+                "INSERT INTO lxmf_tickets (peer, ticket, expires_at, direction)
                      VALUES (?1, ?2, ?3, 'received')
                      ON CONFLICT(peer, direction, ticket)
                      DO UPDATE SET expires_at = excluded.expires_at",
-                    params![&ticket.peer, &ticket.ticket, ticket.expires_at],
-                )?;
-            }
+                params![&ticket.peer, &ticket.ticket, ticket.expires_at],
+            )?;
         }
         transaction.commit()?;
         Ok(changed > 0)
@@ -375,9 +376,8 @@ impl MessagesStore {
                      WHERE o.delivered_at IS NULL AND r.state = 'delivered'
                      ORDER BY o.message_id LIMIT 1024",
                 )?;
-                let ids =
-                    statement.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
-                ids
+
+                statement.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?
             };
             if ids.is_empty() {
                 break;

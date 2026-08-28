@@ -9,9 +9,9 @@ use base64::Engine;
 use ed25519_dalek::Signature;
 use rand_core::CryptoRngCore;
 use rns_core::crypt::fernet::{
-    Fernet, PlainText, Token, FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE,
+    FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE, Fernet, PlainText, Token,
 };
-use rns_core::identity::{DerivedKey, Identity, PrivateIdentity, PUBLIC_KEY_LENGTH};
+use rns_core::identity::{DerivedKey, Identity, PUBLIC_KEY_LENGTH, PrivateIdentity};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 

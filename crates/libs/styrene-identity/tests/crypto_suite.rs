@@ -650,7 +650,7 @@ fn wrong_passphrase_produces_different_result() {
 /// Identity file must be exactly 97 bytes (STID format).
 #[test]
 fn identity_file_size_is_exact() {
-    use styrene_identity::file_signer::{ClosurePassphraseProvider, FileSigner, FILE_LEN};
+    use styrene_identity::file_signer::{ClosurePassphraseProvider, FILE_LEN, FileSigner};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("test-identity.key");

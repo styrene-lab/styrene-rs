@@ -1,5 +1,5 @@
 use crate::backend::RuntimeProfile;
-use styrene_ipc::types::{ActiveCapabilitiesInfo, ACTIVE_CAPABILITIES_VERSION};
+use styrene_ipc::types::{ACTIVE_CAPABILITIES_VERSION, ActiveCapabilitiesInfo};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlPlane {
@@ -245,21 +245,27 @@ mod tests {
     #[test]
     fn control_planes_reject_cross_plane_actions() {
         let context = live_context(7);
-        assert!(context
-            .authorize(ControlPlane::Lab, &SafetyAction::operate("rpc.reboot", true))
-            .is_err());
+        assert!(
+            context
+                .authorize(ControlPlane::Lab, &SafetyAction::operate("rpc.reboot", true))
+                .is_err()
+        );
         assert!(context.authorize(ControlPlane::Operate, &SafetyAction::live_scenario()).is_err());
     }
 
     #[test]
     fn operate_actions_require_current_capability() {
         let context = live_context(7);
-        assert!(context
-            .authorize(ControlPlane::Operate, &SafetyAction::operate("rpc.reboot", true))
-            .is_ok());
-        assert!(context
-            .authorize(ControlPlane::Operate, &SafetyAction::operate("policy.update", true))
-            .is_err());
+        assert!(
+            context
+                .authorize(ControlPlane::Operate, &SafetyAction::operate("rpc.reboot", true))
+                .is_ok()
+        );
+        assert!(
+            context
+                .authorize(ControlPlane::Operate, &SafetyAction::operate("policy.update", true))
+                .is_err()
+        );
     }
 
     #[test]

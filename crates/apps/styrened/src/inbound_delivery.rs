@@ -1,7 +1,7 @@
 use crate::storage::messages::{CanonicalInboundRecord, MessageRecord};
-use lxmf::inbound_decode::decode_inbound_message;
-pub use lxmf::inbound_decode::InboundPayloadMode;
 use lxmf::WireMessage;
+pub use lxmf::inbound_decode::InboundPayloadMode;
+use lxmf::inbound_decode::decode_inbound_message;
 
 use lxmf::wire_fields::rmpv_to_json_redacting_attachments;
 
@@ -223,8 +223,8 @@ fn inbound_mode_label(mode: InboundPayloadMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_canonical_inbound_payload, decode_inbound_payload_with_diagnostics, ticket_expiry,
-        DecodedInboundRecord,
+        DecodedInboundRecord, decode_canonical_inbound_payload,
+        decode_inbound_payload_with_diagnostics, ticket_expiry,
     };
     use crate::storage::messages::{CanonicalInboundRecord, MessageRecord};
     use lxmf::inbound_decode::InboundPayloadMode;

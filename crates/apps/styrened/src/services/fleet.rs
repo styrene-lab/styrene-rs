@@ -391,12 +391,11 @@ impl FleetService {
         // Check for error response (RBAC denial, etc.)
         if let Ok(status) =
             cbor_decode::<styrene_mesh::wire::PropagationStatusPayload>(&response.payload)
+            && !status.success
         {
-            if !status.success {
-                return Err(std::io::Error::other(
-                    status.error.unwrap_or_else(|| "fetch rejected".into()),
-                ));
-            }
+            return Err(std::io::Error::other(
+                status.error.unwrap_or_else(|| "fetch rejected".into()),
+            ));
         }
         let result: styrene_mesh::wire::PropagationFetchResultPayload =
             cbor_decode(&response.payload)?;

@@ -96,11 +96,7 @@ impl AnnounceLimitEntry {
             0.0
         } else {
             let avg = delta_sum.as_secs_f64() / self.incoming.len() as f64;
-            if avg == 0.0 {
-                0.0
-            } else {
-                1.0 / avg
-            }
+            if avg == 0.0 { 0.0 } else { 1.0 / avg }
         }
     }
 
@@ -117,14 +113,13 @@ impl AnnounceLimitEntry {
         let incoming_freq = self.incoming_announce_frequency(now);
 
         if self.burst_active {
-            if incoming_freq < freq_threshold {
-                if let Some(activated_at) = self.burst_activated {
-                    if now >= activated_at + rate_limit.burst_hold {
-                        self.burst_active = false;
-                        self.burst_activated = None;
-                        self.held_release = now + rate_limit.burst_penalty;
-                    }
-                }
+            if incoming_freq < freq_threshold
+                && let Some(activated_at) = self.burst_activated
+                && now >= activated_at + rate_limit.burst_hold
+            {
+                self.burst_active = false;
+                self.burst_activated = None;
+                self.held_release = now + rate_limit.burst_penalty;
             }
 
             true
@@ -261,7 +256,7 @@ impl AnnounceLimits {
 mod tests {
     use super::*;
     use crate::packet::{Header, PacketType};
-    use tokio::time::{advance, Duration};
+    use tokio::time::{Duration, advance};
 
     fn test_rate_limit() -> AnnounceRateLimit {
         AnnounceRateLimit {

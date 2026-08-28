@@ -5,8 +5,8 @@
 //! real RNS transport layer.
 
 use super::mesh_transport::{
-    validate_link_representation, LinkRepresentation, MeshTransport, RequestLifecycleEvent,
-    TransportError, TransportLifecycleEvent,
+    LinkRepresentation, MeshTransport, RequestLifecycleEvent, TransportError,
+    TransportLifecycleEvent, validate_link_representation,
 };
 use rns_core::destination::{DestinationDesc, DestinationName, SingleInputDestination};
 use rns_core::hash::AddressHash;
@@ -16,15 +16,15 @@ use rns_core::packet::{
     PacketDataBuffer, PacketType, PropagationType,
 };
 use rns_core::transport::core_transport::{
-    path_table::RouteEvent, AnnounceEvent, ReceivedData, SendPacketOutcome, Transport,
+    AnnounceEvent, ReceivedData, SendPacketOutcome, Transport, path_table::RouteEvent,
 };
 use rns_core::transport::delivery::LinkSendResult;
 use rns_core::transport::destination_ext::link::{LinkEvent, LinkEventData};
 use rns_core::transport::iface::InterfaceStatsSnapshot;
 use rns_core::transport::resource::ResourceEvent;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
@@ -53,11 +53,11 @@ impl Drop for TokioTransportAdapter {
     fn drop(&mut self) {
         self.forwarder_cancel.cancel();
         self.interface_cancel.cancel();
-        if let Ok(forwarders) = self.forwarders.try_lock() {
-            if let Some(forwarders) = forwarders.as_ref() {
-                for forwarder in forwarders {
-                    forwarder.abort();
-                }
+        if let Ok(forwarders) = self.forwarders.try_lock()
+            && let Some(forwarders) = forwarders.as_ref()
+        {
+            for forwarder in forwarders {
+                forwarder.abort();
             }
         }
         let interface_manager = self.transport.iface_manager();
@@ -128,12 +128,12 @@ async fn open_native_link_owned(
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         if cancellation.is_cancelled() {
-            if let Some(link_id) = owned_link_id.take() {
-                if !transport.cancel_link_open(&link_id).await {
-                    return Err(TransportError::CleanupFailed(
-                        "pending native link remained registered".into(),
-                    ));
-                }
+            if let Some(link_id) = owned_link_id.take()
+                && !transport.cancel_link_open(&link_id).await
+            {
+                return Err(TransportError::CleanupFailed(
+                    "pending native link remained registered".into(),
+                ));
             }
             return Err(TransportError::Cancelled);
         }
@@ -159,12 +159,12 @@ async fn open_native_link_owned(
         drop(guard);
         let timed_out = tokio::time::Instant::now() >= deadline;
         if cancellation.is_cancelled() || timed_out {
-            if let Some(link_id) = owned_link_id.take() {
-                if !transport.cancel_link_open(&link_id).await {
-                    return Err(TransportError::CleanupFailed(
-                        "pending native link remained registered".into(),
-                    ));
-                }
+            if let Some(link_id) = owned_link_id.take()
+                && !transport.cancel_link_open(&link_id).await
+            {
+                return Err(TransportError::CleanupFailed(
+                    "pending native link remained registered".into(),
+                ));
             }
             return if timed_out {
                 Err(TransportError::TimedOut)
@@ -593,14 +593,13 @@ impl MeshTransport for TokioTransportAdapter {
                 super::mesh_transport::LinkOpenResult::Created(link_id) => Some(*link_id),
                 super::mesh_transport::LinkOpenResult::Reused(_) => None,
             });
-            if result_tx.send(result).is_err() || ack_rx.await.is_err() {
-                if let Some(link_id) = created {
-                    if let Err(error) = close_unclaimed_native_link(&transport, link_id).await {
-                        log::error!(
-                            "native link ownership handoff cleanup reached terminal error: {error}"
-                        );
-                    }
-                }
+            if (result_tx.send(result).is_err() || ack_rx.await.is_err())
+                && let Some(link_id) = created
+                && let Err(error) = close_unclaimed_native_link(&transport, link_id).await
+            {
+                log::error!(
+                    "native link ownership handoff cleanup reached terminal error: {error}"
+                );
             }
         });
         let result = result_rx
@@ -1001,12 +1000,14 @@ mod tests {
             .expect("reuse active native link");
 
         assert_eq!(reopened, crate::transport::mesh_transport::LinkOpenResult::Reused(link_id));
-        assert!(transport
-            .link_lifecycle_snapshot()
-            .await
-            .active
-            .iter()
-            .any(|snapshot| snapshot.id == link_id));
+        assert!(
+            transport
+                .link_lifecycle_snapshot()
+                .await
+                .active
+                .iter()
+                .any(|snapshot| snapshot.id == link_id)
+        );
     }
 
     #[tokio::test]

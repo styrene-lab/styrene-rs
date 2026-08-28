@@ -1,5 +1,5 @@
 use styrene_e2e::node::TestNodeBuilder;
-use styrened::startup_contract::{capabilities, components, EvidenceScope, RuntimeKind};
+use styrened::startup_contract::{EvidenceScope, RuntimeKind, capabilities, components};
 
 #[tokio::test]
 async fn test_only_page_handler_is_internal_styrene_evidence() {

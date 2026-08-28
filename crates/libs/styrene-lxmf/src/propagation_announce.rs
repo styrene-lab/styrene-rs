@@ -402,10 +402,12 @@ mod tests {
         ] {
             let rmpv::Value::Array(mut fields) = canonical_value() else { panic!("array") };
             fields[3] = replacement;
-            assert!(StandardPropagationAnnounce::parse(
-                &rmp_serde::to_vec(&rmpv::Value::Array(fields)).unwrap()
-            )
-            .is_err());
+            assert!(
+                StandardPropagationAnnounce::parse(
+                    &rmp_serde::to_vec(&rmpv::Value::Array(fields)).unwrap()
+                )
+                .is_err()
+            );
         }
         let rmpv::Value::Array(mut fields) = canonical_value() else { panic!("array") };
         fields[2] = 2.into();

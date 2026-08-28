@@ -11,10 +11,10 @@ use crate::app_context::AppContext;
 use crate::config::DaemonConfig;
 use crate::daemon_facade::DaemonFacade;
 use crate::identity_store::load_or_create_identity;
-use crate::standard_propagation::{StandardPropagationEndpoint, DEFAULT_PROPAGATION_NODE_NAME};
+use crate::standard_propagation::{DEFAULT_PROPAGATION_NODE_NAME, StandardPropagationEndpoint};
 use crate::startup_contract::{
-    capabilities as startup_capability, components as startup_component, ActiveCapabilities,
-    RuntimeKind, StartupContract, StartupContractBuilder,
+    ActiveCapabilities, RuntimeKind, StartupContract, StartupContractBuilder,
+    capabilities as startup_capability, components as startup_component,
 };
 use crate::storage::messages::MessagesStore;
 use crate::transport::adapter::TokioTransportAdapter;
@@ -413,10 +413,10 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     app_context.set_signer(Arc::new(identity.clone()));
     app_context.identity().set_delivery_destination_hash(Some(delivery_hash.clone()));
 
-    if let Some(config_path) = config_path.as_ref() {
-        if let Err(e) = app_context.config().load(config_path) {
-            crate::daemon_diagnostic!("[styrene] config load error: {e}");
-        }
+    if let Some(config_path) = config_path.as_ref()
+        && let Err(e) = app_context.config().load(config_path)
+    {
+        crate::daemon_diagnostic!("[styrene] config load error: {e}");
     }
 
     if node_role == crate::config::NodeRole::Hub {
@@ -519,10 +519,10 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     let expiry_worker =
         crate::services::propagation::spawn_expiry_task(app_context.propagation_arc());
     startup.record(startup_component::PROPAGATION_EXPIRY_SCHEDULER);
-    if let Some(target) = service_receipt_target {
-        if target.set(Arc::downgrade(&app_context.messaging_arc())).is_err() {
-            anyhow::bail!("service receipt target initialized twice");
-        }
+    if let Some(target) = service_receipt_target
+        && target.set(Arc::downgrade(&app_context.messaging_arc())).is_err()
+    {
+        anyhow::bail!("service receipt target initialized twice");
     }
 
     crate::daemon_diagnostic!("[styrene] workers started");
@@ -706,9 +706,11 @@ mod tests {
         .unwrap();
         let endpoint = handle.standard_propagation.as_ref().unwrap();
         assert_eq!(endpoint.queue_stats(2).unwrap().queued_count, 1);
-        assert!(handle
-            .startup_contract
-            .advertises(crate::startup_contract::capabilities::STANDARD_LXMF_PROPAGATION.id()));
+        assert!(
+            handle
+                .startup_contract
+                .advertises(crate::startup_contract::capabilities::STANDARD_LXMF_PROPAGATION.id())
+        );
         handle.shutdown().await;
     }
 }

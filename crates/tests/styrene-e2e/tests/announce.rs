@@ -3,7 +3,7 @@
 //! After TCP connection, nodes announce themselves and discover each other.
 
 use std::time::Duration;
-use styrene_e2e::helpers::{await_identity_resolved, with_timeout, SETTLE};
+use styrene_e2e::helpers::{SETTLE, await_identity_resolved, with_timeout};
 use styrene_e2e::node::TestNodeBuilder;
 
 #[tokio::test]

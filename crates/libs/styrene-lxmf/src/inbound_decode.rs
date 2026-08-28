@@ -1,5 +1,5 @@
-use crate::message::Message;
 use crate::LxmfError;
+use crate::message::Message;
 use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::String;
@@ -465,19 +465,25 @@ mod tests {
             rmpv::Value::Nil,
             rmpv::Value::Nil,
         ]));
-        assert!(decode_inbound_message([0; 16], &non_finite, InboundPayloadMode::FullWire).is_err());
-        assert!(decode_inbound_message(
-            [0; 16],
-            &vec![0; MAX_INBOUND_WIRE_BYTES + 1],
-            InboundPayloadMode::FullWire
-        )
-        .is_err());
-        assert!(decode_inbound_message(
-            [0; 16],
-            &vec![0; MAX_INBOUND_WIRE_BYTES],
-            InboundPayloadMode::DestinationStripped
-        )
-        .is_err());
+        assert!(
+            decode_inbound_message([0; 16], &non_finite, InboundPayloadMode::FullWire).is_err()
+        );
+        assert!(
+            decode_inbound_message(
+                [0; 16],
+                &vec![0; MAX_INBOUND_WIRE_BYTES + 1],
+                InboundPayloadMode::FullWire
+            )
+            .is_err()
+        );
+        assert!(
+            decode_inbound_message(
+                [0; 16],
+                &vec![0; MAX_INBOUND_WIRE_BYTES],
+                InboundPayloadMode::DestinationStripped
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -503,23 +509,27 @@ mod tests {
         deeply_nested.extend_from_slice(&[0xc4, 0x00, 0xc4, 0x00]);
         deeply_nested.extend(core::iter::repeat_n(0x91, MAX_FIELD_DEPTH + 2));
         deeply_nested.push(0xc0);
-        assert!(decode_inbound_message(
-            [0x11; 16],
-            &wire_bytes(&deeply_nested),
-            InboundPayloadMode::FullWire,
-        )
-        .is_err());
+        assert!(
+            decode_inbound_message(
+                [0x11; 16],
+                &wire_bytes(&deeply_nested),
+                InboundPayloadMode::FullWire,
+            )
+            .is_err()
+        );
 
         let mut excessive_nodes = vec![0x94, 0xcb];
         excessive_nodes.extend_from_slice(&1_700_000_000.5_f64.to_bits().to_be_bytes());
         excessive_nodes.extend_from_slice(&[0xc4, 0x00, 0xc4, 0x00, 0xdd]);
         excessive_nodes.extend_from_slice(&((MAX_FIELD_VALUES + 1) as u32).to_be_bytes());
-        assert!(decode_inbound_message(
-            [0x11; 16],
-            &wire_bytes(&excessive_nodes),
-            InboundPayloadMode::FullWire,
-        )
-        .is_err());
+        assert!(
+            decode_inbound_message(
+                [0x11; 16],
+                &wire_bytes(&excessive_nodes),
+                InboundPayloadMode::FullWire,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -556,10 +566,12 @@ mod tests {
             rewritten_decoded.authentication_state(Some(signer.as_identity())),
             AuthenticationState::Invalid
         );
-        assert!(!crate::WireMessage::unpack(&rewritten)
-            .expect("unpack rewritten payload")
-            .verify(signer.as_identity())
-            .expect("verify rewritten payload"));
+        assert!(
+            !crate::WireMessage::unpack(&rewritten)
+                .expect("unpack rewritten payload")
+                .verify(signer.as_identity())
+                .expect("verify rewritten payload")
+        );
     }
 
     #[test]

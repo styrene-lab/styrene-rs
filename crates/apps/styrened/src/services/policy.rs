@@ -6,7 +6,7 @@
 
 use std::sync::RwLock;
 
-use styrene_rbac::{RbacPolicy, Role, RosterEntry, ALL_CAPABILITIES};
+use styrene_rbac::{ALL_CAPABILITIES, RbacPolicy, Role, RosterEntry};
 
 use crate::storage::messages::MessagesStore;
 

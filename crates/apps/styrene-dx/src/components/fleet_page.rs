@@ -209,8 +209,8 @@ pub fn FleetPage(
                                         aria_describedby: block_reason.as_ref().map(|_| "fleet-block-disabled"),
                                         onclick: {
                                             let identity_hash = peer.identity_hash.clone();
-                                            move |_| if let Some(identity_hash) = identity_hash.clone() {
-                                                if let Some(pending) = fleet_confirmation(
+                                            move |_| if let Some(identity_hash) = identity_hash.clone()
+                                                && let Some(pending) = fleet_confirmation(
                                                     &safety_policy.read(),
                                                     identity_hash,
                                                     FleetOperation::Block,
@@ -218,7 +218,6 @@ pub fn FleetPage(
                                                 ) {
                                                     confirmation.set(Some(pending));
                                                 }
-                                            }
                                         },
                                         "Block Peer"
                                     }

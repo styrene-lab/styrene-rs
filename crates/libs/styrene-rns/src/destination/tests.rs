@@ -4,8 +4,8 @@ use rand_core::OsRng;
 use rand_core::{CryptoRng, RngCore};
 use std::collections::BTreeSet;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 use tempfile::TempDir;
 
@@ -20,11 +20,11 @@ use crate::packet::ContextFlag;
 
 use super::DestinationAnnounce;
 use super::DestinationName;
-use super::SingleInputDestination;
 use super::RATCHET_LENGTH;
+use super::SingleInputDestination;
 use super::{
-    request_path_hash, IngressRegistrationError, RequestAccess, RequestDispatchError,
-    RequestHandler, RequestLinkContext, RequestRegistrationError,
+    IngressRegistrationError, RequestAccess, RequestDispatchError, RequestHandler,
+    RequestLinkContext, RequestRegistrationError, request_path_hash,
 };
 
 #[derive(Clone, Copy)]

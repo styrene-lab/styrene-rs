@@ -16,10 +16,10 @@ impl<T: std::hash::Hash + Eq + Clone> CacheSet<T> {
             return false;
         }
 
-        if self.set.len() == self.capacity {
-            if let Some(oldest) = self.queue.pop_front() {
-                self.set.remove(&oldest);
-            }
+        if self.set.len() == self.capacity
+            && let Some(oldest) = self.queue.pop_front()
+        {
+            self.set.remove(&oldest);
         }
 
         self.set.insert(value.clone());

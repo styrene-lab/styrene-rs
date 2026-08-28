@@ -1,7 +1,7 @@
 [package]
 name = "styrene-telemetry"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 rust-version.workspace = true
 license = "MIT"
 description = "Styrene mesh telemetry schema — typed observations over LXMF FIELD_TELEMETRY"

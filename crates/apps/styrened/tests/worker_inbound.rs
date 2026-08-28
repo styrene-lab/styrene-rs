@@ -10,7 +10,7 @@ use styrened::storage::messages::MessagesStore;
 use styrened::storage::messages::{MessageRecord, OutboundAttemptRecord, OutboundRouteRecord};
 use styrened::transport::mock_transport::MockTransport;
 use styrened::workers::inbound::{
-    spawn_inbound_worker, spawn_inbound_worker_with_auto_reply, InboundDestinations,
+    InboundDestinations, spawn_inbound_worker, spawn_inbound_worker_with_auto_reply,
 };
 
 fn build_lxmf_wire(destination: [u8; 16], source: [u8; 16], content: &str) -> Vec<u8> {
@@ -321,9 +321,9 @@ async fn outbound_resource_integrity_failure_is_terminal_and_sticky() {
     let messaging = Arc::new(MessagingService::with_store(store.clone()));
     let resource_hash = Hash::new([0x66; 32]);
     messaging.track_receipt(&hex::encode(resource_hash.to_bytes()), &message.id);
-    assert!(!messaging
-        .handle_packet_delivery_receipt(&hex::encode(resource_hash.to_bytes()))
-        .unwrap());
+    assert!(
+        !messaging.handle_packet_delivery_receipt(&hex::encode(resource_hash.to_bytes())).unwrap()
+    );
     let mut handle = spawn_inbound_worker(
         transport.clone(),
         messaging.clone(),

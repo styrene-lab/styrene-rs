@@ -1,7 +1,7 @@
+use super::Args;
 use super::announce_worker::spawn_announce_worker;
 use super::bridge::{PeerCrypto, TransportBridge};
 use super::receipt_worker::spawn_receipt_worker;
-use super::Args;
 use rns_core::destination::{DestinationName, RequestAccess, SingleInputDestination};
 use rns_core::hash::AddressHash;
 use rns_core::transport::core_transport::{Transport, TransportConfig};
@@ -23,11 +23,11 @@ use styrened::receipt_bridge::{
 };
 use styrened::rpc::{AnnounceBridge, InterfaceRecord, OutboundBridge, RpcDaemon};
 use styrened::standard_propagation::{
-    StandardPropagationEndpoint, StandardPropagationRuntimePolicy, DEFAULT_PROPAGATION_NODE_NAME,
+    DEFAULT_PROPAGATION_NODE_NAME, StandardPropagationEndpoint, StandardPropagationRuntimePolicy,
 };
 use styrened::startup_contract::{
-    capabilities as startup_capability, components as startup_component, ActiveCapabilities,
-    RuntimeKind, StartupContract, StartupContractBuilder,
+    ActiveCapabilities, RuntimeKind, StartupContract, StartupContractBuilder,
+    capabilities as startup_capability, components as startup_component,
 };
 use styrened::storage::messages::MessagesStore;
 use styrened::storage::standard_propagation::{
@@ -324,11 +324,7 @@ async fn bootstrap_with_transport_override(
     // Try explicit --config, then default path
     let config_path = args.config.clone().or_else(|| {
         let default = styrened::config::default_config_path();
-        if default.exists() {
-            Some(default)
-        } else {
-            None
-        }
+        if default.exists() { Some(default) } else { None }
     });
     let daemon_config = config_path.as_ref().and_then(|path| match DaemonConfig::from_path(path) {
         Ok(config) => Some(config),
@@ -598,7 +594,7 @@ async fn bootstrap_with_transport_override(
     // Wire TokioTransportAdapter when real transport exists, NullTransport otherwise.
     let mesh_transport: Arc<dyn MeshTransport> = if let Some(transport) = mesh_transport_override {
         transport
-    } else if let (Some(ref tp), Some(ref ann_dest)) =
+    } else if let (Some(tp), Some(ann_dest)) =
         (&transport_for_services, &announce_dest_for_services)
     {
         let mut id_hash = [0u8; 16];
@@ -745,10 +741,10 @@ async fn bootstrap_with_transport_override(
     legacy_workers.push(spawn_legacy_message_event_adapter(daemon.clone(), app_context.clone()));
     startup.record(startup_component::LEGACY_MESSAGE_EVENT_ADAPTER);
     // Load config into ConfigService if a config file was provided
-    if let Some(config_path) = config_path.as_ref() {
-        if let Err(e) = app_context.config().load(config_path) {
-            eprintln!("[daemon] failed to load config into ConfigService: {}", e);
-        }
+    if let Some(config_path) = config_path.as_ref()
+        && let Err(e) = app_context.config().load(config_path)
+    {
+        eprintln!("[daemon] failed to load config into ConfigService: {}", e);
     }
     // Wire signing identity into services that need outbound delivery
     app_context.set_signer(Arc::new(identity.clone()));
@@ -803,10 +799,10 @@ async fn bootstrap_with_transport_override(
     startup.record(startup_component::INBOUND_RESOURCE_WORKER);
     startup.record(startup_component::OUTBOUND_RESOURCE_COMPLETION_WORKER);
 
-    if let Some(target) = service_receipt_target {
-        if target.set(Arc::downgrade(&app_context.messaging_arc())).is_err() {
-            panic!("standalone service receipt target initialized twice");
-        }
+    if let Some(target) = service_receipt_target
+        && target.set(Arc::downgrade(&app_context.messaging_arc())).is_err()
+    {
+        panic!("standalone service receipt target initialized twice");
     }
 
     // Spawn propagation expiry cleanup task
@@ -882,8 +878,8 @@ async fn bootstrap_with_transport_override(
     // Wire WireGuard backend into TunnelService on Linux when the feature is enabled.
     #[cfg(all(target_os = "linux", feature = "wireguard"))]
     {
-        use styrene_tunnel::wireguard::WireGuardBackend;
         use styrene_tunnel::TunnelBackend;
+        use styrene_tunnel::wireguard::WireGuardBackend;
 
         // Derive a WireGuard-specific private key from the RNS identity via HKDF.
         // This ensures a stable WG key tied to the node identity without storing
