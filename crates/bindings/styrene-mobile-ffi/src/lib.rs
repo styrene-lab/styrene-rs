@@ -148,6 +148,8 @@ mod tests {
         .expect("boot mobile node");
 
         node.shutdown();
+        node.shutdown();
+        assert!(matches!(node.status(), Err(MobileError::NotConnected { .. })));
         drop(node);
     }
 }
