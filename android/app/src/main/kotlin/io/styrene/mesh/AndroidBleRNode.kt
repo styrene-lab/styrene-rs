@@ -24,7 +24,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
 import java.util.UUID
-import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeUnit
 
 data class RNodeCandidate(
@@ -203,8 +203,8 @@ class AndroidBleRNodeDiscovery(
 class BluetoothRNodeByteLink private constructor(
     private val gatt: BluetoothGatt,
     private val writeCharacteristic: BluetoothGattCharacteristic,
-    private val events: LinkedBlockingQueue<GattEvent>,
-    private val notifications: LinkedBlockingQueue<NotificationEvent>,
+    private val events: RNodeEventQueue<GattEvent>,
+    private val notifications: RNodeEventQueue<NotificationEvent>,
     private var mtu: Int,
 ) : RNodeByteLink {
     override val bearerName = "Bluetooth"
@@ -213,12 +213,13 @@ class BluetoothRNodeByteLink private constructor(
 
     override fun read(buffer: ByteArray, timeoutMs: Int): Int {
         if (pendingOffset >= pendingRead.size) {
-            when (val event = notifications.poll(timeoutMs.toLong(), TimeUnit.MILLISECONDS) ?: return 0) {
+            when (val event = notifications.poll(timeoutMs.toLong()) ?: return 0) {
                 is NotificationEvent.Data -> {
                     pendingRead = event.value
                     pendingOffset = 0
                 }
                 NotificationEvent.Disconnected -> error("Bluetooth RNode disconnected")
+                is NotificationEvent.Failed -> error(event.message)
             }
         }
         val count = minOf(buffer.size, pendingRead.size - pendingOffset)
@@ -229,11 +230,7 @@ class BluetoothRNodeByteLink private constructor(
 
     @Synchronized
     override fun write(data: ByteArray, timeoutMs: Int) {
-        val chunkSize = (mtu - ATT_WRITE_OVERHEAD).coerceAtLeast(DEFAULT_WRITE_BYTES)
-        var offset = 0
-        while (offset < data.size) {
-            val end = minOf(offset + chunkSize, data.size)
-            val chunk = data.copyOfRange(offset, end)
+        for (chunk in rnodeWriteChunks(data, mtu)) {
             val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 gatt.writeCharacteristic(
                     writeCharacteristic,
@@ -248,7 +245,6 @@ class BluetoothRNodeByteLink private constructor(
             }
             check(started) { "Bluetooth write could not be started" }
             waitFor<GattEvent.CharacteristicWrite>(events, timeoutMs.toLong())
-            offset = end
         }
     }
 
@@ -264,8 +260,12 @@ class BluetoothRNodeByteLink private constructor(
         private const val CONNECT_TIMEOUT_MS = 15_000L
 
         fun open(context: Context, device: BluetoothDevice): BluetoothRNodeByteLink {
-            val events = LinkedBlockingQueue<GattEvent>()
-            val notifications = LinkedBlockingQueue<NotificationEvent>()
+            val events = RNodeEventQueue<GattEvent>(EVENT_QUEUE_CAPACITY) {
+                GattEvent.Failed("event queue capacity", -1)
+            }
+            val notifications = RNodeEventQueue<NotificationEvent>(NOTIFICATION_QUEUE_CAPACITY) {
+                NotificationEvent.Failed("Bluetooth notification queue capacity exceeded")
+            }
             val callback = RNodeGattCallback(events, notifications)
             val gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
                 ?: error("Bluetooth GATT connection could not be created")
@@ -312,7 +312,14 @@ class BluetoothRNodeByteLink private constructor(
         }
 
         private const val REQUESTED_MTU = 517
+        private const val EVENT_QUEUE_CAPACITY = 64
+        private const val NOTIFICATION_QUEUE_CAPACITY = 256
     }
+}
+
+internal fun rnodeWriteChunks(data: ByteArray, mtu: Int): List<ByteArray> {
+    val chunkSize = (mtu - 3).coerceAtLeast(20)
+    return data.asList().chunked(chunkSize).map { it.toByteArray() }
 }
 
 private sealed interface GattEvent {
@@ -327,18 +334,31 @@ private sealed interface GattEvent {
 
 private sealed interface NotificationEvent {
     data class Data(val value: ByteArray) : NotificationEvent
+    data class Failed(val message: String) : NotificationEvent
     data object Disconnected : NotificationEvent
 }
 
+internal class RNodeEventQueue<T>(capacity: Int, private val capacityEvent: () -> T) {
+    private val queue = ArrayBlockingQueue<T>(capacity)
+
+    fun publish(event: T) {
+        if (queue.offer(event)) return
+        queue.clear()
+        check(queue.offer(capacityEvent())) { "RNode capacity event could not be queued" }
+    }
+
+    fun poll(timeoutMs: Long): T? = queue.poll(timeoutMs, TimeUnit.MILLISECONDS)
+}
+
 private inline fun <reified T : GattEvent> waitFor(
-    events: LinkedBlockingQueue<GattEvent>,
+    events: RNodeEventQueue<GattEvent>,
     timeoutMs: Long,
 ): T {
     val deadline = System.currentTimeMillis() + timeoutMs
     while (true) {
         val remaining = deadline - System.currentTimeMillis()
         check(remaining > 0) { "Bluetooth ${T::class.simpleName} timed out" }
-        when (val event = events.poll(remaining, TimeUnit.MILLISECONDS)) {
+        when (val event = events.poll(remaining)) {
             is T -> return event
             is GattEvent.Failed -> error("Bluetooth ${event.operation} failed with status ${event.status}")
             GattEvent.Disconnected -> error("Bluetooth RNode disconnected")
@@ -349,46 +369,46 @@ private inline fun <reified T : GattEvent> waitFor(
 }
 
 private class RNodeGattCallback(
-    private val events: LinkedBlockingQueue<GattEvent>,
-    private val notifications: LinkedBlockingQueue<NotificationEvent>,
+    private val events: RNodeEventQueue<GattEvent>,
+    private val notifications: RNodeEventQueue<NotificationEvent>,
 ) : BluetoothGattCallback() {
     override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
         when {
             newState == BluetoothProfile.STATE_DISCONNECTED -> {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    events += GattEvent.Disconnected
+                    events.publish(GattEvent.Disconnected)
                 } else {
-                    events += GattEvent.Failed("connection", status)
+                    events.publish(GattEvent.Failed("connection", status))
                 }
-                notifications += NotificationEvent.Disconnected
+                notifications.publish(NotificationEvent.Disconnected)
             }
-            status != BluetoothGatt.GATT_SUCCESS -> events += GattEvent.Failed("connection", status)
-            newState == BluetoothProfile.STATE_CONNECTED -> events += GattEvent.Connected
+            status != BluetoothGatt.GATT_SUCCESS -> events.publish(GattEvent.Failed("connection", status))
+            newState == BluetoothProfile.STATE_CONNECTED -> events.publish(GattEvent.Connected)
         }
     }
 
     override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-        events += if (status == BluetoothGatt.GATT_SUCCESS) {
+        events.publish(if (status == BluetoothGatt.GATT_SUCCESS) {
             GattEvent.ServicesDiscovered
         } else {
             GattEvent.Failed("service discovery", status)
-        }
+        })
     }
 
     override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-        events += if (status == BluetoothGatt.GATT_SUCCESS) {
+        events.publish(if (status == BluetoothGatt.GATT_SUCCESS) {
             GattEvent.DescriptorWrite
         } else {
             GattEvent.Failed("notification subscription", status)
-        }
+        })
     }
 
     override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-        events += if (status == BluetoothGatt.GATT_SUCCESS) {
+        events.publish(if (status == BluetoothGatt.GATT_SUCCESS) {
             GattEvent.MtuChanged(mtu)
         } else {
             GattEvent.Failed("MTU negotiation", status)
-        }
+        })
     }
 
     override fun onCharacteristicWrite(
@@ -396,17 +416,17 @@ private class RNodeGattCallback(
         characteristic: BluetoothGattCharacteristic,
         status: Int,
     ) {
-        events += if (status == BluetoothGatt.GATT_SUCCESS) {
+        events.publish(if (status == BluetoothGatt.GATT_SUCCESS) {
             GattEvent.CharacteristicWrite
         } else {
             GattEvent.Failed("write", status)
-        }
+        })
     }
 
     @Deprecated("Used on Android 12 and earlier")
     @Suppress("DEPRECATION")
     override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-        notifications += NotificationEvent.Data(characteristic.value.copyOf())
+        notifications.publish(NotificationEvent.Data(characteristic.value.copyOf()))
     }
 
     override fun onCharacteristicChanged(
@@ -414,6 +434,6 @@ private class RNodeGattCallback(
         characteristic: BluetoothGattCharacteristic,
         value: ByteArray,
     ) {
-        notifications += NotificationEvent.Data(value.copyOf())
+        notifications.publish(NotificationEvent.Data(value.copyOf()))
     }
 }

@@ -13,7 +13,7 @@
 
 - [x] 2.1 Add or retain tests for one-node startup, partial-boot cleanup, explicit shutdown, and repeated lifecycle calls
 - [x] 2.2 Verify persisted configuration starts the iOS and Android embedded node without a normal-path manual start action
-- [ ] 2.3 Verify channel detachment pauses packet pumping without destroying Bluetooth approval
+- [x] 2.3 Verify channel detachment pauses packet pumping without destroying Bluetooth approval
 - [x] 2.4 Run focused `styrened` mobile and mobile FFI tests with warning-denied Clippy
 
 ## 3. RNode Bearers
@@ -21,9 +21,9 @@
 
 - [ ] 3.1 Add injectable iOS CoreBluetooth tests for NUS discovery, characteristic properties, protected-access failure, negotiated write limits, arbitrary KISS fragmentation, and serialized write-with-response output
 - [ ] 3.2 Add injectable Android GATT and USB tests for NUS validation, MTU fallback, fragmented notifications, serialized chunk writes, permission denial, disconnect races, and explicit USB fallback
-- [ ] 3.3 Bound host event, write, notification, and outbound-retention queues and return an explicit capacity outcome without losing accepted work
-- [ ] 3.4 Verify retained packets remain ordered and single-release across bearer reconnect, channel detachment, channel replacement, and Android Activity recreation
-- [ ] 3.5 Confirm unknown Bluetooth advertisements never auto-connect, approval survives detachment, and only the approved peripheral reconnects
+- [x] 3.3 Bound host event, write, notification, and outbound-retention queues and return an explicit capacity outcome without losing accepted work
+- [x] 3.4 Verify retained packets remain ordered and single-release across bearer reconnect, channel detachment, channel replacement, and Android Activity recreation
+- [x] 3.5 Confirm unknown Bluetooth advertisements never auto-connect, approval survives detachment, and only the approved peripheral reconnects
 
 ## 4. Integration Corpus And Deployment
 <!-- specs: mobile-platform-foundation/spec -->

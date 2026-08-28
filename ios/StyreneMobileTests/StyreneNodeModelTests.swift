@@ -212,6 +212,44 @@ final class StyreneNodeModelTests: XCTestCase {
         XCTAssertNil(retention.packet)
     }
 
+    func testRNodeWriteQueueChunksAndSerializesOneWriteAtATime() {
+        let queue = RNodeWriteQueue()
+        let data = Data(0..<45)
+
+        XCTAssertTrue(queue.enqueue(data, chunkSize: 20, completesOutbound: true))
+        XCTAssertEqual(queue.pendingCount, 3)
+        XCTAssertEqual(queue.startNext()?.data, Data(0..<20))
+        XCTAssertNil(queue.startNext())
+        XCTAssertFalse(queue.finishActive(retry: false)?.completesOutbound ?? true)
+        XCTAssertEqual(queue.startNext()?.data, Data(20..<40))
+        XCTAssertFalse(queue.finishActive(retry: false)?.completesOutbound ?? true)
+        XCTAssertEqual(queue.startNext()?.data, Data(40..<45))
+        XCTAssertTrue(queue.finishActive(retry: false)?.completesOutbound ?? false)
+        XCTAssertNil(queue.startNext())
+    }
+
+    func testRNodeWriteQueueRetriesActiveChunkBeforeLaterChunks() {
+        let queue = RNodeWriteQueue()
+        XCTAssertTrue(queue.enqueue(Data(0..<25), chunkSize: 20, completesOutbound: true))
+
+        let first = queue.startNext()
+        queue.finishActive(retry: true)
+
+        XCTAssertEqual(queue.startNext()?.data, first?.data)
+        XCTAssertFalse(queue.finishActive(retry: false)?.completesOutbound ?? true)
+        XCTAssertTrue(queue.startNext()?.completesOutbound ?? false)
+    }
+
+    func testRNodeWriteQueueRejectsCapacityWithoutPartialEnqueue() {
+        let queue = RNodeWriteQueue()
+        for byte in 0..<RNodeWriteQueue.maximumPendingChunks {
+            XCTAssertTrue(queue.enqueue(Data([UInt8(byte)]), chunkSize: 20, completesOutbound: false))
+        }
+
+        XCTAssertFalse(queue.enqueue(Data([0xFF]), chunkSize: 20, completesOutbound: true))
+        XCTAssertEqual(queue.pendingCount, RNodeWriteQueue.maximumPendingChunks)
+    }
+
     private func runningModel(node: FakeMobileNode) -> (StyreneNodeModel, TestScheduler) {
         let (model, scheduler) = makeModel(node: node)
         model.boot(hubAddress: "", displayName: "Test")
