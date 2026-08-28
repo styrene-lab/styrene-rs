@@ -3,7 +3,10 @@ use std::time::Duration;
 
 use styrene_ipc::traits::DaemonStatus;
 use styrene_ipc::types::InterfaceDetail;
-use styrened::mobile::{IdentityBackend, MobileConfig, MobileInterfaceConfig, MobileNode};
+use styrened::mobile::{
+    IdentityBackend, MobileBearerKind, MobileBearerState, MobileConfig, MobileConnectionPhase,
+    MobileFailureCode, MobileInterfaceConfig, MobileNode,
+};
 use styrened::startup_contract::{RuntimeKind, capabilities, components};
 
 fn config(root: &std::path::Path, hub_address: Option<String>) -> MobileConfig {
@@ -191,6 +194,80 @@ async fn refused_tcp_client_reconnects_within_bound_without_replacing_node() {
     assert_eq!(node.app_context.identity().identity_hash(), identity);
     assert_eq!(node.delivery_hash(), delivery_hash);
     drop(stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn connected_session_snapshot_exposes_endpoint_generation_and_independent_bearers() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    mobile_config.interfaces.push(MobileInterfaceConfig::TcpClient {
+        remote_address: format!("localhost:{}", address.port()),
+    });
+
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("session connection timed out")
+        .unwrap();
+    wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+    let snapshot = node.session_snapshot().await;
+
+    assert_eq!(snapshot.phase, MobileConnectionPhase::Connected);
+    assert_eq!(
+        snapshot.endpoint.as_deref(),
+        Some(format!("localhost:{}", address.port()).as_str())
+    );
+    assert_eq!(snapshot.generation, 1);
+    assert!(snapshot.failure.is_none());
+    assert_eq!(
+        snapshot.bearer(MobileBearerKind::Tcp).expect("TCP bearer").state,
+        MobileBearerState::Connected
+    );
+    assert_eq!(
+        snapshot.bearer(MobileBearerKind::BluetoothRnode).expect("Bluetooth RNode bearer").state,
+        MobileBearerState::Unavailable
+    );
+    assert_eq!(
+        snapshot.bearer(MobileBearerKind::AndroidUsb).expect("Android USB bearer").state,
+        MobileBearerState::Unavailable
+    );
+
+    drop(stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn refused_session_snapshot_exposes_recoverable_typed_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    wait_for_interface_status(&node, "retrying", Duration::from_secs(2)).await;
+    let snapshot = node.session_snapshot().await;
+    let failure = snapshot.failure.as_ref().expect("retrying TCP failure");
+
+    assert_eq!(snapshot.phase, MobileConnectionPhase::Reconnecting);
+    assert_eq!(snapshot.endpoint.as_deref(), Some(address.to_string().as_str()));
+    assert_eq!(snapshot.generation, 1);
+    assert_eq!(failure.code, MobileFailureCode::TcpRetrying);
+    assert!(failure.retryable);
+    assert_eq!(
+        snapshot.bearer(MobileBearerKind::Tcp).expect("TCP bearer").state,
+        MobileBearerState::Reconnecting
+    );
+    assert_eq!(
+        snapshot.bearer(MobileBearerKind::BluetoothRnode).expect("Bluetooth RNode bearer").state,
+        MobileBearerState::Unavailable
+    );
     shutdown(node).await;
 }
 
