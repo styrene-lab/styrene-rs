@@ -11,7 +11,7 @@
 ## 2. Persistent Network Session
 <!-- specs: mobile-network-session -->
 
-- [ ] 2.1 Add failing `MobileNode` tests for persisted identity, hostname and IPv4 TCP clients, refused endpoints, bounded reconnect, and one-node ownership
+- [x] 2.1 Add failing `MobileNode` tests for persisted identity, hostname and IPv4 TCP clients, refused endpoints, bounded reconnect, and one-node ownership
 - [ ] 2.2 Extend the in-process mobile session with typed connection phase, endpoint, generation, failure, and independent bearer observations
 - [ ] 2.3 Add failing Rust store and Dioxus component tests for cold restoration, reconnect, stale completion rejection, and TCP operation without an RNode
 - [ ] 2.4 Implement persisted endpoint editing, automatic boot, reconnect presentation, and recoverable failure in shared Rust and Dioxus code

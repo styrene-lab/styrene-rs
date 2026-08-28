@@ -427,8 +427,7 @@ fn validate_interfaces(config: &MobileConfig) -> anyhow::Result<Vec<ValidatedMob
                 ValidatedMobileInterface::TcpServer(address)
             }
             MobileInterfaceConfig::TcpClient { remote_address } => {
-                let address = parse_direct_socket("TCP client", remote_address)?;
-                ValidatedMobileInterface::TcpClient(address.to_string())
+                ValidatedMobileInterface::TcpClient(parse_tcp_client_address(remote_address)?)
             }
         };
         if validated.contains(&normalized) {
@@ -460,6 +459,36 @@ fn parse_direct_socket(kind: &str, value: &str) -> anyhow::Result<SocketAddr> {
         anyhow::bail!("{kind} address is empty");
     }
     value.parse().map_err(|error| anyhow::anyhow!("invalid {kind} address '{value}': {error}"))
+}
+
+fn parse_tcp_client_address(value: &str) -> anyhow::Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        anyhow::bail!("TCP client address is empty");
+    }
+    if let Ok(address) = value.parse::<SocketAddr>() {
+        return Ok(address.to_string());
+    }
+
+    let (host, port) = value
+        .rsplit_once(':')
+        .ok_or_else(|| anyhow::anyhow!("invalid TCP client address '{value}': missing port"))?;
+    let valid_host = !host.is_empty()
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        });
+    if !valid_host {
+        anyhow::bail!("invalid TCP client address '{value}': invalid hostname");
+    }
+    let port = port
+        .parse::<u16>()
+        .map_err(|error| anyhow::anyhow!("invalid TCP client address '{value}': {error}"))?;
+    Ok(format!("{}:{port}", host.to_ascii_lowercase()))
 }
 
 async fn await_tcp_binding(

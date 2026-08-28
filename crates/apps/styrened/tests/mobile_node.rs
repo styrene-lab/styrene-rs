@@ -1,6 +1,8 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use styrene_ipc::traits::DaemonStatus;
+use styrene_ipc::types::InterfaceDetail;
 use styrened::mobile::{IdentityBackend, MobileConfig, MobileInterfaceConfig, MobileNode};
 use styrened::startup_contract::{RuntimeKind, capabilities, components};
 
@@ -22,6 +24,30 @@ async fn shutdown(node: MobileNode) {
         .await
         .expect("mobile node shutdown timed out")
         .expect("mobile transport shutdown failed");
+}
+
+async fn wait_for_interface_status(
+    node: &MobileNode,
+    status: &str,
+    deadline: Duration,
+) -> InterfaceDetail {
+    tokio::time::timeout(deadline, async {
+        loop {
+            if let Some(interface) = node
+                .facade
+                .list_interfaces()
+                .await
+                .expect("interface observations")
+                .into_iter()
+                .find(|interface| interface.kind == "tcp_client" && interface.status == status)
+            {
+                return interface;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("TCP client did not enter {status}"))
 }
 
 #[tokio::test]
@@ -76,15 +102,111 @@ async fn shutdown_then_boot_restores_the_same_identity() {
 }
 
 #[tokio::test]
+async fn ipv4_tcp_client_reports_connected_runtime_endpoint() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("IPv4 client connection timed out")
+        .unwrap();
+    let interface = wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+
+    assert_eq!(interface.remote_endpoint.as_deref(), Some(address.to_string().as_str()));
+    assert!(node.is_connected());
+    drop(stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn hostname_tcp_client_connects_to_loopback_listener() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: format!("localhost:{port}") });
+
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("hostname client connection timed out")
+        .unwrap();
+    let interface = wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+
+    assert_eq!(interface.remote_endpoint.as_deref(), Some(format!("127.0.0.1:{port}").as_str()));
+    drop(stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn refused_tcp_client_is_retrying_and_not_connected() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let interface = wait_for_interface_status(&node, "retrying", Duration::from_secs(2)).await;
+
+    assert!(interface.remote_endpoint.is_none());
+    assert!(!node.is_connected());
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn refused_tcp_client_reconnects_within_bound_without_replacing_node() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let retrying = wait_for_interface_status(&node, "retrying", Duration::from_secs(2)).await;
+    let identity = node.app_context.identity().identity_hash().to_string();
+    let delivery_hash = node.delivery_hash();
+    let listener = tokio::net::TcpListener::bind(address).await.unwrap();
+    let (stream, _) = tokio::time::timeout(Duration::from_secs(6), listener.accept())
+        .await
+        .expect("TCP retry exceeded its bound")
+        .unwrap();
+    let connected = wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+
+    assert_eq!(connected.hash, retrying.hash);
+    assert_eq!(node.app_context.identity().identity_hash(), identity);
+    assert_eq!(node.delivery_hash(), delivery_hash);
+    drop(stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
 async fn hub_boot_publishes_destination_and_normalized_display_name() {
     let root = tempfile::tempdir().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let hub = listener.local_addr().unwrap().to_string();
-    let accept = tokio::spawn(async move {
-        let _ = listener.accept().await;
-    });
+    let accept = tokio::spawn(async move { listener.accept().await.unwrap().0 });
 
     let node = MobileNode::boot(config(root.path(), Some(hub))).await.unwrap();
+    let stream = tokio::time::timeout(Duration::from_secs(2), accept)
+        .await
+        .expect("hub connection timed out")
+        .expect("hub accept task failed");
+    wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
     let delivery_hash = node.delivery_hash().expect("hub-backed delivery hash");
 
     assert_eq!(delivery_hash.len(), 32);
@@ -104,8 +226,7 @@ async fn hub_boot_publishes_destination_and_normalized_display_name() {
     assert_eq!(node.app_context.protocol().handler_count().await, 0);
 
     shutdown(node).await;
-    accept.abort();
-    let _ = accept.await;
+    drop(stream);
 }
 
 #[tokio::test]
