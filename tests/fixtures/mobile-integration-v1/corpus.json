@@ -2,6 +2,38 @@
   "schema_version": 1,
   "corpus": "styrene-mobile-integration-v1",
   "description": "Acceptance inventory for the shared Styrene iOS and Android communicator",
+  "execution_lanes": [
+    {
+      "id": "mobile.messaging.cross-platform-ios-to-android",
+      "case": "mobile.messaging.cross-platform-roundtrip",
+      "actions": ["launch-cross-platform-pair", "send-a-to-b"],
+      "boundaries": ["local_host", "ios_simulator", "android_emulator"],
+      "launch_profiles": [
+        {"boundary": "ios_simulator", "profile": "ios-a"},
+        {"boundary": "android_emulator", "profile": "android-a"}
+      ],
+      "scenario_deadline_seconds": 900,
+      "deadlines": [
+        {"name": "hub-start", "seconds": 180},
+        {"name": "android-install", "seconds": 180},
+        {"name": "android-launch", "seconds": 60},
+        {"name": "ios-build", "seconds": 180},
+        {"name": "ios-test", "seconds": 240},
+        {"name": "message-delivery", "seconds": 30},
+        {"name": "cleanup", "seconds": 30}
+      ],
+      "cleanup": [
+        {"resource": "ios_app", "ownership": "runner_owned", "always_run": true},
+        {"resource": "android_app", "ownership": "runner_owned", "always_run": true},
+        {"resource": "hub", "ownership": "runner_started_only", "always_run": true}
+      ],
+      "artifacts": {
+        "root": "target/mobile-integration",
+        "commit": "forbidden",
+        "required_classes": ["run_manifest", "milestones", "bounded_logs", "semantic_ui_snapshots", "ios_test_results"]
+      }
+    }
+  ],
   "topologies": [
     {"id": "offline-single", "kind": "offline", "nodes": 1, "description": "One embedded node without a routable interface"},
     {"id": "loopback-pair", "kind": "loopback", "nodes": 2, "description": "Two embedded mobile nodes over direct loopback TCP"},

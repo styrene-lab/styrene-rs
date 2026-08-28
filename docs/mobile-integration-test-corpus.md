@@ -41,9 +41,14 @@ A blocked case is expected backlog. It must name each missing capability.
 
 `just test-mobile-corpus` parses the committed corpus. It validates structural
 schema, repository references, required area and case coverage, evidence-scope
-rules, and blocked-capability declarations. It does not validate deadlines,
-cleanup execution, artifact redaction, or whether referenced tests ran. It does
-not open sockets, launch processes, or start simulators.
+rules, blocked-capability declarations, and the declared cross-platform execution
+lane. Lane validation covers case and action references, explicit execution
+boundaries, distinct launch-profile IDs of at most 64 ASCII bytes, positive
+deadlines bounded by a one-hour scenario maximum, always-run cleanup ownership,
+and required artifact classes under `target/mobile-integration/` with commits
+forbidden. It validates policy declarations, not cleanup execution, artifact
+redaction, artifact contents, or whether referenced tests ran. It does not open
+sockets, launch processes, or start simulators.
 
 This lane is safe for ordinary validation and CI.
 
