@@ -26,7 +26,7 @@ use styrened::identity_store::load_or_create_identity;
 use styrened::inbound_delivery::decode_inbound_payload;
 use styrened::transport::adapter::TokioTransportAdapter;
 use styrened::transport::mesh_transport::MeshTransport;
-use tokio::sync::{broadcast, Mutex, Notify};
+use tokio::sync::{Mutex, Notify, broadcast};
 
 /// A pending proxy request awaiting response chunks.
 struct PendingRequest {

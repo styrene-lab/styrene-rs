@@ -51,8 +51,8 @@ use crate::config::PlatformPaths;
 use crate::daemon_facade::DaemonFacade;
 use crate::services::messaging::InboundAcceptOutcome;
 use crate::startup_contract::{
-    capabilities as startup_capability, components as startup_component, ActiveCapabilities,
-    RuntimeKind, StartupContract, StartupContractBuilder,
+    ActiveCapabilities, RuntimeKind, StartupContract, StartupContractBuilder,
+    capabilities as startup_capability, components as startup_component,
 };
 use crate::storage::messages::MessagesStore;
 use crate::transport::mesh_transport::MeshTransport;
@@ -256,10 +256,10 @@ fn compose_mobile_node(
         .unwrap_or_else(|error| {
             panic!("mobile local authorization initialization failed: {error}")
         });
-    if let Some(target) = service_receipt_target {
-        if target.set(Arc::downgrade(&app_context.messaging_arc())).is_err() {
-            panic!("mobile service receipt target initialized twice");
-        }
+    if let Some(target) = service_receipt_target
+        && target.set(Arc::downgrade(&app_context.messaging_arc())).is_err()
+    {
+        panic!("mobile service receipt target initialized twice");
     }
     app_context.set_signer(Arc::new(identity));
     if direct_capability_active {
@@ -958,7 +958,7 @@ mod tests {
     use rns_core::hash::AddressHash;
     use rns_core::transport::core_transport::{ReceivedData, ReceivedPayloadMode};
     use styrene_ipc::types::DaemonEvent;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     fn compose_with_mock(mock: Arc<MockTransport>, display_name: Option<String>) -> MobileNode {
         let identity = PrivateIdentity::new_from_name("mobile-node-test");

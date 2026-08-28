@@ -25,4 +25,4 @@ pub use destination::{group_decrypt, group_encrypt};
 pub use error::RnsError;
 pub use hash::lxmf_address_hash;
 pub use identity::{lxmf_sign, lxmf_verify};
-pub use packet::{Packet, LXMF_MAX_PAYLOAD};
+pub use packet::{LXMF_MAX_PAYLOAD, Packet};

@@ -2,7 +2,7 @@ use styrene_ipc::traits::DaemonStatus;
 use styrene_rbac::Capability;
 use styrened::daemon::{self, DaemonConfig2};
 use styrened::daemon_facade::DaemonFacade;
-use styrened::startup_contract::{capabilities, components, RuntimeKind};
+use styrened::startup_contract::{RuntimeKind, capabilities, components};
 
 #[tokio::test]
 async fn canonical_runtime_advertises_only_composed_capabilities() {

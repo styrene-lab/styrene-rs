@@ -201,9 +201,9 @@ fn all_protocol_keys_are_unique() {
 
 #[tokio::test]
 async fn vault_init_unlock_produces_same_identity() {
+    use styrene_identity::IdentitySigner;
     use styrene_identity::file_signer::ClosurePassphraseProvider;
     use styrene_identity::vault::IdentityVault;
-    use styrene_identity::IdentitySigner;
 
     let dir = tempfile::tempdir().expect("tempdir");
     let key_path = dir.path().join("test-identity.key");
@@ -236,9 +236,9 @@ async fn vault_init_unlock_produces_same_identity() {
 
 #[tokio::test]
 async fn vault_wrong_passphrase_fails() {
+    use styrene_identity::IdentitySigner;
     use styrene_identity::file_signer::ClosurePassphraseProvider;
     use styrene_identity::vault::IdentityVault;
-    use styrene_identity::IdentitySigner;
 
     let dir = tempfile::tempdir().expect("tempdir");
     let key_path = dir.path().join("test-wrong-pass.key");

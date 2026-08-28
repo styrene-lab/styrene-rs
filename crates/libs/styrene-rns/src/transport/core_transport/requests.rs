@@ -7,7 +7,7 @@ use crate::destination::RequestLinkContext;
 use crate::transport::destination_ext::link::LinkPayload;
 use crate::transport::request::{decode_response_envelope, encode_response_envelope};
 use crate::transport::resource::{
-    ResourceAdvertisement, ResourceEvent, ResourceEventKind, LINK_PACKET_MDU,
+    LINK_PACKET_MDU, ResourceAdvertisement, ResourceEvent, ResourceEventKind,
 };
 
 struct DecodedRequest<'a> {
@@ -328,12 +328,12 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use rand_core::OsRng;
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     use super::*;
     use crate::destination::{
-        request_path_hash, DestinationName, RequestAccess, RequestHandler,
-        RequestRegistrationError, SingleInputDestination,
+        DestinationName, RequestAccess, RequestHandler, RequestRegistrationError,
+        SingleInputDestination, request_path_hash,
     };
     use crate::identity::PrivateIdentity;
     use crate::packet::PacketContext;

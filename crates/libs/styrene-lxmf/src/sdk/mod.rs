@@ -13,9 +13,9 @@ pub mod profiles;
 pub mod types;
 
 pub use capability::{
-    effective_capabilities_for_profile, negotiate_contract_version, negotiate_plugins,
     CapabilityDescriptor, CapabilityState, EffectiveLimits, NegotiationRequest,
-    NegotiationResponse, PluginDescriptor, PluginState,
+    NegotiationResponse, PluginDescriptor, PluginState, effective_capabilities_for_profile,
+    negotiate_contract_version, negotiate_plugins,
 };
 pub use domain::{
     AttachmentDownloadChunk, AttachmentDownloadChunkRequest, AttachmentId, AttachmentListRequest,
@@ -31,14 +31,14 @@ pub use domain::{
     TopicRecord, TopicSubscriptionRequest, TrustLevel, VoiceSessionId, VoiceSessionOpenRequest,
     VoiceSessionState, VoiceSessionUpdateRequest,
 };
-pub use error::{code as error_code, ErrorCategory, ErrorDetails, SdkError};
+pub use error::{ErrorCategory, ErrorDetails, SdkError, code as error_code};
 pub use event::{
     EventBatch, EventCursor, EventSubscription, SdkEvent, Severity, SubscriptionStart,
 };
 pub use lifecycle::{Lifecycle, SdkMethod};
 pub use profiles::{
-    default_effective_limits, default_memory_budget, required_capabilities, supports_capability,
-    MemoryBudget,
+    MemoryBudget, default_effective_limits, default_memory_budget, required_capabilities,
+    supports_capability,
 };
 pub use types::{
     Ack, AuthMode, BindMode, CancelResult, ClientHandle, ConfigPatch, DeliverySnapshot,

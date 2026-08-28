@@ -3,7 +3,7 @@
 mod common;
 
 use ed25519_dalek::Signature;
-use rns_core::identity::{lxmf_verify, PrivateIdentity};
+use rns_core::identity::{PrivateIdentity, lxmf_verify};
 
 #[derive(serde::Deserialize)]
 struct IdentityVector {

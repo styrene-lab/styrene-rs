@@ -6,8 +6,8 @@ use tokio::time::{Duration, Instant};
 
 use crate::destination::DestinationName;
 use crate::destination::PlainInputDestination;
-use crate::hash::AddressHash;
 use crate::hash::ADDRESS_HASH_SIZE;
+use crate::hash::AddressHash;
 use crate::identity::EmptyIdentity;
 use crate::packet::ContextFlag;
 use crate::packet::DestinationType;
@@ -333,9 +333,9 @@ mod tests {
         assert!(testee.decode_at(packet.data.as_slice(), now).is_some());
         assert!(testee.decode_at(packet.data.as_slice(), now).is_none());
 
-        assert!(testee
-            .decode_at(packet.data.as_slice(), now + Duration::from_millis(1100))
-            .is_some());
+        assert!(
+            testee.decode_at(packet.data.as_slice(), now + Duration::from_millis(1100)).is_some()
+        );
     }
 
     #[test]

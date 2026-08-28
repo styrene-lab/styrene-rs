@@ -121,56 +121,56 @@ impl PropagationRequestHandler {
         };
 
         // If dest_hash matches our own delivery hash, deliver locally instead of storing
-        if let Some(ref local) = self.local_delivery_hash {
-            if request.dest_hash == *local {
-                let mut dest = [0u8; 16];
-                if let Ok(bytes) = hex::decode(&request.dest_hash) {
-                    if bytes.len() == 16 {
-                        dest.copy_from_slice(&bytes);
-                        return match self.messaging.accept_inbound(
-                            dest,
-                            &request.lxmf_bytes,
-                            InboundPayloadMode::FullWire,
-                        ) {
-                            InboundAcceptOutcome::Accepted(record) => {
-                                crate::daemon_diagnostic!(
-                                    "[propagation] ingest for local dest — delivered as id={}",
-                                    record.id
-                                );
-                                Self::cbor_encode(&PropagationStatusPayload {
-                                    success: true,
-                                    error: None,
-                                    count: Some(1),
-                                })
-                            }
-                            InboundAcceptOutcome::Duplicate { message_id } => {
-                                crate::daemon_diagnostic!(
-                                    "[propagation] duplicate local ingest dropped: id={message_id}"
-                                );
-                                self.events.emit_inbound_drop(
-                                    "propagation_ingest",
-                                    "duplicate",
-                                    Some(&message_id),
-                                    Some(&request.dest_hash),
-                                    None,
-                                );
-                                Self::cbor_encode(&PropagationStatusPayload {
-                                    success: true,
-                                    error: None,
-                                    count: Some(0),
-                                })
-                            }
-                            InboundAcceptOutcome::Rejected { diagnostics } => Self::error_response(
-                                &format!("malformed local delivery: {}", diagnostics.summary()),
-                            ),
-                            InboundAcceptOutcome::StorageError { error, .. } => {
-                                Self::error_response(&format!("local storage error: {error}"))
-                            }
-                        };
+        if let Some(ref local) = self.local_delivery_hash
+            && request.dest_hash == *local
+        {
+            let mut dest = [0u8; 16];
+            if let Ok(bytes) = hex::decode(&request.dest_hash)
+                && bytes.len() == 16
+            {
+                dest.copy_from_slice(&bytes);
+                return match self.messaging.accept_inbound(
+                    dest,
+                    &request.lxmf_bytes,
+                    InboundPayloadMode::FullWire,
+                ) {
+                    InboundAcceptOutcome::Accepted(record) => {
+                        crate::daemon_diagnostic!(
+                            "[propagation] ingest for local dest — delivered as id={}",
+                            record.id
+                        );
+                        Self::cbor_encode(&PropagationStatusPayload {
+                            success: true,
+                            error: None,
+                            count: Some(1),
+                        })
                     }
-                }
-                return Self::error_response("failed to deliver locally");
+                    InboundAcceptOutcome::Duplicate { message_id } => {
+                        crate::daemon_diagnostic!(
+                            "[propagation] duplicate local ingest dropped: id={message_id}"
+                        );
+                        self.events.emit_inbound_drop(
+                            "propagation_ingest",
+                            "duplicate",
+                            Some(&message_id),
+                            Some(&request.dest_hash),
+                            None,
+                        );
+                        Self::cbor_encode(&PropagationStatusPayload {
+                            success: true,
+                            error: None,
+                            count: Some(0),
+                        })
+                    }
+                    InboundAcceptOutcome::Rejected { diagnostics } => Self::error_response(
+                        &format!("malformed local delivery: {}", diagnostics.summary()),
+                    ),
+                    InboundAcceptOutcome::StorageError { error, .. } => {
+                        Self::error_response(&format!("local storage error: {error}"))
+                    }
+                };
             }
+            return Self::error_response("failed to deliver locally");
         }
 
         match self.propagation.store_for_propagation(

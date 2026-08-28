@@ -1,5 +1,5 @@
 use rand_core::{OsRng, RngCore};
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde_json::Value as JsonValue;
 use sha2::Digest;
 
@@ -1053,7 +1053,8 @@ fn rebuild_conversation_schema(conn: &Connection) -> rusqlite::Result<()> {
 fn conversation_schema_is_valid(conn: &Connection) -> rusqlite::Result<bool> {
     let state_columns = {
         let mut statement = conn.prepare("PRAGMA table_info(conversation_state)")?;
-        let columns = statement
+
+        statement
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(1)?,
@@ -1062,12 +1063,12 @@ fn conversation_schema_is_valid(conn: &Connection) -> rusqlite::Result<bool> {
                     row.get::<_, i64>(5)?,
                 ))
             })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        columns
+            .collect::<rusqlite::Result<Vec<_>>>()?
     };
     let draft_columns = {
         let mut statement = conn.prepare("PRAGMA table_info(conversation_drafts)")?;
-        let columns = statement
+
+        statement
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(1)?,
@@ -1076,8 +1077,7 @@ fn conversation_schema_is_valid(conn: &Connection) -> rusqlite::Result<bool> {
                     row.get::<_, i64>(5)?,
                 ))
             })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        columns
+            .collect::<rusqlite::Result<Vec<_>>>()?
     };
     let expected_state = vec![
         ("peer_hash".into(), "TEXT".into(), 1, 1),
@@ -1687,7 +1687,7 @@ pub(super) fn stage_attachment_blobs(
                 Some(_) => {
                     return Err(rusqlite::Error::InvalidParameterName(
                         "attachment digest/length conflict".into(),
-                    ))
+                    ));
                 }
                 None => {
                     new_count += 1;
@@ -2463,13 +2463,13 @@ impl MessagesStore {
              WHERE c.source = ?1 AND c.authentication_state = 'unknown_identity'
              ORDER BY c.rowid LIMIT ?2",
         )?;
-        let records = statement
+
+        statement
             .query_map(
                 params![source.as_slice(), limit.min(1024) as i64],
                 parse_canonical_inbound_row,
             )?
-            .collect();
-        records
+            .collect()
     }
 
     pub fn update_authentication_state(
@@ -2595,8 +2595,8 @@ impl MessagesStore {
             "SELECT ticket FROM lxmf_tickets WHERE peer = ?1 AND direction = 'issued'
              AND expires_at > ?2 ORDER BY expires_at DESC LIMIT 8",
         )?;
-        let records = statement.query_map(params![peer, now], |row| row.get(0))?.collect();
-        records
+
+        statement.query_map(params![peer, now], |row| row.get(0))?.collect()
     }
 
     fn upsert_message(&self, record: &MessageRecord) -> rusqlite::Result<usize> {
@@ -2806,8 +2806,8 @@ impl MessagesStore {
         let mut statement = self.conn.prepare(
             "SELECT message_id, requested_method, actual_method, representation, fallback_reason, correlation_id, retry_of, deadline_unix_ms, state, attempt_count FROM outbound_routes ORDER BY rowid",
         )?;
-        let records = statement.query_map([], parse_outbound_route_row)?.collect();
-        records
+
+        statement.query_map([], parse_outbound_route_row)?.collect()
     }
 
     pub fn outbound_retry_for(
@@ -3000,10 +3000,8 @@ impl MessagesStore {
                AND r.state NOT IN ('delivered', 'failed', 'cancelled', 'expired', 'rejected')
              ORDER BY r.message_id, e.rowid DESC",
         )?;
-        let records = statement
-            .query_map(params![now_unix_ms], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect();
-        records
+
+        statement.query_map(params![now_unix_ms], |row| Ok((row.get(0)?, row.get(1)?)))?.collect()
     }
 
     pub fn begin_outbound_attempt(
@@ -3229,7 +3227,8 @@ impl MessagesStore {
              FROM message_delivery_evidence WHERE message_id = ?1
              ORDER BY observed_at, evidence_hash LIMIT ?2",
         )?;
-        let records = statement
+
+        statement
             .query_map(params![message_id, MAX_DELIVERY_EVIDENCE_PER_MESSAGE as i64], |row| {
                 Ok(MessageDeliveryEvidenceRecord {
                     message_id: row.get(0)?,
@@ -3247,8 +3246,7 @@ impl MessagesStore {
                     progress: row.get(12)?,
                 })
             })?
-            .collect();
-        records
+            .collect()
     }
 
     pub fn prune_delivery_evidence(&self, now: i64) -> rusqlite::Result<usize> {
@@ -3288,7 +3286,8 @@ impl MessagesStore {
         let mut statement = self.conn.prepare(
             "SELECT message_id, attempt_number, started_unix_ms, deadline_unix_ms, state FROM outbound_attempts WHERE message_id = ?1 ORDER BY attempt_number",
         )?;
-        let records = statement
+
+        statement
             .query_map(params![message_id], |row| {
                 Ok(OutboundAttemptRecord {
                     message_id: row.get(0)?,
@@ -3298,8 +3297,7 @@ impl MessagesStore {
                     state: row.get(4)?,
                 })
             })?
-            .collect();
-        records
+            .collect()
     }
 
     pub fn outbound_attempts_for_correlation(
@@ -3313,7 +3311,8 @@ impl MessagesStore {
              WHERE r.correlation_id = ?1
              ORDER BY a.attempt_number, a.started_unix_ms, a.message_id",
         )?;
-        let records = statement
+
+        statement
             .query_map(params![correlation_id], |row| {
                 Ok(OutboundAttemptRecord {
                     message_id: row.get(0)?,
@@ -3323,8 +3322,7 @@ impl MessagesStore {
                     state: row.get(4)?,
                 })
             })?
-            .collect();
-        records
+            .collect()
     }
 
     pub fn reconcile_outbound_startup(&self, now_unix_ms: i64) -> rusqlite::Result<()> {
@@ -3525,10 +3523,10 @@ impl MessagesStore {
             .map(|cursor| crate::cursor::MessageCursor::decode(cursor, &metadata.cursor_secret))
             .transpose()
             .map_err(|error| PageError::InvalidCursor(error.to_string()))?;
-        if let Some(cursor) = decoded.as_ref() {
-            if cursor.store_id != metadata.store_id || cursor.peer != peer {
-                return Err(PageError::InvalidCursor("cursor scope does not match query".into()));
-            }
+        if let Some(cursor) = decoded.as_ref()
+            && (cursor.store_id != metadata.store_id || cursor.peer != peer)
+        {
+            return Err(PageError::InvalidCursor("cursor scope does not match query".into()));
         }
         let snapshot_seq = match decoded.as_ref() {
             Some(cursor) => cursor.snapshot_seq,
@@ -3656,10 +3654,10 @@ impl MessagesStore {
                  WHERE lower(source) = ?1 OR lower(destination) = ?1
                  ORDER BY id",
             )?;
-            let ids = statement
+
+            statement
                 .query_map(params![peer_hash], |row| row.get(0))?
-                .collect::<rusqlite::Result<Vec<String>>>()?;
-            ids
+                .collect::<rusqlite::Result<Vec<String>>>()?
         };
         if message_ids.is_empty() {
             return Ok((
@@ -4891,10 +4889,10 @@ impl MessagesStore {
             let legacy_rows = {
                 let mut statement = transaction
                     .prepare("SELECT message_id, wire FROM canonical_inbound_messages")?;
-                let rows = statement
+
+                statement
                     .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                rows
+                    .collect::<rusqlite::Result<Vec<_>>>()?
             };
             for (message_id, wire) in legacy_rows {
                 match lxmf::inbound_decode::decode_inbound_message(
@@ -4994,7 +4992,8 @@ impl MessagesStore {
                          ORDER BY lower(peer_hash), updated_at DESC,
                                   created_at DESC, peer_hash DESC",
                     )?;
-                    let contacts = statement
+
+                    statement
                         .query_map([], |row| {
                             Ok(ContactRecord {
                                 peer_hash: row.get(0)?,
@@ -5004,8 +5003,7 @@ impl MessagesStore {
                                 updated_at: row.get(4)?,
                             })
                         })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    contacts
+                        .collect::<rusqlite::Result<Vec<_>>>()?
                 };
                 let mut merged = std::collections::BTreeMap::<String, ContactRecord>::new();
                 for contact in valid_contacts {
@@ -5303,7 +5301,8 @@ impl MessagesStore {
         )?;
         let (after_timestamp, after_id) =
             after.map(|(timestamp, id)| (Some(timestamp), Some(id))).unwrap_or((None, None));
-        let rows = statement
+
+        statement
             .query_map(
                 params![i64::try_from(limit).unwrap_or(i64::MAX), after_timestamp, after_id],
                 |row| {
@@ -5317,8 +5316,7 @@ impl MessagesStore {
                     })
                 },
             )?
-            .collect();
-        rows
+            .collect()
     }
 
     /// Delete propagation packets by id after successful delivery.
@@ -5509,15 +5507,17 @@ mod tests {
                      DROP INDEX idx_message_page_peer_order;",
                 )
                 .unwrap();
-            assert!(store
-                .conn
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM schema_migrations
+            assert!(
+                store
+                    .conn
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM schema_migrations
                      WHERE id = '2026-08-23-stable-message-pagination-v8')",
-                    [],
-                    |row| row.get::<_, bool>(0),
-                )
-                .unwrap());
+                        [],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .unwrap()
+            );
             cursor
         };
         let store = MessagesStore::open(&path).unwrap();
@@ -5605,12 +5605,14 @@ mod tests {
 
         let compatibility = Connection::open(&path).unwrap();
         compatibility.busy_timeout(std::time::Duration::from_secs(1)).unwrap();
-        assert!(compatibility
-            .execute(
-                "UPDATE messages SET source = ?2, timestamp = 500 WHERE id = ?1",
-                params!["immutable", "cccccccccccccccccccccccccccccccc"],
-            )
-            .is_err());
+        assert!(
+            compatibility
+                .execute(
+                    "UPDATE messages SET source = ?2, timestamp = 500 WHERE id = ?1",
+                    params!["immutable", "cccccccccccccccccccccccccccccccc"],
+                )
+                .is_err()
+        );
         assert_eq!(
             compatibility
                 .execute(
@@ -5641,9 +5643,11 @@ mod tests {
         store.insert_message(&peer_message("guarded", peer, 1, true)).unwrap();
         let compatibility = Connection::open(&path).unwrap();
         compatibility.pragma_update(None, "foreign_keys", "ON").unwrap();
-        assert!(compatibility
-            .execute("DELETE FROM message_page_keys WHERE message_id = 'guarded'", [])
-            .is_err());
+        assert!(
+            compatibility
+                .execute("DELETE FROM message_page_keys WHERE message_id = 'guarded'", [])
+                .is_err()
+        );
         assert_eq!(
             compatibility.execute("DELETE FROM messages WHERE id = 'guarded'", []).unwrap(),
             1
@@ -5900,7 +5904,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn database_open_rejects_symlinks_without_chmodding_target() {
-        use std::os::unix::fs::{symlink, PermissionsExt};
+        use std::os::unix::fs::{PermissionsExt, symlink};
 
         let temp = tempfile::tempdir().unwrap();
         let target = temp.path().join("target.db");
@@ -5916,7 +5920,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn database_open_never_chmods_symlinked_sidecar_target() {
-        use std::os::unix::fs::{symlink, PermissionsExt};
+        use std::os::unix::fs::{PermissionsExt, symlink};
 
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("messages.db");
@@ -6017,15 +6021,17 @@ mod tests {
             store
                 .insert_outbound_message(&outbound_message("routed", 1, Some("queued")), &route)
                 .unwrap();
-            assert!(store
-                .begin_outbound_attempt(&OutboundAttemptRecord {
-                    message_id: "routed".into(),
-                    attempt_number: 1,
-                    started_unix_ms: 10_000,
-                    deadline_unix_ms: 42_000,
-                    state: "sending".into(),
-                })
-                .unwrap());
+            assert!(
+                store
+                    .begin_outbound_attempt(&OutboundAttemptRecord {
+                        message_id: "routed".into(),
+                        attempt_number: 1,
+                        started_unix_ms: 10_000,
+                        deadline_unix_ms: 42_000,
+                        state: "sending".into(),
+                    })
+                    .unwrap()
+            );
         }
 
         let reopened = MessagesStore::open(&path).unwrap();
@@ -6516,14 +6522,16 @@ mod tests {
     fn draft_schema_rejects_blob_and_legacy_blob_read_is_explicit_error() {
         let store = MessagesStore::in_memory().unwrap();
         let peer = "91".repeat(16);
-        assert!(store
-            .conn
-            .execute(
-                "INSERT INTO conversation_drafts (peer_hash, content, updated_at)
+        assert!(
+            store
+                .conn
+                .execute(
+                    "INSERT INTO conversation_drafts (peer_hash, content, updated_at)
                  VALUES (?1, ?2, 1)",
-                params![peer, vec![0xff_u8, 0xfe]],
-            )
-            .is_err());
+                    params![peer, vec![0xff_u8, 0xfe]],
+                )
+                .is_err()
+        );
 
         store.conn.pragma_update(None, "ignore_check_constraints", "ON").unwrap();
         store
@@ -6650,9 +6658,11 @@ mod tests {
         assert!(result.truncated);
         assert_eq!(result.items[0].message.id, "b");
         assert!(store.search_message_projection_outcome("", None, 1).is_err());
-        assert!(store
-            .search_message_projection_outcome(&"x".repeat(MAX_SEARCH_QUERY_BYTES + 1), None, 1)
-            .is_err());
+        assert!(
+            store
+                .search_message_projection_outcome(&"x".repeat(MAX_SEARCH_QUERY_BYTES + 1), None, 1)
+                .is_err()
+        );
         assert!(store.search_message_projection_outcome("x", None, 0).is_err());
     }
 
@@ -6729,13 +6739,15 @@ mod tests {
         assert_eq!(canonical.updated_at, 20);
         assert!(contacts.iter().any(|contact| contact.peer_hash == "bad!"));
         assert!(contacts.iter().any(|contact| contact.peer_hash == "BAD!"));
-        assert!(store
-            .conn
-            .execute(
-                "INSERT INTO contacts VALUES (?1, NULL, NULL, 1, 1)",
-                params![peer.to_ascii_uppercase()],
-            )
-            .is_err());
+        assert!(
+            store
+                .conn
+                .execute(
+                    "INSERT INTO contacts VALUES (?1, NULL, NULL, 1, 1)",
+                    params![peer.to_ascii_uppercase()],
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -6884,24 +6896,30 @@ mod tests {
             .unwrap();
         assert_eq!(state, (0, 1, 20));
         assert_eq!(store.draft(&peer).unwrap().unwrap().content, "latest");
-        assert!(store
-            .conn
-            .execute("INSERT INTO conversation_drafts VALUES (NULL, 'draft', 1)", [],)
-            .is_err());
-        assert!(store
-            .conn
-            .execute(
-                "INSERT INTO conversation_drafts VALUES (?1, NULL, 1)",
-                params!["d1".repeat(16)],
-            )
-            .is_err());
-        assert!(store
-            .conn
-            .execute(
-                "INSERT INTO conversation_drafts VALUES (?1, ?2, 1)",
-                params!["d2".repeat(16), "x".repeat(MAX_DRAFT_BYTES + 1)],
-            )
-            .is_err());
+        assert!(
+            store
+                .conn
+                .execute("INSERT INTO conversation_drafts VALUES (NULL, 'draft', 1)", [],)
+                .is_err()
+        );
+        assert!(
+            store
+                .conn
+                .execute(
+                    "INSERT INTO conversation_drafts VALUES (?1, NULL, 1)",
+                    params!["d1".repeat(16)],
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .conn
+                .execute(
+                    "INSERT INTO conversation_drafts VALUES (?1, ?2, 1)",
+                    params!["d2".repeat(16), "x".repeat(MAX_DRAFT_BYTES + 1)],
+                )
+                .is_err()
+        );
         let count: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM conversation_drafts", [], |row| row.get(0))
@@ -7440,14 +7458,16 @@ mod tests {
                 stamp_value: None,
                 stamp_target: None,
             };
-            assert!(store
-                .insert_canonical_inbound_with_attachments(
-                    &projection,
-                    &canonical,
-                    std::slice::from_ref(&attachment),
-                    None,
-                )
-                .expect("insert attachment"));
+            assert!(
+                store
+                    .insert_canonical_inbound_with_attachments(
+                        &projection,
+                        &canonical,
+                        std::slice::from_ref(&attachment),
+                        None,
+                    )
+                    .expect("insert attachment")
+            );
         }
         let blob_count: i64 = store
             .conn
@@ -7730,36 +7750,42 @@ mod tests {
         let store = MessagesStore::in_memory().unwrap();
         let message = chat_message("strict-types", "alice", "me", 1);
         store.insert_message(&message).unwrap();
-        assert!(store
-            .conn
-            .execute(
-                "INSERT INTO attachment_transfers
+        assert!(
+            store
+                .conn
+                .execute(
+                    "INSERT INTO attachment_transfers
                  (message_id, transfer_id, resource_hash, representation, direction, state,
                   transferred, total, checksum_verified, error, updated_at)
                  VALUES (?1, 'transfer', ?2, 'resource', 'outbound', 'transferring',
                          0, 1, 0, NULL, 1)",
-                params![&message.id, "0".repeat(32)],
-            )
-            .is_err());
-        assert!(store
-            .conn
-            .execute(
-                "INSERT INTO attachment_issues (message_id, reason, created_at)
+                    params![&message.id, "0".repeat(32)],
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .conn
+                .execute(
+                    "INSERT INTO attachment_issues (message_id, reason, created_at)
                  VALUES (?1, 'invalid', 1)",
-                params![vec![0x61_u8; 8]],
-            )
-            .is_err());
-        assert!(store
-            .conn
-            .execute(
-                "INSERT INTO attachment_transfers
+                    params![vec![0x61_u8; 8]],
+                )
+                .is_err()
+        );
+        assert!(
+            store
+                .conn
+                .execute(
+                    "INSERT INTO attachment_transfers
                  (message_id, transfer_id, representation, direction, state, transferred,
                   total, checksum_verified, error, updated_at)
                  VALUES (?1, 'transfer', 'resource', 'outbound', 'transferring',
                          0.5, 1.0, 0, NULL, 1.0)",
-                params![&message.id],
-            )
-            .is_err());
+                    params![&message.id],
+                )
+                .is_err()
+        );
     }
 
     #[test]
@@ -7848,36 +7874,44 @@ mod tests {
         let outbound_id = "cd".repeat(32);
         let message = outbound_message(&outbound_id, 2, Some("queued"));
         store.insert_outbound_message(&message, &outbound_route(&outbound_id, None)).unwrap();
-        assert!(store
-            .begin_outbound_attempt(&OutboundAttemptRecord {
-                message_id: outbound_id.clone(),
-                attempt_number: 1,
-                started_unix_ms: 1,
-                deadline_unix_ms: i64::MAX,
-                state: "sending".into(),
-            })
-            .unwrap());
-        assert!(!store
-            .track_outbound_evidence(&"ef".repeat(32), &outbound_id, "resource")
-            .unwrap());
+        assert!(
+            store
+                .begin_outbound_attempt(&OutboundAttemptRecord {
+                    message_id: outbound_id.clone(),
+                    attempt_number: 1,
+                    started_unix_ms: 1,
+                    deadline_unix_ms: i64::MAX,
+                    state: "sending".into(),
+                })
+                .unwrap()
+        );
+        assert!(
+            !store.track_outbound_evidence(&"ef".repeat(32), &outbound_id, "resource").unwrap()
+        );
         for index in 0..20_u64 {
-            assert!(store
-                .track_outbound_evidence(&format!("{index:064x}"), &outbound_id, "packet")
-                .unwrap());
+            assert!(
+                store
+                    .track_outbound_evidence(&format!("{index:064x}"), &outbound_id, "packet")
+                    .unwrap()
+            );
         }
-        assert!(store
-            .begin_outbound_attempt(&OutboundAttemptRecord {
-                message_id: outbound_id.clone(),
-                attempt_number: 2,
-                started_unix_ms: 2,
-                deadline_unix_ms: i64::MAX,
-                state: "sending".into(),
-            })
-            .unwrap());
+        assert!(
+            store
+                .begin_outbound_attempt(&OutboundAttemptRecord {
+                    message_id: outbound_id.clone(),
+                    attempt_number: 2,
+                    started_unix_ms: 2,
+                    deadline_unix_ms: i64::MAX,
+                    state: "sending".into(),
+                })
+                .unwrap()
+        );
         for index in 20..40_u64 {
-            assert!(store
-                .track_outbound_evidence(&format!("{index:064x}"), &outbound_id, "packet")
-                .unwrap());
+            assert!(
+                store
+                    .track_outbound_evidence(&format!("{index:064x}"), &outbound_id, "packet")
+                    .unwrap()
+            );
         }
         assert_eq!(store.message_delivery_evidence(&outbound_id).unwrap().len(), 32);
         let correlations: i64 = store
@@ -7889,16 +7923,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(correlations, 32);
-        assert!(store
-            .finish_outbound_with_exact_evidence(
-                &outbound_id,
-                "delivered",
-                "delivered: packet-receipt",
-                Some("authenticated packet receipt"),
-                &format!("{:064x}", 39),
-                "packet",
-            )
-            .unwrap());
+        assert!(
+            store
+                .finish_outbound_with_exact_evidence(
+                    &outbound_id,
+                    "delivered",
+                    "delivered: packet-receipt",
+                    Some("authenticated packet receipt"),
+                    &format!("{:064x}", 39),
+                    "packet",
+                )
+                .unwrap()
+        );
         drop(store);
 
         let store = MessagesStore::open(&path).unwrap();
@@ -7910,9 +7946,9 @@ mod tests {
         let completed = evidence.iter().find(|item| item.state == "completed").unwrap();
         assert_eq!(completed.evidence_hash, format!("{:064x}", 39));
         assert_eq!(completed.attempt_number, Some(2));
-        assert!(evidence
-            .iter()
-            .any(|item| item.attempt_number == Some(1) && item.state == "failed"));
+        assert!(
+            evidence.iter().any(|item| item.attempt_number == Some(1) && item.state == "failed")
+        );
         assert_eq!(completed.outcome.as_deref(), Some("authenticated packet receipt"));
         assert_eq!(
             store.outbound_terminal_detail(&outbound_id).unwrap().as_deref(),
@@ -7992,9 +8028,9 @@ mod tests {
                     state: "sending".into(),
                 })
                 .unwrap();
-            assert!(store
-                .track_outbound_evidence(&resource_hash, &message_id, "resource")
-                .unwrap());
+            assert!(
+                store.track_outbound_evidence(&resource_hash, &message_id, "resource").unwrap()
+            );
             assert!(store.update_delivery_evidence_progress(&resource_hash, 25, 100).unwrap());
             store
                 .insert_outbound_message(
@@ -8011,9 +8047,9 @@ mod tests {
                     state: "sending".into(),
                 })
                 .unwrap();
-            assert!(store
-                .track_outbound_evidence(&packet_hash, &packet_message_id, "packet")
-                .unwrap());
+            assert!(
+                store.track_outbound_evidence(&packet_hash, &packet_message_id, "packet").unwrap()
+            );
             assert!(!store.update_delivery_evidence_progress(&packet_hash, 1, 2).unwrap());
         }
 

@@ -24,4 +24,4 @@ pub mod dispatch;
 pub mod server;
 pub mod wire;
 
-pub use server::{default_socket_path, IpcServer, IpcServerConfig};
+pub use server::{IpcServer, IpcServerConfig, default_socket_path};

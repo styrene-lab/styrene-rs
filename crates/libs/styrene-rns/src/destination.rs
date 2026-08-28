@@ -1,4 +1,4 @@
-use ed25519_dalek::{Signature, SigningKey, VerifyingKey, SIGNATURE_LENGTH};
+use ed25519_dalek::{SIGNATURE_LENGTH, Signature, SigningKey, VerifyingKey};
 use rand_core::CryptoRngCore;
 use x25519_dalek::PublicKey;
 
@@ -15,7 +15,7 @@ use std::path::Path;
 use crate::{
     error::RnsError,
     hash::{AddressHash, Hash},
-    identity::{EmptyIdentity, HashIdentity, Identity, PrivateIdentity, PUBLIC_KEY_LENGTH},
+    identity::{EmptyIdentity, HashIdentity, Identity, PUBLIC_KEY_LENGTH, PrivateIdentity},
     packet::{
         self, ContextFlag, DestinationType, Header, HeaderType, IfacFlag, Packet, PacketContext,
         PacketDataBuffer, PacketType, PropagationType,
@@ -35,14 +35,14 @@ mod request;
 mod tests;
 
 pub use primitives::{
-    group_decrypt, group_encrypt, Direction, Group, Input, Output, Plain, Single, Type,
+    Direction, Group, Input, Output, Plain, Single, Type, group_decrypt, group_encrypt,
 };
 pub use ratchet::RATCHET_LENGTH;
-use ratchet::{try_decrypt_with_ratchets, RatchetState};
+use ratchet::{RatchetState, try_decrypt_with_ratchets};
 use request::RequestRegistry;
 pub use request::{
-    request_path_hash, RequestAccess, RequestAccessCallback, RequestDispatchError, RequestHandler,
-    RequestId, RequestLinkContext, RequestPath, RequestPathHash, RequestRegistrationError,
+    RequestAccess, RequestAccessCallback, RequestDispatchError, RequestHandler, RequestId,
+    RequestLinkContext, RequestPath, RequestPathHash, RequestRegistrationError, request_path_hash,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -249,11 +249,7 @@ impl DestinationAnnounce {
             })
         };
 
-        if has_ratchet_flag {
-            parse_with_ratchet()
-        } else {
-            parse_without_ratchet()
-        }
+        if has_ratchet_flag { parse_with_ratchet() } else { parse_without_ratchet() }
     }
 }
 
@@ -451,14 +447,12 @@ impl Destination<PrivateIdentity, Input, Single> {
                 return Ok((plaintext, true));
             }
             #[cfg(feature = "std")]
-            if let Some(path) = self.ratchet_state.ratchets_path.clone() {
-                if self.ratchet_state.reload(&self.identity, &path).is_ok() {
-                    if let Some(plaintext) =
-                        try_decrypt_with_ratchets(&self.ratchet_state, salt, ciphertext)
-                    {
-                        return Ok((plaintext, true));
-                    }
-                }
+            if let Some(path) = self.ratchet_state.ratchets_path.clone()
+                && self.ratchet_state.reload(&self.identity, &path).is_ok()
+                && let Some(plaintext) =
+                    try_decrypt_with_ratchets(&self.ratchet_state, salt, ciphertext)
+            {
+                return Ok((plaintext, true));
             }
             if self.ratchet_state.enforce_ratchets {
                 return Err(RnsError::CryptoError);
@@ -569,10 +563,10 @@ impl Destination<PrivateIdentity, Input, Single> {
         let now = StdInstant::now();
         self.prune_path_responses(now);
 
-        if let Some(tag) = tag {
-            if let Some((_, cached)) = self.path_responses.get(tag) {
-                return Ok(*cached);
-            }
+        if let Some(tag) = tag
+            && let Some((_, cached)) = self.path_responses.get(tag)
+        {
+            return Ok(*cached);
         }
 
         let mut announce = self.announce(rng, app_data)?;

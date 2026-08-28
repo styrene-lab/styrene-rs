@@ -4,7 +4,7 @@
 //! with a durable store that tracks peer announces, device metadata,
 //! connectivity history, and capabilities.
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 

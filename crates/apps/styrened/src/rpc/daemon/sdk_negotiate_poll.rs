@@ -502,8 +502,8 @@ impl RpcDaemon {
                 Ok(())
             };
 
-        if parsed.cursor.is_none() && event_rows.len() < parsed.max {
-            if let Some(gap_meta) = compute_stream_gap(dropped_count, oldest_seq) {
+        if parsed.cursor.is_none() && event_rows.len() < parsed.max
+            && let Some(gap_meta) = compute_stream_gap(dropped_count, oldest_seq) {
             let gap_row = json!({
                     "event_id": format!("gap-{}", gap_meta.gap_seq_no),
                 "runtime_id": self.identity_hash,
@@ -525,7 +525,6 @@ impl RpcDaemon {
                     return Ok(response);
                 }
             }
-        }
 
         let remaining_slots = parsed.max.saturating_sub(event_rows.len());
         for entry in log_guard

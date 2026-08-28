@@ -14,11 +14,7 @@ pub fn normalize_display_name(value: &str) -> Option<String> {
         return None;
     }
     let normalized: String = trimmed.chars().take(64).collect();
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
+    if normalized.is_empty() { None } else { Some(normalized) }
 }
 
 pub fn parse_peer_name_from_app_data(app_data: &[u8]) -> Option<(String, &'static str)> {
@@ -26,12 +22,11 @@ pub fn parse_peer_name_from_app_data(app_data: &[u8]) -> Option<(String, &'stati
         return None;
     }
 
-    if is_msgpack_array_prefix(app_data[0]) {
-        if let Some(name) =
+    if is_msgpack_array_prefix(app_data[0])
+        && let Some(name) =
             display_name_from_app_data(app_data).and_then(|value| normalize_display_name(&value))
-        {
-            return Some((name, "delivery_app_data"));
-        }
+    {
+        return Some((name, "delivery_app_data"));
     }
 
     if let Some(name) =
@@ -142,11 +137,7 @@ fn string_like_value_to_string(value: &rmpv::Value) -> Option<String> {
         }
         rmpv::Value::F32(value) => {
             let value = f64::from(*value);
-            if value.fract() == 0.0 {
-                Some(format!("{value:.0}"))
-            } else {
-                None
-            }
+            if value.fract() == 0.0 { Some(format!("{value:.0}")) } else { None }
         }
         _ => None,
     }

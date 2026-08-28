@@ -5,10 +5,10 @@ use rand_core::CryptoRngCore;
 use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
 
 use crate::crypt::fernet::{
-    Fernet, PlainText, Token, FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE,
+    FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE, Fernet, PlainText, Token,
 };
 use crate::error::RnsError;
-use crate::identity::{DerivedKey, PrivateIdentity, PUBLIC_KEY_LENGTH};
+use crate::identity::{DerivedKey, PUBLIC_KEY_LENGTH, PrivateIdentity};
 
 pub fn encrypt_for_public_key<R: CryptoRngCore + Copy>(
     public_key: &PublicKey,

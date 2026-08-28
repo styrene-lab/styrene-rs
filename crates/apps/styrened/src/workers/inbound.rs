@@ -218,14 +218,12 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                     .await;
                             if let (Some(source), Some(identity)) =
                                 (source, sender_identity.as_ref())
-                            {
-                                if let Err(error) =
+                                && let Err(error) =
                                     messaging.revalidate_unknown_identity(source, identity)
-                                {
-                                    crate::daemon_diagnostic!(
-                                        "[worker] deferred resource LXMF authentication failed: {error}"
-                                    );
-                                }
+                            {
+                                crate::daemon_diagnostic!(
+                                    "[worker] deferred resource LXMF authentication failed: {error}"
+                                );
                             }
                             match messaging.accept_inbound_resource_with_identity(
                                 destination,
@@ -400,13 +398,12 @@ pub fn spawn_inbound_worker_with_auto_reply(
 
                     let (source, sender_identity) =
                         resolve_sender_identity(transport.as_ref(), data, payload_mode).await;
-                    if let (Some(source), Some(identity)) = (source, sender_identity.as_ref()) {
-                        if let Err(error) = messaging.revalidate_unknown_identity(source, identity)
-                        {
-                            crate::daemon_diagnostic!(
-                                "[worker] deferred LXMF authentication failed: {error}"
-                            );
-                        }
+                    if let (Some(source), Some(identity)) = (source, sender_identity.as_ref())
+                        && let Err(error) = messaging.revalidate_unknown_identity(source, identity)
+                    {
+                        crate::daemon_diagnostic!(
+                            "[worker] deferred LXMF authentication failed: {error}"
+                        );
                     }
 
                     // Local delivery: decode and persist exactly once.
@@ -477,40 +474,39 @@ pub fn spawn_inbound_worker_with_auto_reply(
                             let is_auto_reply_message = record.title.contains("[auto-reply]");
                             let should_auto_reply = !is_protocol_message && !is_auto_reply_message;
 
-                            if should_auto_reply {
-                                if let Some(ref ar) = auto_reply {
-                                    if let Some(reply_text) = ar.should_reply(&record.source) {
-                                        // Determine the sender's delivery hash for reply routing.
-                                        // The record.source is the sender's identity hash; we need
-                                        // their delivery destination hash for send_chat.
-                                        // The inbound worker knows the delivery hash is what the
-                                        // transport resolved — look it up from the source identity.
-                                        let source_delivery_hash = (record.source.len() == 32)
-                                            .then(|| record.source.clone());
+                            if should_auto_reply
+                                && let Some(ref ar) = auto_reply
+                                && let Some(reply_text) = ar.should_reply(&record.source)
+                            {
+                                // Determine the sender's delivery hash for reply routing.
+                                // The record.source is the sender's identity hash; we need
+                                // their delivery destination hash for send_chat.
+                                // The inbound worker knows the delivery hash is what the
+                                // transport resolved — look it up from the source identity.
+                                let source_delivery_hash =
+                                    (record.source.len() == 32).then(|| record.source.clone());
 
-                                        if let Some(dest_hash) = source_delivery_hash {
-                                            let m = messaging.clone();
-                                            tokio::spawn(async move {
-                                                if let Err(e) = m
-                                                    .send_chat(
-                                                        &dest_hash,
-                                                        &reply_text,
-                                                        Some("[auto-reply]"),
-                                                    )
-                                                    .await
-                                                {
-                                                    crate::daemon_diagnostic!(
-                                                        "[worker] auto-reply failed: {e}"
-                                                    );
-                                                } else {
-                                                    crate::daemon_diagnostic!(
-                                                        "[worker] auto-reply sent to {}",
-                                                        dest_hash
-                                                    );
-                                                }
-                                            });
+                                if let Some(dest_hash) = source_delivery_hash {
+                                    let m = messaging.clone();
+                                    tokio::spawn(async move {
+                                        if let Err(e) = m
+                                            .send_chat(
+                                                &dest_hash,
+                                                &reply_text,
+                                                Some("[auto-reply]"),
+                                            )
+                                            .await
+                                        {
+                                            crate::daemon_diagnostic!(
+                                                "[worker] auto-reply failed: {e}"
+                                            );
+                                        } else {
+                                            crate::daemon_diagnostic!(
+                                                "[worker] auto-reply sent to {}",
+                                                dest_hash
+                                            );
                                         }
-                                    }
+                                    });
                                 }
                             } // close should_auto_reply
                         }

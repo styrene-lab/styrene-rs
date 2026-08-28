@@ -28,11 +28,7 @@ pub fn validate_stamp(
     tickets: &[Vec<u8>],
 ) -> Option<u32> {
     let validation = lxmf::stamps::validate_stamp(stamp, message_id, Some(target_cost), tickets);
-    if validation.state == lxmf::stamps::StampState::Verified {
-        validation.value
-    } else {
-        None
-    }
+    if validation.state == lxmf::stamps::StampState::Verified { validation.value } else { None }
 }
 
 pub fn stamp_workblock(material: &[u8], expand_rounds: usize) -> Vec<u8> {

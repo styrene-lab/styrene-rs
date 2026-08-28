@@ -11,6 +11,7 @@ use rns_core::destination::{DestinationDesc, DestinationName};
 use rns_core::hash::AddressHash;
 use rns_core::identity::{Identity, PrivateIdentity};
 use sha2::{Digest, Sha256};
+use styrene_ipc::PageAddress;
 use styrene_ipc::types::{
     DiscoveredCapability, FileDownloadInfo, FileDownloadRequest, FileDownloadState,
     ObservationMetadata, ObservationSource, PageBrowseFailure, PageBrowseOutcome, PageBrowseStage,
@@ -20,7 +21,6 @@ use styrene_ipc::types::{
     PageTransferKind, RequestObservationInfo, RequestProtocolError, RequestResponseTransfer,
     RequestState, StartRequestInfo,
 };
-use styrene_ipc::PageAddress;
 use styrene_micron::{Block, ChildBlock, Document, FormField, InlineNode, Line};
 use tokio::io::AsyncWriteExt;
 
@@ -1083,16 +1083,16 @@ impl NativeNomadNetBrowseCoordinator {
             old_link
         };
         reservation.disarm();
-        if let Some(link) = old_link {
-            if let Err(error) = self.cleanup_or_retain(link.clone()).await {
-                self.owner_cleanup
-                    .lock()
-                    .unwrap_or_else(|value| value.into_inner())
-                    .entry(owner)
-                    .or_default()
-                    .insert(link.id.clone(), link);
-                log::error!("replaced browser link cleanup reached terminal error: {error}");
-            }
+        if let Some(link) = old_link
+            && let Err(error) = self.cleanup_or_retain(link.clone()).await
+        {
+            self.owner_cleanup
+                .lock()
+                .unwrap_or_else(|value| value.into_inner())
+                .entry(owner)
+                .or_default()
+                .insert(link.id.clone(), link);
+            log::error!("replaced browser link cleanup reached terminal error: {error}");
         }
         Ok(page)
     }
@@ -1132,15 +1132,15 @@ impl NativeNomadNetBrowseCoordinator {
             rollback: None,
             armed: true,
         };
-        if let Some(link) = link {
-            if let Err(error) = self.release_session_link(&link).await {
-                let mut sessions = self.sessions.lock().unwrap_or_else(|value| value.into_inner());
-                if let Some(session) = sessions.get_mut(session_id) {
-                    session.active = false;
-                }
-                reservation.disarm();
-                return Err(error.to_string());
+        if let Some(link) = link
+            && let Err(error) = self.release_session_link(&link).await
+        {
+            let mut sessions = self.sessions.lock().unwrap_or_else(|value| value.into_inner());
+            if let Some(session) = sessions.get_mut(session_id) {
+                session.active = false;
             }
+            reservation.disarm();
+            return Err(error.to_string());
         }
         self.sessions
             .lock()
@@ -1462,10 +1462,10 @@ impl NativeNomadNetBrowseCoordinator {
                 return Some(current);
             }
             #[cfg(test)]
-            if let Some(gate) = self.cancel_wait_gate.lock().await.take() {
-                if let Ok(permit) = gate.acquire().await {
-                    permit.forget();
-                }
+            if let Some(gate) = self.cancel_wait_gate.lock().await.take()
+                && let Ok(permit) = gate.acquire().await
+            {
+                permit.forget();
             }
             match tokio::time::timeout(DOWNLOAD_CANCELLATION_WAIT, completion.changed()).await {
                 Ok(Ok(())) => {}
@@ -1535,10 +1535,10 @@ impl NativeNomadNetBrowseCoordinator {
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             #[cfg(test)]
-            if let Some(gate) = coordinator.save_gate.lock().await.clone() {
-                if let Ok(permit) = gate.acquire().await {
-                    permit.forget();
-                }
+            if let Some(gate) = coordinator.save_gate.lock().await.clone()
+                && let Ok(permit) = gate.acquire().await
+            {
+                permit.forget();
             }
             let temporary = parent.join(format!(
                 ".{}.{}.styrene-download",
@@ -1696,11 +1696,7 @@ impl NativeNomadNetBrowseCoordinator {
             records.remove(&id);
         }
         drop(records);
-        if cleanup_errors.is_empty() {
-            Ok(())
-        } else {
-            Err(cleanup_errors.join("; "))
-        }
+        if cleanup_errors.is_empty() { Ok(()) } else { Err(cleanup_errors.join("; ")) }
     }
 
     pub fn project_local(&self, host: &str, path: &str, source: Vec<u8>) -> PageContent {
@@ -2494,11 +2490,7 @@ mod tests {
             if self
                 .close_failures
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
-                    if remaining > 0 {
-                        Some(remaining - 1)
-                    } else {
-                        None
-                    }
+                    if remaining > 0 { Some(remaining - 1) } else { None }
                 })
                 .is_ok()
             {
@@ -2582,11 +2574,13 @@ mod tests {
         assert_eq!(backend.calls.lock().unwrap().as_slice(), ["path", "identity"]);
         assert_eq!(result.stages[0].state, PageBrowseStageState::Succeeded);
         assert!(matches!(result.stages[1].state, PageBrowseStageState::Failed { .. }));
-        assert!(result
-            .stages
-            .iter()
-            .skip(2)
-            .all(|stage| { matches!(stage.state, PageBrowseStageState::Skipped { .. }) }));
+        assert!(
+            result
+                .stages
+                .iter()
+                .skip(2)
+                .all(|stage| { matches!(stage.state, PageBrowseStageState::Skipped { .. }) })
+        );
         assert!(result.source_bytes.is_empty());
         assert_eq!(result.outcome, PageBrowseOutcome::Failed);
         assert_eq!(
@@ -2678,11 +2672,13 @@ mod tests {
 
         assert_eq!(result.stages[3].state, PageBrowseStageState::Succeeded);
         assert!(matches!(result.stages[5].state, PageBrowseStageState::Failed { .. }));
-        assert!(result
-            .stages
-            .iter()
-            .skip(6)
-            .all(|stage| matches!(stage.state, PageBrowseStageState::Skipped { .. })));
+        assert!(
+            result
+                .stages
+                .iter()
+                .skip(6)
+                .all(|stage| matches!(stage.state, PageBrowseStageState::Skipped { .. }))
+        );
         assert_eq!(result.outcome, PageBrowseOutcome::TimedOut);
         assert_eq!(
             result.failure.as_ref().map(|failure| failure.code.as_str()),
@@ -2702,11 +2698,13 @@ mod tests {
 
         assert_eq!(backend.calls.lock().unwrap().as_slice(), ["path"]);
         assert!(matches!(result.stages[0].state, PageBrowseStageState::Failed { .. }));
-        assert!(result
-            .stages
-            .iter()
-            .skip(1)
-            .all(|stage| { matches!(stage.state, PageBrowseStageState::Skipped { .. }) }));
+        assert!(
+            result
+                .stages
+                .iter()
+                .skip(1)
+                .all(|stage| { matches!(stage.state, PageBrowseStageState::Skipped { .. }) })
+        );
         assert_eq!(result.outcome, PageBrowseOutcome::TimedOut);
     }
 
@@ -3011,11 +3009,13 @@ mod tests {
         assert_eq!(completed.state, FileDownloadState::Completed);
         assert!(completed.integrity_verified);
         assert!(!destination.exists());
-        assert!(coordinator
-            .save_download(&started.download_id, Path::new("saved.bin"))
-            .await
-            .unwrap_err()
-            .contains("absolute path"));
+        assert!(
+            coordinator
+                .save_download(&started.download_id, Path::new("saved.bin"))
+                .await
+                .unwrap_err()
+                .contains("absolute path")
+        );
         let existing = root.path().join("existing.bin");
         std::fs::write(&existing, b"operator data").unwrap();
         assert!(coordinator.save_download(&started.download_id, &existing).await.is_err());
@@ -3316,12 +3316,14 @@ mod tests {
 
         assert!(terminal.contains("cleanup failed after 3 attempts"));
         assert!(!coordinator.sessions.lock().unwrap().contains_key(&page.navigation.session_id));
-        assert!(coordinator
-            .owner_cleanup
-            .lock()
-            .unwrap()
-            .get(&42)
-            .is_some_and(|links| links.contains_key(&link_id)));
+        assert!(
+            coordinator
+                .owner_cleanup
+                .lock()
+                .unwrap()
+                .get(&42)
+                .is_some_and(|links| links.contains_key(&link_id))
+        );
         assert!(matches!(
             coordinator.cleanup.status(&link_id).await,
             Some(LinkCleanupStatus::TerminalError { attempts: 3, .. })

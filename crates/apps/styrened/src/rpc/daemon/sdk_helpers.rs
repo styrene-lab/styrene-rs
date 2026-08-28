@@ -97,14 +97,13 @@ impl RpcDaemon {
             ));
         }
 
-        if let Some(store_forward) = config.get("store_forward") {
-            if !store_forward.is_object() && !store_forward.is_null() {
+        if let Some(store_forward) = config.get("store_forward")
+            && !store_forward.is_object() && !store_forward.is_null() {
                 return Err(Self::sdk_config_error(
                     "SDK_VALIDATION_INVALID_ARGUMENT",
                     "store_forward must be an object when provided",
                 ));
             }
-        }
         if let Some(store_forward) = config.get("store_forward").and_then(JsonValue::as_object) {
             const ALLOWED_STORE_FORWARD_KEYS: &[&str] = &[
                 "max_messages",
@@ -154,37 +153,32 @@ impl RpcDaemon {
                 .and_then(JsonValue::as_str)
                 .map(str::trim)
                 .map(str::to_ascii_lowercase)
-            {
-                if !matches!(capacity_policy.as_str(), "reject_new" | "drop_oldest") {
+                && !matches!(capacity_policy.as_str(), "reject_new" | "drop_oldest") {
                     return Err(Self::sdk_config_error(
                         "SDK_VALIDATION_INVALID_ARGUMENT",
                         "store_forward.capacity_policy must be reject_new or drop_oldest",
                     ));
                 }
-            }
             if let Some(eviction_priority) = store_forward
                 .get("eviction_priority")
                 .and_then(JsonValue::as_str)
                 .map(str::trim)
                 .map(str::to_ascii_lowercase)
-            {
-                if !matches!(eviction_priority.as_str(), "oldest_first" | "terminal_first") {
+                && !matches!(eviction_priority.as_str(), "oldest_first" | "terminal_first") {
                     return Err(Self::sdk_config_error(
                         "SDK_VALIDATION_INVALID_ARGUMENT",
                         "store_forward.eviction_priority must be oldest_first or terminal_first",
                     ));
                 }
-            }
         }
 
-        if let Some(event_stream) = config.get("event_stream") {
-            if !event_stream.is_object() && !event_stream.is_null() {
+        if let Some(event_stream) = config.get("event_stream")
+            && !event_stream.is_object() && !event_stream.is_null() {
                 return Err(Self::sdk_config_error(
                     "SDK_VALIDATION_INVALID_ARGUMENT",
                     "event_stream must be an object when provided",
                 ));
             }
-        }
         if let Some(event_stream) = config.get("event_stream").and_then(JsonValue::as_object) {
             const ALLOWED_EVENT_STREAM_KEYS: &[&str] = &[
                 "max_poll_events",
@@ -243,24 +237,21 @@ impl RpcDaemon {
                 ));
             }
             if let (Some(max_event_bytes), Some(max_batch_bytes)) = (max_event_bytes, max_batch_bytes)
-            {
-                if max_batch_bytes < max_event_bytes {
+                && max_batch_bytes < max_event_bytes {
                     return Err(Self::sdk_config_error(
                         "SDK_VALIDATION_INVALID_ARGUMENT",
                         "event_stream.max_batch_bytes must be greater than or equal to max_event_bytes",
                     ));
                 }
-            }
         }
 
-        if let Some(event_sink) = config.get("event_sink") {
-            if !event_sink.is_object() && !event_sink.is_null() {
+        if let Some(event_sink) = config.get("event_sink")
+            && !event_sink.is_object() && !event_sink.is_null() {
                 return Err(Self::sdk_config_error(
                     "SDK_VALIDATION_INVALID_ARGUMENT",
                     "event_sink must be an object when provided",
                 ));
             }
-        }
         if let Some(event_sink) = config.get("event_sink").and_then(JsonValue::as_object) {
             const ALLOWED_EVENT_SINK_KEYS: &[&str] =
                 &["enabled", "max_event_bytes", "allow_kinds", "extensions"];
@@ -273,14 +264,13 @@ impl RpcDaemon {
                     &format!("unknown event_sink key '{key}'"),
                 ));
             }
-            if let Some(enabled) = event_sink.get("enabled") {
-                if !enabled.is_boolean() {
+            if let Some(enabled) = event_sink.get("enabled")
+                && !enabled.is_boolean() {
                     return Err(Self::sdk_config_error(
                         "SDK_VALIDATION_INVALID_ARGUMENT",
                         "event_sink.enabled must be a boolean",
                     ));
                 }
-            }
             if let Some(max_event_bytes) = event_sink.get("max_event_bytes") {
                 let Some(value) = max_event_bytes.as_u64() else {
                     return Err(Self::sdk_config_error(
@@ -482,36 +472,30 @@ impl RpcDaemon {
             return policy;
         };
 
-        if let Some(value) = store_forward.get("max_messages").and_then(JsonValue::as_u64) {
-            if value > 0 && value <= STORE_FORWARD_MAX_MESSAGES_LIMIT as u64 {
+        if let Some(value) = store_forward.get("max_messages").and_then(JsonValue::as_u64)
+            && value > 0 && value <= STORE_FORWARD_MAX_MESSAGES_LIMIT as u64 {
                 policy.max_messages = value as usize;
             }
-        }
-        if let Some(value) = store_forward.get("max_message_age_ms").and_then(JsonValue::as_u64) {
-            if value > 0 {
+        if let Some(value) = store_forward.get("max_message_age_ms").and_then(JsonValue::as_u64)
+            && value > 0 {
                 policy.max_message_age_ms = value;
             }
-        }
         if let Some(value) = store_forward
             .get("capacity_policy")
             .and_then(JsonValue::as_str)
             .map(str::trim)
             .map(str::to_ascii_lowercase)
-        {
-            if matches!(value.as_str(), "reject_new" | "drop_oldest") {
+            && matches!(value.as_str(), "reject_new" | "drop_oldest") {
                 policy.capacity_policy = value;
             }
-        }
         if let Some(value) = store_forward
             .get("eviction_priority")
             .and_then(JsonValue::as_str)
             .map(str::trim)
             .map(str::to_ascii_lowercase)
-        {
-            if matches!(value.as_str(), "oldest_first" | "terminal_first") {
+            && matches!(value.as_str(), "oldest_first" | "terminal_first") {
                 policy.eviction_priority = value;
             }
-        }
         policy
     }
 

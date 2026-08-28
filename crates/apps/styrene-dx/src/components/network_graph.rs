@@ -64,10 +64,10 @@ pub fn NetworkGraph(
                 continue;
             }
             let mut pinned = vec![0];
-            if let Interaction::DraggingNode { idx, .. } = *interaction.read() {
-                if !pinned.contains(&idx) {
-                    pinned.push(idx);
-                }
+            if let Interaction::DraggingNode { idx, .. } = *interaction.read()
+                && !pinned.contains(&idx)
+            {
+                pinned.push(idx);
             }
             let edge_snapshot = edges.read().clone();
             let mut node_snapshot = nodes.read().clone();

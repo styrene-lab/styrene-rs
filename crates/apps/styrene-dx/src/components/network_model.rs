@@ -115,10 +115,9 @@ pub(crate) fn build_graph(
     for (source_hash, target_hash) in associations {
         if let (Some(&source), Some(&target)) =
             (node_indices.get(source_hash), node_indices.get(target_hash))
+            && source != target
         {
-            if source != target {
-                edges.push(GraphEdge { source, target, hops: 0, kind: GraphEdgeKind::Association });
-            }
+            edges.push(GraphEdge { source, target, hops: 0, kind: GraphEdgeKind::Association });
         }
     }
 

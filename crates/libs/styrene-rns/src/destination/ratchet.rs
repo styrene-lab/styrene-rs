@@ -1,6 +1,6 @@
 use crate::{
     error::RnsError,
-    identity::{PrivateIdentity, PUBLIC_KEY_LENGTH},
+    identity::{PUBLIC_KEY_LENGTH, PrivateIdentity},
     ratchets::decrypt_with_private_key,
 };
 use alloc::vec::Vec;

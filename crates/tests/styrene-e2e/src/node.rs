@@ -16,8 +16,8 @@ use styrened::announce_names::encode_delivery_display_name_app_data;
 use styrened::app_context::AppContext;
 use styrened::receipt_bridge::ServiceReceiptBridge;
 use styrened::startup_contract::{
-    capabilities as startup_capability, components as startup_component, RuntimeKind,
-    StartupContract, StartupContractBuilder,
+    RuntimeKind, StartupContract, StartupContractBuilder, capabilities as startup_capability,
+    components as startup_component,
 };
 use styrened::storage::messages::MessagesStore;
 use styrened::transport::adapter::TokioTransportAdapter;
@@ -394,10 +394,10 @@ impl TestNode {
 impl Drop for TestNode {
     fn drop(&mut self) {
         self.interface_shutdown.cancel();
-        if let Ok(workers) = self.workers.get_mut() {
-            if let Some(workers) = workers.take() {
-                workers.abort();
-            }
+        if let Ok(workers) = self.workers.get_mut()
+            && let Some(workers) = workers.take()
+        {
+            workers.abort();
         }
         let interface_manager = self.transport.iface_manager();
         if let Ok(manager) = interface_manager.try_lock() {

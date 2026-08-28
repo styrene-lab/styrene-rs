@@ -15,7 +15,7 @@
 //! per the decided split (Option C). MessagingService orchestrates:
 //! transport.request_path → poll resolve_identity → send_via_link → fallback send_raw.
 
-use crate::inbound_delivery::{decode_canonical_inbound_payload, InboundDecodeDiagnostics};
+use crate::inbound_delivery::{InboundDecodeDiagnostics, decode_canonical_inbound_payload};
 use crate::lxmf_bridge;
 use crate::services::router::{
     DeliveryMethod, LifecycleEvidence, OutboundState, RetryQueueResult, RouterCoordinator,
@@ -1786,12 +1786,11 @@ impl MessagingService {
             None,
             Some((transient_id, attempt_id, peer)),
         );
-        if let InboundAcceptOutcome::Accepted(record) = &outcome {
-            if let (Some(events), Ok(Some(canonical))) =
+        if let InboundAcceptOutcome::Accepted(record) = &outcome
+            && let (Some(events), Ok(Some(canonical))) =
                 (self.events.get(), self.canonical_inbound(&record.id))
-            {
-                events.emit_message_new(record, Some(&canonical));
-            }
+        {
+            events.emit_message_new(record, Some(&canonical));
         }
         outcome
     }
@@ -1814,7 +1813,7 @@ impl MessagingService {
             let store = match self.lock_store() {
                 Ok(store) => store,
                 Err(error) => {
-                    return InboundAcceptOutcome::StorageError { message_id: String::new(), error }
+                    return InboundAcceptOutcome::StorageError { message_id: String::new(), error };
                 }
             };
             if let Err(error) = store.expire_lxmf_tickets(now) {
@@ -1829,7 +1828,7 @@ impl MessagingService {
                     return InboundAcceptOutcome::StorageError {
                         message_id: String::new(),
                         error: std::io::Error::other(error),
-                    }
+                    };
                 }
             };
             let issued_tickets = match source.map_or(Ok(Vec::new()), |source| {
@@ -1840,7 +1839,7 @@ impl MessagingService {
                     return InboundAcceptOutcome::StorageError {
                         message_id: String::new(),
                         error: std::io::Error::other(error),
-                    }
+                    };
                 }
             };
             decode_canonical_inbound_payload(
@@ -1867,19 +1866,18 @@ impl MessagingService {
                 return InboundAcceptOutcome::Rejected { diagnostics };
             }
         };
-        if let Some((expires_at, _)) = decoded.received_ticket.as_ref() {
-            if *expires_at <= now
+        if let Some((expires_at, _)) = decoded.received_ticket.as_ref()
+            && (*expires_at <= now
                 || *expires_at
-                    > now.saturating_add(TICKET_TTL_SECS + lxmf::stamps::TICKET_GRACE_SECS)
-            {
-                let mut diagnostics = InboundDecodeDiagnostics::default();
-                diagnostics.attempts.push(crate::inbound_delivery::DecodeAttempt {
-                    candidate: "ticket",
-                    len: data.len(),
-                    error: "LXMF ticket expiry outside accepted window".into(),
-                });
-                return InboundAcceptOutcome::Rejected { diagnostics };
-            }
+                    > now.saturating_add(TICKET_TTL_SECS + lxmf::stamps::TICKET_GRACE_SECS))
+        {
+            let mut diagnostics = InboundDecodeDiagnostics::default();
+            diagnostics.attempts.push(crate::inbound_delivery::DecodeAttempt {
+                candidate: "ticket",
+                len: data.len(),
+                error: "LXMF ticket expiry outside accepted window".into(),
+            });
+            return InboundAcceptOutcome::Rejected { diagnostics };
         }
         let record = decoded.projection;
         let canonical = decoded.canonical;
@@ -1929,7 +1927,7 @@ impl MessagingService {
         let store = match self.lock_store() {
             Ok(store) => store,
             Err(error) => {
-                return InboundAcceptOutcome::StorageError { message_id: record.id, error }
+                return InboundAcceptOutcome::StorageError { message_id: record.id, error };
             }
         };
         let inserted = store.insert_canonical_with_attachments_ticket_transfer_and_propagation(
@@ -2691,11 +2689,7 @@ impl MessagingService {
             return;
         }
         let kind = route.as_ref().map_or("packet", |route| {
-            if route.representation == "resource" {
-                "resource"
-            } else {
-                "packet"
-            }
+            if route.representation == "resource" { "resource" } else { "packet" }
         });
         if route.is_some() {
             match self.router.track_evidence(packet_hash, message_id, kind) {
@@ -2712,10 +2706,9 @@ impl MessagingService {
         let mut receipts = self.receipts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if !receipts.mappings.contains_key(packet_hash)
             && receipts.mappings.len() >= MAX_RECEIPT_CORRELATIONS
+            && let Some(oldest) = receipts.mappings.keys().next().cloned()
         {
-            if let Some(oldest) = receipts.mappings.keys().next().cloned() {
-                receipts.mappings.remove(&oldest);
-            }
+            receipts.mappings.remove(&oldest);
         }
         receipts
             .mappings
@@ -2772,14 +2765,14 @@ impl MessagingService {
             .update_attachment_transfer_progress(resource_hash, transferred, total)
             .map_err(std::io::Error::other)?;
         if evidence_changed || attachment_changed {
-            if let Some((message_id, kind)) = self.router.resolve_evidence(&evidence_hash)? {
-                if kind == "resource" {
-                    if let Some(events) = self.events.get() {
-                        events.emit_message_inspection_changed(&message_id);
-                    }
-                    if attachment_changed {
-                        self.emit_attachment_transfers(&message_id)?;
-                    }
+            if let Some((message_id, kind)) = self.router.resolve_evidence(&evidence_hash)?
+                && kind == "resource"
+            {
+                if let Some(events) = self.events.get() {
+                    events.emit_message_inspection_changed(&message_id);
+                }
+                if attachment_changed {
+                    self.emit_attachment_transfers(&message_id)?;
                 }
             }
         } else {
@@ -3197,12 +3190,14 @@ mod tests {
         }
         assert_eq!(service.receipts.lock().unwrap().mappings.len(), MAX_RECEIPT_CORRELATIONS);
 
-        assert!(service
-            .apply_lifecycle_evidence(
-                &message.id,
-                LifecycleEvidence::Failed("terminal test".into()),
-            )
-            .unwrap());
+        assert!(
+            service
+                .apply_lifecycle_evidence(
+                    &message.id,
+                    LifecycleEvidence::Failed("terminal test".into()),
+                )
+                .unwrap()
+        );
         assert!(service.receipts.lock().unwrap().mappings.is_empty());
     }
 
@@ -3256,9 +3251,10 @@ mod tests {
         )
         .unwrap();
         let resource_hash = [0x44; 32];
-        assert!(!svc
-            .handle_resource_progress(&resource_hash, wire.len() as u64 / 2, wire.len() as u64)
-            .unwrap());
+        assert!(
+            !svc.handle_resource_progress(&resource_hash, wire.len() as u64 / 2, wire.len() as u64)
+                .unwrap()
+        );
         let id = match svc.accept_inbound_resource_with_identity(
             destination,
             &wire,
@@ -3504,12 +3500,14 @@ mod tests {
         );
 
         let poisoned_store = store.clone();
-        assert!(std::thread::spawn(move || {
-            let _guard = poisoned_store.lock().expect("messaging test store lock");
-            panic!("poison messaging store");
-        })
-        .join()
-        .is_err());
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = poisoned_store.lock().expect("messaging test store lock");
+                panic!("poison messaging store");
+            })
+            .join()
+            .is_err()
+        );
         let error = service
             .apply_lifecycle_evidence("route-missing", LifecycleEvidence::Cancelled)
             .expect_err("poisoned store must return an operational error");
@@ -3716,9 +3714,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(svc
-            .apply_lifecycle_evidence(&original, LifecycleEvidence::Failed("retry-test".into()))
-            .unwrap());
+        assert!(
+            svc.apply_lifecycle_evidence(&original, LifecycleEvidence::Failed("retry-test".into()))
+                .unwrap()
+        );
         let retry = match svc.retry_message_outcome(&original).await.unwrap() {
             RetryMessageOutcome::Created(id) => id,
             outcome => panic!("expected retry creation, got {outcome:?}"),
@@ -4081,10 +4080,12 @@ mod tests {
         assert!(!outcome.message_id.is_empty());
         assert_eq!(outcome.message.id, outcome.message_id);
         assert!(outcome.paper_uri.is_none());
-        assert!(outcome
-            .terminal_error
-            .as_deref()
-            .is_some_and(|error| error.contains("does not match requested destination")));
+        assert!(
+            outcome
+                .terminal_error
+                .as_deref()
+                .is_some_and(|error| error.contains("does not match requested destination"))
+        );
         assert!(!format!("{outcome:?}").contains("lxm://"));
         assert!(store.lock().unwrap().get_message(&outcome.message_id).unwrap().is_some());
     }
@@ -4116,15 +4117,17 @@ mod tests {
         assert!(!outcome.message_id.is_empty());
         assert_eq!(outcome.message.id, outcome.message_id);
         assert_eq!(outcome.terminal_error.as_deref(), Some("injected post-commit failure"));
-        assert!(store
-            .lock()
-            .unwrap()
-            .get_message(&outcome.message_id)
-            .unwrap()
-            .unwrap()
-            .receipt_status
-            .as_deref()
-            .is_some_and(|status| status.starts_with("failed")));
+        assert!(
+            store
+                .lock()
+                .unwrap()
+                .get_message(&outcome.message_id)
+                .unwrap()
+                .unwrap()
+                .receipt_status
+                .as_deref()
+                .is_some_and(|status| status.starts_with("failed"))
+        );
     }
 
     #[tokio::test]
@@ -4153,11 +4156,13 @@ mod tests {
         assert_eq!(outcome.disposition, SendCommitDisposition::Failed);
         assert!(!outcome.message_id.is_empty());
         assert_eq!(outcome.message.id, outcome.message_id);
-        assert!(outcome
-            .terminal_error
-            .as_deref()
-            .is_some_and(|error| error.contains("injected post-commit failure")
-                && error.contains("projection freshness")));
+        assert!(
+            outcome
+                .terminal_error
+                .as_deref()
+                .is_some_and(|error| error.contains("injected post-commit failure")
+                    && error.contains("projection freshness"))
+        );
     }
 
     #[tokio::test]
@@ -4243,15 +4248,17 @@ mod tests {
         }
         service.set_signer(transport.clone(), local);
 
-        assert!(service
-            .send_chat_with_method(
-                &hex::encode(recipient_destination.as_slice()),
-                "rollback",
-                None,
-                Some("propagated"),
-            )
-            .await
-            .is_err());
+        assert!(
+            service
+                .send_chat_with_method(
+                    &hex::encode(recipient_destination.as_slice()),
+                    "rollback",
+                    None,
+                    Some("propagated"),
+                )
+                .await
+                .is_err()
+        );
         assert!(store.lock().unwrap().list_messages(16, None).unwrap().is_empty());
         assert!(transport.calls().is_empty());
     }
@@ -4429,9 +4436,9 @@ mod tests {
             .send_chat_with_method(&"33".repeat(16), "no peer", None, Some("propagated"))
             .await
             .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("no selected compatible standard LXMF propagation peer"));
+        assert!(
+            error.to_string().contains("no selected compatible standard LXMF propagation peer")
+        );
         assert!(store.lock().unwrap().list_messages(1, None).unwrap().is_empty());
         assert!(!transport.calls().iter().any(|call| {
             matches!(call, MockCall::OpenLink { .. } | MockCall::SendOnLink { .. })

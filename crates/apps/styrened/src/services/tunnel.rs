@@ -21,9 +21,9 @@ use styrene_mesh::{StyreneMessage, StyreneMessageType};
 use styrene_services::protocol_registry::{HandleResult, InboundMessage, ProtocolHandler};
 
 #[cfg(feature = "wireguard")]
-use styrene_tunnel::wireguard::WireGuardBackend;
-#[cfg(feature = "wireguard")]
 use styrene_tunnel::TunnelBackend;
+#[cfg(feature = "wireguard")]
+use styrene_tunnel::wireguard::WireGuardBackend;
 
 /// Peer state stored when a tunnel is established.
 #[derive(Debug, Clone)]
@@ -406,10 +406,10 @@ impl TunnelService {
         if !self.transport.lock().expect("lock").is_connected() {
             return Err("transport not connected".into());
         }
-        if let Some(existing) = self.latest_operation(peer_identity) {
-            if matches!(existing.state.as_str(), "queued" | "sending_offer" | "offer_sent") {
-                return Ok(existing.operation_id);
-            }
+        if let Some(existing) = self.latest_operation(peer_identity)
+            && matches!(existing.state.as_str(), "queued" | "sending_offer" | "offer_sent")
+        {
+            return Ok(existing.operation_id);
         }
 
         let mesh_ip = tunnel_payloads::derive_mesh_ip(&self.identity_hash.lock().expect("lock"));

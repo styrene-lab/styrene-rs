@@ -24,10 +24,10 @@ async fn second_message_reuses_link() {
         tokio::time::sleep(Duration::from_millis(500)).await;
         let mut link_activated_count = 0;
         while let Ok(event) = link_rx.try_recv() {
-            if let DaemonEvent::Link { event } = event {
-                if event.status == "active" {
-                    link_activated_count += 1;
-                }
+            if let DaemonEvent::Link { event } = event
+                && event.status == "active"
+            {
+                link_activated_count += 1;
             }
         }
         assert!(
@@ -43,10 +43,10 @@ async fn second_message_reuses_link() {
         tokio::time::sleep(Duration::from_millis(500)).await;
         let mut second_activation_count = 0;
         while let Ok(event) = link_rx.try_recv() {
-            if let DaemonEvent::Link { event } = event {
-                if event.status == "active" {
-                    second_activation_count += 1;
-                }
+            if let DaemonEvent::Link { event } = event
+                && event.status == "active"
+            {
+                second_activation_count += 1;
             }
         }
 

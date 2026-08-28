@@ -1,4 +1,4 @@
-use crate::sdk::error::{code, ErrorCategory, SdkError};
+use crate::sdk::error::{ErrorCategory, SdkError, code};
 use crate::sdk::types::{RuntimeState, StartRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;

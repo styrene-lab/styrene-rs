@@ -11,7 +11,7 @@ use crate::transport::iface::{InterfaceMode, TxMessageType};
 use crate::transport::resource::{ResourceEventKind, ResourceFailure};
 use crate::transport::time::{ManualMonotonicClock, MonotonicClock};
 use rand_core::OsRng;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 #[tokio::test]
 async fn link_in_payload_is_forwarded_to_received_data() {
@@ -754,8 +754,8 @@ async fn send_packet_with_outcome_drops_announce_without_route() {
 }
 
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
 struct CountingReceiptHandler {

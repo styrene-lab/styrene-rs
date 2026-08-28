@@ -125,7 +125,7 @@ pub fn negotiate_plugins(
 
 #[cfg(test)]
 mod tests {
-    use super::{negotiate_contract_version, negotiate_plugins, PluginDescriptor, PluginState};
+    use super::{PluginDescriptor, PluginState, negotiate_contract_version, negotiate_plugins};
 
     #[test]
     fn negotiate_contract_version_selects_highest_overlap() {

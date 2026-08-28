@@ -294,10 +294,10 @@ pub(crate) async fn tunnel_status(socket: Option<&Path>, peer: &str) -> anyhow::
     if let Some(backend) = status.get("backend").and_then(|v| v.as_str()) {
         eprintln!("  backend    {backend}");
     }
-    if let Some(endpoint) = status.get("remote_endpoint").and_then(|v| v.as_str()) {
-        if !endpoint.is_empty() {
-            eprintln!("  endpoint   {endpoint}");
-        }
+    if let Some(endpoint) = status.get("remote_endpoint").and_then(|v| v.as_str())
+        && !endpoint.is_empty()
+    {
+        eprintln!("  endpoint   {endpoint}");
     }
     if let Some(message) = status.get("error_message").and_then(|v| v.as_str()) {
         eprintln!("  error      {message}");

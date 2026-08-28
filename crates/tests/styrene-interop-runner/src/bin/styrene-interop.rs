@@ -1,13 +1,13 @@
 use clap::Parser;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 use styrene_interop_runner::{
-    python_lxmf_scenario, run_live_scenario_cancellable, CancellationHandle, PinnedScenarioId,
-    RunStatus,
+    CancellationHandle, PinnedScenarioId, RunStatus, python_lxmf_scenario,
+    run_live_scenario_cancellable,
 };
 
 #[derive(Parser)]
@@ -74,11 +74,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if let Some(parent) = args.evidence.parent() {
-        if let Err(error) = std::fs::create_dir_all(parent) {
-            eprintln!("failed to create evidence directory: {error}");
-            return ExitCode::FAILURE;
-        }
+    if let Some(parent) = args.evidence.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        eprintln!("failed to create evidence directory: {error}");
+        return ExitCode::FAILURE;
     }
     let encoded = match serde_json::to_vec_pretty(&evidence) {
         Ok(encoded) => encoded,
@@ -92,9 +92,5 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     println!("{}", args.evidence.display());
-    if evidence.status == RunStatus::Passed {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
+    if evidence.status == RunStatus::Passed { ExitCode::SUCCESS } else { ExitCode::FAILURE }
 }

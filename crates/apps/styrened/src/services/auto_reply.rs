@@ -108,10 +108,10 @@ impl AutoReplyService {
         let mut cooldowns = self.cooldowns.lock().unwrap();
         let now = Instant::now();
 
-        if let Some(last) = cooldowns.get(peer) {
-            if now.duration_since(*last) < cooldown {
-                return false; // still in cooldown
-            }
+        if let Some(last) = cooldowns.get(peer)
+            && now.duration_since(*last) < cooldown
+        {
+            return false; // still in cooldown
         }
 
         cooldowns.insert(peer.to_string(), now);

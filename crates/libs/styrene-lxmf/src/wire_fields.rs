@@ -4,8 +4,8 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use rmpv::Value;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
@@ -120,28 +120,27 @@ fn canonicalize_attachment_binary(value: &mut Value) -> Result<(), LxmfError> {
 
 pub fn rmpv_to_json_redacting_attachments(value: &Value) -> Option<JsonValue> {
     let mut projected = value.clone();
-    if let Value::Map(fields) = &mut projected {
-        if let Some((_, attachment_value)) =
+    if let Value::Map(fields) = &mut projected
+        && let Some((_, attachment_value)) =
             fields.iter_mut().find(|(key, _)| key.as_i64() == Some(5))
-        {
-            *attachment_value = match crate::attachments::parse_attachment_field(Some(value)) {
-                Ok(entries) => Value::Array(
-                    entries
-                        .into_iter()
-                        .enumerate()
-                        .map(|(ordinal, entry)| {
-                            Value::Map(vec![
-                                (Value::from("ordinal"), Value::from(ordinal as u64)),
-                                (Value::from("name"), Value::from(entry.filename)),
-                                (Value::from("size"), Value::from(entry.data.len() as u64)),
-                                (Value::from("data"), Value::from("stored_attachment")),
-                            ])
-                        })
-                        .collect(),
-                ),
-                Err(_) => Value::Map(vec![(Value::from("state"), Value::from("invalid"))]),
-            };
-        }
+    {
+        *attachment_value = match crate::attachments::parse_attachment_field(Some(value)) {
+            Ok(entries) => Value::Array(
+                entries
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ordinal, entry)| {
+                        Value::Map(vec![
+                            (Value::from("ordinal"), Value::from(ordinal as u64)),
+                            (Value::from("name"), Value::from(entry.filename)),
+                            (Value::from("size"), Value::from(entry.data.len() as u64)),
+                            (Value::from("data"), Value::from("stored_attachment")),
+                        ])
+                    })
+                    .collect(),
+            ),
+            Err(_) => Value::Map(vec![(Value::from("state"), Value::from("invalid"))]),
+        };
     }
     rmpv_to_json(&projected)
 }
@@ -189,11 +188,7 @@ fn normalize_attachment_data(value: &JsonValue) -> Result<JsonValue, LxmfError> 
                     .as_u64()
                     .and_then(
                         |value| {
-                            if value <= u8::MAX as u64 {
-                                Some(value as u8)
-                            } else {
-                                None
-                            }
+                            if value <= u8::MAX as u64 { Some(value as u8) } else { None }
                         },
                     )
                     .or_else(|| item.as_i64().and_then(|value| u8::try_from(value).ok()));
@@ -210,7 +205,7 @@ fn normalize_attachment_data(value: &JsonValue) -> Result<JsonValue, LxmfError> 
         _ => {
             return Err(LxmfError::Encode(
                 "attachment data must be an array of bytes or prefixed text data".to_string(),
-            ))
+            ));
         }
     };
 
@@ -463,16 +458,16 @@ fn decode_columba_meta_text(text: &str) -> Option<JsonValue> {
 
 fn decode_columba_meta_bytes(bytes: &[u8], options: RmpvToJsonOptions) -> Option<JsonValue> {
     let text = core::str::from_utf8(bytes).ok();
-    if let Some(text) = text {
-        if let Ok(json) = serde_json::from_str::<JsonValue>(text) {
-            return Some(json);
-        }
+    if let Some(text) = text
+        && let Ok(json) = serde_json::from_str::<JsonValue>(text)
+    {
+        return Some(json);
     }
 
-    if let Some(decoded) = decode_msgpack_value_from_bytes_exact(bytes) {
-        if let Some(decoded) = rmpv_to_json_with_options_inner(&decoded, options) {
-            return Some(decoded);
-        }
+    if let Some(decoded) = decode_msgpack_value_from_bytes_exact(bytes)
+        && let Some(decoded) = rmpv_to_json_with_options_inner(&decoded, options)
+    {
+        return Some(decoded);
     }
 
     text.map(|value| JsonValue::String(value.to_string()))

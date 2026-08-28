@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use tokio::net::UnixStream;
 
-use styrene_e2e::helpers::{await_identity_resolved, await_inbound_message, with_timeout, SETTLE};
+use styrene_e2e::helpers::{SETTLE, await_identity_resolved, await_inbound_message, with_timeout};
 use styrene_e2e::node::TestNodeBuilder;
 use styrene_ipc::traits::Daemon;
 use styrene_ipc_server::wire::{self, MessageType, REQUEST_ID_SIZE};

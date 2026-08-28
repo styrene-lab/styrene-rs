@@ -54,21 +54,25 @@ fn ticket(peer: &str, direction: &str) -> LxmfTicketRecord {
 fn ticket_learning_is_atomic_and_requires_verified_authentication() {
     let store = MessagesStore::in_memory().unwrap();
     let received = ticket(&"11".repeat(16), "received");
-    assert!(store
-        .insert_canonical_with_verified_ticket(
-            &projection("unknown"),
-            &canonical("unknown", "unknown_identity"),
-            Some(&received),
-        )
-        .unwrap());
+    assert!(
+        store
+            .insert_canonical_with_verified_ticket(
+                &projection("unknown"),
+                &canonical("unknown", "unknown_identity"),
+                Some(&received),
+            )
+            .unwrap()
+    );
     assert!(store.active_lxmf_ticket(&received.peer, "received", 1).unwrap().is_none());
-    assert!(store
-        .insert_canonical_with_verified_ticket(
-            &projection("verified"),
-            &canonical("verified", "verified"),
-            Some(&received),
-        )
-        .unwrap());
+    assert!(
+        store
+            .insert_canonical_with_verified_ticket(
+                &projection("verified"),
+                &canonical("verified", "verified"),
+                Some(&received),
+            )
+            .unwrap()
+    );
     assert!(store.active_lxmf_ticket(&received.peer, "received", 1).unwrap().is_some());
 }
 
@@ -140,9 +144,11 @@ fn failed_ticket_offer_rolls_back_message_and_route_atomically() {
         ticket: invalid_ticket,
     };
 
-    assert!(store
-        .insert_outbound_message_with_ticket_offer(&message, &route, Some(&reservation))
-        .is_err());
+    assert!(
+        store
+            .insert_outbound_message_with_ticket_offer(&message, &route, Some(&reservation))
+            .is_err()
+    );
     assert!(store.get_message(&message.id).unwrap().is_none());
     assert!(store.outbound_route(&message.id).unwrap().is_none());
 }
@@ -239,12 +245,14 @@ fn poisoned_message_store_returns_an_operational_error() {
     let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
     let service = MessagingService::with_store(store.clone());
     let poison = store.clone();
-    assert!(std::thread::spawn(move || {
-        let _guard = poison.lock().unwrap();
-        panic!("poison test store");
-    })
-    .join()
-    .is_err());
+    assert!(
+        std::thread::spawn(move || {
+            let _guard = poison.lock().unwrap();
+            panic!("poison test store");
+        })
+        .join()
+        .is_err()
+    );
 
     match service.accept_inbound([0; 16], &[], lxmf::inbound_decode::InboundPayloadMode::FullWire) {
         InboundAcceptOutcome::StorageError { error, .. } => {

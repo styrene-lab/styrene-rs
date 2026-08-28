@@ -9,11 +9,11 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
 use styrened::rpc::codec;
-use styrened::rpc::{http, RpcDaemon, RpcRequest};
+use styrened::rpc::{RpcDaemon, RpcRequest, http};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
+use tokio_rustls::server::TlsStream;
 use x509_parser::extensions::ParsedExtension;
 use x509_parser::prelude::{FromDer, GeneralName, X509Certificate};
 
@@ -380,10 +380,9 @@ mod rpc_loop_tests {
         assert_eq!(meta.path, "/rpc");
         assert_eq!(meta.rpc_method.as_deref(), Some("sdk_poll_events_v2"));
         assert_eq!(meta.rpc_request_id, Some(44));
-        assert!(meta
-            .trace_ref
-            .as_deref()
-            .is_some_and(|value| value.contains("sdk_poll_events_v2")));
+        assert!(
+            meta.trace_ref.as_deref().is_some_and(|value| value.contains("sdk_poll_events_v2"))
+        );
     }
 
     #[test]

@@ -19,7 +19,7 @@ install_dir := env_var_or_default("STYRENE_INSTALL_DIR", env_var("HOME") + "/.ca
 # Run offline unit, component, and committed fixture tests
 test:
     mkdir -p target
-    rustc --edition 2021 scripts/check_fixture_immutability.rs -o target/check-fixture-immutability
+    rustc --edition 2024 scripts/check_fixture_immutability.rs -o target/check-fixture-immutability
     target/check-fixture-immutability snapshot target/identity-vectors.snapshot \
         crates/libs/styrene-identity/tests/test-vectors.json \
         crates/libs/styrene-identity/tests/vectors/repository-signing-v1/positive.json \
@@ -147,7 +147,7 @@ validate-product:
 # Prove ordinary validation does not invoke live or environment-dependent prerequisites
 test-validation-offline:
     mkdir -p target
-    rustc --edition 2021 --test scripts/test_validation_offline.rs -o target/test-validation-offline
+    rustc --edition 2024 --test scripts/test_validation_offline.rs -o target/test-validation-offline
     target/test-validation-offline
 
 # Run deterministic, offline validation against Rust code and committed fixtures

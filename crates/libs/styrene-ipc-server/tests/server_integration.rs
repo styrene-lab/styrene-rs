@@ -800,10 +800,10 @@ impl DaemonPages for TestDaemon {
         let mut state = self.pages.lock().expect("page test state lock");
         state.sessions.retain(|_, session_owner| *session_owner != owner);
         state.downloads.retain(|_, (download_owner, _)| *download_owner != owner);
-        if let Some(blocked) = self.blocked_browse.lock().expect("blocked browse lock").as_ref() {
-            if blocked.owner.load(std::sync::atomic::Ordering::Acquire) == owner {
-                blocked.owner_cleaned.store(true, std::sync::atomic::Ordering::Release);
-            }
+        if let Some(blocked) = self.blocked_browse.lock().expect("blocked browse lock").as_ref()
+            && blocked.owner.load(std::sync::atomic::Ordering::Acquire) == owner
+        {
+            blocked.owner_cleaned.store(true, std::sync::atomic::Ordering::Release);
         }
         Ok(())
     }
@@ -1042,13 +1042,11 @@ async fn peer_hashes_are_canonical_before_daemon_invocation() {
     let daemon_api: Arc<dyn Daemon> = daemon.clone();
     for invalid in ["aa".into(), "A".repeat(32), "gg".repeat(16), "aa".repeat(17)] {
         let payload = HashMap::from([("peer_hash".into(), rmpv::Value::from(invalid))]);
-        assert!(styrene_ipc_server::dispatch::dispatch(
-            &daemon_api,
-            MessageType::CmdMarkRead,
-            payload,
-        )
-        .await
-        .is_err());
+        assert!(
+            styrene_ipc_server::dispatch::dispatch(&daemon_api, MessageType::CmdMarkRead, payload,)
+                .await
+                .is_err()
+        );
     }
     assert_eq!(daemon.peer_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
 
@@ -1209,9 +1207,9 @@ async fn unix_socket_page_workflow_is_owner_scoped_and_secret_safe() {
     assert_eq!(navigated.msg_type, MessageType::Result);
     let encoded_response =
         wire::encode_frame(navigated.msg_type, &navigated.request_id, &navigated.payload).unwrap();
-    assert!(!encoded_response
-        .windows(b"socket-secret".len())
-        .any(|window| window == b"socket-secret"));
+    assert!(
+        !encoded_response.windows(b"socket-secret".len()).any(|window| window == b"socket-secret")
+    );
 
     let mut request = FileDownloadRequest::default();
     request.session_id = Some(session_id.clone());
@@ -1610,13 +1608,15 @@ async fn malformed_send_chat_attachments_never_invoke_daemon() {
             ),
         ]),
     ] {
-        assert!(styrene_ipc_server::dispatch::dispatch(
-            &daemon_api,
-            MessageType::CmdSendChat,
-            malformed,
-        )
-        .await
-        .is_err());
+        assert!(
+            styrene_ipc_server::dispatch::dispatch(
+                &daemon_api,
+                MessageType::CmdSendChat,
+                malformed,
+            )
+            .await
+            .is_err()
+        );
     }
     assert_eq!(daemon.send_chat_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
 }

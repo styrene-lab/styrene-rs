@@ -413,10 +413,11 @@ async fn unavailable_propagated_request_is_rejected_without_direct_substitution(
         matches!(error, IpcError::Unavailable { ref reason } if reason.contains("propagation peer")),
         "unexpected propagated error: {error:?}"
     );
-    assert!(!transport
-        .calls()
-        .iter()
-        .any(|call| { matches!(call, MockCall::SendRaw { .. } | MockCall::SendViaLink { .. }) }));
+    assert!(
+        !transport.calls().iter().any(|call| {
+            matches!(call, MockCall::SendRaw { .. } | MockCall::SendViaLink { .. })
+        })
+    );
     let messages = daemon.query_messages(&hex::encode([0x55; 16]), 10, None).await.unwrap();
     assert!(messages.is_empty());
 }
@@ -436,10 +437,12 @@ async fn legacy_paper_is_rejected_before_persistence_or_transmission() {
     assert!(
         matches!(error, IpcError::InvalidRequest { ref message } if message.contains("send_chat_outcome"))
     );
-    assert!(!transport
-        .calls()
-        .iter()
-        .any(|call| matches!(call, MockCall::SendRaw { .. } | MockCall::SendViaLink { .. })));
+    assert!(
+        !transport
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::SendRaw { .. } | MockCall::SendViaLink { .. }))
+    );
     let messages = daemon.query_messages(&peer_hash, 10, None).await.unwrap();
     assert!(messages.is_empty());
 }

@@ -62,8 +62,8 @@ fn encode_binary(content: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
     use rns_core::destination::{
-        request_path_hash, DestinationName, RequestDispatchError, RequestLinkContext,
-        SingleInputDestination,
+        DestinationName, RequestDispatchError, RequestLinkContext, SingleInputDestination,
+        request_path_hash,
     };
     use rns_core::hash::AddressHash;
     use rns_core::identity::PrivateIdentity;
@@ -121,7 +121,8 @@ mod tests {
             pages.native_entries().into_iter().find(|entry| entry.request_path == path).unwrap();
         register_entry(&destination, pages, entry).await.unwrap();
         let destination_hash = destination.lock().await.desc.address_hash;
-        let result = destination.lock().await.dispatch_request(
+
+        destination.lock().await.dispatch_request(
             &request_path_hash(path),
             data,
             remote,
@@ -130,8 +131,7 @@ mod tests {
                 destination: destination_hash,
             },
             [0xcd; 16],
-        );
-        result
+        )
     }
 
     #[cfg(unix)]
@@ -225,11 +225,13 @@ mod tests {
             destination.lock().await.dispatch_request(&path, &[0xc0], None, &context, [5; 16]),
             Err(RequestDispatchError::Unauthorized)
         );
-        assert!(destination
-            .lock()
-            .await
-            .dispatch_request(&path, &[0xc0], Some(allowed.as_identity()), &context, [6; 16])
-            .is_ok());
+        assert!(
+            destination
+                .lock()
+                .await
+                .dispatch_request(&path, &[0xc0], Some(allowed.as_identity()), &context, [6; 16])
+                .is_ok()
+        );
     }
 
     #[cfg(unix)]

@@ -13,13 +13,13 @@ use rns_core::packet::{
 };
 use rns_core::transport::core_transport::Transport;
 use rns_core::transport::delivery::{
-    send_outcome_is_sent, send_outcome_status, send_via_link, LinkSendResult,
+    LinkSendResult, send_outcome_is_sent, send_outcome_status, send_via_link,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use styrened::lxmf_bridge::build_wire_message;
 use styrened::receipt_bridge::{
-    register_receipt_waiter, track_receipt_mapping, ReceiptEvent, ReceiptWaiters,
+    ReceiptEvent, ReceiptWaiters, register_receipt_waiter, track_receipt_mapping,
 };
 use styrened::rpc::{AnnounceBridge, OutboundBridge};
 
@@ -255,10 +255,10 @@ impl DeliveryTask {
                 let trace_detail = send_trace_detail(trace);
                 log_delivery_trace(&message_id, &destination_hex, "opportunistic", &trace_detail);
                 let outcome = trace.outcome;
-                if !send_outcome_is_sent(outcome) {
-                    if let Ok(mut map) = receipt_map.lock() {
-                        map.remove(&packet_hash);
-                    }
+                if !send_outcome_is_sent(outcome)
+                    && let Ok(mut map) = receipt_map.lock()
+                {
+                    map.remove(&packet_hash);
                 }
                 let _ = receipt_tx.send(ReceiptEvent {
                     message_id,

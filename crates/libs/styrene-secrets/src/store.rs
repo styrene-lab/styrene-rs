@@ -21,11 +21,11 @@ use std::path::{Path, PathBuf};
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit},
     ChaCha20Poly1305, Nonce,
+    aead::{Aead, KeyInit},
 };
 use rand_core::{OsRng, RngCore};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use secrecy::SecretBox;
 use zeroize::Zeroize;
 

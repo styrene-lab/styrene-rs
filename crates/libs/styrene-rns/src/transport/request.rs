@@ -453,10 +453,10 @@ impl RequestTracker {
         if let Some(hash) = receipt.request_resource_hash {
             hashes.push(hash);
         }
-        if let ResponseTransfer::Resource { hash } = receipt.response_transfer {
-            if !hashes.contains(&hash) {
-                hashes.push(hash);
-            }
+        if let ResponseTransfer::Resource { hash } = receipt.response_transfer
+            && !hashes.contains(&hash)
+        {
+            hashes.push(hash);
         }
         hashes
     }

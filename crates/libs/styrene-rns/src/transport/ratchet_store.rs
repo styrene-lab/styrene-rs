@@ -35,10 +35,10 @@ impl RatchetStore {
         ratchet: [u8; PUBLIC_KEY_LENGTH],
     ) -> Result<(), RnsError> {
         let now = now_secs();
-        if let Some(existing) = self.cache.get(destination) {
-            if existing.ratchet.as_ref() == ratchet.as_slice() {
-                return Ok(());
-            }
+        if let Some(existing) = self.cache.get(destination)
+            && existing.ratchet.as_ref() == ratchet.as_slice()
+        {
+            return Ok(());
         }
 
         let record = RatchetRecord { ratchet: ByteBuf::from(ratchet.to_vec()), received: now };
@@ -73,12 +73,11 @@ impl RatchetStore {
         if let Ok(entries) = fs::read_dir(&self.ratchet_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if let Ok(data) = fs::read(&path) {
-                    if let Ok(record) = rmp_serde::from_slice::<RatchetRecord>(&data) {
-                        if now > record.received + RATCHET_EXPIRY_SECS {
-                            let _ = fs::remove_file(path);
-                        }
-                    }
+                if let Ok(data) = fs::read(&path)
+                    && let Ok(record) = rmp_serde::from_slice::<RatchetRecord>(&data)
+                    && now > record.received + RATCHET_EXPIRY_SECS
+                {
+                    let _ = fs::remove_file(path);
                 }
             }
         }

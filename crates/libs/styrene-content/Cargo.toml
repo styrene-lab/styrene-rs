@@ -1,7 +1,7 @@
 [package]
 name = "styrene-content"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 rust-version.workspace = true
 license = "MIT"
 description = "Styrene mesh content distribution — P2P file sharing over RNS/Yggdrasil"

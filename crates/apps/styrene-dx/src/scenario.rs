@@ -1,14 +1,14 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Serialize;
 use styrene_interop_runner::{
-    python_lxmf_scenario, CancellationHandle, LiveScenario, PinnedScenarioId, RunEvidence,
-    RunStatus, PINNED_SCENARIOS,
+    CancellationHandle, LiveScenario, PINNED_SCENARIOS, PinnedScenarioId, RunEvidence, RunStatus,
+    python_lxmf_scenario,
 };
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScenarioProfile {
@@ -546,11 +546,7 @@ fn safe_revision(value: &str) -> String {
         && value.chars().all(|character| character.is_ascii_alphanumeric() || character == '-');
     let git_revision = (7..=64).contains(&value.len())
         && value.chars().all(|character| character.is_ascii_hexdigit());
-    if known_fixture || git_revision {
-        value.into()
-    } else {
-        "[REDACTED]".into()
-    }
+    if known_fixture || git_revision { value.into() } else { "[REDACTED]".into() }
 }
 
 fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {

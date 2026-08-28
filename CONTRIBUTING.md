@@ -15,6 +15,9 @@ just test
 ```
 
 The committed `rust-toolchain.toml` pins the supported stable Rust release. Do not silently downgrade the workspace MSRV or introduce nightly-only features.
+Workspace crates inherit Rust edition 2024 and the pinned `rust-version` from
+`workspace.package`; new crates must use those shared settings rather than
+declaring an older local edition or MSRV.
 
 ## Before opening a change
 

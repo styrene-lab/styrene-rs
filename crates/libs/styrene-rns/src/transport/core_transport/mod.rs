@@ -3,9 +3,9 @@ use announce_limits::AnnounceLimits;
 use announce_table::AnnounceTable;
 use link_table::LinkTable;
 use packet_cache::PacketCache;
-use path_requests::create_path_request_destination;
 use path_requests::PathRequests;
 use path_requests::TagBytes;
+use path_requests::create_path_request_destination;
 use path_table::PathTable;
 use rand_core::OsRng;
 use std::collections::{HashMap, VecDeque};
@@ -15,9 +15,9 @@ use std::time::{Duration, SystemTime};
 use tokio::time;
 use tokio_util::sync::CancellationToken;
 
-use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 use tokio::sync::MutexGuard;
+use tokio::sync::broadcast;
 use x25519_dalek::PublicKey;
 
 use crate::destination::DestinationAnnounce;
@@ -35,7 +35,7 @@ use crate::transport::destination_ext::link::LinkHandleResult;
 use crate::transport::destination_ext::link::LinkId;
 use crate::transport::destination_ext::link::LinkStatus;
 
-use crate::hash::{AddressHash, Hash, HASH_SIZE};
+use crate::hash::{AddressHash, HASH_SIZE, Hash};
 use crate::identity::{Identity, PrivateIdentity};
 use crate::transport::error::RnsError;
 
@@ -56,8 +56,8 @@ use crate::ratchets::{encrypt_for_public_key, now_secs};
 use crate::transport::ratchet_store::RatchetStore;
 use crate::transport::request::{RequestClock, RequestTracker, SystemRequestClock};
 use crate::transport::resource::{
-    build_resource_cache_request_packet, build_resource_cancel_packet,
-    build_resource_request_packet, ResourceEvent, ResourceManager, ResourceStateCounts,
+    ResourceEvent, ResourceManager, ResourceStateCounts, build_resource_cache_request_packet,
+    build_resource_cancel_packet, build_resource_request_packet,
 };
 use crate::transport::time::{MonotonicClock, SystemMonotonicClock};
 

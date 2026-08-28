@@ -14,9 +14,11 @@ fn repository_signing_corpus_provenance_matches_source_tree() {
 
     assert_eq!(manifest["schema_version"].as_integer(), Some(1));
     assert_eq!(manifest["profile"].as_str(), Some("styrene-repository-signing-v1"));
-    assert!(manifest["warning"]
-        .as_str()
-        .is_some_and(|warning| warning.contains("public test material")));
+    assert!(
+        manifest["warning"]
+            .as_str()
+            .is_some_and(|warning| warning.contains("public test material"))
+    );
 
     let status = manifest["status"].as_str().expect("provenance status");
     let revision = manifest["generator_revision"].as_str().expect("generator revision");
