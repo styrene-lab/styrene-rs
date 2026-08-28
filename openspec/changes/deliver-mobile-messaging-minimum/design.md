@@ -2,10 +2,10 @@
 
 ## Product Boundary
 
-This change delivers a focused mobile product through the existing SwiftUI and
-Compose reference hosts. It does not wait for the shared Dioxus migration. The
-requirements are renderer-neutral so a later renderer can reuse the same typed
-state corpus and acceptance gates.
+This change delivers one Dioxus mobile product from shared Rust source. iOS and
+Android are packaging and runtime targets for that application, not separate
+product implementations. The existing SwiftUI and Compose applications remain
+legacy comparison surfaces until the Dioxus workflows pass acceptance.
 
 The minimum product contains Messages, People, Network, and More. Propagation is
 a client detail under messaging or network settings, not a mobile administration
@@ -15,14 +15,19 @@ workspace.
 
 The embedded Rust node owns identity, transport, peer observations, canonical
 messages, drafts, delivery methods, attempts, receipts, propagation selection,
-synchronization, persistence, and correlation. Swift and Kotlin own application
-lifecycle and platform presentation. They must not derive protocol success from
-display strings, elapsed time, queue size, or local button completion.
+synchronization, persistence, and correlation. Shared Rust stores and reducers
+own product state. Dioxus components render that state and dispatch typed Rust
+actions. They must not derive protocol success from display strings, elapsed
+time, queue size, or local button completion.
 
 The current `MobileNode` composition and `DaemonFacade` remain the authoritative
-operation boundary. UniFFI DTOs must expose missing typed state rather than
-duplicating propagation or delivery logic in `StyreneNodeModel` or
-`MobileNodeStateHolder`.
+operation boundary. The Dioxus application uses an in-process typed Rust session.
+It does not route product operations through UniFFI or duplicate propagation and
+delivery logic in platform code.
+
+Platform integration enters through Rust-owned typed services. Unavoidable
+launcher or build-system glue may start the Rust application, but it must not own
+navigation, product state, protocol state, or workflow decisions.
 
 ## Configuration Model
 
@@ -85,8 +90,8 @@ under process interruption.
 
 Implementation proceeds by observable slice:
 
-1. Add shared fixture schemas and failing Rust, Swift, and Kotlin state tests.
-2. Add failing embedded-runtime and UniFFI contract tests.
+1. Add shared fixture schemas and failing Rust state, reducer, and component tests.
+2. Add failing embedded-runtime and in-process session contract tests.
 3. Implement the smallest backend and host changes that satisfy each slice.
 4. Run local two-party tests before public-Brutus tests.
 5. Run simulator, emulator, and applicable physical-device acceptance last.
@@ -97,9 +102,10 @@ physical-device, and public-network results remain separate.
 
 ## Rollout And Claims
 
-The native hosts remain available throughout the change. Existing persisted
-identity and message data must remain readable. New propagation configuration
-uses an additive persisted field and does not infer a value from the TCP endpoint.
+The legacy native hosts remain available only as comparison and rollback
+references throughout the change. Existing persisted identity and message data
+must remain readable. New propagation configuration uses an additive persisted
+field and does not infer a value from the TCP endpoint.
 
 The minimum release claim covers only passing TCP, discovery, text messaging,
 and propagation-client gates. RNode, attachment, NomadNet, propagation-host, and

@@ -4,18 +4,18 @@
 
 ### Requirement: Mobile minimum behavior has one cross-platform state corpus
 
-The iOS and Android hosts must run the same named fixtures for session,
+The Dioxus iOS and Android targets must run the same named fixtures for session,
 discovery, messaging, propagation, stale-generation, duplicate, and failure
 states while preserving platform-specific presentation conventions.
 
 #### Scenario: Shared state fixture is rendered
 Given a named mobile-minimum fixture defines typed backend and platform state
-When iOS and Android render that fixture
+When the Dioxus iOS and Android targets render that fixture
 Then both expose the same required facts, actions, disabled reasons, and accessibility identifiers
 And platform layout differences do not change the protocol outcome
 
 #### Scenario: Fixture mode is active
-Given a mobile host renders deterministic fixture data
+Given the Dioxus mobile application renders deterministic fixture data
 When a user views or acts on that data
 Then the application marks the session as fixture or preview
 And it opens no external network interface or message transmission
