@@ -145,6 +145,15 @@ pub enum MobileBearerState {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum MobileBearerReason {
+    NotConfigured,
+    PermissionDenied,
+    ConnectionInterrupted,
+    PhysicalEvidenceAbsent,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobileFailureCode {
     InvalidTcpEndpoint,
     TcpRetrying,
@@ -186,6 +195,122 @@ pub struct MobileFailure {
 pub struct MobileBearerObservation {
     pub kind: MobileBearerKind,
     pub state: MobileBearerState,
+    pub reason: Option<MobileBearerReason>,
+}
+
+#[derive(Clone)]
+pub struct MobilePlatformService {
+    state: Arc<tokio::sync::RwLock<MobilePlatformState>>,
+}
+
+struct MobilePlatformState {
+    bearers: Vec<MobileBearerObservation>,
+    bluetooth_approved: bool,
+    usb_fallback_requested: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MobileUsbFallbackDisposition {
+    Accepted,
+    BluetoothActive,
+}
+
+impl MobilePlatformService {
+    fn new(rnode_channel_enabled: bool) -> Self {
+        let bluetooth = if rnode_channel_enabled {
+            MobileBearerObservation {
+                kind: MobileBearerKind::BluetoothRnode,
+                state: MobileBearerState::Unverified,
+                reason: Some(MobileBearerReason::PhysicalEvidenceAbsent),
+            }
+        } else {
+            MobileBearerObservation {
+                kind: MobileBearerKind::BluetoothRnode,
+                state: MobileBearerState::Unavailable,
+                reason: Some(MobileBearerReason::NotConfigured),
+            }
+        };
+        Self {
+            state: Arc::new(tokio::sync::RwLock::new(MobilePlatformState {
+                bearers: vec![
+                    bluetooth,
+                    MobileBearerObservation {
+                        kind: MobileBearerKind::AndroidUsb,
+                        state: MobileBearerState::Unavailable,
+                        reason: Some(MobileBearerReason::NotConfigured),
+                    },
+                ],
+                bluetooth_approved: false,
+                usb_fallback_requested: false,
+            })),
+        }
+    }
+
+    pub async fn report(&self, observation: MobileBearerObservation) -> Result<(), &'static str> {
+        if observation.kind == MobileBearerKind::Tcp {
+            return Err("TCP bearer state is owned by the transport runtime");
+        }
+        let mut state = self.state.write().await;
+        if observation.kind == MobileBearerKind::AndroidUsb
+            && matches!(
+                observation.state,
+                MobileBearerState::Connecting
+                    | MobileBearerState::Connected
+                    | MobileBearerState::Reconnecting
+            )
+            && !state.usb_fallback_requested
+        {
+            return Err("Android USB requires an explicit fallback request");
+        }
+        if observation.kind == MobileBearerKind::AndroidUsb
+            && matches!(
+                observation.state,
+                MobileBearerState::Connecting
+                    | MobileBearerState::Connected
+                    | MobileBearerState::Reconnecting
+            )
+            && approved_bluetooth_active(&state)
+        {
+            return Err("Android USB cannot preempt approved Bluetooth");
+        }
+        let bearer = state
+            .bearers
+            .iter_mut()
+            .find(|bearer| bearer.kind == observation.kind)
+            .ok_or("unsupported mobile platform bearer")?;
+        *bearer = observation;
+        Ok(())
+    }
+
+    pub async fn set_bluetooth_approved(&self, approved: bool) {
+        self.state.write().await.bluetooth_approved = approved;
+    }
+
+    pub async fn request_android_usb_fallback(&self) -> MobileUsbFallbackDisposition {
+        let mut state = self.state.write().await;
+        if approved_bluetooth_active(&state) {
+            return MobileUsbFallbackDisposition::BluetoothActive;
+        }
+        state.usb_fallback_requested = true;
+        MobileUsbFallbackDisposition::Accepted
+    }
+
+    async fn snapshot(&self) -> Vec<MobileBearerObservation> {
+        self.state.read().await.bearers.clone()
+    }
+}
+
+fn approved_bluetooth_active(state: &MobilePlatformState) -> bool {
+    state.bluetooth_approved
+        && state.bearers.iter().any(|bearer| {
+            bearer.kind == MobileBearerKind::BluetoothRnode
+                && matches!(
+                    bearer.state,
+                    MobileBearerState::Connecting
+                        | MobileBearerState::Connected
+                        | MobileBearerState::Reconnecting
+                )
+        })
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -673,6 +798,7 @@ pub struct MobileNode {
     rnode: Option<RNodeBridge>,
     tcp_endpoint: Option<String>,
     generation: u64,
+    platform_service: MobilePlatformService,
     active_conversation: Arc<tokio::sync::RwLock<Option<String>>>,
 }
 
@@ -993,6 +1119,7 @@ async fn compose_mobile_node(
         }
     };
     app_context.publish_startup_contract(startup_contract.clone());
+    let rnode_channel_enabled = rnode_channel.is_some();
     let rnode = rnode_channel.map(|channel| RNodeBridge {
         address: channel.address,
         rx: channel.rx_channel,
@@ -1011,6 +1138,7 @@ async fn compose_mobile_node(
         rnode,
         tcp_endpoint,
         generation: 1,
+        platform_service: MobilePlatformService::new(rnode_channel_enabled),
         active_conversation,
     })
 }
@@ -1388,20 +1516,13 @@ impl MobileNode {
         } else {
             MobileBearerState::Unavailable
         };
-        let rnode = if self.rnode.is_some() {
-            MobileBearerState::Unverified
-        } else {
-            MobileBearerState::Unavailable
-        };
+        let platform_bearers = self.platform_service.snapshot().await;
         let failure = (tcp == MobileBearerState::Reconnecting)
             .then_some(MobileFailure { code: MobileFailureCode::TcpRetrying, retryable: true });
         let phase = match tcp {
             MobileBearerState::Connected => MobileConnectionPhase::Connected,
             MobileBearerState::Connecting => MobileConnectionPhase::Connecting,
             MobileBearerState::Reconnecting => MobileConnectionPhase::Reconnecting,
-            MobileBearerState::Unavailable if rnode == MobileBearerState::Unverified => {
-                MobileConnectionPhase::Degraded
-            }
             MobileBearerState::Unavailable
             | MobileBearerState::Unverified
             | MobileBearerState::Disconnected => MobileConnectionPhase::Stopped,
@@ -1411,15 +1532,19 @@ impl MobileNode {
             endpoint: self.tcp_endpoint.clone(),
             generation,
             failure,
-            bearers: vec![
-                MobileBearerObservation { kind: MobileBearerKind::Tcp, state: tcp },
-                MobileBearerObservation { kind: MobileBearerKind::BluetoothRnode, state: rnode },
-                MobileBearerObservation {
-                    kind: MobileBearerKind::AndroidUsb,
-                    state: MobileBearerState::Unavailable,
-                },
-            ],
+            bearers: std::iter::once(MobileBearerObservation {
+                kind: MobileBearerKind::Tcp,
+                state: tcp,
+                reason: None,
+            })
+            .chain(platform_bearers)
+            .collect(),
         }
+    }
+
+    #[must_use]
+    pub fn platform_service(&self) -> MobilePlatformService {
+        self.platform_service.clone()
     }
 
     pub async fn peer_snapshot_at(
