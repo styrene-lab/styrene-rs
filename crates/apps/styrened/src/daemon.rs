@@ -443,9 +443,12 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     if let (Some(endpoint), Some(transport)) =
         (standard_propagation.as_mut(), native_transport.as_ref())
     {
-        endpoint.activate(app_context.transport_arc(), transport.as_ref()).await.map_err(
+        endpoint.activate(app_context.transport_arc(), Arc::clone(transport)).await.map_err(
             |error| anyhow::anyhow!("standard propagation activation failed: {error:?}"),
         )?;
+        app_context.network_operations().set_propagation_announce_trigger(
+            endpoint.announce_trigger().expect("active endpoint"),
+        );
         startup.record(startup_component::STANDARD_LXMF_PROPAGATION_OFFER_HANDLER);
         startup.record(startup_component::STANDARD_LXMF_PROPAGATION_GET_HANDLER);
         startup.record(startup_component::STANDARD_LXMF_PROPAGATION_INGRESS_WORKER);

@@ -776,9 +776,12 @@ async fn bootstrap_with_transport_override(
         (standard_propagation.as_mut(), transport_for_services.as_ref())
     {
         endpoint
-            .activate(app_context.transport_arc(), transport.as_ref())
+            .activate(app_context.transport_arc(), Arc::clone(transport))
             .await
             .unwrap_or_else(|error| panic!("standard propagation activation failed: {error:?}"));
+        app_context.network_operations().set_propagation_announce_trigger(
+            endpoint.announce_trigger().expect("active endpoint"),
+        );
         startup.record(startup_component::STANDARD_LXMF_PROPAGATION_OFFER_HANDLER);
         startup.record(startup_component::STANDARD_LXMF_PROPAGATION_GET_HANDLER);
         startup.record(startup_component::STANDARD_LXMF_PROPAGATION_INGRESS_WORKER);

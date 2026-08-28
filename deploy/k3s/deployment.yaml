@@ -51,6 +51,8 @@ spec:
               value: "Styrene Community Hub"
             - name: STYRENE_PROPAGATION_NODE_NAME
               value: "Styrene Community Hub"
+            - name: STYRENE_PROPAGATION_ANNOUNCE_INTERVAL_SECS
+              value: "300"
           volumeMounts:
             - name: data
               mountPath: /var/lib/styrene
