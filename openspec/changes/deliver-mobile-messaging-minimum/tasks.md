@@ -37,7 +37,7 @@
 ## 5. Standard Propagation Client
 <!-- specs: mobile-propagation-client -->
 
-- [ ] 5.1 Add failing Rust mobile tests for selected-node persistence, active-metadata validation, explicit propagated upload, identified inventory, durable-before-ack retrieval, duplicate suppression, and partial failure
+- [x] 5.1 Add failing Rust mobile tests for selected-node persistence, active-metadata validation, explicit propagated upload, identified inventory, durable-before-ack retrieval, duplicate suppression, and partial failure
 - [ ] 5.2 Expose standard propagation discovery, selection, readiness, upload, manual sync, automatic-sync policy, progress, and terminal observations through the typed Rust mobile session
 - [ ] 5.3 Add failing single-flight scheduler tests for initial connection, reconnect, foreground opportunity, cooldown, deadline, cancellation, and shutdown
 - [ ] 5.4 Add failing Rust reducer and Dioxus component tests for selection persistence, stale node metadata, manual sync, automatic sync disclosure, upload versus delivery, progress, repeat sync, and recoverable failure

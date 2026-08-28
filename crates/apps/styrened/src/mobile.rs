@@ -2525,6 +2525,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn propagated_retrieval_is_durable_before_ack_and_duplicate_safe() {
+        let destination = [0x51; 16];
+        let mock = Arc::new(MockTransport::new(
+            AddressHash::new([0x50; 16]),
+            AddressHash::new(destination),
+        ));
+        let node = compose_with_mock(mock, None).await;
+        let sender = PrivateIdentity::new_from_name("propagated mobile sender");
+        let sender_destination = SingleOutputDestination::new(
+            *sender.as_identity(),
+            DestinationName::new("lxmf", "delivery"),
+        )
+        .desc
+        .address_hash;
+        let mut source = [0; 16];
+        source.copy_from_slice(sender_destination.as_slice());
+        let wire = crate::lxmf_bridge::build_wire_message(
+            source,
+            destination,
+            "",
+            "retrieved once",
+            None,
+            &sender,
+        )
+        .unwrap();
+        let transient_id = lxmf::propagation::transient_id(&wire);
+        let attempt_id = [0x52; 16];
+        let peer = [0x53; 16];
+
+        let first = node.app_context.messaging().accept_propagated_inbound(
+            destination,
+            &wire,
+            transient_id,
+            attempt_id,
+            peer,
+        );
+        let second = node.app_context.messaging().accept_propagated_inbound(
+            destination,
+            &wire,
+            transient_id,
+            attempt_id,
+            peer,
+        );
+
+        assert!(matches!(first, InboundAcceptOutcome::Accepted(_)));
+        assert!(matches!(second, InboundAcceptOutcome::Duplicate { .. }));
+        {
+            let store = node.app_context.store().lock().unwrap();
+            assert_eq!(store.list_messages(10, None).unwrap().len(), 1);
+            assert_eq!(
+                store.standard_propagation_pending_haves(peer, 10).unwrap(),
+                vec![transient_id]
+            );
+        }
+        node.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejected_propagated_retrieval_is_not_acknowledgeable() {
+        let destination = [0x61; 16];
+        let node = compose_with_mock(
+            Arc::new(MockTransport::new(
+                AddressHash::new([0x60; 16]),
+                AddressHash::new(destination),
+            )),
+            None,
+        )
+        .await;
+        let transient_id = [0x62; 32];
+        let peer = [0x63; 16];
+
+        let outcome = node.app_context.messaging().accept_propagated_inbound(
+            destination,
+            b"invalid LXMF wire",
+            transient_id,
+            [0x64; 16],
+            peer,
+        );
+
+        assert!(matches!(outcome, InboundAcceptOutcome::Rejected { .. }));
+        {
+            let store = node.app_context.store().lock().unwrap();
+            assert!(store.list_messages(10, None).unwrap().is_empty());
+            assert!(store.standard_propagation_pending_haves(peer, 10).unwrap().is_empty());
+        }
+        node.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn failed_composition_shuts_down_transport_before_returning() {
         let mock = Arc::new(MockTransport::new_default());
         let receipt_target = Arc::new(std::sync::OnceLock::new());
