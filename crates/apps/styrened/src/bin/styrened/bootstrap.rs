@@ -453,6 +453,10 @@ async fn bootstrap_with_transport_override(
                 panic!("standard propagation destination registration failed: {error:?}")
             });
             let propagation_hash = endpoint.destination().lock().await.desc.address_hash;
+            println!(
+                "[daemon] standard propagation destination hash={}",
+                hex::encode(propagation_hash.as_slice())
+            );
             let propagation_policy = endpoint.runtime_observation().policy();
             startup.record(startup_component::STANDARD_LXMF_PROPAGATION_DESTINATION);
             standard_propagation = Some(endpoint);
