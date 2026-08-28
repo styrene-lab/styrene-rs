@@ -6,8 +6,9 @@ use styrene_ipc::types::InterfaceDetail;
 use styrened::mobile::{
     load_mobile_tcp_endpoint, persist_mobile_tcp_endpoint, IdentityBackend, MobileBearerKind,
     MobileBearerState, MobileConfig, MobileConnectionPhase, MobileDeliveryMethod,
-    MobileDraftClearDisposition, MobileFailureCode, MobileInterfaceConfig, MobileNode,
-    MobilePeerAspect, MobilePeerSource, MobileSendDisposition, MobileSendRequest,
+    MobileDraftClearDisposition, MobileFailureCode, MobileInterfaceConfig, MobileMessageEvent,
+    MobileMessageEventKind, MobileMessageSubscription, MobileNode, MobilePeerAspect,
+    MobilePeerSource, MobilePeerSubscription, MobileSendDisposition, MobileSendRequest,
 };
 use styrened::startup_contract::{RuntimeKind, capabilities, components};
 use styrened::storage::messages::MessageRecord;
@@ -876,33 +877,33 @@ async fn multiple_tcp_servers_report_listeners_in_profile_order() {
     shutdown(node).await;
 }
 
-async fn wait_for_peer(node: &MobileNode, destination: &str) {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        if node.list_peers().await.unwrap().iter().any(|peer| peer.destination_hash == destination)
-        {
-            return;
+async fn wait_for_peer_event(subscription: &mut MobilePeerSubscription, destination: &str) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let event = subscription.recv().await.expect("peer event");
+            if event.peer.destination_hash == destination {
+                return;
+            }
         }
-        assert!(tokio::time::Instant::now() < deadline, "peer discovery timed out");
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+    })
+    .await
+    .expect("peer discovery event timed out");
 }
 
-async fn wait_for_content(node: &MobileNode, peer_identity: &str, content: &str) {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        if node
-            .get_messages(peer_identity, 20)
-            .await
-            .unwrap()
-            .iter()
-            .any(|message| !message.is_outgoing && message.content == content)
-        {
-            return;
+async fn wait_for_new_message_event(
+    subscription: &mut MobileMessageSubscription,
+    message_id: &str,
+) -> MobileMessageEvent {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let event = subscription.recv().await.expect("message event");
+            if event.kind == MobileMessageEventKind::New && event.message.id == message_id {
+                return event;
+            }
         }
-        assert!(tokio::time::Instant::now() < deadline, "LXMF delivery timed out");
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+    })
+    .await
+    .expect("inbound message event timed out")
 }
 
 #[tokio::test]
@@ -924,20 +925,70 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
         .push(MobileInterfaceConfig::TcpClient { remote_address: listen_address.to_string() });
     let client = MobileNode::boot(client_config).await.unwrap();
 
-    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    server.announce().await.unwrap();
-    client.announce().await.unwrap();
+    wait_for_interface_status(&client, "connected", Duration::from_secs(2)).await;
+    let mut server_peers = server.subscribe_peer_events().await;
+    let mut client_peers = client.subscribe_peer_events().await;
     let server_delivery = server.delivery_hash().unwrap();
     let client_delivery = client.delivery_hash().unwrap();
-    wait_for_peer(&server, &client_delivery).await;
-    wait_for_peer(&client, &server_delivery).await;
+    server.announce_outcome().await.unwrap();
+    client.announce_outcome().await.unwrap();
+    wait_for_peer_event(&mut server_peers, &client_delivery).await;
+    wait_for_peer_event(&mut client_peers, &server_delivery).await;
 
     let server_identity = server.app_context.identity().identity_hash().to_string();
     let client_identity = client.app_context.identity().identity_hash().to_string();
-    server.send_chat(&client_delivery, "red to yellow").await.unwrap();
-    wait_for_content(&client, &server_identity, "red to yellow").await;
-    client.send_chat(&server_delivery, "yellow to red").await.unwrap();
-    wait_for_content(&server, &client_identity, "yellow to red").await;
+    let mut client_messages = client.subscribe_message_events().await;
+    let red_outcome = server
+        .send_text(MobileSendRequest {
+            destination_hash: client_delivery.clone(),
+            content: "red to yellow".into(),
+            requested_method: MobileDeliveryMethod::Direct,
+            draft_revision: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(red_outcome.disposition, MobileSendDisposition::Accepted);
+    assert_eq!(red_outcome.requested_method, MobileDeliveryMethod::Direct);
+    assert_eq!(red_outcome.actual_method, MobileDeliveryMethod::Direct);
+    assert_eq!(
+        red_outcome.message.correlation_id.as_deref(),
+        Some(red_outcome.message_id.as_str())
+    );
+    assert_eq!(red_outcome.message.attempts.len(), 1);
+    let red_inbound =
+        wait_for_new_message_event(&mut client_messages, &red_outcome.message_id).await;
+    assert_eq!(red_inbound.kind, MobileMessageEventKind::New);
+    assert_eq!(red_inbound.message.id, red_outcome.message_id);
+    assert_eq!(red_inbound.message.source_hash, server_identity);
+    assert_eq!(red_inbound.message.destination_hash, client_delivery);
+    assert_eq!(red_inbound.message.content, "red to yellow");
+
+    let mut server_messages = server.subscribe_message_events().await;
+    let yellow_outcome = client
+        .send_text(MobileSendRequest {
+            destination_hash: server_delivery.clone(),
+            content: "yellow to red".into(),
+            requested_method: MobileDeliveryMethod::Direct,
+            draft_revision: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(yellow_outcome.disposition, MobileSendDisposition::Accepted);
+    let yellow_inbound =
+        wait_for_new_message_event(&mut server_messages, &yellow_outcome.message_id).await;
+    assert_eq!(yellow_inbound.message.id, yellow_outcome.message_id);
+    assert_eq!(yellow_inbound.message.source_hash, client_identity);
+    assert_eq!(yellow_inbound.message.destination_hash, server_delivery);
+    assert_eq!(yellow_inbound.message.content, "yellow to red");
+
+    let server_outbound = server.get_messages(&client_delivery, 20).await.unwrap();
+    assert_eq!(server_outbound.len(), 1);
+    assert_eq!(server_outbound[0].id, red_outcome.message_id);
+    assert!(server_outbound[0].is_outgoing);
+    let client_outbound = client.get_messages(&server_delivery, 20).await.unwrap();
+    assert_eq!(client_outbound.len(), 1);
+    assert_eq!(client_outbound[0].id, yellow_outcome.message_id);
+    assert!(client_outbound[0].is_outgoing);
 
     let client_inbound = client
         .get_messages(&server_identity, 20)
