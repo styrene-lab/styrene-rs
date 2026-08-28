@@ -6,7 +6,7 @@
 - [x] 1.1 Define shared fixture records for session generations, bearers, peers, conversations, message evidence, propagation selection, synchronization, and typed failures
 - [x] 1.2 Add failing Rust serialization and reducer-contract tests for every fixture state before changing production state
 - [x] 1.3 Add failing Dioxus component tests for both mobile target classes using the same fixture identifiers and required accessibility identifiers
-- [ ] 1.4 Remove live-path preview substitution and retain preview records only in explicitly marked fixture sessions
+- [x] 1.4 Remove live-path preview substitution and retain preview records only in explicitly marked fixture sessions
 
 ## 2. Persistent Network Session
 <!-- specs: mobile-network-session -->
