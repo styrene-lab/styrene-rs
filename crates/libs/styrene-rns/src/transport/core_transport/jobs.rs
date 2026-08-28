@@ -176,11 +176,11 @@ pub(super) async fn handle_protocol_deadlines(mut handler: MutexGuard<'_, Transp
             continue;
         }
         live_link_ids.push(link_id);
-        if let Some(iface) = link.ingress_iface() {
-            if link.next_channel_retry_at().is_some_and(|deadline| deadline <= now) {
-                for packet in link.poll_channel_timeouts(now) {
-                    messages.push(TxMessage { tx_type: TxMessageType::Direct(iface), packet });
-                }
+        if let Some(iface) = link.ingress_iface()
+            && link.next_channel_retry_at().is_some_and(|deadline| deadline <= now)
+        {
+            for packet in link.poll_channel_timeouts(now) {
+                messages.push(TxMessage { tx_type: TxMessageType::Direct(iface), packet });
             }
         }
     }
@@ -200,31 +200,30 @@ pub(super) async fn handle_protocol_deadlines(mut handler: MutexGuard<'_, Transp
         }
     }
     for (link_id, packet) in actions.packets {
-        if let Some(link) = find_live_link(&handler, link_id).await {
-            if let Some(iface) = link.lock().await.ingress_iface() {
-                messages.push(TxMessage { tx_type: TxMessageType::Direct(iface), packet });
-            }
+        if let Some(link) = find_live_link(&handler, link_id).await
+            && let Some(iface) = link.lock().await.ingress_iface()
+        {
+            messages.push(TxMessage { tx_type: TxMessageType::Direct(iface), packet });
         }
     }
     for (link_id, proof_hash) in actions.proof_requests {
         if let Some(link) = find_live_link(&handler, link_id).await {
             let link = link.lock().await;
-            if let Some(iface) = link.ingress_iface() {
-                if let Ok(packet) = build_resource_cache_request_packet(&link, proof_hash) {
-                    messages.push(TxMessage { tx_type: TxMessageType::Direct(iface), packet });
-                }
+            if let Some(iface) = link.ingress_iface()
+                && let Ok(packet) = build_resource_cache_request_packet(&link, proof_hash)
+            {
+                messages.push(TxMessage { tx_type: TxMessageType::Direct(iface), packet });
             }
         }
     }
     for cancellation in actions.cancellations {
         if let Some(link) = find_live_link(&handler, cancellation.link_id).await {
             let link = link.lock().await;
-            if let Some(iface) = link.ingress_iface() {
-                if let Ok(packet) =
+            if let Some(iface) = link.ingress_iface()
+                && let Ok(packet) =
                     build_resource_cancel_packet(&link, cancellation.hash, cancellation.context)
-                {
-                    messages.push(TxMessage { tx_type: TxMessageType::Direct(iface), packet });
-                }
+            {
+                messages.push(TxMessage { tx_type: TxMessageType::Direct(iface), packet });
             }
         }
     }

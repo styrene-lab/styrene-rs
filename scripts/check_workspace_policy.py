@@ -62,6 +62,13 @@ def cargo_metadata(root: Path) -> dict[str, Any]:
 
 def validate(root: Path, metadata: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    root_manifest = load_toml(root / "Cargo.toml")
+    workspace = root_manifest["workspace"]
+    workspace_package = workspace["package"]
+    expected_edition = workspace_package["edition"]
+    expected_rust_version = workspace_package["rust-version"]
+    if workspace.get("resolver") != "3":
+        errors.append("workspace: resolver must be 3")
     packages = {package["name"]: package for package in metadata["packages"]}
     package_paths = {
         Path(package["manifest_path"]).parent.resolve(): package["name"]
@@ -95,6 +102,15 @@ def validate(root: Path, metadata: dict[str, Any]) -> list[str]:
         errors.append(f"{crate_name}: automated release crate is not public")
 
     for crate_name, package in sorted(packages.items()):
+        if package.get("edition") != expected_edition:
+            errors.append(
+                f"{crate_name}: edition {package.get('edition')!r} != workspace edition {expected_edition!r}"
+            )
+        if package.get("rust_version") != expected_rust_version:
+            errors.append(
+                f"{crate_name}: rust-version {package.get('rust_version')!r} != "
+                f"workspace rust-version {expected_rust_version!r}"
+            )
         publish_registries = package.get("publish")
         is_publishable = publish_registries is None or "crates-io" in publish_registries
         if crate_name in public and not is_publishable:
@@ -153,7 +169,6 @@ def validate(root: Path, metadata: dict[str, Any]) -> list[str]:
                         f"{dependency.get('req')!r} != {expected_requirement!r}"
                     )
 
-    root_manifest = load_toml(root / "Cargo.toml")
     workspace_dependencies = root_manifest["workspace"].get("dependencies", {})
     for dependency_key, specification in sorted(workspace_dependencies.items()):
         if not isinstance(specification, dict) or "path" not in specification:

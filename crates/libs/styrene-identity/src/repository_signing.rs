@@ -320,11 +320,7 @@ fn signing_frame(protected: &[u8]) -> Result<Vec<u8>, RepositorySignerBindingErr
 fn validate_public_key(bytes: &[u8; 32]) -> Result<(), RepositorySignerBindingError> {
     let key =
         VerifyingKey::from_bytes(bytes).map_err(|_| RepositorySignerBindingError::Signature)?;
-    if key.is_weak() {
-        Err(RepositorySignerBindingError::Signature)
-    } else {
-        Ok(())
-    }
+    if key.is_weak() { Err(RepositorySignerBindingError::Signature) } else { Ok(()) }
 }
 
 fn format_error(_error: minicbor::decode::Error) -> RepositorySignerBindingError {

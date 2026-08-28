@@ -593,8 +593,8 @@ impl ResourceManager {
         let Ok(proof) = ResourceProof::decode(packet.data.as_slice()) else {
             return;
         };
-        if let Some(sender) = self.outgoing.get_mut(&proof.resource_hash) {
-            if sender.handle_proof(&proof) {
+        if let Some(sender) = self.outgoing.get_mut(&proof.resource_hash)
+            && sender.handle_proof(&proof) {
                 self.outgoing.remove(&proof.resource_hash);
                 self.events.push(ResourceEvent {
                     hash: proof.resource_hash,
@@ -602,7 +602,6 @@ impl ResourceManager {
                     kind: ResourceEventKind::OutboundComplete,
                 });
             }
-        }
     }
 
     fn cancel_into(&mut self, packet: &Packet, _responses: &mut Vec<Packet>) {

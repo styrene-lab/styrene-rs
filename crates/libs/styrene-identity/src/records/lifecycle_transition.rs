@@ -2,9 +2,9 @@ use minicbor::{Decode, Encode};
 
 use super::runtime_certificate::SubjectKind;
 use super::{
-    encode_error, sha256, signing_frame, validate_ascii_identifier, Digest32, Id16, RecordError,
-    SignatureSuite, LIFECYCLE_TRANSITION_DOMAIN, MAX_LIFECYCLE_TRANSITION_BYTES,
-    RECORD_PROFILE_VERSION,
+    Digest32, Id16, LIFECYCLE_TRANSITION_DOMAIN, MAX_LIFECYCLE_TRANSITION_BYTES,
+    RECORD_PROFILE_VERSION, RecordError, SignatureSuite, encode_error, sha256, signing_frame,
+    validate_ascii_identifier,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
@@ -235,10 +235,10 @@ impl LifecycleTransitionClaims {
         if !compromise && self.compromise_not_before_ms.is_some() {
             return Err(RecordError::InvalidTransition);
         }
-        if let Some(start) = self.compromise_not_before_ms {
-            if start > self.effective_at_ms {
-                return Err(RecordError::InvalidTransition);
-            }
+        if let Some(start) = self.compromise_not_before_ms
+            && start > self.effective_at_ms
+        {
+            return Err(RecordError::InvalidTransition);
         }
         if compromise && self.descendant_scope == DescendantScope::TargetOnly {
             return Err(RecordError::InvalidTransition);
@@ -249,7 +249,7 @@ impl LifecycleTransitionClaims {
         match (&self.transition_kind, &self.reconciliation) {
             (TransitionKind::Reconcile, Some(value)) => value.validate()?,
             (TransitionKind::Reconcile, None) | (_, Some(_)) => {
-                return Err(RecordError::InvalidReconciliation)
+                return Err(RecordError::InvalidReconciliation);
             }
             _ => {}
         }

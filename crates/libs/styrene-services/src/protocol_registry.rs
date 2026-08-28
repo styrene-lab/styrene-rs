@@ -117,21 +117,21 @@ impl ProtocolRegistry {
         // Try protocol-specific handlers. Once a protocol type is claimed by a
         // registered handler, dispatch is terminal: malformed data must never
         // fall through to an unrelated default handler (for example, chat).
-        if let Some(protocol) = &message.protocol {
-            if let Some(indices) = index.get(protocol) {
-                for &idx in indices {
-                    if let Some(handler) = handlers.get(idx) {
-                        let result = handler.handle(message).await;
-                        match &result {
-                            HandleResult::NotHandled => continue,
-                            _ => return result,
-                        }
+        if let Some(protocol) = &message.protocol
+            && let Some(indices) = index.get(protocol)
+        {
+            for &idx in indices {
+                if let Some(handler) = handlers.get(idx) {
+                    let result = handler.handle(message).await;
+                    match &result {
+                        HandleResult::NotHandled => continue,
+                        _ => return result,
                     }
                 }
-                return HandleResult::Error(format!(
-                    "registered protocol '{protocol}' was not accepted by its handlers"
-                ));
             }
+            return HandleResult::Error(format!(
+                "registered protocol '{protocol}' was not accepted by its handlers"
+            ));
         }
 
         // Only absent or wholly unregistered protocols reach the default handler.

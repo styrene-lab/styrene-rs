@@ -1,12 +1,12 @@
 use std::time::Duration;
 
+use rumqttc::Outgoing;
 use rumqttc::v5::mqttbytes::v5::Packet;
 use rumqttc::v5::{AsyncClient, Event, EventLoop, MqttOptions};
-use rumqttc::Outgoing;
 use styrene_a2a::AgentEnvelope;
 
 use crate::{
-    decode_publication, publication_for, A2aTopic, MqttA2aError, ReceivedA2aEnvelope, Result,
+    A2aTopic, MqttA2aError, ReceivedA2aEnvelope, Result, decode_publication, publication_for,
 };
 
 pub struct MqttA2aClient {
@@ -51,7 +51,8 @@ impl MqttA2aClient {
 
     pub async fn publish(&mut self, envelope: &AgentEnvelope, now_ms: u64) -> Result<()> {
         let publication = publication_for(&self.tenant, envelope, now_ms)?;
-        self.client
+        let result = self
+            .client
             .publish_with_properties(
                 publication.topic,
                 publication.qos,
@@ -59,8 +60,8 @@ impl MqttA2aClient {
                 publication.payload,
                 publication.properties,
             )
-            .await
-            .map_err(|error| MqttA2aError::Publish(error.to_string()))
+            .await;
+        result.map_err(|error| MqttA2aError::Publish(error.to_string()))
     }
 
     pub async fn subscribe_agent(&mut self, agent_id: &str) -> Result<()> {
@@ -81,7 +82,8 @@ impl MqttA2aClient {
 
     pub async fn flush_publish(&mut self) -> Result<()> {
         loop {
-            match self.event_loop.poll().await {
+            let event = self.event_loop.poll().await;
+            match event {
                 Ok(Event::Outgoing(Outgoing::Publish(_))) => return Ok(()),
                 Ok(_) => {}
                 Err(error) => return Err(MqttA2aError::Connection(error.to_string())),
@@ -95,7 +97,8 @@ impl MqttA2aClient {
 
     pub async fn recv(&mut self, now_ms: u64) -> Result<ReceivedA2aEnvelope> {
         loop {
-            match self.event_loop.poll().await {
+            let event = self.event_loop.poll().await;
+            match event {
                 Ok(Event::Incoming(Packet::Publish(publish))) => {
                     let topic = String::from_utf8_lossy(&publish.topic);
                     let properties = publish.properties.unwrap_or_default();

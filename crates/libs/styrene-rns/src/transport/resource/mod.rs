@@ -10,9 +10,9 @@ use serde_bytes::ByteBuf;
 use sha2::Digest;
 
 use crate::crypt::fernet::{FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE};
-use crate::hash::{AddressHash, Hash, ADDRESS_HASH_SIZE, HASH_SIZE};
+use crate::hash::{ADDRESS_HASH_SIZE, AddressHash, HASH_SIZE, Hash};
 use crate::packet::DestinationType;
-use crate::packet::{Header, Packet, PacketContext, PacketDataBuffer, PacketType, PACKET_MDU};
+use crate::packet::{Header, PACKET_MDU, Packet, PacketContext, PacketDataBuffer, PacketType};
 use crate::transport::destination_ext::link::Link;
 use crate::transport::error::RnsError;
 use crate::transport::time::{MonotonicClock, SystemMonotonicClock};

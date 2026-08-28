@@ -60,10 +60,10 @@ pub async fn await_inbound_message(ctx: &AppContext, timeout: Duration) -> Messa
     loop {
         {
             let store = ctx.store().lock().expect("lock store");
-            if let Ok(messages) = store.list_messages(100, None) {
-                if let Some(msg) = messages.into_iter().find(|m| m.direction == "in") {
-                    return msg;
-                }
+            if let Ok(messages) = store.list_messages(100, None)
+                && let Some(msg) = messages.into_iter().find(|m| m.direction == "in")
+            {
+                return msg;
             }
         }
         if tokio::time::Instant::now() >= deadline {
@@ -117,10 +117,9 @@ pub async fn await_message_count(
             let store = ctx.store().lock().expect("lock store");
             if let Ok(messages) =
                 store.list_messages(styrene_ipc::types::MAX_MESSAGE_QUERY_LIMIT as usize, None)
+                && messages.len() >= count
             {
-                if messages.len() >= count {
-                    return messages;
-                }
+                return messages;
             }
         }
         if tokio::time::Instant::now() >= deadline {

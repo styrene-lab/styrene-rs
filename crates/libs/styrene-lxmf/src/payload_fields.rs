@@ -1,5 +1,5 @@
-use crate::constants::FIELD_COMMANDS;
 use crate::LxmfError;
+use crate::constants::FIELD_COMMANDS;
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 use alloc::vec;

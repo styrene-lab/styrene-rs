@@ -9,10 +9,10 @@
 use ed25519_dalek::Verifier;
 use zeroize::Zeroizing;
 
+use crate::IdentityId;
 use crate::derive::{KeyDeriver, KeyPurpose};
 use crate::pubkey::{ed25519_verifying_key, sign_with_seed};
 use crate::signer::RootSecret;
-use crate::IdentityId;
 
 /// Number of bytes kept from the SHA-256 digest (16 bytes = 32 hex chars).
 pub const IDENTITY_HASH_BYTES: usize = 16;

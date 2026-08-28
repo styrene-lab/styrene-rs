@@ -463,19 +463,11 @@ impl NetworkOperationService {
 }
 
 fn ensure_before_deadline(deadline: tokio::time::Instant) -> Result<(), TransportError> {
-    if tokio::time::Instant::now() >= deadline {
-        Err(TransportError::TimedOut)
-    } else {
-        Ok(())
-    }
+    if tokio::time::Instant::now() >= deadline { Err(TransportError::TimedOut) } else { Ok(()) }
 }
 
 fn ensure_not_cancelled(cancellation: &CancellationToken) -> Result<(), TransportError> {
-    if cancellation.is_cancelled() {
-        Err(TransportError::Cancelled)
-    } else {
-        Ok(())
-    }
+    if cancellation.is_cancelled() { Err(TransportError::Cancelled) } else { Ok(()) }
 }
 
 async fn wait_for_poll(
@@ -917,10 +909,12 @@ mod tests {
         let cancelled = service.cancel(&open.operation_id).await.unwrap();
 
         assert_eq!(cancelled.outcome, Some(NetworkOperationOutcome::Failed));
-        assert!(cancelled
-            .detail
-            .as_deref()
-            .is_some_and(|detail| detail.contains("retained pending link")));
+        assert!(
+            cancelled
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("retained pending link"))
+        );
         assert!(transport.calls().iter().any(|call| matches!(
             call,
             crate::transport::mock_transport::MockCall::CancelLinkOpen { link_id: observed }
@@ -941,9 +935,8 @@ mod tests {
 
         let terminal = service.get(&open.operation_id).unwrap();
         assert_eq!(terminal.outcome, Some(NetworkOperationOutcome::Failed));
-        assert!(terminal
-            .detail
-            .as_deref()
-            .is_some_and(|detail| detail.contains("timeout cleanup")));
+        assert!(
+            terminal.detail.as_deref().is_some_and(|detail| detail.contains("timeout cleanup"))
+        );
     }
 }

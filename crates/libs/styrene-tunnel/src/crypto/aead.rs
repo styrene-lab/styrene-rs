@@ -10,8 +10,8 @@
 //! These spaces never overlap, preventing nonce reuse between handshake
 //! confirmations and data frames.
 
-use aes_gcm::aead::{Aead, KeyInit, Nonce};
 use aes_gcm::Aes256Gcm;
+use aes_gcm::aead::{Aead, KeyInit, Nonce};
 
 use crate::error::TunnelError;
 

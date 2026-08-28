@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde_json::Value as JsonValue;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]

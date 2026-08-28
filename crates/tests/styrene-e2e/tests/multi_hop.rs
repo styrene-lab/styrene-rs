@@ -9,7 +9,7 @@ use rns_core::transport::core_transport::path_table::{
 use rns_core::transport::iface::InterfaceState;
 use std::time::Duration;
 use styrene_e2e::helpers::{
-    await_identity_resolved, await_inbound_count, await_inbound_message, with_timeout, SETTLE,
+    SETTLE, await_identity_resolved, await_inbound_count, await_inbound_message, with_timeout,
 };
 use styrene_e2e::node::TestNodeBuilder;
 
@@ -37,13 +37,12 @@ async fn await_exact_route(
 ) -> PathSnapshot {
     let deadline = tokio::time::Instant::now() + MILESTONE_TIMEOUT;
     loop {
-        if let Some(route) = node.transport.path_snapshot(&destination).await {
-            if route.hops == hops
-                && route.received_from == next_hop
-                && interface.is_none_or(|expected| route.iface == expected)
-            {
-                return route;
-            }
+        if let Some(route) = node.transport.path_snapshot(&destination).await
+            && route.hops == hops
+            && route.received_from == next_hop
+            && interface.is_none_or(|expected| route.iface == expected)
+        {
+            return route;
         }
         assert!(
             tokio::time::Instant::now() < deadline,

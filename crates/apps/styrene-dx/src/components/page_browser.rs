@@ -4,13 +4,13 @@
 
 use crate::state::PageView;
 use dioxus::prelude::*;
+#[cfg(test)]
+use styrene_ipc::PageAddress;
 use styrene_ipc::types::{
     FileDownloadInfo, FileDownloadRequest, FileDownloadState, PageBrowseStage, PageBrowseStageKind,
     PageBrowseStageState, PageFormFieldKind, PageFormSubmission, PageNavigationAction,
     PageNavigationRequest,
 };
-#[cfg(test)]
-use styrene_ipc::PageAddress;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum PageMode {
@@ -175,10 +175,10 @@ pub fn PageBrowser(
         page.as_ref().and_then(|page| page.authoritative.as_ref()).map(|page| &page.navigation);
     let can_back = navigation.is_some_and(|state| state.can_back);
     let can_forward = navigation.is_some_and(|state| state.can_forward);
-    if let Some(state) = navigation {
-        if *page_session.read() != state.session_id {
-            page_session.set(state.session_id.clone());
-        }
+    if let Some(state) = navigation
+        && *page_session.read() != state.session_id
+    {
+        page_session.set(state.session_id.clone());
     }
     let is_loading = page.as_ref().map(|p| p.loading).unwrap_or(false);
 

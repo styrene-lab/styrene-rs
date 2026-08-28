@@ -111,14 +111,14 @@ impl ConfigService {
         let config = s.config.get_or_insert_with(DaemonConfig::default);
 
         // Apply known fields from the snapshot
-        if let Some(role_val) = snapshot.values.get("role") {
-            if let Some(role_str) = role_val.as_str() {
-                config.role = match role_str {
-                    "hub" => NodeRole::Hub,
-                    "propagation_client" => NodeRole::PropagationClient,
-                    _ => NodeRole::FullNode,
-                };
-            }
+        if let Some(role_val) = snapshot.values.get("role")
+            && let Some(role_str) = role_val.as_str()
+        {
+            config.role = match role_str {
+                "hub" => NodeRole::Hub,
+                "propagation_client" => NodeRole::PropagationClient,
+                _ => NodeRole::FullNode,
+            };
         }
 
         // Save to disk if path is set

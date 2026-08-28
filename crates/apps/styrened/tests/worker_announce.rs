@@ -1,4 +1,4 @@
-use rns_core::destination::{DestinationName, SingleOutputDestination, NAME_HASH_LENGTH};
+use rns_core::destination::{DestinationName, NAME_HASH_LENGTH, SingleOutputDestination};
 use rns_core::identity::PrivateIdentity;
 use rns_core::packet::PacketDataBuffer;
 use rns_core::transport::core_transport::AnnounceEvent;

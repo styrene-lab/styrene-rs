@@ -21,17 +21,16 @@ async fn process_announce<'a>(
         }
     }
     let ratchet = announce.ratchet;
-    if let Some(ratchet_bytes) = ratchet {
-        if let Some(store) = handler.ratchet_store.as_mut() {
-            if let Err(err) = store.remember(&packet.destination, ratchet_bytes) {
-                log::warn!(
-                    "tp({}): failed to remember ratchet for {}: {:?}",
-                    handler.config.name,
-                    packet.destination,
-                    err
-                );
-            }
-        }
+    if let Some(ratchet_bytes) = ratchet
+        && let Some(store) = handler.ratchet_store.as_mut()
+        && let Err(err) = store.remember(&packet.destination, ratchet_bytes)
+    {
+        log::warn!(
+            "tp({}): failed to remember ratchet for {}: {:?}",
+            handler.config.name,
+            packet.destination,
+            err
+        );
     }
     // Retransmit/path bookkeeping must use the announced destination hash,
     // not the bare identity hash, otherwise peers learn only identity routes

@@ -34,10 +34,10 @@ pub async fn run_direct(bind: &str, i2pd_addr: &str) -> Result<()> {
                 handle_request(req, i2pd, peer)
             });
 
-            if let Err(e) = http1::Builder::new().serve_connection(io, svc).await {
-                if !e.to_string().contains("connection closed") {
-                    eprintln!("[proxy] connection error from {peer}: {e}");
-                }
+            if let Err(e) = http1::Builder::new().serve_connection(io, svc).await
+                && !e.to_string().contains("connection closed")
+            {
+                eprintln!("[proxy] connection error from {peer}: {e}");
             }
         });
     }
@@ -200,10 +200,10 @@ pub async fn run_mesh(bind: &str, client: Arc<MeshClient>) -> Result<()> {
                 handle_mesh_request(req, client, peer)
             });
 
-            if let Err(e) = http1::Builder::new().serve_connection(io, svc).await {
-                if !e.to_string().contains("connection closed") {
-                    eprintln!("[proxy] connection error from {peer}: {e}");
-                }
+            if let Err(e) = http1::Builder::new().serve_connection(io, svc).await
+                && !e.to_string().contains("connection closed")
+            {
+                eprintln!("[proxy] connection error from {peer}: {e}");
             }
         });
     }
@@ -235,13 +235,13 @@ async fn handle_mesh_request(
     // Collect headers
     let mut headers = Vec::new();
     for (name, value) in req.headers() {
-        if let Ok(v) = value.to_str() {
-            if !matches!(
+        if let Ok(v) = value.to_str()
+            && !matches!(
                 name.to_string().to_lowercase().as_str(),
                 "connection" | "proxy-connection" | "keep-alive" | "transfer-encoding"
-            ) {
-                headers.push((name.to_string(), v.to_string()));
-            }
+            )
+        {
+            headers.push((name.to_string(), v.to_string()));
         }
     }
 
@@ -249,11 +249,7 @@ async fn handle_mesh_request(
     let body_bytes = match req.collect().await {
         Ok(b) => {
             let b = b.to_bytes();
-            if b.is_empty() {
-                None
-            } else {
-                Some(b.to_vec())
-            }
+            if b.is_empty() { None } else { Some(b.to_vec()) }
         }
         Err(e) => {
             eprintln!("[proxy] failed to read request body: {e}");

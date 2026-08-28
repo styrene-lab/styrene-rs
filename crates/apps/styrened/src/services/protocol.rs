@@ -102,8 +102,8 @@ fn record_to_inbound(record: &MessageRecord) -> InboundMessage {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     struct TestHandler {
         id: String,

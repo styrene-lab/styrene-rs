@@ -688,9 +688,11 @@ mod tests {
         );
         assert_eq!(discovered.map(|event| event.kind), Some(RouteEventKind::Discovered));
 
-        assert!(table
-            .cull(started + ROAMING_PATH_LIFETIME, wall + ROAMING_PATH_LIFETIME, &[iface])
-            .is_empty());
+        assert!(
+            table
+                .cull(started + ROAMING_PATH_LIFETIME, wall + ROAMING_PATH_LIFETIME, &[iface])
+                .is_empty()
+        );
         assert!(table.get(&destination).is_some());
 
         let events = table.cull(

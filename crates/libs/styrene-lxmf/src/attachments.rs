@@ -79,7 +79,7 @@ pub fn parse_attachment_field(
             _ => {
                 return Err(LxmfError::Decode(
                     "LXMF attachment filename must be text or binary".into(),
-                ))
+                ));
             }
         };
         let (data, source) = match &tuple[1] {
@@ -102,7 +102,7 @@ pub fn parse_attachment_field(
             _ => {
                 return Err(LxmfError::Decode(
                     "LXMF attachment data must be MessagePack binary".into(),
-                ))
+                ));
             }
         };
         validate_name_and_size(&filename, data.len())?;

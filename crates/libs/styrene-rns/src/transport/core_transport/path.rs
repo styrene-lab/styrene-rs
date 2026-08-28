@@ -52,45 +52,45 @@ pub(super) async fn handle_path_request<'a>(
             return;
         }
 
-        if handler.config.retransmit {
-            if let Some(entry) = handler.path_table.get(&request.destination) {
-                if let Some(requestor_id) = request.requesting_transport {
-                    if requestor_id == entry.received_from {
-                        log::trace!(
-                            "tp({}): dropping circular path request from {}",
-                            handler.config.name,
-                            request.destination
-                        );
-                        return;
-                    }
-                }
-
-                let hops = entry.hops;
-
-                handler.announce_table.add_response(request.destination, iface, hops);
-
+        if handler.config.retransmit
+            && let Some(entry) = handler.path_table.get(&request.destination)
+        {
+            if let Some(requestor_id) = request.requesting_transport
+                && requestor_id == entry.received_from
+            {
                 log::trace!(
-                    "tp({}): scheduled remote path response to {} ({} hops) over {}",
+                    "tp({}): dropping circular path request from {}",
                     handler.config.name,
-                    request.destination,
-                    hops,
-                    iface
+                    request.destination
                 );
-
                 return;
             }
+
+            let hops = entry.hops;
+
+            handler.announce_table.add_response(request.destination, iface, hops);
+
+            log::trace!(
+                "tp({}): scheduled remote path response to {} ({} hops) over {}",
+                handler.config.name,
+                request.destination,
+                hops,
+                iface
+            );
+
+            return;
         }
 
-        if handler.config.retransmit {
-            if let Some(packet) = handler.path_requests.generate_recursive(
+        if handler.config.retransmit
+            && let Some(packet) = handler.path_requests.generate_recursive(
                 &request.destination,
                 Some(iface),
                 Some(request.tag_bytes.clone()),
-            ) {
-                handler
-                    .send(TxMessage { tx_type: TxMessageType::Broadcast(Some(iface)), packet })
-                    .await;
-            }
+            )
+        {
+            handler
+                .send(TxMessage { tx_type: TxMessageType::Broadcast(Some(iface)), packet })
+                .await;
         }
     }
 }

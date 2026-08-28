@@ -58,15 +58,14 @@ impl RpcDaemon {
                 "marker coordinates are out of range",
             ));
         }
-        if let Some(topic_id) = parsed.topic_id.as_deref() {
-            if !self.sdk_topics.lock().expect("sdk_topics mutex poisoned").contains_key(topic_id) {
+        if let Some(topic_id) = parsed.topic_id.as_deref()
+            && !self.sdk_topics.lock().expect("sdk_topics mutex poisoned").contains_key(topic_id) {
                 return Ok(self.sdk_error_response(
                     request.id,
                     "SDK_RUNTIME_NOT_FOUND",
                     "topic not found",
                 ));
             }
-        }
         let marker_id = self.next_sdk_domain_id("marker");
         let record = SdkMarkerRecord {
             marker_id: marker_id.clone(),
@@ -129,11 +128,10 @@ impl RpcDaemon {
             let Some(record) = markers_guard.get(marker_id).cloned() else {
                 continue;
             };
-            if let Some(topic_id) = parsed.topic_id.as_deref() {
-                if record.topic_id.as_deref() != Some(topic_id) {
+            if let Some(topic_id) = parsed.topic_id.as_deref()
+                && record.topic_id.as_deref() != Some(topic_id) {
                     continue;
                 }
-            }
             markers.push(record);
             if markers.len() >= limit {
                 break;

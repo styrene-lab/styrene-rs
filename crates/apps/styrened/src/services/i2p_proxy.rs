@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use styrene_mesh::i2p::{
-    I2pProxyData, I2pProxyError, I2pProxyRequest, I2pProxyResponse, I2PD_RESPONSE_TIMEOUT_SECS,
+    I2PD_RESPONSE_TIMEOUT_SECS, I2pProxyData, I2pProxyError, I2pProxyRequest, I2pProxyResponse,
     MAX_CONCURRENT_REQUESTS, MAX_REQUEST_BODY, RATE_LIMIT_PER_MINUTE,
 };
 use styrene_mesh::{StyreneMessage, StyreneMessageType};

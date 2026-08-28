@@ -2,7 +2,7 @@ use std::net::TcpStream;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use styrene_a2a::{AgentEnvelope, AgentEnvelopeKind, AgentId, RootOperationId, RuntimeId};
-use styrene_mqtt::{A2aTopic, A2aTopicKind, MqttA2aClient, MQTT_A2A_CONTENT_TYPE};
+use styrene_mqtt::{A2aTopic, A2aTopicKind, MQTT_A2A_CONTENT_TYPE, MqttA2aClient};
 
 fn broker() -> Option<(String, u16)> {
     let raw =

@@ -6,7 +6,7 @@
 
 use std::sync::Mutex;
 
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use styrene_a2a::{AgentEnvelope, GraphEdgeRelationship};
 
 use crate::ServiceError;

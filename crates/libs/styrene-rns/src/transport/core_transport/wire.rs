@@ -1,6 +1,6 @@
 use super::path::send_to_next_hop;
 use super::*;
-use ed25519_dalek::{Signature, SIGNATURE_LENGTH};
+use ed25519_dalek::{SIGNATURE_LENGTH, Signature};
 
 async fn ingress_registration(
     handler: &TransportHandler,
@@ -339,26 +339,26 @@ pub(super) async fn handle_data<'a>(
                     }
                     return;
                 }
-                if packet_for_manager.context == PacketContext::ResourceAdvrtisement {
-                    if let Some(hash) = handler.correlate_resource_advertisement(
+                if packet_for_manager.context == PacketContext::ResourceAdvrtisement
+                    && let Some(hash) = handler.correlate_resource_advertisement(
                         *link.id(),
                         packet_for_manager.data.as_slice(),
+                    )
+                {
+                    if let Ok(cancel) = crate::transport::resource::build_resource_cancel_packet(
+                        &link,
+                        hash,
+                        PacketContext::ResourceReceiverCancel,
                     ) {
-                        if let Ok(cancel) = crate::transport::resource::build_resource_cancel_packet(
-                            &link,
-                            hash,
-                            PacketContext::ResourceReceiverCancel,
-                        ) {
-                            drop(link);
-                            handler
-                                .send(TxMessage {
-                                    tx_type: TxMessageType::Direct(iface),
-                                    packet: cancel,
-                                })
-                                .await;
-                        }
-                        return;
+                        drop(link);
+                        handler
+                            .send(TxMessage {
+                                tx_type: TxMessageType::Direct(iface),
+                                packet: cancel,
+                            })
+                            .await;
                     }
+                    return;
                 }
                 let ingress = ingress_registration(
                     &handler,

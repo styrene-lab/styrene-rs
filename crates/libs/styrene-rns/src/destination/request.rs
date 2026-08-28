@@ -2,7 +2,7 @@ use alloc::{collections::BTreeSet, string::String, sync::Arc, vec::Vec};
 use core::fmt;
 
 use crate::{
-    hash::{address_hash, AddressHash, ADDRESS_HASH_SIZE},
+    hash::{ADDRESS_HASH_SIZE, AddressHash, address_hash},
     identity::Identity,
 };
 

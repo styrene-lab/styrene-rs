@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::net::UnixStream;
 
 use styrene_e2e::helpers::{
-    await_identity_resolved, await_inbound_count, two_connected_nodes, with_timeout, SETTLE,
+    SETTLE, await_identity_resolved, await_inbound_count, two_connected_nodes, with_timeout,
 };
 use styrene_e2e::node::TestNodeBuilder;
 use styrene_mesh::{StyreneMessage, StyreneMessageType, WIRE_VERSION};
@@ -73,10 +73,9 @@ async fn ipc_events_arrive_in_send_order() {
                 kind: styrene_ipc::types::MessageEventKind::New,
                 message,
             } = event
+                && !message.content.is_empty()
             {
-                if !message.content.is_empty() {
-                    message_contents.push(message.content.clone());
-                }
+                message_contents.push(message.content.clone());
             }
         }
 

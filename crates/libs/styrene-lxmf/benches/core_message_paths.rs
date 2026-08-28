@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use lxmf_core::inbound_decode::{decode_inbound_message, InboundPayloadMode};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use lxmf_core::Message;
+use lxmf_core::inbound_decode::{InboundPayloadMode, decode_inbound_message};
 
 fn sample_wire_payload() -> (Vec<u8>, [u8; 16]) {
     let mut message = Message::new();

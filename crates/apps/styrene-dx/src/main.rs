@@ -304,25 +304,23 @@ fn App() -> Element {
         .and_then(|peer| view.messages.drafts.get(peer))
         .map(|draft| (draft.peer_hash.clone(), draft.content.clone(), draft.updated_at));
     use_effect(move || {
-        if let Some((peer, content, _)) = &selected_draft {
-            if selected_peer.read().as_deref() == Some(peer.as_str())
-                && chat_input.read().is_empty()
-            {
-                chat_input.set(content.clone());
-            }
+        if let Some((peer, content, _)) = &selected_draft
+            && selected_peer.read().as_deref() == Some(peer.as_str())
+            && chat_input.read().is_empty()
+        {
+            chat_input.set(content.clone());
         }
     });
     let accepted_compose = view.messages.accepted_compose.clone();
     use_effect(move || {
-        if let Some((peer, content)) = &accepted_compose {
-            if selected_peer.read().as_deref() == Some(peer.as_str())
-                && chat_input.read().as_str() == content
-            {
-                chat_input.set(String::new());
-                chat_title.set(String::new());
-                chat_attachments.set(Vec::new());
-                stores.write().messages.accepted_compose = None;
-            }
+        if let Some((peer, content)) = &accepted_compose
+            && selected_peer.read().as_deref() == Some(peer.as_str())
+            && chat_input.read().as_str() == content
+        {
+            chat_input.set(String::new());
+            chat_title.set(String::new());
+            chat_attachments.set(Vec::new());
+            stores.write().messages.accepted_compose = None;
         }
     });
     let chat_unavailable = view.delivery_method_availability(&chat_method.read()).err();
@@ -337,13 +335,15 @@ fn App() -> Element {
         }
     });
     let page_unavailable = view.mutation_availability("page.browse").err();
+    let activity_context =
+        selected_peer.read().clone().unwrap_or_else(|| "No entity selected".to_string());
 
     // Helper to send commands to the daemon
     let send_cmd = move |cmd: daemon_bridge::DaemonCommand| {
-        if let Some(ref tx) = *cmd_tx.read() {
-            if tx.try_send(cmd).is_err() {
-                tracing::warn!(target: "dx::command", "UI command queue is full");
-            }
+        if let Some(ref tx) = *cmd_tx.read()
+            && tx.try_send(cmd).is_err()
+        {
+            tracing::warn!(target: "dx::command", "UI command queue is full");
         }
     };
 
@@ -581,14 +581,13 @@ fn App() -> Element {
                                             class: if is_selected { "convo-item selected" } else { "convo-item" },
                                             aria_current: is_selected.then_some("page"),
                                             onclick: move |_| {
-                                                if let Some(previous) = selected_peer.read().clone() {
-                                                    if previous != hash && !chat_input.read().is_empty() {
+                                                if let Some(previous) = selected_peer.read().clone()
+                                                    && previous != hash && !chat_input.read().is_empty() {
                                                         send_cmd(daemon_bridge::DaemonCommand::SaveDraft {
                                                             peer_hash: previous,
                                                             content: chat_input.read().clone(),
                                                         });
                                                     }
-                                                }
                                                 selected_peer.set(Some(hash.clone()));
                                                 chat_input.set(draft_content.clone().unwrap_or_default());
                                                 send_cmd(daemon_bridge::DaemonCommand::LoadDraft {
@@ -1020,7 +1019,7 @@ fn App() -> Element {
                     div { class: "context-summary",
                         span { "Context" }
                         strong {
-                            {selected_peer.read().as_deref().unwrap_or("No entity selected")}
+                            {activity_context}
                         }
                     }
                     if view.activity.entries.is_empty() {
@@ -1148,11 +1147,11 @@ async fn handle_ui_command(
     stores: &mut Signal<stores::DomainStores>,
     generation: backend::ConnectionGeneration,
 ) {
-    if let Some(capability) = cmd.required_capability() {
-        if let Err(error) = stores.read().mutation_availability_at(generation, capability) {
-            tracing::warn!(target: "dx::command", %error, %capability, "backend action blocked");
-            return;
-        }
+    if let Some(capability) = cmd.required_capability()
+        && let Err(error) = stores.read().mutation_availability_at(generation, capability)
+    {
+        tracing::warn!(target: "dx::command", %error, %capability, "backend action blocked");
+        return;
     }
     match cmd {
         daemon_bridge::DaemonCommand::SendChat {

@@ -1,7 +1,7 @@
 use rand_core::CryptoRngCore;
+use rns_core::RnsError;
 use rns_core::identity::PrivateIdentity;
 use rns_core::ratchets;
-use rns_core::RnsError;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 pub fn encrypt_for_public_key<R: CryptoRngCore + Copy>(

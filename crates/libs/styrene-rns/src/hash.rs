@@ -2,8 +2,8 @@ use core::cmp;
 use core::fmt;
 
 use alloc::string::String;
-use crypto_common::typenum::Unsigned;
 use crypto_common::OutputSizeUser;
+use crypto_common::typenum::Unsigned;
 use rand_core::CryptoRngCore;
 use sha2::{Digest, Sha256};
 

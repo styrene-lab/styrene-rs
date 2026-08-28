@@ -15,7 +15,7 @@ use styrene_content::manifest::{Sig64, StyreneManifest};
 use styrene_mesh::wire::{ChunkRequestPayload, ChunkResponsePayload, ResourceAvailablePayload};
 use styrene_mesh::{StyreneMessage, StyreneMessageType};
 
-use styrene_e2e::helpers::{with_timeout, SETTLE};
+use styrene_e2e::helpers::{SETTLE, with_timeout};
 use styrene_e2e::node::TestNodeBuilder;
 
 fn test_content() -> Vec<u8> {

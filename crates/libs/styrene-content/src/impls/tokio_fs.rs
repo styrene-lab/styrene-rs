@@ -71,13 +71,16 @@ impl ChunkStore for TokioFsChunkStore {
         let Ok(mut rd) = tokio::fs::read_dir(&dir).await else {
             return bs;
         };
-        while let Ok(Some(entry)) = rd.next_entry().await {
-            if let Some(name) = entry.file_name().to_str() {
-                if let Ok(idx) = name.parse::<u32>() {
-                    if idx < 256 {
-                        bs.set(idx);
-                    }
-                }
+        loop {
+            let next_entry = rd.next_entry().await;
+            let Ok(Some(entry)) = next_entry else {
+                break;
+            };
+            if let Some(name) = entry.file_name().to_str()
+                && let Ok(idx) = name.parse::<u32>()
+                && idx < 256
+            {
+                bs.set(idx);
             }
         }
         bs

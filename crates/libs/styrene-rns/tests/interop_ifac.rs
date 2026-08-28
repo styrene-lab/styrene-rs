@@ -2,7 +2,7 @@
 
 mod common;
 
-use rns_core::transport::iface::ifac::{ifac_unwrap, ifac_wrap, IfacConfig};
+use rns_core::transport::iface::ifac::{IfacConfig, ifac_unwrap, ifac_wrap};
 
 #[derive(serde::Deserialize)]
 struct IfacVector {

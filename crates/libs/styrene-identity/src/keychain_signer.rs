@@ -16,7 +16,7 @@ use rand_core::{OsRng, RngCore};
 use zeroize::Zeroizing;
 
 use security_framework::passwords::{
-    delete_generic_password, generic_password, set_generic_password_options, PasswordOptions,
+    PasswordOptions, delete_generic_password, generic_password, set_generic_password_options,
 };
 use security_framework::passwords_options::AccessControlOptions;
 

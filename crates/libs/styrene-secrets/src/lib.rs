@@ -59,7 +59,7 @@ pub mod value;
 
 pub use error::ResolveError;
 pub use secrecy::{ExposeSecret, SecretBox, SecretString};
-pub use value::{secret_from_bytes, secret_from_str, SecretValue, SecretValueExt};
+pub use value::{SecretValue, SecretValueExt, secret_from_bytes, secret_from_str};
 
 #[cfg(feature = "file-store")]
 pub use error::StoreError;
@@ -139,23 +139,7 @@ pub fn resolve_with_source(key: &str) -> Result<ResolvedSecret, ResolveError> {
     }
 
     // 3. Environment variable (warn — nudge toward store).
-    let env_key = to_env_key(key);
-    if let Ok(val) = std::env::var(&env_key) {
-        if !is_quiet() {
-            eprintln!(
-                "\x1b[33mwarning:\x1b[0m secret '{}' resolved from env var {} — \
-                 consider moving to the encrypted store: styrene-secrets set {}",
-                key, env_key, key
-            );
-        }
-        return Ok(ResolvedSecret {
-            value: value::secret_from_str(&val),
-            source: SecretSource::EnvVar(env_key),
-        });
-    }
-
-    // 4. Not found.
-    Err(ResolveError::NotFound { key: key.to_string(), env_key })
+    resolve_environment_with(key, None, |name| std::env::var(name).ok())
 }
 
 /// Resolve a secret by key, with a fallback conventional env var.
@@ -183,23 +167,42 @@ pub fn resolve_or_env_with_source(
         Err(e) => return Err(e),
     }
 
-    // Try the fallback env var.
-    if let Ok(val) = std::env::var(env_var) {
-        if !is_quiet() {
-            eprintln!(
-                "\x1b[33mwarning:\x1b[0m secret '{}' resolved from env var {} — \
-                 consider moving to the encrypted store: styrene-secrets set {}",
-                key, env_var, key
-            );
-        }
+    resolve_environment_with(key, Some(env_var), |name| std::env::var(name).ok())
+}
+
+fn resolve_environment_with(
+    key: &str,
+    fallback: Option<&str>,
+    mut lookup: impl FnMut(&str) -> Option<String>,
+) -> Result<ResolvedSecret, ResolveError> {
+    let env_key = to_env_key(key);
+    if let Some(value) = lookup(&env_key) {
+        warn_environment_resolution(key, &env_key);
         return Ok(ResolvedSecret {
-            value: value::secret_from_str(&val),
-            source: SecretSource::FallbackEnvVar(env_var.to_string()),
+            value: value::secret_from_str(&value),
+            source: SecretSource::EnvVar(env_key),
         });
     }
-
-    let env_key = to_env_key(key);
+    if let Some(fallback) = fallback
+        && let Some(value) = lookup(fallback)
+    {
+        warn_environment_resolution(key, fallback);
+        return Ok(ResolvedSecret {
+            value: value::secret_from_str(&value),
+            source: SecretSource::FallbackEnvVar(fallback.to_string()),
+        });
+    }
     Err(ResolveError::NotFound { key: key.to_string(), env_key })
+}
+
+fn warn_environment_resolution(key: &str, env_key: &str) {
+    if !is_quiet() {
+        eprintln!(
+            "\x1b[33mwarning:\x1b[0m secret '{}' resolved from env var {} — \
+             consider moving to the encrypted store: styrene-secrets set {}",
+            key, env_key, key
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -384,13 +387,12 @@ mod tests {
     fn resolve_from_env_with_warning() {
         let key = "test.resolve.env.only";
         let env_key = to_env_key(key);
-        std::env::set_var(&env_key, "test-value-42");
-
-        let resolved = resolve_with_source(key).unwrap();
+        let resolved = resolve_environment_with(key, None, |name| {
+            (name == env_key).then(|| "test-value-42".to_string())
+        })
+        .unwrap();
         assert_eq!(resolved.value.expose_secret().as_slice(), b"test-value-42");
         assert_eq!(resolved.source, SecretSource::EnvVar(env_key.clone()));
-
-        std::env::remove_var(&env_key);
     }
 
     #[test]
@@ -406,26 +408,24 @@ mod tests {
         let key = "test.resolve.fallback.src";
         let fallback = "TEST_RESOLVE_FALLBACK_SRC_TOKEN";
 
-        // Neither set — should fail.
-        std::env::remove_var(to_env_key(key));
-        std::env::remove_var(fallback);
-        assert!(resolve_or_env(key, fallback).is_err());
+        assert!(resolve_environment_with(key, Some(fallback), |_| None).is_err());
 
-        // Set fallback — should succeed via fallback.
-        std::env::set_var(fallback, "fallback-value");
-        let resolved = resolve_or_env_with_source(key, fallback).unwrap();
+        let resolved = resolve_environment_with(key, Some(fallback), |name| {
+            (name == fallback).then(|| "fallback-value".to_string())
+        })
+        .unwrap();
         assert_eq!(resolved.value.expose_secret().as_slice(), b"fallback-value");
         assert_eq!(resolved.source, SecretSource::FallbackEnvVar(fallback.to_string()));
 
-        // Set primary env var — should take precedence.
         let env_key = to_env_key(key);
-        std::env::set_var(&env_key, "primary-value");
-        let resolved = resolve_or_env_with_source(key, fallback).unwrap();
+        let resolved = resolve_environment_with(key, Some(fallback), |name| match name {
+            name if name == env_key => Some("primary-value".to_string()),
+            name if name == fallback => Some("fallback-value".to_string()),
+            _ => None,
+        })
+        .unwrap();
         assert_eq!(resolved.value.expose_secret().as_slice(), b"primary-value");
         assert_eq!(resolved.source, SecretSource::EnvVar(env_key.clone()));
-
-        std::env::remove_var(&env_key);
-        std::env::remove_var(fallback);
     }
 
     #[test]

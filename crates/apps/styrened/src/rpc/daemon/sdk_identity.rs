@@ -466,8 +466,8 @@ impl RpcDaemon {
                 order.push(identity.to_string());
             }
         }
-        if let Some(name) = contact.display_name.clone() {
-            if let Some(bundle) = self
+        if let Some(name) = contact.display_name.clone()
+            && let Some(bundle) = self
                 .sdk_identities
                 .lock()
                 .expect("sdk_identities mutex poisoned")
@@ -475,7 +475,6 @@ impl RpcDaemon {
             {
                 bundle.display_name = Some(name);
             }
-        }
         self.persist_sdk_domain_snapshot()?;
         Ok(RpcResponse {
             id: request.id,

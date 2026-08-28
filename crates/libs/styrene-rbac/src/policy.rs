@@ -427,15 +427,19 @@ mod tests {
         assert!(policy.add_entry(
             RosterEntry::new("aaaa1111bbbb2222cccc3333dddd4444", Role::Admin).with_label("Alice"),
         ));
-        assert!(policy.add_entry(
-            RosterEntry::new("eeee5555ffff6666aaaa7777bbbb8888", Role::Operator)
-                .with_label("Bob")
-                .with_grants(vec![Capability::VPN_HANDSHAKE.to_string()]),
-        ));
-        assert!(policy.add_entry(
-            RosterEntry::new("1111222233334444555566667777aaaa", Role::Monitor)
-                .with_label("Charlie"),
-        ));
+        assert!(
+            policy.add_entry(
+                RosterEntry::new("eeee5555ffff6666aaaa7777bbbb8888", Role::Operator)
+                    .with_label("Bob")
+                    .with_grants(vec![Capability::VPN_HANDSHAKE.to_string()]),
+            )
+        );
+        assert!(
+            policy.add_entry(
+                RosterEntry::new("1111222233334444555566667777aaaa", Role::Monitor)
+                    .with_label("Charlie"),
+            )
+        );
         assert!(policy.block("deadbeef"));
         assert!(policy.block("ca3e9813"));
         policy
@@ -495,8 +499,10 @@ mod tests {
     #[test]
     fn operator_has_config_update() {
         let policy = test_policy();
-        assert!(policy
-            .has_capability("eeee5555ffff6666aaaa7777bbbb8888", Capability::RPC_CONFIG_UPDATE));
+        assert!(
+            policy
+                .has_capability("eeee5555ffff6666aaaa7777bbbb8888", Capability::RPC_CONFIG_UPDATE)
+        );
     }
 
     #[test]
@@ -556,10 +562,12 @@ mod tests {
     #[test]
     fn add_replaces_existing() {
         let mut policy = test_policy();
-        assert!(policy.add_entry(
-            RosterEntry::new("aaaa1111bbbb2222cccc3333dddd4444", Role::Peer)
-                .with_label("Alice demoted"),
-        ));
+        assert!(
+            policy.add_entry(
+                RosterEntry::new("aaaa1111bbbb2222cccc3333dddd4444", Role::Peer)
+                    .with_label("Alice demoted"),
+            )
+        );
         assert_eq!(policy.resolve_role("aaaa1111bbbb2222cccc3333dddd4444"), Role::Peer);
     }
 
@@ -589,10 +597,14 @@ mod tests {
     #[test]
     fn invalid_grants_filtered_at_add() {
         let mut policy = RbacPolicy::default();
-        assert!(policy.add_entry(
-            RosterEntry::new("aaaa0000bbbb1111cccc2222dddd3333", Role::Peer)
-                .with_grants(vec!["fake.cap".to_string(), Capability::VPN_HANDSHAKE.to_string(),]),
-        ));
+        assert!(
+            policy.add_entry(
+                RosterEntry::new("aaaa0000bbbb1111cccc2222dddd3333", Role::Peer).with_grants(vec![
+                    "fake.cap".to_string(),
+                    Capability::VPN_HANDSHAKE.to_string(),
+                ]),
+            )
+        );
         let entry = policy.get_entry("aaaa0000bbbb1111cccc2222dddd3333").expect("entry exists");
         assert_eq!(entry.grants().len(), 1);
         assert_eq!(entry.grants()[0], Capability::VPN_HANDSHAKE);
@@ -622,7 +634,9 @@ mod tests {
     #[test]
     fn reject_non_hex_identity_hash() {
         let mut policy = RbacPolicy::default();
-        assert!(!policy.add_entry(RosterEntry::new("zzzz1111bbbb2222cccc3333dddd4444", Role::Peer)));
+        assert!(
+            !policy.add_entry(RosterEntry::new("zzzz1111bbbb2222cccc3333dddd4444", Role::Peer))
+        );
     }
 
     #[test]
