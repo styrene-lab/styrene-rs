@@ -3526,6 +3526,103 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pinned_python_upload_fetch_ack_repeat_and_restart_are_byte_exact() {
+        let fixture_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/interop/fixtures/lxmf-propagation-v1");
+        let index: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(fixture_dir.join("index.json")).expect("Python propagation index"),
+        )
+        .expect("valid Python propagation index");
+        let message = &index["message"];
+        let transient_id: [u8; 32] =
+            hex::decode(message["transient_id_hex"].as_str().expect("Python transient ID"))
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let recipient = PrivateIdentity::from_private_key_bytes(
+            &hex::decode(
+                message["recipient_private_key_hex"]
+                    .as_str()
+                    .expect("Python recipient private key"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let recipient_destination: [u8; 16] = hex::decode(
+            message["recipient_destination_hash_hex"]
+                .as_str()
+                .expect("Python recipient destination"),
+        )
+        .unwrap()
+        .try_into()
+        .unwrap();
+        let encrypted = std::fs::read(fixture_dir.join("encrypted_lxmf.bin")).unwrap();
+        let transfer = std::fs::read(fixture_dir.join("propagation_transfer.msgpack")).unwrap();
+        let get = std::fs::read(fixture_dir.join("message_get_request.msgpack")).unwrap();
+        let list = std::fs::read(fixture_dir.join("message_list_request.msgpack")).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("python-propagation.db");
+        let link = AddressHash::new([0xa1; 16]);
+
+        {
+            let store = Arc::new(StdMutex::new(MessagesStore::open(&path).unwrap()));
+            let endpoint = endpoint_with_store("python-fixture-node", store).await;
+            assert!(process(&endpoint, link, &transfer));
+            assert!(process(&endpoint, link, &transfer));
+            assert_eq!(endpoint.queue_snapshot().len(), 1);
+        }
+
+        {
+            let store = Arc::new(StdMutex::new(MessagesStore::open(&path).unwrap()));
+            let endpoint = endpoint_with_store("python-fixture-node", store).await;
+            assert_eq!(endpoint.queue_snapshot().len(), 1);
+            let fetched = decode(
+                &dispatch(
+                    &endpoint,
+                    GET_PATH,
+                    &get,
+                    Some(recipient.as_identity()),
+                    AddressHash::new(recipient_destination),
+                )
+                .await,
+            );
+            assert_eq!(fetched, rmpv::Value::Array(vec![rmpv::Value::Binary(encrypted)]));
+
+            let acknowledge = encode(rmpv::Value::Array(vec![
+                rmpv::Value::Nil,
+                rmpv::Value::Array(vec![rmpv::Value::Binary(transient_id.to_vec())]),
+            ]));
+            dispatch(
+                &endpoint,
+                GET_PATH,
+                &acknowledge,
+                Some(recipient.as_identity()),
+                AddressHash::new(recipient_destination),
+            )
+            .await;
+            assert!(endpoint.queue_snapshot().is_empty());
+        }
+
+        {
+            let store = Arc::new(StdMutex::new(MessagesStore::open(&path).unwrap()));
+            let endpoint = endpoint_with_store("python-fixture-node", store).await;
+            let repeated = decode(
+                &dispatch(
+                    &endpoint,
+                    GET_PATH,
+                    &list,
+                    Some(recipient.as_identity()),
+                    AddressHash::new(recipient_destination),
+                )
+                .await,
+            );
+            assert_eq!(repeated, rmpv::Value::Array(Vec::new()));
+            assert!(process(&endpoint, link, &transfer));
+            assert!(endpoint.queue_snapshot().is_empty());
+        }
+    }
+
+    #[tokio::test]
     async fn storage_commit_failure_withholds_authoritative_acceptance() {
         let endpoint = endpoint("storage-failure").await;
         endpoint.store.lock().unwrap().standard_propagation_fail_inserts_for_test().unwrap();

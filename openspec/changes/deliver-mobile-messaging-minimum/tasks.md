@@ -42,7 +42,7 @@
 - [x] 5.3 Add failing single-flight scheduler tests for initial connection, reconnect, foreground opportunity, cooldown, deadline, cancellation, and shutdown
 - [x] 5.4 Add failing Rust reducer and Dioxus component tests for selection persistence, stale node metadata, manual sync, automatic sync disclosure, upload versus delivery, progress, repeat sync, and recoverable failure
 - [x] 5.5 Implement client-only propagation controls without hosting, peering, capacity, or expiry administration
-- [ ] 5.6 Add local Python/Rust tests for upload, byte-identical replay, offline retrieval, acknowledgement, repeat sync, and daemon restart persistence
+- [x] 5.6 Add local Python/Rust tests for upload, byte-identical replay, offline retrieval, acknowledgement, repeat sync, and daemon restart persistence
 
 ## 6. Platform And RNode Coexistence
 <!-- specs: mobile-network-session, mobile-release-evidence -->
