@@ -395,6 +395,84 @@ pub struct MobileSendOutcome {
     pub draft_clear: MobileDraftClearDisposition,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileMessageEventKind {
+    New,
+    StatusChanged,
+    Delivered,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MobileMessageEvent {
+    pub generation: u64,
+    pub kind: MobileMessageEventKind,
+    pub message: styrene_ipc::types::MessageInfo,
+}
+
+pub struct MobileMessageSubscription {
+    generation: u64,
+    facade: Arc<DaemonFacade>,
+    receiver: tokio::sync::broadcast::Receiver<styrene_ipc::types::DaemonEvent>,
+}
+
+impl MobileMessageSubscription {
+    pub async fn recv(&mut self) -> Result<MobileMessageEvent, MobileMessagingFailure> {
+        loop {
+            match self.receiver.recv().await {
+                Ok(styrene_ipc::types::DaemonEvent::Message { kind, message }) => {
+                    let kind = match kind {
+                        styrene_ipc::types::MessageEventKind::New => MobileMessageEventKind::New,
+                        styrene_ipc::types::MessageEventKind::StatusChanged => {
+                            MobileMessageEventKind::StatusChanged
+                        }
+                        styrene_ipc::types::MessageEventKind::Delivered => {
+                            MobileMessageEventKind::Delivered
+                        }
+                        styrene_ipc::types::MessageEventKind::Failed => {
+                            MobileMessageEventKind::Failed
+                        }
+                        _ => continue,
+                    };
+                    let complete =
+                        DaemonMessaging::query_message(self.facade.as_ref(), &message.id)
+                            .await
+                            .map_err(mobile_messaging_failure)?
+                            .ok_or_else(|| MobileMessagingFailure {
+                                code: MobileMessagingFailureCode::NotFound,
+                                retryable: false,
+                                message: format!(
+                                    "message event projection not found: {}",
+                                    message.id
+                                ),
+                            })?;
+                    return Ok(MobileMessageEvent {
+                        generation: self.generation,
+                        kind,
+                        message: complete,
+                    });
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
+                    return Err(MobileMessagingFailure {
+                        code: MobileMessagingFailureCode::Unavailable,
+                        retryable: true,
+                        message: format!("mobile message event stream lagged by {dropped} events"),
+                    });
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    return Err(MobileMessagingFailure {
+                        code: MobileMessagingFailureCode::Unavailable,
+                        retryable: true,
+                        message: "mobile message event stream closed".into(),
+                    });
+                }
+            }
+        }
+    }
+}
+
 fn mobile_messaging_failure(error: styrene_ipc::IpcError) -> MobileMessagingFailure {
     use styrene_ipc::IpcError;
 
@@ -447,6 +525,7 @@ pub struct MobileNode {
     rnode: Option<RNodeBridge>,
     tcp_endpoint: Option<String>,
     generation: u64,
+    active_conversation: Arc<tokio::sync::RwLock<Option<String>>>,
 }
 
 struct MobileWorkers {
@@ -455,6 +534,7 @@ struct MobileWorkers {
     link: JoinHandle<()>,
     route: JoinHandle<()>,
     router_deadlines: JoinHandle<()>,
+    active_conversation: JoinHandle<()>,
     standard_propagation_sync:
         Option<crate::workers::standard_propagation::StandardPropagationSyncWorker>,
     aborted: bool,
@@ -486,6 +566,7 @@ impl MobileWorkers {
         self.link.abort();
         self.route.abort();
         self.router_deadlines.abort();
+        self.active_conversation.abort();
         if let Some(worker) = &self.standard_propagation_sync {
             worker.abort();
         }
@@ -501,12 +582,14 @@ impl MobileWorkers {
         self.link.abort();
         self.route.abort();
         self.router_deadlines.abort();
+        self.active_conversation.abort();
         self.aborted = true;
         self.inbound.wait().await;
         let _ = (&mut self.announce).await;
         let _ = (&mut self.link).await;
         let _ = (&mut self.route).await;
         let _ = (&mut self.router_deadlines).await;
+        let _ = (&mut self.active_conversation).await;
     }
 
     #[cfg(test)]
@@ -516,6 +599,7 @@ impl MobileWorkers {
             && self.link.is_finished()
             && self.route.is_finished()
             && self.router_deadlines.is_finished()
+            && self.active_conversation.is_finished()
             && self.standard_propagation_sync.as_ref().is_none_or(|worker| worker.is_finished())
     }
 
@@ -526,6 +610,7 @@ impl MobileWorkers {
         handles.push(self.link.abort_handle());
         handles.push(self.route.abort_handle());
         handles.push(self.router_deadlines.abort_handle());
+        handles.push(self.active_conversation.abort_handle());
         if let Some(worker) = &self.standard_propagation_sync {
             handles.push(worker.abort_handle());
         }
@@ -641,6 +726,34 @@ async fn compose_mobile_node(
         app_context.messaging().set_propagation_hub(hub_hash.clone(), app_context.fleet_arc());
     }
 
+    let active_conversation = Arc::new(tokio::sync::RwLock::new(None::<String>));
+    let mut message_events = app_context.events().subscribe_messages(&[]);
+    let active_conversation_worker = {
+        let active_conversation = Arc::clone(&active_conversation);
+        let messaging = app_context.messaging_arc();
+        tokio::spawn(async move {
+            loop {
+                match message_events.recv().await {
+                    Ok(styrene_ipc::types::DaemonEvent::Message {
+                        kind: styrene_ipc::types::MessageEventKind::New,
+                        message,
+                    }) => {
+                        let active = active_conversation.read().await.clone();
+                        if active.as_deref() == Some(message.source_hash.as_str()) {
+                            let _ = messaging.mark_read(&message.source_hash);
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        if let Some(active) = active_conversation.read().await.clone() {
+                            let _ = messaging.mark_read(&active);
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
+    };
     let inbound = crate::workers::inbound::spawn_inbound_worker_with_auto_reply(
         app_context.transport_arc(),
         app_context.messaging_arc(),
@@ -686,6 +799,7 @@ async fn compose_mobile_node(
         link,
         route,
         router_deadlines,
+        active_conversation: active_conversation_worker,
         standard_propagation_sync,
         aborted: false,
     };
@@ -747,6 +861,7 @@ async fn compose_mobile_node(
         rnode,
         tcp_endpoint,
         generation: 1,
+        active_conversation,
     })
 }
 
@@ -1319,6 +1434,24 @@ impl MobileNode {
             .map_err(mobile_messaging_failure)
     }
 
+    pub async fn set_active_conversation(
+        &self,
+        destination_hash: Option<&str>,
+    ) -> Result<(), MobileMessagingFailure> {
+        let Some(destination_hash) = destination_hash else {
+            *self.active_conversation.write().await = None;
+            return Ok(());
+        };
+        DaemonMessaging::mark_read(self.facade.as_ref(), destination_hash)
+            .await
+            .map_err(mobile_messaging_failure)?;
+        *self.active_conversation.write().await = Some(destination_hash.to_ascii_lowercase());
+        DaemonMessaging::mark_read(self.facade.as_ref(), destination_hash)
+            .await
+            .map_err(mobile_messaging_failure)?;
+        Ok(())
+    }
+
     pub async fn message(
         &self,
         message_id: &str,
@@ -1326,6 +1459,14 @@ impl MobileNode {
         DaemonMessaging::query_message(self.facade.as_ref(), message_id)
             .await
             .map_err(mobile_messaging_failure)
+    }
+
+    pub async fn subscribe_message_events(&self) -> MobileMessageSubscription {
+        MobileMessageSubscription {
+            generation: self.session_snapshot().await.generation,
+            facade: Arc::clone(&self.facade),
+            receiver: self.app_context.events().subscribe_messages(&[]),
+        }
     }
 
     /// Actual addresses bound by configured TCP server profiles.

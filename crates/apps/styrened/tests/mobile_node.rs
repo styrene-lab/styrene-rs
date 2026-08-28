@@ -10,6 +10,7 @@ use styrened::mobile::{
     MobilePeerAspect, MobilePeerSource, MobileSendDisposition, MobileSendRequest,
 };
 use styrened::startup_contract::{RuntimeKind, capabilities, components};
+use styrened::storage::messages::MessageRecord;
 
 fn config(root: &std::path::Path, hub_address: Option<String>) -> MobileConfig {
     MobileConfig {
@@ -578,6 +579,119 @@ async fn draft_revision_prevents_an_older_send_from_clearing_a_newer_edit() {
     );
     assert!(restored.draft(destination).await.unwrap().is_none());
     shutdown(restored).await;
+}
+
+#[tokio::test]
+async fn active_conversation_marks_new_inbound_messages_read_and_restores_unread_state() {
+    let root = tempfile::tempdir().unwrap();
+    let inactive_peer = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let active_peer = "ffffffffffffffffffffffffffffffff";
+    let node = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    node.set_active_conversation(Some(active_peer)).await.unwrap();
+
+    let inactive = MessageRecord {
+        id: "inactive-inbound".into(),
+        source: inactive_peer.into(),
+        destination: "00".repeat(16),
+        title: String::new(),
+        content: "unread while inactive".into(),
+        timestamp: 100,
+        direction: "in".into(),
+        fields: None,
+        receipt_status: None,
+        read: false,
+    };
+    let active = MessageRecord {
+        id: "active-inbound".into(),
+        source: active_peer.into(),
+        destination: "00".repeat(16),
+        title: String::new(),
+        content: "read while active".into(),
+        timestamp: 101,
+        direction: "in".into(),
+        fields: None,
+        receipt_status: None,
+        read: false,
+    };
+    assert!(node.app_context.messaging().accept_inbound_record(&inactive).unwrap());
+    node.app_context.events().emit_message_new(&inactive, None);
+    assert!(node.app_context.messaging().accept_inbound_record(&active).unwrap());
+    node.app_context.events().emit_message_new(&active, None);
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let conversations = node.list_conversations().await.unwrap();
+            let inactive_unread = conversations
+                .iter()
+                .find(|conversation| conversation.peer_hash == inactive_peer)
+                .map(|conversation| conversation.unread_count);
+            let active_unread = conversations
+                .iter()
+                .find(|conversation| conversation.peer_hash == active_peer)
+                .map(|conversation| conversation.unread_count);
+            if inactive_unread == Some(1) && active_unread == Some(0) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("active conversation read update timed out");
+    shutdown(node).await;
+
+    let restored = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let conversations = restored.list_conversations().await.unwrap();
+    assert_eq!(
+        conversations
+            .iter()
+            .find(|conversation| conversation.peer_hash == inactive_peer)
+            .map(|conversation| conversation.unread_count),
+        Some(1)
+    );
+    assert_eq!(
+        conversations
+            .iter()
+            .find(|conversation| conversation.peer_hash == active_peer)
+            .map(|conversation| conversation.unread_count),
+        Some(0)
+    );
+    shutdown(restored).await;
+}
+
+#[tokio::test]
+async fn message_events_are_generation_scoped_complete_canonical_projections() {
+    let root = tempfile::tempdir().unwrap();
+    let peer = "abababababababababababababababab";
+    let node = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let mut subscription = node.subscribe_message_events().await;
+    let generation = node.session_snapshot().await.generation;
+    let inbound = MessageRecord {
+        id: "event-inbound".into(),
+        source: peer.into(),
+        destination: "00".repeat(16),
+        title: String::new(),
+        content: "complete event projection".into(),
+        timestamp: 200,
+        direction: "in".into(),
+        fields: None,
+        receipt_status: None,
+        read: false,
+    };
+    assert!(node.app_context.messaging().accept_inbound_record(&inbound).unwrap());
+    node.app_context.events().emit_message_new(&inbound, None);
+
+    let event = tokio::time::timeout(Duration::from_secs(1), subscription.recv())
+        .await
+        .expect("message event timeout")
+        .expect("message event projection");
+
+    assert_eq!(event.generation, generation);
+    assert!(event.message.projection_complete);
+    assert_eq!(event.message.id, inbound.id);
+    assert_eq!(event.message.source_hash, peer);
+    assert_eq!(event.message.content, inbound.content);
+    assert!(!event.message.read);
+    shutdown(node).await;
 }
 
 #[tokio::test]
