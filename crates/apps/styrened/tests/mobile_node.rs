@@ -5,8 +5,9 @@ use styrene_ipc::traits::DaemonStatus;
 use styrene_ipc::types::InterfaceDetail;
 use styrened::mobile::{
     load_mobile_tcp_endpoint, persist_mobile_tcp_endpoint, IdentityBackend, MobileBearerKind,
-    MobileBearerState, MobileConfig, MobileConnectionPhase, MobileFailureCode,
-    MobileInterfaceConfig, MobileNode, MobilePeerAspect, MobilePeerSource,
+    MobileBearerState, MobileConfig, MobileConnectionPhase, MobileDeliveryMethod,
+    MobileDraftClearDisposition, MobileFailureCode, MobileInterfaceConfig, MobileNode,
+    MobilePeerAspect, MobilePeerSource, MobileSendDisposition, MobileSendRequest,
 };
 use styrened::startup_contract::{RuntimeKind, capabilities, components};
 
@@ -506,6 +507,77 @@ async fn local_announce_returns_typed_failure_without_transport() {
     assert_eq!(error.code(), MobileFailureCode::TransportUnavailable);
     assert!(error.retryable());
     shutdown(node).await;
+}
+
+#[tokio::test]
+async fn typed_direct_send_returns_and_restores_the_authoritative_failed_projection() {
+    let root = tempfile::tempdir().unwrap();
+    let destination = "cccccccccccccccccccccccccccccccc";
+    let node = MobileNode::boot(config(root.path(), None)).await.unwrap();
+
+    let outcome = node
+        .send_text(MobileSendRequest {
+            destination_hash: destination.into(),
+            content: "persist before dispatch".into(),
+            requested_method: MobileDeliveryMethod::Direct,
+            draft_revision: None,
+        })
+        .await
+        .expect("authoritative persisted send outcome");
+
+    assert_eq!(outcome.disposition, MobileSendDisposition::Failed);
+    assert_eq!(outcome.requested_method, MobileDeliveryMethod::Direct);
+    assert_eq!(outcome.actual_method, MobileDeliveryMethod::Direct);
+    assert_eq!(outcome.message.id, outcome.message_id);
+    assert_eq!(outcome.message.destination_hash, destination);
+    assert_eq!(outcome.message.correlation_id.as_deref(), Some(outcome.message_id.as_str()));
+    assert!(outcome.message.projection_complete);
+    assert!(outcome.terminal_failure.as_ref().is_some_and(|failure| failure.retryable));
+
+    let exact =
+        node.message(&outcome.message_id).await.expect("message query").expect("persisted message");
+    assert_eq!(exact, outcome.message);
+    assert_eq!(node.get_messages(destination, 10).await.unwrap().len(), 1);
+    let message_id = outcome.message_id;
+    shutdown(node).await;
+
+    let restored = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let exact = restored
+        .message(&message_id)
+        .await
+        .expect("restored message query")
+        .expect("restored persisted message");
+    assert_eq!(exact.id, message_id);
+    assert_eq!(exact.destination_hash, destination);
+    assert_eq!(restored.get_messages(destination, 10).await.unwrap().len(), 1);
+    shutdown(restored).await;
+}
+
+#[tokio::test]
+async fn draft_revision_prevents_an_older_send_from_clearing_a_newer_edit() {
+    let root = tempfile::tempdir().unwrap();
+    let destination = "dddddddddddddddddddddddddddddddd";
+    let node = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let submitted = node.set_draft(destination, "submitted text").await.unwrap();
+    let newer = node.set_draft(destination, "newer edit").await.unwrap();
+
+    assert_eq!(submitted.revision, 1);
+    assert_eq!(newer.revision, 2);
+    assert_eq!(
+        node.clear_draft_if_revision(destination, submitted.revision).await.unwrap(),
+        MobileDraftClearDisposition::Superseded
+    );
+    assert_eq!(node.draft(destination).await.unwrap(), Some(newer.clone()));
+    shutdown(node).await;
+
+    let restored = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    assert_eq!(restored.draft(destination).await.unwrap(), Some(newer.clone()));
+    assert_eq!(
+        restored.clear_draft_if_revision(destination, newer.revision).await.unwrap(),
+        MobileDraftClearDisposition::Cleared
+    );
+    assert!(restored.draft(destination).await.unwrap().is_none());
+    shutdown(restored).await;
 }
 
 #[tokio::test]

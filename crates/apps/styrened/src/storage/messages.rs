@@ -42,7 +42,8 @@ const CONVERSATION_SCHEMA_DDL: &str = "
         content TEXT NOT NULL
             CHECK(typeof(content) = 'text')
             CHECK(length(CAST(content AS BLOB)) <= 65536),
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)
     );";
 const PAGE_KEYS_SCHEMA_DDL: &str = "
     CREATE TABLE message_page_keys (
@@ -384,6 +385,7 @@ pub struct ConversationDraft {
     pub peer_hash: String,
     pub content: String,
     pub updated_at: i64,
+    pub revision: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -910,7 +912,12 @@ fn parse_draft_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConversationDraf
             ));
         }
     };
-    Ok(ConversationDraft { peer_hash: row.get(0)?, content, updated_at: row.get(2)? })
+    Ok(ConversationDraft {
+        peer_hash: row.get(0)?,
+        content,
+        updated_at: row.get(2)?,
+        revision: row.get(3)?,
+    })
 }
 
 #[derive(Clone)]
@@ -975,17 +982,22 @@ fn extract_conversation_rows(
         }
     }
 
-    let mut drafts =
-        std::collections::BTreeMap::<String, ((i64, Vec<u8>, Vec<u8>), ConversationDraft)>::new();
+    let mut drafts = std::collections::BTreeMap::<
+        String,
+        ((u64, i64, Vec<u8>, Vec<u8>), ConversationDraft),
+    >::new();
     if table_has_columns(conn, "conversation_drafts", &["peer_hash", "content", "updated_at"])? {
-        let mut statement = conn.prepare(
-            "SELECT CAST(peer_hash AS BLOB), CAST(content AS BLOB), updated_at
+        let has_revision = table_has_columns(conn, "conversation_drafts", &["revision"])?;
+        let revision = if has_revision { "revision" } else { "1" };
+        let mut statement = conn.prepare(&format!(
+            "SELECT CAST(peer_hash AS BLOB), CAST(content AS BLOB), updated_at, {revision}
              FROM conversation_drafts
              WHERE typeof(peer_hash) = 'text'
                AND typeof(content) = 'text'
                AND length(CAST(content AS BLOB)) <= 65536
-               AND typeof(updated_at) = 'integer'",
-        )?;
+               AND typeof(updated_at) = 'integer'{}",
+            if has_revision { " AND typeof(revision) = 'integer' AND revision >= 1" } else { "" }
+        ))?;
         let mut rows = statement.query([])?;
         while let Some(row) = rows.next()? {
             let peer_bytes: Vec<u8> = row.get(0)?;
@@ -999,10 +1011,12 @@ fn extract_conversation_rows(
                 continue;
             }
             let updated_at: i64 = row.get(2)?;
+            let revision: u64 = row.get(3)?;
             let canonical = peer.to_ascii_lowercase();
             let content = content.to_owned();
-            let authority = (updated_at, content_bytes, peer_bytes);
-            let candidate = ConversationDraft { peer_hash: canonical.clone(), content, updated_at };
+            let authority = (revision, updated_at, content_bytes, peer_bytes);
+            let candidate =
+                ConversationDraft { peer_hash: canonical.clone(), content, updated_at, revision };
             if drafts.get(&canonical).is_none_or(|(existing, _)| authority > *existing) {
                 drafts.insert(canonical, (authority, candidate));
             }
@@ -1038,9 +1052,9 @@ fn rebuild_conversation_schema(conn: &Connection) -> rusqlite::Result<()> {
     }
     for draft in drafts {
         conn.execute(
-            "INSERT INTO conversation_drafts (peer_hash, content, updated_at)
-             VALUES (?1, ?2, ?3)",
-            params![draft.peer_hash, draft.content, draft.updated_at],
+            "INSERT INTO conversation_drafts (peer_hash, content, updated_at, revision)
+              VALUES (?1, ?2, ?3, ?4)",
+            params![draft.peer_hash, draft.content, draft.updated_at, draft.revision],
         )?;
     }
     conn.execute_batch(
@@ -1089,6 +1103,7 @@ fn conversation_schema_is_valid(conn: &Connection) -> rusqlite::Result<bool> {
         ("peer_hash".into(), "TEXT".into(), 1, 1),
         ("content".into(), "TEXT".into(), 1, 0),
         ("updated_at".into(), "INTEGER".into(), 1, 0),
+        ("revision".into(), "INTEGER".into(), 1, 0),
     ];
     if state_columns != expected_state || draft_columns != expected_drafts {
         return Ok(false);
@@ -1129,7 +1144,9 @@ fn conversation_schema_is_valid(conn: &Connection) -> rusqlite::Result<bool> {
         && draft_sql.contains("content text not null")
         && draft_sql.contains("typeof(content) = 'text'")
         && draft_sql.contains("length(cast(content as blob)) <= 65536")
-        && draft_sql.contains("updated_at integer not null"))
+        && draft_sql.contains("updated_at integer not null")
+        && draft_sql.contains("revision integer not null default 1")
+        && draft_sql.contains("revision >= 1"))
 }
 
 fn table_exists(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
@@ -4165,24 +4182,31 @@ impl MessagesStore {
         }
         let updated_at = unix_now();
         transaction.execute(
-            "INSERT INTO conversation_drafts (peer_hash, content, updated_at)
-             VALUES (?1, ?2, ?3)
+            "INSERT INTO conversation_drafts (peer_hash, content, updated_at, revision)
+             VALUES (?1, ?2, ?3, 1)
              ON CONFLICT(peer_hash) DO UPDATE SET content = excluded.content,
-                 updated_at = excluded.updated_at",
+                 updated_at = excluded.updated_at,
+                 revision = conversation_drafts.revision + 1",
             params![peer_hash, content, updated_at],
+        )?;
+        let revision = transaction.query_row(
+            "SELECT revision FROM conversation_drafts WHERE peer_hash = ?1",
+            params![peer_hash],
+            |row| row.get(0),
         )?;
         transaction.commit()?;
         Ok(ConversationDraft {
             peer_hash: peer_hash.to_string(),
             content: content.to_string(),
             updated_at,
+            revision,
         })
     }
 
     pub fn draft(&self, peer_hash: &str) -> rusqlite::Result<Option<ConversationDraft>> {
         self.conn
             .query_row(
-                "SELECT peer_hash, content, updated_at FROM conversation_drafts WHERE peer_hash = ?1",
+                "SELECT peer_hash, content, updated_at, revision FROM conversation_drafts WHERE peer_hash = ?1",
                 params![peer_hash],
                 parse_draft_row,
             )
@@ -4194,6 +4218,17 @@ impl MessagesStore {
             .conn
             .execute("DELETE FROM conversation_drafts WHERE peer_hash = ?1", params![peer_hash])?
             > 0)
+    }
+
+    pub fn clear_draft_if_revision(
+        &self,
+        peer_hash: &str,
+        revision: u64,
+    ) -> rusqlite::Result<bool> {
+        Ok(self.conn.execute(
+            "DELETE FROM conversation_drafts WHERE peer_hash = ?1 AND revision = ?2",
+            params![peer_hash, revision],
+        )? > 0)
     }
 
     // ── Contacts ────────────────────────────────────────────────────────
@@ -6462,12 +6497,15 @@ mod tests {
         let peer = "01".repeat(16);
         let draft = store.set_draft(&peer, "private draft").unwrap();
         assert_eq!(draft.content, "private draft");
+        assert_eq!(draft.revision, 1);
         let replaced = store.set_draft(&peer, "replacement").unwrap();
+        assert_eq!(replaced.revision, 2);
         assert_eq!(store.draft(&peer).unwrap(), Some(replaced));
         assert!(store.search_messages("replacement", None, 10).unwrap().is_empty());
         assert!(store.list_conversations(false).unwrap().is_empty());
         assert_eq!(store.count_message_buckets().unwrap(), (0, 0));
-        assert!(store.clear_draft(&peer).unwrap());
+        assert!(!store.clear_draft_if_revision(&peer, draft.revision).unwrap());
+        assert!(store.clear_draft_if_revision(&peer, 2).unwrap());
         assert!(store.draft(&peer).unwrap().is_none());
 
         assert!(store.set_draft(&peer, &"é".repeat(MAX_DRAFT_BYTES / 2 + 1)).is_err());

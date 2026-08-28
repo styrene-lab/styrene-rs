@@ -39,6 +39,14 @@ pub trait DaemonMessaging: Send + Sync {
         Err(IpcError::not_implemented("clear_draft"))
     }
 
+    async fn clear_draft_if_revision(
+        &self,
+        _peer_hash: &str,
+        _revision: u64,
+    ) -> Result<MessagingDisposition, IpcError> {
+        Err(IpcError::not_implemented("clear_draft_if_revision"))
+    }
+
     /// Mark all messages from a peer as read. Returns count of messages marked.
     async fn mark_read(&self, peer_hash: &str) -> Result<u64, IpcError>;
 

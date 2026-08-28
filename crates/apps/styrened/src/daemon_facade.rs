@@ -666,6 +666,7 @@ impl DaemonMessaging for DaemonFacade {
         result.peer_hash = draft.peer_hash;
         result.content = draft.content;
         result.updated_at = draft.updated_at;
+        result.revision = draft.revision;
         Ok(result)
     }
 
@@ -676,6 +677,7 @@ impl DaemonMessaging for DaemonFacade {
             result.peer_hash = draft.peer_hash;
             result.content = draft.content;
             result.updated_at = draft.updated_at;
+            result.revision = draft.revision;
             result
         }))
     }
@@ -687,6 +689,26 @@ impl DaemonMessaging for DaemonFacade {
         } else {
             MessagingDisposition::Unchanged
         })
+    }
+
+    async fn clear_draft_if_revision(
+        &self,
+        peer_hash: &str,
+        revision: u64,
+    ) -> Result<MessagingDisposition, IpcError> {
+        self.require(Capability::MESSAGING_MANAGE)?;
+        Ok(
+            if self
+                .ctx
+                .messaging()
+                .clear_draft_if_revision(peer_hash, revision)
+                .map_err(messaging_error)?
+            {
+                MessagingDisposition::Applied
+            } else {
+                MessagingDisposition::Unchanged
+            },
+        )
     }
 
     async fn mark_read(&self, peer_hash: &str) -> Result<u64, IpcError> {
