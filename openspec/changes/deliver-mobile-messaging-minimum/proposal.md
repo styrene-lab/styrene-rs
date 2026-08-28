@@ -16,11 +16,12 @@ Python LXMF round trip against Brutus provides the propagation behavior target.
 This change adds persistent network and propagation-node configuration, truthful
 connection and discovery state, durable text conversation workflows, explicit
 delivery evidence, standard propagation upload and synchronization controls, and
-one shared cross-platform acceptance corpus. It delivers the behavior through
-the current SwiftUI and Compose reference hosts and the embedded Rust runtime.
+one shared cross-platform acceptance corpus. One Dioxus application and its
+Rust-owned embedded runtime deliver the behavior on iOS and Android.
 
-This change does not require a renderer migration. A later shared Dioxus client
-must satisfy the same behavioral scenarios. This change excludes mobile
+The existing SwiftUI and Compose applications are legacy reference surfaces,
+not implementation targets. They receive no new product state or workflow logic.
+This change excludes mobile
 propagation hosting, automatic propagation-node selection, attachments, Paper
 delivery, NomadNet parity, advanced route or link administration, fleet, tunnel,
 and Lab workflows.
@@ -39,5 +40,5 @@ must not claim RNode support until its applicable physical-device gates pass.
 - A selected standard LXMF propagation node persists across launch, supports
   manual and bounded automatic synchronization, and presents each retrieved
   message once.
-- The same deterministic state and behavior corpus passes against both native
-  hosts, followed by public-Brutus and applicable physical-device gates.
+- The same deterministic state and behavior corpus passes against the Dioxus iOS
+  and Android targets, followed by public-Brutus and applicable physical-device gates.
