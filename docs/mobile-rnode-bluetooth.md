@@ -79,7 +79,12 @@ A physical acceptance record must include:
 
 Do not claim physical BLE acceptance from a successful build, simulator run, advertisement, or GATT connection alone.
 
-An operator-observed iOS run reached approved-peripheral reconnect, RNode
-detection, radio configuration, and packet transmission. The run does not meet
-the complete acceptance-record requirements above. Physical iOS and Android BLE
+On 2026-08-28, a freshly installed signed build cold-launched on a physical
+iPhone running iOS 26.6.1. With the previously approved RNode powered, the
+Network screen reported connected and configured without manual approval or a
+manual node-start action. This verifies automatic approved-peripheral reconnect
+and configuration for the host task only.
+
+An earlier operator-observed iOS run also reached packet transmission. Neither
+run meets all acceptance-record requirements above. Physical iOS and Android BLE
 acceptance therefore remain open.
