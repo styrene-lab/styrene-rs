@@ -8,7 +8,8 @@ use styrened::mobile::{
     MobileBearerState, MobileConfig, MobileConnectionPhase, MobileDeliveryMethod,
     MobileDraftClearDisposition, MobileFailureCode, MobileInterfaceConfig, MobileMessageEvent,
     MobileMessageEventKind, MobileMessageSubscription, MobileNode, MobilePeerAspect,
-    MobilePeerSource, MobilePeerSubscription, MobileSendDisposition, MobileSendRequest,
+    MobilePeerSource, MobilePeerSubscription, MobileRetryDisposition, MobileSendDisposition,
+    MobileSendRequest,
 };
 use styrened::startup_contract::{RuntimeKind, capabilities, components};
 use styrened::storage::messages::MessageRecord;
@@ -552,6 +553,15 @@ async fn typed_direct_send_returns_and_restores_the_authoritative_failed_project
     assert_eq!(exact.id, message_id);
     assert_eq!(exact.destination_hash, destination);
     assert_eq!(restored.get_messages(destination, 10).await.unwrap().len(), 1);
+    let retry = restored.retry_text(&message_id).await.expect("restart-safe retry");
+    assert_eq!(retry.disposition, MobileRetryDisposition::Applied);
+    assert_eq!(retry.message.id, message_id);
+    assert_eq!(retry.message.correlation_id.as_deref(), Some(message_id.as_str()));
+    assert_eq!(
+        retry.message.attempts.iter().map(|attempt| attempt.number).collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(restored.get_messages(destination, 10).await.unwrap().len(), 1);
     shutdown(restored).await;
 }
 
@@ -877,17 +887,28 @@ async fn multiple_tcp_servers_report_listeners_in_profile_order() {
     shutdown(node).await;
 }
 
-async fn wait_for_peer_event(subscription: &mut MobilePeerSubscription, destination: &str) {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let event = subscription.recv().await.expect("peer event");
-            if event.peer.destination_hash == destination {
-                return;
+async fn wait_for_peer_event(
+    announcer: &MobileNode,
+    subscription: &mut MobilePeerSubscription,
+    destination: &str,
+) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        announcer.announce_outcome().await.expect("announce dispatch");
+        let observed = tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                let event = subscription.recv().await.expect("peer event");
+                if event.peer.destination_hash == destination {
+                    return;
+                }
             }
+        })
+        .await;
+        if observed.is_ok() {
+            return;
         }
-    })
-    .await
-    .expect("peer discovery event timed out");
+        assert!(tokio::time::Instant::now() < deadline, "peer discovery event timed out");
+    }
 }
 
 async fn wait_for_new_message_event(
@@ -930,10 +951,8 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
     let mut client_peers = client.subscribe_peer_events().await;
     let server_delivery = server.delivery_hash().unwrap();
     let client_delivery = client.delivery_hash().unwrap();
-    server.announce_outcome().await.unwrap();
-    client.announce_outcome().await.unwrap();
-    wait_for_peer_event(&mut server_peers, &client_delivery).await;
-    wait_for_peer_event(&mut client_peers, &server_delivery).await;
+    wait_for_peer_event(&server, &mut client_peers, &server_delivery).await;
+    wait_for_peer_event(&client, &mut server_peers, &client_delivery).await;
 
     let server_identity = server.app_context.identity().identity_hash().to_string();
     let client_identity = client.app_context.identity().identity_hash().to_string();

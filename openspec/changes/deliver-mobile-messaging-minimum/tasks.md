@@ -28,11 +28,11 @@
 ## 4. Durable Text Messaging
 <!-- specs: mobile-messaging -->
 
-- [ ] 4.1 Add failing embedded-runtime tests from mobile send request through canonical persistence, explicit method selection, attempt correlation, inbound persistence, unread state, and restart restoration
-- [ ] 4.2 Extend the typed Rust mobile session for drafts, requested and actual method, attempt, propagation upload, receipt evidence, retry, and typed failure
-- [ ] 4.3 Add failing Rust reducer and Dioxus component tests for draft revision races, empty live state, queued versus delivered rendering, inbound unread behavior, duplicate evidence, retry, and restart restoration
-- [ ] 4.4 Implement shared Dioxus conversation, composer, history, retry, and delivery-detail components using backend-owned state
-- [ ] 4.5 Add a deterministic two-identity text round trip proving one canonical outbound record, one inbound record, and exact correlation
+- [x] 4.1 Add failing embedded-runtime tests from mobile send request through canonical persistence, explicit method selection, attempt correlation, inbound persistence, unread state, and restart restoration
+- [x] 4.2 Extend the typed Rust mobile session for drafts, requested and actual method, attempt, propagation upload, receipt evidence, retry, and typed failure
+- [x] 4.3 Add failing Rust reducer and Dioxus component tests for draft revision races, empty live state, queued versus delivered rendering, inbound unread behavior, duplicate evidence, retry, and restart restoration
+- [x] 4.4 Implement shared Dioxus conversation, composer, history, retry, and delivery-detail components using backend-owned state
+- [x] 4.5 Add a deterministic two-identity text round trip proving one canonical outbound record, one inbound record, and exact correlation
 
 ## 5. Standard Propagation Client
 <!-- specs: mobile-propagation-client -->
