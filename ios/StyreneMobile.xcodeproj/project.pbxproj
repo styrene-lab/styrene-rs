@@ -12,7 +12,28 @@
 		100000000000000000000003 /* styrene_mobile_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* styrene_mobile_ffi.swift */; };
 		100000000000000000000004 /* StyreneMobileFFI.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 200000000000000000000005 /* StyreneMobileFFI.xcframework */; };
 		100000000000000000000005 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* Security.framework */; };
+		100000000000000000000006 /* MobileNodeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* MobileNodeClient.swift */; };
+		100000000000000000000007 /* StyreneNodeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* StyreneNodeModelTests.swift */; };
+		100000000000000000000008 /* CrossPlatformHubUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000B /* CrossPlatformHubUITests.swift */; };
+		100000000000000000000009 /* RNodeBluetoothController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000D /* RNodeBluetoothController.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A00000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 600000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 500000000000000000000001;
+			remoteInfo = StyreneMobile;
+		};
+		A00000000000000000000003 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 600000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 500000000000000000000001;
+			remoteInfo = StyreneMobile;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		200000000000000000000001 /* StyreneMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyreneMobileApp.swift; sourceTree = "<group>"; };
@@ -22,15 +43,35 @@
 		200000000000000000000005 /* StyreneMobileFFI.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = StyreneMobileFFI.xcframework; sourceTree = "<group>"; };
 		200000000000000000000006 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		200000000000000000000007 /* StyreneMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StyreneMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000008 /* MobileNodeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileNodeClient.swift; sourceTree = "<group>"; };
+		200000000000000000000009 /* StyreneNodeModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyreneNodeModelTests.swift; sourceTree = "<group>"; };
+		20000000000000000000000A /* StyreneMobileTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StyreneMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		20000000000000000000000B /* CrossPlatformHubUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrossPlatformHubUITests.swift; sourceTree = "<group>"; };
+		20000000000000000000000C /* StyreneMobileUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StyreneMobileUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		20000000000000000000000D /* RNodeBluetoothController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNodeBluetoothController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		300000000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		300000000000000000000002 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000004 /* StyreneMobileFFI.xcframework in Frameworks */,
 				100000000000000000000005 /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		300000000000000000000007 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -41,6 +82,8 @@
 			isa = PBXGroup;
 			children = (
 				400000000000000000000002 /* StyreneMobile */,
+				400000000000000000000006 /* StyreneMobileTests */,
+				400000000000000000000007 /* StyreneMobileUITests */,
 				400000000000000000000003 /* Generated */,
 				400000000000000000000004 /* Frameworks */,
 				400000000000000000000005 /* Products */,
@@ -52,6 +95,8 @@
 			children = (
 				200000000000000000000001 /* StyreneMobileApp.swift */,
 				200000000000000000000002 /* StyreneNodeModel.swift */,
+				200000000000000000000008 /* MobileNodeClient.swift */,
+				20000000000000000000000D /* RNodeBluetoothController.swift */,
 				200000000000000000000004 /* Info.plist */,
 			);
 			path = StyreneMobile;
@@ -78,8 +123,26 @@
 			isa = PBXGroup;
 			children = (
 				200000000000000000000007 /* StyreneMobile.app */,
+				20000000000000000000000A /* StyreneMobileTests.xctest */,
+				20000000000000000000000C /* StyreneMobileUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		400000000000000000000006 /* StyreneMobileTests */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000009 /* StyreneNodeModelTests.swift */,
+			);
+			path = StyreneMobileTests;
+			sourceTree = "<group>";
+		};
+		400000000000000000000007 /* StyreneMobileUITests */ = {
+			isa = PBXGroup;
+			children = (
+				20000000000000000000000B /* CrossPlatformHubUITests.swift */,
+			);
+			path = StyreneMobileUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -102,6 +165,42 @@
 			productReference = 200000000000000000000007 /* StyreneMobile.app */;
 			productType = "com.apple.product-type.application";
 		};
+		500000000000000000000002 /* StyreneMobileTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000003 /* Build configuration list for PBXNativeTarget "StyreneMobileTests" */;
+			buildPhases = (
+				300000000000000000000005 /* Sources */,
+				300000000000000000000004 /* Frameworks */,
+				300000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A00000000000000000000002 /* PBXTargetDependency */,
+			);
+			name = StyreneMobileTests;
+			productName = StyreneMobileTests;
+			productReference = 20000000000000000000000A /* StyreneMobileTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		500000000000000000000003 /* StyreneMobileUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000004 /* Build configuration list for PBXNativeTarget "StyreneMobileUITests" */;
+			buildPhases = (
+				300000000000000000000008 /* Sources */,
+				300000000000000000000007 /* Frameworks */,
+				300000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A00000000000000000000004 /* PBXTargetDependency */,
+			);
+			name = StyreneMobileUITests;
+			productName = StyreneMobileUITests;
+			productReference = 20000000000000000000000C /* StyreneMobileUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -115,6 +214,14 @@
 					500000000000000000000001 = {
 						CreatedOnToolsVersion = 26.6;
 						ProvisioningStyle = Automatic;
+					};
+					500000000000000000000002 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 500000000000000000000001;
+					};
+					500000000000000000000003 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 500000000000000000000001;
 					};
 				};
 			};
@@ -130,14 +237,30 @@
 			productRefGroup = 400000000000000000000005 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (
+				targets = (
 				500000000000000000000001 /* StyreneMobile */,
+				500000000000000000000002 /* StyreneMobileTests */,
+				500000000000000000000003 /* StyreneMobileUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		300000000000000000000006 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		300000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		300000000000000000000009 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -153,11 +276,42 @@
 			files = (
 				100000000000000000000001 /* StyreneMobileApp.swift in Sources */,
 				100000000000000000000002 /* StyreneNodeModel.swift in Sources */,
+				100000000000000000000006 /* MobileNodeClient.swift in Sources */,
+				100000000000000000000009 /* RNodeBluetoothController.swift in Sources */,
 				100000000000000000000003 /* styrene_mobile_ffi.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		300000000000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000007 /* StyreneNodeModelTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		300000000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000008 /* CrossPlatformHubUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A00000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 500000000000000000000001 /* StyreneMobile */;
+			targetProxy = A00000000000000000000001 /* PBXContainerItemProxy */;
+		};
+		A00000000000000000000004 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 500000000000000000000001 /* StyreneMobile */;
+			targetProxy = A00000000000000000000003 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		700000000000000000000001 /* Debug */ = {
@@ -259,6 +413,64 @@
 			};
 			name = Release;
 		};
+		700000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.styrene.mesh.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StyreneMobile.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/StyreneMobile";
+			};
+			name = Debug;
+		};
+		700000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.styrene.mesh.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StyreneMobile.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/StyreneMobile";
+			};
+			name = Release;
+		};
+		700000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.styrene.mesh.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = StyreneMobile;
+			};
+			name = Debug;
+		};
+		700000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = io.styrene.mesh.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = StyreneMobile;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -276,6 +488,24 @@
 			buildConfigurations = (
 				700000000000000000000003 /* Debug */,
 				700000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000003 /* Build configuration list for PBXNativeTarget "StyreneMobileTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				700000000000000000000005 /* Debug */,
+				700000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000004 /* Build configuration list for PBXNativeTarget "StyreneMobileUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				700000000000000000000007 /* Debug */,
+				700000000000000000000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
