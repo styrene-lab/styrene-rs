@@ -499,6 +499,8 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
             startup.record(startup_component::STANDARD_LXMF_PROPAGATION_SYNC_SCHEDULER);
             crate::workers::standard_propagation::spawn_standard_propagation_sync_worker(
                 app_context.messaging_arc(),
+                app_context.transport().subscribe_lifecycle(),
+                app_context.transport().is_connected(),
             )
         });
 
