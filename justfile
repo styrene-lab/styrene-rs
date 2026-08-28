@@ -371,7 +371,7 @@ android-deploy: build-android-ffi gen-kotlin
 # Install debug APK on connected device
 android-install: android-deploy
     adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-    @echo "Installed on device. Launch: adb shell am start -n io.styrene.mesh/.MainActivity"
+    @echo "Installed on device. Launch: adb shell am start -n io.styrene.mesh.debug/io.styrene.mesh.MainActivity"
 
 # Create the local ARM64 Android virtual device if it does not exist
 android-emulator-setup profile="medium_phone":
@@ -393,8 +393,8 @@ android-emulator-stop profile="medium_phone":
 android-emulator-install serial="emulator-5554":
     "{{ android_adb }}" -s "{{ serial }}" wait-for-device
     "{{ android_adb }}" -s "{{ serial }}" install -r android/app/build/outputs/apk/debug/app-debug.apk
-    "{{ android_adb }}" -s "{{ serial }}" shell am force-stop io.styrene.mesh
-    "{{ android_adb }}" -s "{{ serial }}" shell am start -W -n io.styrene.mesh/.MainActivity
+    "{{ android_adb }}" -s "{{ serial }}" shell am force-stop io.styrene.mesh.debug
+    "{{ android_adb }}" -s "{{ serial }}" shell am start -W -n io.styrene.mesh.debug/io.styrene.mesh.MainActivity
 
 # Print the running Android app's semantic UI tree
 android-emulator-ui serial="emulator-5554":

@@ -51,8 +51,11 @@ that were exercised.
 An operator-observed iOS Bluetooth run reached reconnect, configuration, and
 packet transmission. It lacks the complete committed acceptance record required
 for physical acceptance. Physical iOS, Android Bluetooth, and Android USB
-acceptance remain open. An Android phone is connected by USB, but ADB must be
-authorized on the phone before it can provide physical execution evidence.
+acceptance remain open. An Android 15 phone is connected and authorized for
+ADB. A current Kotlin-host debug package installs and cold-launches beside the
+existing differently signed application; this run did not rebuild the Rust
+native library. The phone was locked after launch, so interactive Bluetooth and
+USB acceptance remain open.
 
 ## RNode Evidence Closure
 
