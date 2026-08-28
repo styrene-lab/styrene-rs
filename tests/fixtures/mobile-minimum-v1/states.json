@@ -164,7 +164,7 @@
       ],
       "peers": [],
       "conversations": [
-        {"peer_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "unread_count": 0, "draft": ""}
+        {"peer_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "unread_count": 0, "draft": "", "draft_revision": 0}
       ],
       "messages": [
         {
@@ -222,7 +222,7 @@
       ],
       "peers": [],
       "conversations": [
-        {"peer_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "unread_count": 0, "draft": ""}
+        {"peer_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "unread_count": 0, "draft": "", "draft_revision": 0}
       ],
       "messages": [
         {
@@ -280,7 +280,7 @@
       ],
       "peers": [],
       "conversations": [
-        {"peer_hash": "cccccccccccccccccccccccccccccccc", "unread_count": 1, "draft": ""}
+        {"peer_hash": "cccccccccccccccccccccccccccccccc", "unread_count": 1, "draft": "", "draft_revision": 0}
       ],
       "messages": [
         {
