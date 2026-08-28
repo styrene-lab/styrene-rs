@@ -171,10 +171,10 @@
           "content": "Direct message awaiting evidence",
           "requested_method": "direct",
           "actual_method": "direct",
-          "persisted": true,
-          "transport_accepted": true,
-          "propagation_uploaded": false,
-          "delivered": false,
+          "persistence": "durable",
+          "transport": "accepted",
+          "propagation": "none",
+          "delivery": "pending",
           "correlation_id": "correlation-direct-1",
           "failure": null
         }
@@ -229,10 +229,10 @@
           "content": "Stored on Brutus",
           "requested_method": "propagated",
           "actual_method": "propagated",
-          "persisted": true,
-          "transport_accepted": true,
-          "propagation_uploaded": true,
-          "delivered": false,
+          "persistence": "durable",
+          "transport": "accepted",
+          "propagation": "uploaded",
+          "delivery": "pending",
           "correlation_id": "correlation-propagated-1",
           "failure": null
         }
@@ -287,10 +287,10 @@
           "content": "Retrieved exactly once",
           "requested_method": "propagated",
           "actual_method": "propagated",
-          "persisted": true,
-          "transport_accepted": true,
-          "propagation_uploaded": false,
-          "delivered": true,
+          "persistence": "durable",
+          "transport": "accepted",
+          "propagation": "none",
+          "delivery": "delivered",
           "correlation_id": "correlation-inbound-1",
           "failure": null
         }
