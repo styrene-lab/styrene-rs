@@ -49,6 +49,8 @@ spec:
               value: /var/lib/styrene
             - name: LXMF_DISPLAY_NAME
               value: "Styrene Community Hub"
+            - name: STYRENE_PROPAGATION_NODE_NAME
+              value: "Styrene Community Hub"
           volumeMounts:
             - name: data
               mountPath: /var/lib/styrene

@@ -550,10 +550,21 @@ hub-push:
 # Build and push hub in one step (fast path)
 hub-ship: hub-build-fast hub-push hub-deploy
 
-# Deploy hub to k3s cluster (applies all manifests)
-hub-deploy:
-    KUBECONFIG=~/.kube/brutus.yaml kubectl apply -k deploy/k3s/
-    KUBECONFIG=~/.kube/brutus.yaml kubectl -n styrene rollout restart deployment/styrene-hub
+# Deploy an immutable hub image to k3s and wait for readiness
+hub-deploy tag=hub_tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rendered="$(mktemp "${TMPDIR:-/tmp}/styrene-hub.XXXXXX.yaml")"
+    trap 'rm -f "$rendered"' EXIT
+    kubectl kustomize deploy/k3s/ \
+        | sed "s#{{ hub_image }}:latest#{{ hub_image }}:{{ tag }}#g" \
+        > "$rendered"
+    if [[ "$(grep -c 'image: {{ hub_image }}:{{ tag }}' "$rendered")" -ne 2 ]]; then
+        echo "expected pinned hub image in both init and runtime containers" >&2
+        exit 1
+    fi
+    KUBECONFIG=~/.kube/brutus.yaml kubectl apply -f "$rendered"
+    KUBECONFIG=~/.kube/brutus.yaml kubectl -n styrene rollout status deployment/styrene-hub --timeout=180s
 
 # Show hub status on the cluster
 hub-status:
