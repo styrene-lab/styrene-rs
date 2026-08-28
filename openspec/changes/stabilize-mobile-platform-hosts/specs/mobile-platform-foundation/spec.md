@@ -36,6 +36,18 @@ When a compatible USB RNode is attached
 Then Android does not replace Bluetooth automatically
 And USB remains available through an explicit fallback action
 
+#### Scenario: BLE notifications and writes cross platform boundaries
+Given a compatible RNode exposes the Nordic UART Service
+When the host receives fragmented notifications and sends a frame larger than one platform write
+Then one persistent KISS decoder reconstructs the inbound frames
+And the host serializes write-with-response chunks within the negotiated write limit
+
+#### Scenario: Packet channel detaches from an approved bearer
+Given an approved Bluetooth RNode is connected to a packet channel
+When the embedded packet channel detaches
+Then the host pauses packet pumping without clearing approval
+And the host reconnects only that approved peripheral when a packet channel becomes available
+
 ### Requirement: Bearer interruption preserves bounded outbound work
 
 A temporary mobile bearer interruption MUST NOT discard accepted outbound
@@ -53,6 +65,12 @@ When another packet is offered
 Then the host returns an explicit capacity outcome
 And does not allocate an unbounded queue
 
+#### Scenario: Bearer write fails during retained delivery
+Given the host retained an accepted outbound packet for the current packet channel
+When a serialized bearer write fails or the bearer disconnects
+Then the packet remains pending for the replacement bearer session
+And successful replay releases that packet once
+
 ### Requirement: Mobile evidence identifies its execution boundary
 
 Validation records MUST distinguish simulator, emulator, physical iOS, physical
@@ -64,6 +82,12 @@ Given Android tests pass without a connected physical Android device
 When mobile validation is reported
 Then the report identifies Android as build, unit, and emulator validated
 And does not claim physical Android Bluetooth or USB success
+
+#### Scenario: Physical RNode acceptance is recorded
+Given a physical mobile device and compatible RNode complete an acceptance run
+When the result is retained as release evidence
+Then the record identifies the device class, OS, RNode board and firmware, NUS properties, write limit, radio profile, jurisdiction, correlation, packet counts, deadlines, reconnect result, and terminal outcome
+And generated artifacts, device credentials, and raw runtime logs remain outside source control
 
 #### Scenario: Generated artifacts are produced
 Given a mobile build generates bindings, libraries, packages, or runtime logs

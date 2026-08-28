@@ -38,6 +38,12 @@ When release support is reported
 Then TCP messaging support can be reported for that platform
 And RNode support remains explicitly unverified
 
+#### Scenario: Physical RNode support is claimed
+Given a reference host has complete physical RNode acceptance evidence
+When the Dioxus release candidate repeats the applicable scenario on that platform
+Then the evidence records NUS properties, MTU or write limit, radio profile, jurisdiction, bidirectional correlation, packet counts, interruption, retained replay, reconnect, and terminal outcome
+And the claim applies only to the exercised platform, bearer, RNode board, and firmware class
+
 #### Scenario: Propagation acceptance is evaluated
 Given the release candidate selects Brutus as its standard propagation node
 When upload, restart persistence, retrieval, acknowledgement, and repeat sync complete
