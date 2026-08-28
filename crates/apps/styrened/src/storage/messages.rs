@@ -64,6 +64,7 @@ const PAGE_METADATA_SCHEMA_DDL: &str = "
             CHECK(typeof(cursor_secret) = 'blob' AND length(cursor_secret) = 32)
     );";
 const MESSAGE_INSPECTION_MIGRATION: &str = "2026-08-25-authoritative-message-inspection-v13";
+const CANONICAL_OUTBOUND_MIGRATION: &str = "2026-08-28-canonical-outbound-retry-v14";
 const CANONICAL_INSPECTION_TABLE_SQL: &str = "CREATE TABLE canonical_inbound_inspection (
     message_id TEXT PRIMARY KEY REFERENCES canonical_inbound_messages(message_id) ON DELETE CASCADE CHECK(typeof(message_id) = 'text'),
     stamp_target INTEGER CHECK(stamp_target IS NULL OR (typeof(stamp_target) = 'integer' AND stamp_target BETWEEN 0 AND 254))
@@ -139,6 +140,18 @@ fn message_inspection_schema_is_valid(conn: &Connection) -> rusqlite::Result<boo
 }
 
 fn ensure_message_inspection_schema(conn: &mut Connection) -> rusqlite::Result<()> {
+    let superseded: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = ?1)",
+        params![CANONICAL_OUTBOUND_MIGRATION],
+        |row| row.get(0),
+    )?;
+    if superseded {
+        return canonical_outbound_schema_is_valid(conn)?.then_some(()).ok_or_else(|| {
+            rusqlite::Error::InvalidParameterName(
+                "v14 canonical outbound schema attestation failed".into(),
+            )
+        });
+    }
     let applied: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = ?1)",
         params![MESSAGE_INSPECTION_MIGRATION],
@@ -191,6 +204,128 @@ fn ensure_message_inspection_schema(conn: &mut Connection) -> rusqlite::Result<(
     transaction.execute(
         "INSERT INTO schema_migrations (id, applied_at) VALUES (?1, CAST(strftime('%s','now') AS INTEGER))",
         params![MESSAGE_INSPECTION_MIGRATION],
+    )?;
+    transaction.commit()
+}
+
+fn canonical_outbound_schema_is_valid(conn: &Connection) -> rusqlite::Result<bool> {
+    for (kind, name) in [
+        ("table", "canonical_outbound_messages"),
+        ("trigger", "canonical_outbound_messages_immutable"),
+        ("table", "outbound_evidence"),
+        ("table", "message_delivery_evidence"),
+        ("index", "idx_outbound_evidence_message"),
+        ("index", "idx_message_delivery_evidence_message"),
+        ("index", "idx_message_delivery_evidence_terminal"),
+    ] {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2)",
+            params![kind, name],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Ok(false);
+        }
+    }
+    for table in ["canonical_outbound_messages", "outbound_evidence", "message_delivery_evidence"] {
+        let strict: Option<i64> = conn
+            .query_row(
+                "SELECT strict FROM pragma_table_list WHERE schema = 'main' AND name = ?1",
+                params![table],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if strict != Some(1) {
+            return Ok(false);
+        }
+    }
+    let attempt_columns: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('outbound_evidence')
+         WHERE name = 'attempt_number' AND type = 'INTEGER' AND \"notnull\" = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(attempt_columns == 1)
+}
+
+fn ensure_canonical_outbound_schema(conn: &mut Connection) -> rusqlite::Result<()> {
+    let applied: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = ?1)",
+        params![CANONICAL_OUTBOUND_MIGRATION],
+        |row| row.get(0),
+    )?;
+    if applied {
+        return canonical_outbound_schema_is_valid(conn)?.then_some(()).ok_or_else(|| {
+            rusqlite::Error::InvalidParameterName(
+                "v14 canonical outbound schema attestation failed".into(),
+            )
+        });
+    }
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    transaction.execute_batch(
+        "DROP INDEX idx_outbound_evidence_message;
+         DROP INDEX idx_message_delivery_evidence_message;
+         DROP INDEX idx_message_delivery_evidence_terminal;
+         ALTER TABLE outbound_evidence RENAME TO outbound_evidence_v13;
+         ALTER TABLE message_delivery_evidence RENAME TO message_delivery_evidence_v13;
+         CREATE TABLE outbound_evidence (
+             evidence_id TEXT PRIMARY KEY,
+             message_id TEXT NOT NULL,
+             attempt_number INTEGER NOT NULL CHECK(attempt_number BETWEEN 1 AND 32),
+             kind TEXT NOT NULL CHECK(kind IN ('packet','resource')),
+             FOREIGN KEY(message_id, attempt_number)
+                 REFERENCES outbound_attempts(message_id, attempt_number) ON DELETE CASCADE
+         ) STRICT;
+         CREATE TABLE message_delivery_evidence (
+             evidence_hash TEXT NOT NULL CHECK(typeof(evidence_hash) = 'text' AND length(evidence_hash) = 64 AND evidence_hash = lower(evidence_hash) AND evidence_hash NOT GLOB '*[^0-9a-f]*'),
+             message_id TEXT NOT NULL REFERENCES outbound_routes(message_id) ON DELETE CASCADE CHECK(typeof(message_id) = 'text'),
+             kind TEXT NOT NULL CHECK(typeof(kind) = 'text' AND kind IN ('packet_receipt','resource_completion')),
+             representation TEXT NOT NULL CHECK(typeof(representation) = 'text' AND representation IN ('packet','resource')),
+             state TEXT NOT NULL CHECK(typeof(state) = 'text' AND state IN ('tracked','completed','failed','cancelled')),
+             outcome TEXT CHECK(outcome IS NULL OR (typeof(outcome) = 'text' AND length(CAST(outcome AS BLOB)) <= 1024)),
+             attempt_number INTEGER NOT NULL CHECK(typeof(attempt_number) = 'integer' AND attempt_number BETWEEN 1 AND 32),
+             correlation_id TEXT CHECK(correlation_id IS NULL OR (typeof(correlation_id) = 'text' AND length(CAST(correlation_id AS BLOB)) BETWEEN 1 AND 128)),
+             observed_at INTEGER NOT NULL CHECK(typeof(observed_at) = 'integer' AND observed_at >= 0),
+             terminal_at INTEGER CHECK(terminal_at IS NULL OR (typeof(terminal_at) = 'integer' AND terminal_at >= observed_at)),
+             transferred_bytes INTEGER CHECK(transferred_bytes IS NULL OR (typeof(transferred_bytes) = 'integer' AND transferred_bytes >= 0)),
+             total_bytes INTEGER CHECK(total_bytes IS NULL OR (typeof(total_bytes) = 'integer' AND total_bytes >= 0)),
+             progress INTEGER CHECK(progress IS NULL OR (typeof(progress) = 'integer' AND progress BETWEEN 0 AND 100)),
+             PRIMARY KEY(message_id, attempt_number, evidence_hash),
+             FOREIGN KEY(message_id, attempt_number)
+                 REFERENCES outbound_attempts(message_id, attempt_number) ON DELETE CASCADE,
+             CHECK((kind = 'packet_receipt' AND representation = 'packet') OR (kind = 'resource_completion' AND representation = 'resource')),
+             CHECK((state = 'tracked' AND terminal_at IS NULL) OR (state != 'tracked' AND terminal_at IS NOT NULL)),
+             CHECK((representation = 'packet' AND transferred_bytes IS NULL AND total_bytes IS NULL AND progress IS NULL) OR (representation = 'resource' AND ((transferred_bytes IS NULL AND total_bytes IS NULL AND progress IS NULL) OR (transferred_bytes IS NOT NULL AND total_bytes IS NOT NULL AND progress IS NOT NULL AND transferred_bytes <= total_bytes))))
+         ) STRICT;
+         INSERT INTO message_delivery_evidence SELECT * FROM message_delivery_evidence_v13;
+         INSERT INTO outbound_evidence (evidence_id, message_id, attempt_number, kind)
+             SELECT o.evidence_id, o.message_id, e.attempt_number, o.kind
+             FROM outbound_evidence_v13 o
+             JOIN message_delivery_evidence_v13 e
+               ON e.evidence_hash = o.evidence_id AND e.message_id = o.message_id;
+         DROP TABLE outbound_evidence_v13;
+         DROP TABLE message_delivery_evidence_v13;
+         CREATE INDEX idx_outbound_evidence_message
+             ON outbound_evidence(message_id, attempt_number);
+         CREATE INDEX idx_message_delivery_evidence_message
+             ON message_delivery_evidence(message_id, attempt_number, observed_at DESC, evidence_hash);
+         CREATE INDEX idx_message_delivery_evidence_terminal
+             ON message_delivery_evidence(terminal_at) WHERE terminal_at IS NOT NULL;
+         CREATE TABLE canonical_outbound_messages (
+             message_id TEXT PRIMARY KEY REFERENCES outbound_routes(message_id) ON DELETE CASCADE
+                 CHECK(typeof(message_id) = 'text'),
+             wire BLOB NOT NULL CHECK(typeof(wire) = 'blob' AND length(wire) BETWEEN 1 AND 4194304)
+         ) STRICT;
+         CREATE TRIGGER canonical_outbound_messages_immutable
+         BEFORE UPDATE ON canonical_outbound_messages
+         BEGIN
+             SELECT RAISE(ABORT, 'canonical outbound LXMF wire is immutable');
+         END;",
+    )?;
+    transaction.execute(
+        "INSERT INTO schema_migrations (id, applied_at)
+         VALUES (?1, CAST(strftime('%s','now') AS INTEGER))",
+        params![CANONICAL_OUTBOUND_MIGRATION],
     )?;
     transaction.commit()
 }
@@ -2712,6 +2847,28 @@ impl MessagesStore {
         transfer_total: usize,
         propagation: Option<&crate::storage::standard_propagation::StandardPropagationClientJob>,
     ) -> rusqlite::Result<()> {
+        self.insert_outbound_message_with_canonical_wire(
+            message,
+            route,
+            reservation,
+            attachments,
+            transfer_total,
+            propagation,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_outbound_message_with_canonical_wire(
+        &self,
+        message: &MessageRecord,
+        route: &OutboundRouteRecord,
+        reservation: Option<&LxmfTicketOfferReservation>,
+        attachments: &[AttachmentBlobInput],
+        transfer_total: usize,
+        propagation: Option<&crate::storage::standard_propagation::StandardPropagationClientJob>,
+        canonical_wire: Option<&[u8]>,
+    ) -> rusqlite::Result<()> {
         let transaction = self.conn.unchecked_transaction()?;
         let fields_json =
             message.fields.as_ref().map(|value| serde_json::to_string(value).unwrap_or_default());
@@ -2765,6 +2922,19 @@ impl MessagesStore {
             "INSERT INTO outbound_message_inspection (message_id, terminal_detail) VALUES (?1, NULL)",
             params![&route.message_id],
         )?;
+        if let Some(wire) = canonical_wire {
+            if lxmf::inbound_decode::outbound_message_id_hex(wire).as_deref()
+                != Some(message.id.as_str())
+            {
+                return Err(rusqlite::Error::InvalidParameterName(
+                    "canonical outbound LXMF wire does not match message ID".into(),
+                ));
+            }
+            transaction.execute(
+                "INSERT INTO canonical_outbound_messages (message_id, wire) VALUES (?1, ?2)",
+                params![&message.id, wire],
+            )?;
+        }
         if let Some(propagation) = propagation {
             if route.actual_method != "propagated" || propagation.message_id != message.id {
                 return Err(rusqlite::Error::InvalidParameterName(
@@ -2804,6 +2974,16 @@ impl MessagesStore {
             )?;
         }
         transaction.commit()
+    }
+
+    pub fn canonical_outbound_wire(&self, message_id: &str) -> rusqlite::Result<Option<Vec<u8>>> {
+        self.conn
+            .query_row(
+                "SELECT wire FROM canonical_outbound_messages WHERE message_id = ?1",
+                params![message_id],
+                |row| row.get(0),
+            )
+            .optional()
     }
 
     pub fn outbound_route(
@@ -2858,13 +3038,12 @@ impl MessagesStore {
         }
         let transaction = self.conn.unchecked_transaction()?;
         let count = transaction.execute(
-            "INSERT INTO outbound_evidence (evidence_id, message_id, kind)
-             SELECT ?1, ?2, ?3 WHERE EXISTS (
-                  SELECT 1 FROM outbound_routes WHERE message_id = ?2
+            "INSERT INTO outbound_evidence (evidence_id, message_id, attempt_number, kind)
+             SELECT ?1, ?2, attempt_count, ?3 FROM outbound_routes WHERE message_id = ?2
                     AND representation = ?3
                     AND attempt_count BETWEEN 1 AND 32
                     AND state NOT IN ('delivered', 'failed', 'cancelled', 'expired', 'rejected')
-             ) ON CONFLICT(evidence_id) DO NOTHING",
+             ON CONFLICT(evidence_id) DO NOTHING",
             params![evidence_id, message_id, kind],
         )?;
         if count > 0 {
@@ -2883,24 +3062,28 @@ impl MessagesStore {
             )?;
             transaction.execute(
                 "DELETE FROM outbound_evidence
-                 WHERE evidence_id IN (
-                     SELECT evidence_hash FROM message_delivery_evidence WHERE message_id = ?1
-                     ORDER BY observed_at DESC, evidence_hash DESC LIMIT -1 OFFSET ?2
+                 WHERE (message_id, attempt_number, evidence_id) IN (
+                     SELECT message_id, attempt_number, evidence_hash
+                     FROM message_delivery_evidence WHERE message_id = ?1
+                     ORDER BY observed_at DESC, attempt_number DESC, evidence_hash DESC
+                     LIMIT -1 OFFSET ?2
                  )",
                 params![message_id, MAX_DELIVERY_EVIDENCE_PER_MESSAGE as i64],
             )?;
             transaction.execute(
                 "DELETE FROM message_delivery_evidence
-                 WHERE message_id = ?1 AND evidence_hash IN (
-                     SELECT evidence_hash FROM message_delivery_evidence WHERE message_id = ?1
-                     ORDER BY observed_at DESC, evidence_hash DESC LIMIT -1 OFFSET ?2
+                 WHERE (message_id, attempt_number, evidence_hash) IN (
+                     SELECT message_id, attempt_number, evidence_hash
+                     FROM message_delivery_evidence WHERE message_id = ?1
+                     ORDER BY observed_at DESC, attempt_number DESC, evidence_hash DESC
+                     LIMIT -1 OFFSET ?2
                  )",
                 params![message_id, MAX_DELIVERY_EVIDENCE_PER_MESSAGE as i64],
             )?;
             transaction.execute(
                 "DELETE FROM outbound_evidence
-                 WHERE evidence_id IN (
-                     SELECT evidence_hash FROM message_delivery_evidence
+                 WHERE (message_id, attempt_number, evidence_id) IN (
+                     SELECT message_id, attempt_number, evidence_hash FROM message_delivery_evidence
                      WHERE terminal_at IS NOT NULL
                        AND terminal_at <= CAST(strftime('%s','now') AS INTEGER) - ?1
                  )",
@@ -2999,8 +3182,11 @@ impl MessagesStore {
         Ok(self.conn.execute(
             "UPDATE message_delivery_evidence
              SET transferred_bytes = ?2, total_bytes = ?3, progress = ?4
-             WHERE evidence_hash = ?1 AND kind = 'resource_completion'
-               AND representation = 'resource' AND state = 'tracked'",
+             WHERE kind = 'resource_completion' AND representation = 'resource'
+               AND state = 'tracked' AND (message_id, attempt_number, evidence_hash) = (
+                   SELECT message_id, attempt_number, evidence_id FROM outbound_evidence
+                   WHERE evidence_id = ?1
+               )",
             params![evidence_hash, transferred, total, progress],
         )? > 0)
     }
@@ -3012,7 +3198,8 @@ impl MessagesStore {
         let mut statement = self.conn.prepare(
             "SELECT r.message_id, e.evidence_id
              FROM outbound_routes r
-             JOIN outbound_evidence e ON e.message_id = r.message_id AND e.kind = 'resource'
+             JOIN outbound_evidence e ON e.message_id = r.message_id
+                 AND e.attempt_number = r.attempt_count AND e.kind = 'resource'
              WHERE r.deadline_unix_ms <= ?1
                AND r.state NOT IN ('delivered', 'failed', 'cancelled', 'expired', 'rejected')
              ORDER BY r.message_id, e.rowid DESC",
@@ -3046,6 +3233,61 @@ impl MessagesStore {
         transaction.execute(
             "UPDATE attachment_transfers SET state = 'transferring', updated_at = ?2
              WHERE message_id = ?1 AND state = 'queued'",
+            params![&attempt.message_id, attempt.started_unix_ms / 1000],
+        )?;
+        transaction.commit()?;
+        Ok(true)
+    }
+
+    pub fn begin_outbound_retry(&self, attempt: &OutboundAttemptRecord) -> rusqlite::Result<bool> {
+        let transaction = self.conn.unchecked_transaction()?;
+        let previous_attempt = attempt.attempt_number.saturating_sub(1);
+        let changed = transaction.execute(
+            "UPDATE outbound_routes
+             SET state = 'sending', attempt_count = ?2, deadline_unix_ms = ?3
+             WHERE message_id = ?1 AND attempt_count = ?4
+               AND (state IN ('failed', 'expired') OR (
+                   state = 'queued' AND EXISTS (
+                       SELECT 1 FROM outbound_attempts
+                       WHERE message_id = ?1 AND attempt_number = ?4 AND state = 'interrupted'
+                   )
+               ))
+               AND EXISTS (SELECT 1 FROM canonical_outbound_messages WHERE message_id = ?1)",
+            params![
+                &attempt.message_id,
+                attempt.attempt_number,
+                attempt.deadline_unix_ms,
+                previous_attempt,
+            ],
+        )?;
+        if changed == 0 {
+            return Ok(false);
+        }
+        transaction.execute(
+            "INSERT INTO outbound_attempts
+             (message_id, attempt_number, started_unix_ms, deadline_unix_ms, state)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                &attempt.message_id,
+                attempt.attempt_number,
+                attempt.started_unix_ms,
+                attempt.deadline_unix_ms,
+                &attempt.state,
+            ],
+        )?;
+        transaction.execute(
+            "UPDATE messages SET receipt_status = 'sending: retry' WHERE id = ?1",
+            params![&attempt.message_id],
+        )?;
+        transaction.execute(
+            "UPDATE outbound_message_inspection SET terminal_detail = NULL WHERE message_id = ?1",
+            params![&attempt.message_id],
+        )?;
+        transaction.execute(
+            "UPDATE attachment_transfers
+             SET state = 'transferring', transferred = 0, checksum_verified = 0, error = NULL,
+                 updated_at = ?2
+             WHERE message_id = ?1",
             params![&attempt.message_id, attempt.started_unix_ms / 1000],
         )?;
         transaction.commit()?;
@@ -3119,8 +3361,9 @@ impl MessagesStore {
                         AND a.attempt_number = e.attempt_number
                     WHERE e.evidence_hash = ?1 AND e.message_id = ?2
                       AND e.kind = ?3 AND e.representation = ?4 AND e.state = 'tracked'
-                      AND o.message_id = e.message_id AND o.kind = ?4
-                      AND r.representation = ?4
+                      AND o.message_id = e.message_id
+                      AND o.attempt_number = e.attempt_number AND o.kind = ?4
+                      AND r.representation = ?4 AND r.attempt_count = e.attempt_number
                 )",
                 params![evidence_hash, message_id, stored_kind, evidence_kind],
                 |row| row.get(0),
@@ -3204,14 +3447,18 @@ impl MessagesStore {
                      SET state = ?4, outcome = ?5, terminal_at = ?6,
                          transferred_bytes = CASE WHEN representation = 'resource' AND ?4 = 'completed' THEN COALESCE(total_bytes, transferred_bytes) ELSE transferred_bytes END,
                          progress = CASE WHEN representation = 'resource' AND ?4 = 'completed' AND total_bytes IS NOT NULL THEN 100 ELSE progress END
-                     WHERE evidence_hash = ?1 AND message_id = ?2 AND kind = ?3 AND state = 'tracked'",
+                      WHERE evidence_hash = ?1 AND message_id = ?2 AND kind = ?3
+                        AND attempt_number = (SELECT attempt_number FROM outbound_evidence WHERE evidence_id = ?1)
+                        AND state = 'tracked'",
                     params![evidence_hash, message_id, stored_kind, exact_state, terminal_detail, now],
                 )?;
                 transaction.execute(
                     "UPDATE message_delivery_evidence
                      SET state = CASE WHEN ?2 = 'cancelled' THEN 'cancelled' ELSE 'failed' END,
                          outcome = 'message terminalized by different exact evidence', terminal_at = ?3
-                     WHERE message_id = ?1 AND evidence_hash != ?4 AND state = 'tracked'",
+                      WHERE message_id = ?1
+                        AND attempt_number = (SELECT attempt_count FROM outbound_routes WHERE message_id = ?1)
+                        AND evidence_hash != ?4 AND state = 'tracked'",
                     params![message_id, state, now, evidence_hash],
                 )?;
             } else {
@@ -3219,7 +3466,9 @@ impl MessagesStore {
                 transaction.execute(
                     "UPDATE message_delivery_evidence
                      SET state = ?2, outcome = ?3, terminal_at = ?4
-                     WHERE message_id = ?1 AND state = 'tracked'",
+                      WHERE message_id = ?1
+                        AND attempt_number = (SELECT attempt_count FROM outbound_routes WHERE message_id = ?1)
+                        AND state = 'tracked'",
                     params![message_id, evidence_state, terminal_detail, now],
                 )?;
             }
@@ -3270,8 +3519,8 @@ impl MessagesStore {
         let transaction = self.conn.unchecked_transaction()?;
         transaction.execute(
             "DELETE FROM outbound_evidence
-             WHERE evidence_id IN (
-                 SELECT evidence_hash FROM message_delivery_evidence
+             WHERE (message_id, attempt_number, evidence_id) IN (
+                 SELECT message_id, attempt_number, evidence_hash FROM message_delivery_evidence
                  WHERE terminal_at IS NOT NULL AND terminal_at <= ?1 - ?2
              )",
             params![now.max(0), DELIVERY_EVIDENCE_RETENTION_SECS],
@@ -3346,8 +3595,8 @@ impl MessagesStore {
         let transaction = self.conn.unchecked_transaction()?;
         transaction.execute(
             "DELETE FROM outbound_evidence
-             WHERE evidence_id IN (
-                 SELECT evidence_hash FROM message_delivery_evidence
+             WHERE (message_id, attempt_number, evidence_id) IN (
+                 SELECT message_id, attempt_number, evidence_hash FROM message_delivery_evidence
                  WHERE terminal_at IS NOT NULL AND terminal_at <= ?1 - ?2
              )",
             params![now_unix_ms.max(0) / 1000, DELIVERY_EVIDENCE_RETENTION_SECS],
@@ -5134,6 +5383,7 @@ impl MessagesStore {
         ensure_attachment_schema(&mut self.conn, attachment_migration)?;
         super::standard_propagation::ensure_standard_propagation_schema(&mut self.conn)?;
         ensure_message_inspection_schema(&mut self.conn)?;
+        ensure_canonical_outbound_schema(&mut self.conn)?;
         self.prune_delivery_evidence(unix_time_secs())?;
         Ok(())
     }
@@ -7827,7 +8077,7 @@ mod tests {
     }
 
     #[test]
-    fn v13_migrates_v12_additively_and_is_idempotent() {
+    fn v13_and_v14_migrate_v12_additively_and_are_idempotent() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("message-inspection-v13.sqlite");
         drop(MessagesStore::open(&path).unwrap());
@@ -7839,8 +8089,11 @@ mod tests {
                  DROP TABLE message_delivery_evidence;
                  DROP TABLE canonical_inbound_inspection;
                  DROP TABLE outbound_message_inspection;
+                 DROP TRIGGER canonical_outbound_messages_immutable;
+                 DROP TABLE canonical_outbound_messages;
                  DELETE FROM schema_migrations
-                  WHERE id = '2026-08-25-authoritative-message-inspection-v13';
+                   WHERE id IN ('2026-08-25-authoritative-message-inspection-v13',
+                                '2026-08-28-canonical-outbound-retry-v14');
                  INSERT INTO messages
                   (id, source, destination, title, content, timestamp, direction, fields,
                    receipt_status, read)
@@ -7853,7 +8106,7 @@ mod tests {
         for _ in 0..2 {
             let store = MessagesStore::open(&path).unwrap();
             assert_eq!(store.get_message("v12-message").unwrap().unwrap().content, "preserved");
-            assert!(message_inspection_schema_is_valid(&store.conn).unwrap());
+            assert!(canonical_outbound_schema_is_valid(&store.conn).unwrap());
             let markers: i64 = store
                 .conn
                 .query_row(
@@ -7864,6 +8117,119 @@ mod tests {
                 .unwrap();
             assert_eq!(markers, 1);
         }
+    }
+
+    #[test]
+    fn v14_canonical_wire_survives_reopen_and_rearms_identical_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("canonical-outbound-v14.sqlite");
+        let signer = rns_core::identity::PrivateIdentity::new_from_name("canonical-retry-v14");
+        let source = [0x11; 16];
+        let destination = [0x22; 16];
+        let wire = crate::lxmf_bridge::build_wire_message(
+            source,
+            destination,
+            "",
+            "same wire",
+            None,
+            &signer,
+        )
+        .unwrap();
+        let message_id = lxmf::inbound_decode::outbound_message_id_hex(&wire).unwrap();
+        let message = MessageRecord {
+            id: message_id.clone(),
+            source: hex::encode(source),
+            destination: hex::encode(destination),
+            title: String::new(),
+            content: "same wire".into(),
+            timestamp: 1,
+            direction: "out".into(),
+            fields: None,
+            receipt_status: Some("queued".into()),
+            read: true,
+        };
+        let route = OutboundRouteRecord {
+            message_id: message_id.clone(),
+            requested_method: "direct".into(),
+            actual_method: "direct".into(),
+            representation: "packet".into(),
+            fallback_reason: None,
+            correlation_id: message_id.clone(),
+            retry_of: None,
+            deadline_unix_ms: i64::MAX,
+            state: "queued".into(),
+            attempt_count: 0,
+        };
+        {
+            let store = MessagesStore::open(&path).unwrap();
+            store
+                .insert_outbound_message_with_canonical_wire(
+                    &message,
+                    &route,
+                    None,
+                    &[],
+                    wire.len(),
+                    None,
+                    Some(&wire),
+                )
+                .unwrap();
+            assert_eq!(store.canonical_outbound_wire(&message_id).unwrap(), Some(wire.clone()));
+            assert!(store
+                .conn
+                .execute(
+                    "UPDATE canonical_outbound_messages SET wire = ?2 WHERE message_id = ?1",
+                    params![&message_id, vec![1_u8]],
+                )
+                .is_err());
+            assert!(store
+                .begin_outbound_attempt(&OutboundAttemptRecord {
+                    message_id: message_id.clone(),
+                    attempt_number: 1,
+                    started_unix_ms: 1,
+                    deadline_unix_ms: i64::MAX,
+                    state: "sending".into(),
+                })
+                .unwrap());
+            let evidence_hash = "ab".repeat(32);
+            assert!(store.track_outbound_evidence(&evidence_hash, &message_id, "packet").unwrap());
+            assert!(store
+                .finish_outbound_with_detail(
+                    &message_id,
+                    "failed",
+                    "failed: offline",
+                    Some("offline"),
+                )
+                .unwrap());
+            assert!(store
+                .begin_outbound_retry(&OutboundAttemptRecord {
+                    message_id: message_id.clone(),
+                    attempt_number: 2,
+                    started_unix_ms: 2,
+                    deadline_unix_ms: i64::MAX,
+                    state: "sending".into(),
+                })
+                .unwrap());
+            assert!(store.track_outbound_evidence(&evidence_hash, &message_id, "packet").unwrap());
+            assert!(store
+                .finish_outbound_with_exact_evidence(
+                    &message_id,
+                    "delivered",
+                    "delivered: packet-receipt",
+                    Some("authenticated packet receipt"),
+                    &evidence_hash,
+                    "packet",
+                )
+                .unwrap());
+            let evidence = store.message_delivery_evidence(&message_id).unwrap();
+            assert_eq!(evidence.len(), 2);
+            assert_eq!(evidence[0].attempt_number, Some(1));
+            assert_eq!(evidence[0].state, "failed");
+            assert_eq!(evidence[1].attempt_number, Some(2));
+            assert_eq!(evidence[1].state, "completed");
+        }
+        let reopened = MessagesStore::open(&path).unwrap();
+        assert_eq!(reopened.canonical_outbound_wire(&message_id).unwrap(), Some(wire));
+        assert_eq!(reopened.outbound_attempts(&message_id).unwrap().len(), 2);
     }
 
     #[test]
@@ -7980,13 +8346,14 @@ mod tests {
         assert_eq!(evidence.len(), 32);
         assert!(evidence.iter().all(|item| item.kind == "packet_receipt"));
         assert_eq!(evidence.iter().filter(|item| item.state == "completed").count(), 1);
-        assert_eq!(evidence.iter().filter(|item| item.state == "failed").count(), 31);
+        assert_eq!(evidence.iter().filter(|item| item.state == "failed").count(), 19);
+        assert_eq!(evidence.iter().filter(|item| item.state == "tracked").count(), 12);
         let completed = evidence.iter().find(|item| item.state == "completed").unwrap();
         assert_eq!(completed.evidence_hash, format!("{:064x}", 39));
         assert_eq!(completed.attempt_number, Some(2));
-        assert!(
-            evidence.iter().any(|item| item.attempt_number == Some(1) && item.state == "failed")
-        );
+        assert!(evidence
+            .iter()
+            .any(|item| item.attempt_number == Some(1) && item.state == "tracked"));
         assert_eq!(completed.outcome.as_deref(), Some("authenticated packet receipt"));
         assert_eq!(
             store.outbound_terminal_detail(&outbound_id).unwrap().as_deref(),
@@ -8002,8 +8369,8 @@ mod tests {
         store
             .conn
             .execute(
-                "DELETE FROM schema_migrations WHERE id = ?1",
-                params![MESSAGE_INSPECTION_MIGRATION],
+                "DELETE FROM schema_migrations WHERE id IN (?1, ?2)",
+                params![MESSAGE_INSPECTION_MIGRATION, CANONICAL_OUTBOUND_MIGRATION],
             )
             .unwrap();
         drop(store);

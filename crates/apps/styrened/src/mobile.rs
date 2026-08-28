@@ -397,6 +397,20 @@ pub struct MobileSendOutcome {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum MobileRetryDisposition {
+    Applied,
+    Unchanged,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MobileRetryOutcome {
+    pub generation: u64,
+    pub disposition: MobileRetryDisposition,
+    pub message: styrene_ipc::types::MessageInfo,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobileMessageEventKind {
     New,
     StatusChanged,
@@ -1396,6 +1410,54 @@ impl MobileNode {
             fallback_reason: outcome.fallback_reason,
             terminal_failure,
             draft_clear,
+        })
+    }
+
+    pub async fn retry_text(
+        &self,
+        message_id: &str,
+    ) -> Result<MobileRetryOutcome, MobileMessagingFailure> {
+        let outcome = DaemonMessaging::retry_message_outcome(self.facade.as_ref(), message_id)
+            .await
+            .map_err(mobile_messaging_failure)?;
+        let disposition = match outcome.disposition {
+            styrene_ipc::types::MessagingDisposition::Applied => MobileRetryDisposition::Applied,
+            styrene_ipc::types::MessagingDisposition::Unchanged => {
+                MobileRetryDisposition::Unchanged
+            }
+            styrene_ipc::types::MessagingDisposition::NotFound => {
+                return Err(MobileMessagingFailure {
+                    code: MobileMessagingFailureCode::NotFound,
+                    retryable: false,
+                    message: "message not found".into(),
+                });
+            }
+            styrene_ipc::types::MessagingDisposition::TerminalConflict => {
+                return Err(MobileMessagingFailure {
+                    code: MobileMessagingFailureCode::Conflict,
+                    retryable: false,
+                    message: outcome
+                        .terminal_state
+                        .unwrap_or_else(|| "message is not retryable".into()),
+                });
+            }
+            _ => {
+                return Err(MobileMessagingFailure {
+                    code: MobileMessagingFailureCode::Internal,
+                    retryable: false,
+                    message: "backend returned unsupported mobile retry disposition".into(),
+                });
+            }
+        };
+        let message = outcome.message.ok_or_else(|| MobileMessagingFailure {
+            code: MobileMessagingFailureCode::Internal,
+            retryable: false,
+            message: "backend retry omitted the authoritative message".into(),
+        })?;
+        Ok(MobileRetryOutcome {
+            generation: self.session_snapshot().await.generation,
+            disposition,
+            message,
         })
     }
 

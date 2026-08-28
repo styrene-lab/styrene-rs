@@ -164,6 +164,13 @@ pub enum RetryQueueResult {
     Existing(OutboundRouteRecord),
 }
 
+#[derive(Debug, Clone)]
+pub enum RetryStartResult {
+    Started(DeliveryPlan),
+    Existing(OutboundRouteRecord),
+    MissingCanonicalWire,
+}
+
 pub trait RouterClock: Send + Sync {
     fn monotonic_now(&self) -> Instant;
     fn unix_time_ms(&self) -> i64;
@@ -260,9 +267,8 @@ impl RouterCoordinator {
             .into_iter()
             .rev()
         {
-            let persisted_attempts = store
-                .outbound_attempts_for_correlation(&route.correlation_id)
-                .map_err(std::io::Error::other)?;
+            let persisted_attempts =
+                store.outbound_attempts(&route.message_id).map_err(std::io::Error::other)?;
             let total_attempts = persisted_attempts.len();
             let deadline = if route.deadline_unix_ms <= now_unix_ms {
                 now
@@ -356,6 +362,7 @@ impl RouterCoordinator {
             None,
             &[],
             None,
+            None,
         )
     }
 
@@ -378,6 +385,7 @@ impl RouterCoordinator {
             ticket,
             &[],
             None,
+            None,
         )
     }
 
@@ -391,6 +399,7 @@ impl RouterCoordinator {
         correlation_id: Option<&str>,
         ticket: Option<&crate::storage::messages::LxmfTicketOfferReservation>,
         attachments: &[crate::storage::messages::AttachmentBlobInput],
+        canonical_wire: &[u8],
     ) -> Result<DeliveryPlan, std::io::Error> {
         self.queue_with_retry(
             message,
@@ -402,6 +411,7 @@ impl RouterCoordinator {
             ticket,
             attachments,
             None,
+            Some(canonical_wire),
         )
     }
 
@@ -416,6 +426,7 @@ impl RouterCoordinator {
         ticket: Option<&crate::storage::messages::LxmfTicketOfferReservation>,
         attachments: &[crate::storage::messages::AttachmentBlobInput],
         propagation: &crate::storage::standard_propagation::StandardPropagationClientJob,
+        canonical_wire: &[u8],
     ) -> Result<DeliveryPlan, std::io::Error> {
         self.queue_with_retry(
             message,
@@ -427,6 +438,7 @@ impl RouterCoordinator {
             ticket,
             attachments,
             Some(propagation),
+            Some(canonical_wire),
         )
     }
 
@@ -448,6 +460,7 @@ impl RouterCoordinator {
             Some(retry_of),
             None,
             &[],
+            None,
             None,
         ) {
             Ok(plan) => Ok(RetryQueueResult::Queued(plan)),
@@ -489,6 +502,7 @@ impl RouterCoordinator {
             ticket,
             &[],
             None,
+            None,
         ) {
             Ok(plan) => Ok(RetryQueueResult::Queued(plan)),
             Err(error) => {
@@ -528,6 +542,7 @@ impl RouterCoordinator {
             Some(retry_of),
             ticket,
             attachments,
+            None,
             None,
         ) {
             Ok(plan) => Ok(RetryQueueResult::Queued(plan)),
@@ -570,6 +585,7 @@ impl RouterCoordinator {
             ticket,
             attachments,
             Some(propagation),
+            None,
         ) {
             Ok(plan) => Ok(RetryQueueResult::Queued(plan)),
             Err(error) => {
@@ -600,6 +616,7 @@ impl RouterCoordinator {
         ticket: Option<&crate::storage::messages::LxmfTicketOfferReservation>,
         attachments: &[crate::storage::messages::AttachmentBlobInput],
         propagation: Option<&crate::storage::standard_propagation::StandardPropagationClientJob>,
+        canonical_wire: Option<&[u8]>,
     ) -> Result<DeliveryPlan, std::io::Error> {
         self.ensure_ready()?;
         let requested_method = DeliveryMethod::parse(requested_method)?;
@@ -690,13 +707,14 @@ impl RouterCoordinator {
             attempt_count: 0,
         };
         self.lock_store()?
-            .insert_outbound_message_with_attachments_and_propagation(
+            .insert_outbound_message_with_canonical_wire(
                 message,
                 &route,
                 ticket,
                 attachments,
                 encoded_wire_size,
                 propagation,
+                canonical_wire,
             )
             .map_err(std::io::Error::other)?;
 
@@ -710,6 +728,68 @@ impl RouterCoordinator {
     ) -> Result<Option<OutboundRouteRecord>, std::io::Error> {
         self.ensure_ready()?;
         self.lock_store()?.outbound_retry_for(message_id).map_err(std::io::Error::other)
+    }
+
+    pub fn begin_retry(&self, message_id: &str) -> Result<RetryStartResult, std::io::Error> {
+        self.ensure_ready()?;
+        let mut state = self.lock_state()?;
+        let route = self
+            .lock_store()?
+            .outbound_route(message_id)
+            .map_err(std::io::Error::other)?
+            .ok_or_else(|| std::io::Error::other("outbound LXMF route is unavailable"))?;
+        if self
+            .lock_store()?
+            .canonical_outbound_wire(message_id)
+            .map_err(std::io::Error::other)?
+            .is_none()
+        {
+            return Ok(RetryStartResult::MissingCanonicalWire);
+        }
+        let requested_method = DeliveryMethod::from_persisted(&route.requested_method)?;
+        let actual_method = DeliveryMethod::from_persisted(&route.actual_method)?;
+        let representation = WireRepresentation::from_persisted(&route.representation)?;
+        let duration = if actual_method == DeliveryMethod::Opportunistic {
+            OPPORTUNISTIC_DEADLINE
+        } else {
+            DIRECT_DEADLINE
+        };
+        let deadline = self.clock.monotonic_now() + duration;
+        let deadline_unix_ms = self
+            .clock
+            .unix_time_ms()
+            .saturating_add(i64::try_from(duration.as_millis()).unwrap_or(i64::MAX));
+        let attempt_number = route.attempt_count.saturating_add(1);
+        if attempt_number as usize > MAX_ATTEMPTS_PER_MESSAGE {
+            return Err(std::io::Error::other("outbound LXMF attempt limit reached"));
+        }
+        let attempt = OutboundAttemptRecord {
+            message_id: message_id.into(),
+            attempt_number,
+            started_unix_ms: self.clock.unix_time_ms(),
+            deadline_unix_ms,
+            state: OutboundState::Sending.as_str().into(),
+        };
+        let started =
+            self.lock_store()?.begin_outbound_retry(&attempt).map_err(std::io::Error::other)?;
+        self.reload_state_locked(&mut state)?;
+        if !started {
+            let winner = self
+                .lock_store()?
+                .outbound_route(message_id)
+                .map_err(std::io::Error::other)?
+                .ok_or_else(|| std::io::Error::other("outbound LXMF route disappeared"))?;
+            return Ok(RetryStartResult::Existing(winner));
+        }
+        Ok(RetryStartResult::Started(DeliveryPlan {
+            requested_method,
+            actual_method,
+            representation,
+            fallback_reason: route.fallback_reason,
+            correlation_id: route.correlation_id,
+            deadline,
+            deadline_unix_ms,
+        }))
     }
 
     pub fn track_evidence(
@@ -1392,7 +1472,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_after_restart_continues_correlated_attempt_history() {
+    fn legacy_correlated_messages_keep_independent_attempt_projections_after_restart() {
         let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
         {
             let router = RouterCoordinator::new(store.clone());
@@ -1403,12 +1483,12 @@ mod tests {
 
         let router = RouterCoordinator::new(store.clone());
         router.queue(&message("retry"), Some("opportunistic"), 1, 1, Some("original")).unwrap();
-        assert_eq!(router.begin_attempt("retry").unwrap().number, 2);
+        assert_eq!(router.begin_attempt("retry").unwrap().number, 1);
         let retry = router.message("retry").unwrap();
         assert_eq!(retry.requested_method, DeliveryMethod::Opportunistic);
         assert_eq!(retry.correlation_id, "original");
-        assert_eq!(retry.total_attempts, 2);
-        assert_eq!(retry.attempts.iter().map(|attempt| attempt.number).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(retry.total_attempts, 1);
+        assert_eq!(retry.attempts.iter().map(|attempt| attempt.number).collect::<Vec<_>>(), [1]);
         assert_eq!(
             store.lock().unwrap().outbound_attempts_for_correlation("original").unwrap().len(),
             2
@@ -1438,7 +1518,7 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_metadata_and_correlated_attempts_survive_database_reopen() {
+    fn lifecycle_metadata_and_per_message_attempts_survive_database_reopen() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("messages.sqlite");
         {
@@ -1481,7 +1561,7 @@ mod tests {
                 Some("send-correlation"),
             )
             .unwrap();
-        assert_eq!(reopened.begin_attempt("retry").unwrap().number, 2);
+        assert_eq!(reopened.begin_attempt("retry").unwrap().number, 1);
         drop(reopened);
         drop(reopened_store);
 
@@ -1489,7 +1569,7 @@ mod tests {
         let final_router = RouterCoordinator::new(final_store);
         let retry = final_router.message("retry").unwrap();
         assert_eq!(retry.correlation_id, "send-correlation");
-        assert_eq!(retry.total_attempts, 2);
-        assert_eq!(retry.attempts.iter().map(|attempt| attempt.number).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(retry.total_attempts, 1);
+        assert_eq!(retry.attempts.iter().map(|attempt| attempt.number).collect::<Vec<_>>(), [1]);
     }
 }
