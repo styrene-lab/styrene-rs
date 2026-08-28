@@ -1,0 +1,407 @@
+{
+  "schema_version": 1,
+  "corpus": "styrene-mobile-minimum-v1",
+  "target_classes": ["ios", "android"],
+  "required_accessibility_ids": [
+    "mobile.session-state",
+    "mobile.identity",
+    "mobile.messages",
+    "mobile.people",
+    "mobile.network",
+    "mobile.propagation"
+  ],
+  "fixtures": [
+    {
+      "id": "live-empty-connected",
+      "profile": "live",
+      "generation": 1,
+      "session": {
+        "phase": "connected",
+        "identity_hash": "11111111111111111111111111111111",
+        "endpoint": "rns.styrene.io:4242",
+        "failure": null
+      },
+      "bearers": [
+        {"kind": "tcp", "state": "connected", "reason": null},
+        {"kind": "bluetooth_rnode", "state": "unavailable", "reason": "not_configured"},
+        {"kind": "android_usb", "state": "unavailable", "reason": "not_configured"}
+      ],
+      "peers": [],
+      "conversations": [],
+      "messages": [],
+      "propagation": {
+        "selected_destination": null,
+        "ready": false,
+        "sync_state": "idle",
+        "new_messages": 0,
+        "failure": null
+      },
+      "event": null,
+      "expected": {
+        "fixture_banner": false,
+        "live_network_enabled": true,
+        "peer_count": 0,
+        "conversation_count": 0,
+        "message_count": 0,
+        "accessibility_ids": [
+          "mobile.session-state",
+          "mobile.identity",
+          "mobile.messages",
+          "mobile.people",
+          "mobile.network",
+          "mobile.propagation"
+        ]
+      }
+    },
+    {
+      "id": "tcp-reconnecting-rnode-unavailable",
+      "profile": "fixture",
+      "generation": 2,
+      "session": {
+        "phase": "reconnecting",
+        "identity_hash": "22222222222222222222222222222222",
+        "endpoint": "rns.styrene.io:4242",
+        "failure": null
+      },
+      "bearers": [
+        {"kind": "tcp", "state": "reconnecting", "reason": "socket_closed"},
+        {"kind": "bluetooth_rnode", "state": "unverified", "reason": "physical_evidence_absent"},
+        {"kind": "android_usb", "state": "unavailable", "reason": "not_selected"}
+      ],
+      "peers": [],
+      "conversations": [],
+      "messages": [],
+      "propagation": {
+        "selected_destination": "780e7aa7b2f175c88f28c7ba8ab1b714",
+        "ready": false,
+        "sync_state": "idle",
+        "new_messages": 0,
+        "failure": null
+      },
+      "event": null,
+      "expected": {
+        "fixture_banner": true,
+        "live_network_enabled": false,
+        "peer_count": 0,
+        "conversation_count": 0,
+        "message_count": 0,
+        "accessibility_ids": [
+          "mobile.session-state",
+          "mobile.identity",
+          "mobile.messages",
+          "mobile.people",
+          "mobile.network",
+          "mobile.propagation"
+        ]
+      }
+    },
+    {
+      "id": "canonical-peer-discovery",
+      "profile": "fixture",
+      "generation": 3,
+      "session": {
+        "phase": "connected",
+        "identity_hash": "33333333333333333333333333333333",
+        "endpoint": "rns.styrene.io:4242",
+        "failure": null
+      },
+      "bearers": [
+        {"kind": "tcp", "state": "connected", "reason": null},
+        {"kind": "bluetooth_rnode", "state": "disconnected", "reason": "approved_device_absent"},
+        {"kind": "android_usb", "state": "unavailable", "reason": "not_selected"}
+      ],
+      "peers": [
+        {
+          "destination_hash": "e01b09b22ccc4e2755d29eead962677b",
+          "aspect": "lxmf.delivery",
+          "display_name": "FPIG_SKYWAVE",
+          "observed_at": 1787927000,
+          "age_secs": 4
+        }
+      ],
+      "conversations": [],
+      "messages": [],
+      "propagation": {
+        "selected_destination": "780e7aa7b2f175c88f28c7ba8ab1b714",
+        "ready": true,
+        "sync_state": "idle",
+        "new_messages": 0,
+        "failure": null
+      },
+      "event": {"generation": 3, "expected_applied": true},
+      "expected": {
+        "fixture_banner": true,
+        "live_network_enabled": false,
+        "peer_count": 1,
+        "conversation_count": 0,
+        "message_count": 0,
+        "accessibility_ids": [
+          "mobile.session-state",
+          "mobile.identity",
+          "mobile.messages",
+          "mobile.people",
+          "mobile.network",
+          "mobile.propagation"
+        ]
+      }
+    },
+    {
+      "id": "direct-message-queued",
+      "profile": "fixture",
+      "generation": 4,
+      "session": {
+        "phase": "connected",
+        "identity_hash": "44444444444444444444444444444444",
+        "endpoint": "rns.styrene.io:4242",
+        "failure": null
+      },
+      "bearers": [
+        {"kind": "tcp", "state": "connected", "reason": null},
+        {"kind": "bluetooth_rnode", "state": "unavailable", "reason": "not_configured"},
+        {"kind": "android_usb", "state": "unavailable", "reason": "not_selected"}
+      ],
+      "peers": [],
+      "conversations": [
+        {"peer_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "unread_count": 0, "draft": ""}
+      ],
+      "messages": [
+        {
+          "id": "message-direct-1",
+          "peer_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "content": "Direct message awaiting evidence",
+          "requested_method": "direct",
+          "actual_method": "direct",
+          "persisted": true,
+          "transport_accepted": true,
+          "propagation_uploaded": false,
+          "delivered": false,
+          "correlation_id": "correlation-direct-1",
+          "failure": null
+        }
+      ],
+      "propagation": {
+        "selected_destination": null,
+        "ready": false,
+        "sync_state": "idle",
+        "new_messages": 0,
+        "failure": null
+      },
+      "event": null,
+      "expected": {
+        "fixture_banner": true,
+        "live_network_enabled": false,
+        "peer_count": 0,
+        "conversation_count": 1,
+        "message_count": 1,
+        "accessibility_ids": [
+          "mobile.session-state",
+          "mobile.identity",
+          "mobile.messages",
+          "mobile.people",
+          "mobile.network",
+          "mobile.propagation"
+        ]
+      }
+    },
+    {
+      "id": "propagation-uploaded-not-delivered",
+      "profile": "fixture",
+      "generation": 5,
+      "session": {
+        "phase": "connected",
+        "identity_hash": "55555555555555555555555555555555",
+        "endpoint": "rns.styrene.io:4242",
+        "failure": null
+      },
+      "bearers": [
+        {"kind": "tcp", "state": "connected", "reason": null},
+        {"kind": "bluetooth_rnode", "state": "unavailable", "reason": "not_configured"},
+        {"kind": "android_usb", "state": "unavailable", "reason": "not_selected"}
+      ],
+      "peers": [],
+      "conversations": [
+        {"peer_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "unread_count": 0, "draft": ""}
+      ],
+      "messages": [
+        {
+          "id": "message-propagated-1",
+          "peer_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "content": "Stored on Brutus",
+          "requested_method": "propagated",
+          "actual_method": "propagated",
+          "persisted": true,
+          "transport_accepted": true,
+          "propagation_uploaded": true,
+          "delivered": false,
+          "correlation_id": "correlation-propagated-1",
+          "failure": null
+        }
+      ],
+      "propagation": {
+        "selected_destination": "780e7aa7b2f175c88f28c7ba8ab1b714",
+        "ready": true,
+        "sync_state": "idle",
+        "new_messages": 0,
+        "failure": null
+      },
+      "event": null,
+      "expected": {
+        "fixture_banner": true,
+        "live_network_enabled": false,
+        "peer_count": 0,
+        "conversation_count": 1,
+        "message_count": 1,
+        "accessibility_ids": [
+          "mobile.session-state",
+          "mobile.identity",
+          "mobile.messages",
+          "mobile.people",
+          "mobile.network",
+          "mobile.propagation"
+        ]
+      }
+    },
+    {
+      "id": "propagation-sync-complete",
+      "profile": "fixture",
+      "generation": 6,
+      "session": {
+        "phase": "connected",
+        "identity_hash": "66666666666666666666666666666666",
+        "endpoint": "rns.styrene.io:4242",
+        "failure": null
+      },
+      "bearers": [
+        {"kind": "tcp", "state": "connected", "reason": null},
+        {"kind": "bluetooth_rnode", "state": "unavailable", "reason": "not_configured"},
+        {"kind": "android_usb", "state": "unavailable", "reason": "not_selected"}
+      ],
+      "peers": [],
+      "conversations": [
+        {"peer_hash": "cccccccccccccccccccccccccccccccc", "unread_count": 1, "draft": ""}
+      ],
+      "messages": [
+        {
+          "id": "message-inbound-1",
+          "peer_hash": "cccccccccccccccccccccccccccccccc",
+          "content": "Retrieved exactly once",
+          "requested_method": "propagated",
+          "actual_method": "propagated",
+          "persisted": true,
+          "transport_accepted": true,
+          "propagation_uploaded": false,
+          "delivered": true,
+          "correlation_id": "correlation-inbound-1",
+          "failure": null
+        }
+      ],
+      "propagation": {
+        "selected_destination": "780e7aa7b2f175c88f28c7ba8ab1b714",
+        "ready": true,
+        "sync_state": "complete",
+        "new_messages": 1,
+        "failure": null
+      },
+      "event": null,
+      "expected": {
+        "fixture_banner": true,
+        "live_network_enabled": false,
+        "peer_count": 0,
+        "conversation_count": 1,
+        "message_count": 1,
+        "accessibility_ids": [
+          "mobile.session-state",
+          "mobile.identity",
+          "mobile.messages",
+          "mobile.people",
+          "mobile.network",
+          "mobile.propagation"
+        ]
+      }
+    },
+    {
+      "id": "stale-generation-rejected",
+      "profile": "fixture",
+      "generation": 8,
+      "session": {
+        "phase": "connected",
+        "identity_hash": "77777777777777777777777777777777",
+        "endpoint": "rns.styrene.io:4242",
+        "failure": null
+      },
+      "bearers": [
+        {"kind": "tcp", "state": "connected", "reason": null},
+        {"kind": "bluetooth_rnode", "state": "unavailable", "reason": "not_configured"},
+        {"kind": "android_usb", "state": "unavailable", "reason": "not_selected"}
+      ],
+      "peers": [],
+      "conversations": [],
+      "messages": [],
+      "propagation": {
+        "selected_destination": null,
+        "ready": false,
+        "sync_state": "idle",
+        "new_messages": 0,
+        "failure": null
+      },
+      "event": {"generation": 7, "expected_applied": false},
+      "expected": {
+        "fixture_banner": true,
+        "live_network_enabled": false,
+        "peer_count": 0,
+        "conversation_count": 0,
+        "message_count": 0,
+        "accessibility_ids": [
+          "mobile.session-state",
+          "mobile.identity",
+          "mobile.messages",
+          "mobile.people",
+          "mobile.network",
+          "mobile.propagation"
+        ]
+      }
+    },
+    {
+      "id": "recoverable-session-failure",
+      "profile": "fixture",
+      "generation": 9,
+      "session": {
+        "phase": "failed",
+        "identity_hash": "88888888888888888888888888888888",
+        "endpoint": "invalid endpoint",
+        "failure": {"code": "invalid_tcp_endpoint", "retryable": true}
+      },
+      "bearers": [
+        {"kind": "tcp", "state": "disconnected", "reason": "invalid_tcp_endpoint"},
+        {"kind": "bluetooth_rnode", "state": "unverified", "reason": "physical_evidence_absent"},
+        {"kind": "android_usb", "state": "unavailable", "reason": "not_selected"}
+      ],
+      "peers": [],
+      "conversations": [],
+      "messages": [],
+      "propagation": {
+        "selected_destination": "780e7aa7b2f175c88f28c7ba8ab1b714",
+        "ready": false,
+        "sync_state": "failed",
+        "new_messages": 0,
+        "failure": {"code": "transport_unavailable", "retryable": true}
+      },
+      "event": null,
+      "expected": {
+        "fixture_banner": true,
+        "live_network_enabled": false,
+        "peer_count": 0,
+        "conversation_count": 0,
+        "message_count": 0,
+        "accessibility_ids": [
+          "mobile.session-state",
+          "mobile.identity",
+          "mobile.messages",
+          "mobile.people",
+          "mobile.network",
+          "mobile.propagation"
+        ]
+      }
+    }
+  ]
+}
