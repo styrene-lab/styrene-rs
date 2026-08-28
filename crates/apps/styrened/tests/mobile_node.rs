@@ -5,11 +5,11 @@ use styrene_ipc::traits::DaemonStatus;
 use styrene_ipc::types::InterfaceDetail;
 use styrened::mobile::{
     load_mobile_tcp_endpoint, persist_mobile_tcp_endpoint, IdentityBackend, MobileBearerKind,
-    MobileBearerState, MobileConfig, MobileConnectionPhase, MobileDeliveryMethod,
-    MobileDraftClearDisposition, MobileFailureCode, MobileInterfaceConfig, MobileMessageEvent,
-    MobileMessageEventKind, MobileMessageSubscription, MobileNode, MobilePeerAspect,
-    MobilePeerSource, MobilePeerSubscription, MobileRetryDisposition, MobileSendDisposition,
-    MobileSendRequest,
+    MobileBearerObservation, MobileBearerReason, MobileBearerState, MobileConfig,
+    MobileConnectionPhase, MobileDeliveryMethod, MobileDraftClearDisposition, MobileFailureCode,
+    MobileInterfaceConfig, MobileMessageEvent, MobileMessageEventKind, MobileMessageSubscription,
+    MobileNode, MobilePeerAspect, MobilePeerSource, MobilePeerSubscription, MobileRetryDisposition,
+    MobileSendDisposition, MobileSendRequest, MobileUsbFallbackDisposition,
 };
 use styrened::startup_contract::{RuntimeKind, capabilities, components};
 use styrened::storage::messages::MessageRecord;
@@ -255,6 +255,135 @@ async fn connected_session_snapshot_exposes_endpoint_generation_and_independent_
     );
 
     drop(stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn platform_bearer_failures_do_not_degrade_connected_tcp() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("session connection timed out")
+        .unwrap();
+    wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+
+    for observation in [
+        MobileBearerObservation {
+            kind: MobileBearerKind::BluetoothRnode,
+            state: MobileBearerState::Unavailable,
+            reason: Some(MobileBearerReason::PermissionDenied),
+        },
+        MobileBearerObservation {
+            kind: MobileBearerKind::BluetoothRnode,
+            state: MobileBearerState::Disconnected,
+            reason: Some(MobileBearerReason::ConnectionInterrupted),
+        },
+        MobileBearerObservation {
+            kind: MobileBearerKind::AndroidUsb,
+            state: MobileBearerState::Unverified,
+            reason: Some(MobileBearerReason::PhysicalEvidenceAbsent),
+        },
+    ] {
+        node.platform_service().report(observation.clone()).await.unwrap();
+        let snapshot = node.session_snapshot().await;
+        assert_eq!(snapshot.phase, MobileConnectionPhase::Connected);
+        assert_eq!(
+            snapshot.bearer(MobileBearerKind::Tcp).expect("TCP bearer").state,
+            MobileBearerState::Connected
+        );
+        assert_eq!(snapshot.bearer(observation.kind), Some(&observation));
+    }
+
+    let tcp_result = node
+        .platform_service()
+        .report(MobileBearerObservation {
+            kind: MobileBearerKind::Tcp,
+            state: MobileBearerState::Disconnected,
+            reason: Some(MobileBearerReason::ConnectionInterrupted),
+        })
+        .await;
+    assert_eq!(tcp_result, Err("TCP bearer state is owned by the transport runtime"));
+
+    drop(stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn android_usb_is_explicit_fallback_and_cannot_preempt_approved_bluetooth() {
+    let root = tempfile::tempdir().unwrap();
+    let node = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let platform = node.platform_service();
+    let usb_connected = MobileBearerObservation {
+        kind: MobileBearerKind::AndroidUsb,
+        state: MobileBearerState::Connected,
+        reason: None,
+    };
+
+    assert_eq!(
+        platform.report(usb_connected.clone()).await,
+        Err("Android USB requires an explicit fallback request")
+    );
+    platform.set_bluetooth_approved(true).await;
+    platform
+        .report(MobileBearerObservation {
+            kind: MobileBearerKind::BluetoothRnode,
+            state: MobileBearerState::Connected,
+            reason: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        platform.request_android_usb_fallback().await,
+        MobileUsbFallbackDisposition::BluetoothActive
+    );
+    assert_eq!(
+        platform.report(usb_connected.clone()).await,
+        Err("Android USB requires an explicit fallback request")
+    );
+
+    platform
+        .report(MobileBearerObservation {
+            kind: MobileBearerKind::BluetoothRnode,
+            state: MobileBearerState::Disconnected,
+            reason: Some(MobileBearerReason::ConnectionInterrupted),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        platform.request_android_usb_fallback().await,
+        MobileUsbFallbackDisposition::Accepted
+    );
+    platform
+        .report(MobileBearerObservation {
+            kind: MobileBearerKind::BluetoothRnode,
+            state: MobileBearerState::Reconnecting,
+            reason: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        platform.report(usb_connected.clone()).await,
+        Err("Android USB cannot preempt approved Bluetooth")
+    );
+    platform
+        .report(MobileBearerObservation {
+            kind: MobileBearerKind::BluetoothRnode,
+            state: MobileBearerState::Disconnected,
+            reason: Some(MobileBearerReason::ConnectionInterrupted),
+        })
+        .await
+        .unwrap();
+    platform.report(usb_connected.clone()).await.unwrap();
+    let snapshot = node.session_snapshot().await;
+    assert_eq!(snapshot.bearer(MobileBearerKind::AndroidUsb), Some(&usb_connected));
+
     shutdown(node).await;
 }
 

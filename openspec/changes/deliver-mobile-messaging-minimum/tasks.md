@@ -47,10 +47,10 @@
 ## 6. Platform And RNode Coexistence
 <!-- specs: mobile-network-session, mobile-release-evidence -->
 
-- [ ] 6.1 Add failing Rust platform-service and Dioxus tests proving TCP remains operational when Bluetooth or USB is unavailable, denied, interrupted, or unverified
-- [ ] 6.2 Implement Rust-owned platform services and present TCP, Bluetooth RNode, and Android USB as independent backend-confirmed bearer states
+- [x] 6.1 Add failing Rust platform-service and Dioxus tests proving TCP remains operational when Bluetooth or USB is unavailable, denied, interrupted, or unverified
+- [x] 6.2 Implement Rust-owned platform services and present TCP, Bluetooth RNode, and Android USB as independent backend-confirmed bearer states
 - [ ] 6.3 Complete applicable `stabilize-mobile-platform-hosts` channel-detachment, approved-device, fragmentation, serialization, and retention gates before enabling an RNode support claim
-- [ ] 6.4 Preserve explicit Android USB fallback and prevent it from preempting an approved Bluetooth bearer
+- [x] 6.4 Preserve explicit Android USB fallback and prevent it from preempting an approved Bluetooth bearer
 
 ## 7. Cross-Platform Acceptance
 <!-- specs: mobile-release-evidence -->
