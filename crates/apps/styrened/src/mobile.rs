@@ -240,14 +240,14 @@ pub struct PollMessage {
     pub timestamp: i64,
 }
 
-fn compose_mobile_node(
+async fn compose_mobile_node(
     paths: PlatformPaths,
     identity: PrivateIdentity,
     store: Arc<Mutex<MessagesStore>>,
     transport_runtime: MobileTransportRuntime,
     display_name: Option<String>,
     hub_delivery_hash: Option<String>,
-) -> MobileNode {
+) -> anyhow::Result<MobileNode> {
     let MobileTransportRuntime {
         transport,
         delivery_hash,
@@ -268,22 +268,33 @@ fn compose_mobile_node(
         startup.record(startup_component::NATIVE_RESOURCE_RETRY_SCHEDULER);
     }
     let identity_hash = hex::encode(identity.address_hash().as_slice());
-    let app_context = Arc::new(AppContext::new(transport, identity_hash.clone(), store));
+    let app_context = Arc::new(AppContext::new(transport.clone(), identity_hash.clone(), store));
     startup.record_local_execution_services();
-    app_context
-        .policy()
-        .grant(
-            styrene_rbac::RosterEntry::new(&identity_hash, styrene_rbac::Role::Admin)
-                .with_label("local-mobile-host"),
-            app_context.store(),
-        )
-        .unwrap_or_else(|error| {
-            panic!("mobile local authorization initialization failed: {error}")
-        });
-    if let Some(target) = service_receipt_target
-        && target.set(Arc::downgrade(&app_context.messaging_arc())).is_err()
-    {
-        panic!("mobile service receipt target initialized twice");
+    let initialization = (|| -> anyhow::Result<()> {
+        app_context
+            .policy()
+            .grant(
+                styrene_rbac::RosterEntry::new(&identity_hash, styrene_rbac::Role::Admin)
+                    .with_label("local-mobile-host"),
+                app_context.store(),
+            )
+            .map_err(|error| {
+                anyhow::anyhow!("mobile local authorization initialization failed: {error}")
+            })?;
+        if let Some(target) = &service_receipt_target {
+            target
+                .set(Arc::downgrade(&app_context.messaging_arc()))
+                .map_err(|_| anyhow::anyhow!("mobile service receipt target initialized twice"))?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = initialization {
+        if let Err(shutdown_error) = transport.shutdown().await {
+            return Err(anyhow::anyhow!(
+                "{error}; mobile transport cleanup failed: {shutdown_error}"
+            ));
+        }
+        return Err(error);
     }
     app_context.set_signer(Arc::new(identity));
     if direct_capability_active {
@@ -338,7 +349,7 @@ fn compose_mobile_node(
             app_context.messaging_arc(),
         )
     });
-    let workers = MobileWorkers {
+    let mut workers = MobileWorkers {
         inbound,
         announce,
         link,
@@ -349,37 +360,43 @@ fn compose_mobile_node(
     };
     let facade = Arc::new(DaemonFacade::new(app_context.clone(), identity_hash));
 
-    startup
-        .advertise(startup_capability::LOCAL_CONFIG)
-        .unwrap_or_else(|error| panic!("invalid mobile local-config startup contract: {error}"));
-    startup
-        .advertise(startup_capability::LOCAL_POLICY)
-        .unwrap_or_else(|error| panic!("invalid mobile local-policy startup contract: {error}"));
-    if direct_capability_active {
-        startup.record_transport_state_services();
-        if let Err(error) = startup.advertise(startup_capability::LXMF_DIRECT) {
-            panic!("invalid mobile startup contract: {error}");
+    let startup_contract = (|| -> anyhow::Result<StartupContract> {
+        startup.advertise(startup_capability::LOCAL_CONFIG).map_err(|error| {
+            anyhow::anyhow!("invalid mobile local-config startup contract: {error}")
+        })?;
+        startup.advertise(startup_capability::LOCAL_POLICY).map_err(|error| {
+            anyhow::anyhow!("invalid mobile local-policy startup contract: {error}")
+        })?;
+        if direct_capability_active {
+            startup.record_transport_state_services();
+            for capability in [
+                startup_capability::LXMF_DIRECT,
+                startup_capability::LXMF_PAPER_EXPORT,
+                startup_capability::NETWORK_OPERATIONS,
+                startup_capability::RNS_REQUESTS,
+                startup_capability::RNS_REQUEST_CANCELLATION,
+                startup_capability::RNS_RESOURCE_CANCELLATION,
+                startup_capability::STANDARD_LXMF_PROPAGATION_CLIENT,
+            ] {
+                startup.advertise(capability).map_err(|error| {
+                    anyhow::anyhow!("invalid mobile startup contract for {capability:?}: {error}")
+                })?;
+            }
         }
-        if let Err(error) = startup.advertise(startup_capability::LXMF_PAPER_EXPORT) {
-            panic!("invalid mobile paper-export startup contract: {error}");
+        Ok(startup.finish())
+    })();
+    let startup_contract = match startup_contract {
+        Ok(contract) => contract,
+        Err(error) => {
+            workers.abort();
+            if let Err(shutdown_error) = transport.shutdown().await {
+                return Err(anyhow::anyhow!(
+                    "{error}; mobile transport cleanup failed: {shutdown_error}"
+                ));
+            }
+            return Err(error);
         }
-        if let Err(error) = startup.advertise(startup_capability::NETWORK_OPERATIONS) {
-            panic!("invalid mobile network-operation startup contract: {error}");
-        }
-        for capability in [
-            startup_capability::RNS_REQUESTS,
-            startup_capability::RNS_REQUEST_CANCELLATION,
-            startup_capability::RNS_RESOURCE_CANCELLATION,
-        ] {
-            startup.advertise(capability).unwrap_or_else(|error| {
-                panic!("invalid mobile transport startup contract: {error}")
-            });
-        }
-        startup
-            .advertise(startup_capability::STANDARD_LXMF_PROPAGATION_CLIENT)
-            .unwrap_or_else(|error| panic!("invalid mobile propagation-client contract: {error}"));
-    }
-    let startup_contract = startup.finish();
+    };
     app_context.publish_startup_contract(startup_contract.clone());
     let rnode = rnode_channel.map(|channel| RNodeBridge {
         address: channel.address,
@@ -388,7 +405,7 @@ fn compose_mobile_node(
         _stop: channel.stop,
     });
 
-    MobileNode {
+    Ok(MobileNode {
         app_context,
         facade,
         paths,
@@ -397,7 +414,7 @@ fn compose_mobile_node(
         tcp_listen_addresses,
         startup_contract,
         rnode,
-    }
+    })
 }
 
 fn validate_interfaces(config: &MobileConfig) -> anyhow::Result<Vec<ValidatedMobileInterface>> {
@@ -595,14 +612,15 @@ impl MobileNode {
             }
         };
 
-        Ok(compose_mobile_node(
+        compose_mobile_node(
             paths,
             identity,
             store,
             transport_runtime,
             display_name,
             config.hub_delivery_hash,
-        ))
+        )
+        .await
     }
 
     /// The local LXMF delivery destination, if a transport was configured.
@@ -1032,7 +1050,10 @@ mod tests {
     use styrene_ipc::types::DaemonEvent;
     use tokio::time::{Duration, timeout};
 
-    fn compose_with_mock(mock: Arc<MockTransport>, display_name: Option<String>) -> MobileNode {
+    async fn compose_with_mock(
+        mock: Arc<MockTransport>,
+        display_name: Option<String>,
+    ) -> MobileNode {
         let identity = PrivateIdentity::new_from_name("mobile-node-test");
         let delivery_hash = hex::encode(mock.destination_hash().as_slice());
         let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
@@ -1050,13 +1071,43 @@ mod tests {
             display_name,
             None,
         )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn failed_composition_shuts_down_transport_before_returning() {
+        let mock = Arc::new(MockTransport::new_default());
+        let receipt_target = Arc::new(std::sync::OnceLock::new());
+        assert!(receipt_target.set(std::sync::Weak::new()).is_ok());
+        let result = compose_mobile_node(
+            PlatformPaths::new("test-config".into(), "test-data".into()),
+            PrivateIdentity::new_from_name("failed-mobile-composition"),
+            Arc::new(Mutex::new(MessagesStore::in_memory().unwrap())),
+            MobileTransportRuntime {
+                transport: mock.clone(),
+                delivery_hash: Some(hex::encode(mock.destination_hash().as_slice())),
+                tcp_listen_addresses: Vec::new(),
+                service_receipt_target: Some(receipt_target),
+                rnode_channel: None,
+            },
+            None,
+            None,
+        )
+        .await;
+
+        let error = result.err().expect("composition must reject a reused receipt target");
+        assert!(error.to_string().contains("receipt target initialized twice"));
+        let shutdowns =
+            mock.calls().into_iter().filter(|call| matches!(call, MockCall::Shutdown)).count();
+        assert_eq!(shutdowns, 1);
     }
 
     #[tokio::test]
     async fn composition_publishes_metadata_and_starts_link_worker() {
         let destination = AddressHash::new([7; 16]);
         let mock = Arc::new(MockTransport::new(AddressHash::new([3; 16]), destination));
-        let node = compose_with_mock(mock.clone(), Some("Classroom Yellow".into()));
+        let node = compose_with_mock(mock.clone(), Some("Classroom Yellow".into())).await;
         let mut links = node.app_context.events().subscribe_links();
 
         assert_eq!(node.delivery_hash(), Some(hex::encode(destination.as_slice())));
@@ -1084,7 +1135,7 @@ mod tests {
         let source = [9_u8; 16];
         let mock =
             Arc::new(MockTransport::new(AddressHash::new([3; 16]), AddressHash::new(destination)));
-        let node = compose_with_mock(mock.clone(), None);
+        let node = compose_with_mock(mock.clone(), None).await;
         let mut events = node.app_context.events().subscribe();
         let payload = rmp_serde::to_vec(&rmpv::Value::Array(vec![
             rmpv::Value::from(1_770_000_000_i64),
@@ -1121,7 +1172,7 @@ mod tests {
     #[tokio::test]
     async fn explicit_shutdown_aborts_workers_and_dispatches_transport_shutdown_once() {
         let mock = Arc::new(MockTransport::new_default());
-        let node = compose_with_mock(mock.clone(), None);
+        let node = compose_with_mock(mock.clone(), None).await;
 
         node.workers.lock().unwrap().as_mut().unwrap().abort();
         tokio::task::yield_now().await;
@@ -1135,7 +1186,7 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_node_aborts_every_retained_worker() {
-        let node = compose_with_mock(Arc::new(MockTransport::new_default()), None);
+        let node = compose_with_mock(Arc::new(MockTransport::new_default()), None).await;
         let handles = node.workers.lock().unwrap().as_ref().unwrap().abort_handles();
 
         drop(node);

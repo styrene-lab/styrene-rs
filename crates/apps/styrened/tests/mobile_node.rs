@@ -63,6 +63,19 @@ async fn offline_boot_reports_no_routable_destination() {
 }
 
 #[tokio::test]
+async fn shutdown_then_boot_restores_the_same_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let first = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let identity = first.app_context.identity().identity_hash().to_string();
+    shutdown(first).await;
+
+    let second = MobileNode::boot(config(root.path(), None)).await.unwrap();
+
+    assert_eq!(second.app_context.identity().identity_hash(), identity);
+    shutdown(second).await;
+}
+
+#[tokio::test]
 async fn hub_boot_publishes_destination_and_normalized_display_name() {
     let root = tempfile::tempdir().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -257,6 +270,41 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
     wait_for_content(&client, &server_identity, "red to yellow").await;
     client.send_chat(&server_delivery, "yellow to red").await.unwrap();
     wait_for_content(&server, &client_identity, "yellow to red").await;
+
+    let client_inbound = client
+        .get_messages(&server_identity, 20)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|message| {
+            !message.is_outgoing
+                && message.source_hash == server_identity
+                && message.content == "red to yellow"
+        })
+        .count();
+    assert_eq!(client_inbound, 1);
+
+    let server_inbound = server
+        .get_messages(&client_identity, 20)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|message| {
+            !message.is_outgoing
+                && message.source_hash == client_identity
+                && message.content == "yellow to red"
+        })
+        .count();
+    assert_eq!(server_inbound, 1);
+
+    let unread_conversation = server
+        .list_conversations()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|conversation| conversation.peer_hash == client_identity)
+        .expect("unread conversation is visible");
+    assert_eq!(unread_conversation.unread_count, 1);
 
     server.mark_read(&client_identity).await.unwrap();
     let conversation = server
