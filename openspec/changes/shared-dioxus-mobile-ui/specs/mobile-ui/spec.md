@@ -19,6 +19,12 @@ When the shared application shell starts
 Then it restores only supported mobile route and selection state
 And does not expose desktop-only Lab or Admin controls
 
+#### Scenario: Accepted application journey is implemented
+Given the versioned mobile application-parity corpus defines an accepted workflow floor
+When iOS and Android execute that workflow from the same Dioxus revision
+Then both expose the required facts, actions, disabled reasons, and backend-confirmed outcome
+And any intentional Styrene difference remains explicit in the parity record
+
 ### Requirement: Shared UI consumes authoritative backend state
 
 The mobile Dioxus application MUST use the shared typed frontend session and

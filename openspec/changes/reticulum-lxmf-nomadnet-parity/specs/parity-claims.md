@@ -18,6 +18,12 @@ When compatibility status is displayed
 Then the workflow is identified as Styrene-specific
 And it is not presented as native LXMF propagation or NomadNet transport
 
+#### Scenario: Application workflow observation exists without a protocol gate
+Given the application-parity corpus records an observed external workflow
+When protocol support claims are generated
+Then the observation may support only its recorded product-workflow scope
+And no RNS, LXMF, propagation, receipt, or NomadNet claim is promoted without its pinned interoperability gate
+
 ### Requirement: Unsupported parity remains explicit
 
 Unsupported, partial, ignored, or manually verified behavior must be visible to operators and release tooling.

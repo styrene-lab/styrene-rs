@@ -18,6 +18,12 @@ When interoperability fixtures and live gates run
 Then evidence records the old and new revisions
 And changed bytes or semantics require explicit review rather than silent fixture replacement
 
+#### Scenario: Reference metadata disagrees for one revision
+Given provenance and evidence registries assign different versions to the same upstream revision
+When interoperability validation runs
+Then dependent compatibility gates fail closed
+And the inconsistency must be resolved from the pinned upstream source before release metadata is generated
+
 ### Requirement: Parity gates retain structured evidence
 
 Every live scenario must use the shared runner, bounded topology, deadlines, cleanup, assertions, and machine-readable evidence consumed by CLI, CI, and Lab.

@@ -11,6 +11,75 @@ The minimum product contains Messages, People, Network, and More. Propagation is
 a client detail under messaging or network settings, not a mobile administration
 workspace.
 
+## Reference Application Corpus
+
+Product parity and protocol interoperability are separate evidence axes:
+
+- The application-parity corpus records observed operator workflows in
+  RNS-compatible messaging applications.
+- Pinned Python RNS and LXMF runs establish wire and protocol compatibility.
+- The mobile-minimum state corpus establishes deterministic typed presentation
+  and reducer behavior.
+- Packaged Dioxus simulator and device runs prove Styrene delivers the accepted
+  workflow on each target.
+
+No axis substitutes for another. A screenshot or reference-app observation does
+not prove wire compatibility. A Python round trip does not prove the mobile
+workflow. A host component test does not prove a packaged application.
+
+The backend-owned application corpus lives at a versioned path such as
+`tests/fixtures/mobile-application-parity-v1/corpus.json`. Each admitted record
+contains:
+
+- Application name, version, and build.
+- Platform and OS.
+- Bundled or observed RNS/LXMF version, when available.
+- Source or binary provenance and observation date.
+- Evidence artifacts and evidence scope.
+
+The UI repository consumes a versioned copy with the exact backend revision.
+
+References are classified as protocol authority, observed RNS/LXMF application,
+candidate RNS/LXMF application, or interaction-only reference. Only protocol
+authorities and executed interoperability scenarios support protocol claims. A
+candidate cannot establish a workflow floor until its provenance and observation
+are admitted. Interaction-only references may inform information architecture or
+ergonomics but cannot establish an RNS, LXMF, propagation, receipt, or bearer
+outcome.
+
+The recovered inventory starts with these evidence scopes:
+
+- Skywave `1.0` build `5`, with Reticulum `0.9.4`, is an observed RNS/LXMF
+  application for public TCP connection and canonical `lxmf.delivery` announces
+  only. It has no retained propagation or full-message acceptance evidence.
+- Python Reticulum `1.4.2` at
+  `b48b96e61676504e0a4e527b33b9a0b4495c6872` and Python LXMF at
+  `795fdaa2b0777c13033787d933d1afc94a2377cb` are protocol authorities.
+- NomadNet `1.2.8` at `ad10301569a39d4f43b3d21ae9fc392602c937ca`
+  is a pinned native-application reference whose bidirectional application gates
+  remain incomplete and whose workflows are excluded from the mobile minimum.
+- Sideband, Columba, and MeshChat remain candidate RNS/LXMF applications until
+  exact versions, provenance, and executed observations are recovered or rerun.
+- Meshtastic and MeshCore remain interaction-only references unless separately
+  proven compatible. They cannot contribute RNS or LXMF evidence.
+
+The deleted Swift and Kotlin Styrene hosts are historical migration inputs, not
+external parity references. Their behavior cannot satisfy application-corpus,
+protocol, or packaged-Dioxus gates. RNode firmware provenance belongs to the
+hardware acceptance corpus, not the application-parity corpus.
+
+The recorded LXMF revision is labelled `1.1.0` in propagation evidence and
+`1.1.1` in shared provenance and capability metadata. Corpus admission must
+resolve that discrepancy from the referenced revision. No validator may select
+one label implicitly.
+
+The corpus maps each required journey to one designated observed floor and
+records observed facts, the Styrene requirement, accepted intentional
+differences, exclusions, and status. Status is one of `matched`,
+`intentionally_different`, `deferred`, `unsupported`, or `unevidenced`.
+Conflicting reference behavior is resolved explicitly in the matrix rather than
+silently combining the most expansive behavior from every application.
+
 ## Authority Boundaries
 
 The embedded Rust node owns identity, transport, peer observations, canonical
@@ -90,11 +159,13 @@ under process interruption.
 
 Implementation proceeds by observable slice:
 
-1. Add shared fixture schemas and failing Rust state, reducer, and component tests.
-2. Add failing embedded-runtime and in-process session contract tests.
-3. Implement the smallest backend and host changes that satisfy each slice.
-4. Run local two-party tests before public-Brutus tests.
-5. Run simulator, emulator, and applicable physical-device acceptance last.
+1. Admit provenance-locked reference observations and classify their authority.
+2. Define the workflow parity matrix and intentional differences.
+3. Add shared fixture schemas and failing Rust state, reducer, and component tests.
+4. Add failing embedded-runtime and in-process session contract tests.
+5. Implement the smallest backend and application changes that satisfy each slice.
+6. Run local two-party tests before public-Brutus tests.
+7. Replay accepted journeys on simulator, emulator, and applicable physical devices.
 
 Every asynchronous test uses a milestone, deadline, and correlation identifier.
 Arbitrary sleeps are not acceptance evidence. Fixture, simulator, emulator,
@@ -106,6 +177,9 @@ Existing persisted identity and message data must remain readable. New
 propagation configuration uses an additive persisted field and does not infer a
 value from the TCP endpoint.
 
-The minimum release claim covers only passing TCP, discovery, text messaging,
-and propagation-client gates. RNode, attachment, NomadNet, propagation-host, and
-advanced operator claims remain separate.
+The minimum release claim covers only TCP, discovery, text messaging, and
+propagation-client journeys that pass application-floor, typed-state, protocol,
+and packaged-target gates applicable to the claim. A required row classified as
+deferred, unsupported, or unevidenced blocks that workflow claim. RNode,
+attachment, NomadNet, propagation-host, and advanced operator claims remain
+separate.
