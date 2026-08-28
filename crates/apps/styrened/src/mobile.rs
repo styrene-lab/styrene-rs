@@ -43,6 +43,10 @@ use crate::announce_names::{encode_delivery_display_name_app_data, normalize_dis
 use crate::app_context::AppContext;
 use crate::config::{atomic_write_private, PlatformPaths};
 use crate::daemon_facade::DaemonFacade;
+use crate::services::discovery::{
+    LXMF_DELIVERY_DEVICE_TYPE, NATIVE_NOMADNET_HOST_DEVICE_TYPE,
+    STANDARD_LXMF_PROPAGATION_ACTIVE_DEVICE_TYPE, STANDARD_LXMF_PROPAGATION_INACTIVE_DEVICE_TYPE,
+};
 use crate::services::messaging::InboundAcceptOutcome;
 use crate::startup_contract::{
     ActiveCapabilities, RuntimeKind, StartupContract, StartupContractBuilder,
@@ -61,6 +65,7 @@ use rns_core::transport::iface::{
 };
 use serde::{Deserialize, Serialize};
 use styrene_ipc::traits::{Daemon, DaemonIdentity, DaemonStatus};
+use styrene_services::node_store::NodeStore;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -191,6 +196,115 @@ pub struct MobileSessionSnapshot {
     pub generation: u64,
     pub failure: Option<MobileFailure>,
     pub bearers: Vec<MobileBearerObservation>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobilePeerAspect {
+    LxmfDelivery,
+    LxmfPropagation,
+    NomadNetworkNode,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobilePeerSource {
+    CanonicalAnnounce,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobilePeer {
+    pub destination_hash: String,
+    pub aspect: MobilePeerAspect,
+    pub display_name: Option<String>,
+    pub observed_at: i64,
+    pub age_secs: u64,
+    pub source: MobilePeerSource,
+    pub announce_count: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobilePeerSnapshot {
+    pub generation: u64,
+    pub observed_at: i64,
+    pub peers: Vec<MobilePeer>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobilePeerEvent {
+    pub generation: u64,
+    pub peer: MobilePeer,
+}
+
+pub struct MobilePeerSubscription {
+    generation: u64,
+    receiver: tokio::sync::broadcast::Receiver<styrene_ipc::types::DaemonEvent>,
+}
+
+impl MobilePeerSubscription {
+    pub async fn recv(&mut self) -> Result<MobilePeerEvent, MobileDiscoveryError> {
+        loop {
+            match self.receiver.recv().await {
+                Ok(styrene_ipc::types::DaemonEvent::Device { device }) => {
+                    if let Some(peer) = mobile_peer_from_device(
+                        device,
+                        rns_core::transport::time::now_epoch_secs_i64(),
+                    ) {
+                        return Ok(MobilePeerEvent { generation: self.generation, peer });
+                    }
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
+                    return Err(MobileDiscoveryError::EventLagged(dropped));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    return Err(MobileDiscoveryError::EventClosed);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MobileDiscoveryError {
+    #[error("mobile discovery snapshot failed: {0}")]
+    Snapshot(String),
+    #[error("mobile discovery event stream lagged by {0} events")]
+    EventLagged(u64),
+    #[error("mobile discovery event stream closed")]
+    EventClosed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobileAnnounceOutcome {
+    pub generation: u64,
+    pub accepted_at: i64,
+    pub local_dispatch_accepted: bool,
+    pub remote_reception_confirmed: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MobileAnnounceError {
+    #[error("mobile announce transport unavailable")]
+    TransportUnavailable,
+    #[error("mobile announce dispatch rejected: {0}")]
+    DispatchRejected(String),
+}
+
+impl MobileAnnounceError {
+    #[must_use]
+    pub const fn code(&self) -> MobileFailureCode {
+        MobileFailureCode::TransportUnavailable
+    }
+
+    #[must_use]
+    pub const fn retryable(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -340,10 +454,15 @@ pub struct PollMessage {
     pub timestamp: i64,
 }
 
+struct MobileStores {
+    messages: Arc<Mutex<MessagesStore>>,
+    nodes: Arc<NodeStore>,
+}
+
 async fn compose_mobile_node(
     paths: PlatformPaths,
     identity: PrivateIdentity,
-    store: Arc<Mutex<MessagesStore>>,
+    stores: MobileStores,
     transport_runtime: MobileTransportRuntime,
     display_name: Option<String>,
     hub_delivery_hash: Option<String>,
@@ -369,7 +488,12 @@ async fn compose_mobile_node(
         startup.record(startup_component::NATIVE_RESOURCE_RETRY_SCHEDULER);
     }
     let identity_hash = hex::encode(identity.address_hash().as_slice());
-    let app_context = Arc::new(AppContext::new(transport.clone(), identity_hash.clone(), store));
+    let app_context = Arc::new(AppContext::with_node_store(
+        transport.clone(),
+        identity_hash.clone(),
+        stores.messages,
+        stores.nodes,
+    ));
     startup.record_local_execution_services();
     let initialization = (|| -> anyhow::Result<()> {
         app_context
@@ -594,6 +718,29 @@ fn parse_tcp_client_address(value: &str) -> anyhow::Result<String> {
     Ok(format!("{}:{port}", host.to_ascii_lowercase()))
 }
 
+fn mobile_peer_from_device(
+    device: styrene_ipc::types::DeviceInfo,
+    snapshot_observed_at: i64,
+) -> Option<MobilePeer> {
+    let aspect = match device.device_type.as_str() {
+        LXMF_DELIVERY_DEVICE_TYPE => MobilePeerAspect::LxmfDelivery,
+        STANDARD_LXMF_PROPAGATION_ACTIVE_DEVICE_TYPE
+        | STANDARD_LXMF_PROPAGATION_INACTIVE_DEVICE_TYPE => MobilePeerAspect::LxmfPropagation,
+        NATIVE_NOMADNET_HOST_DEVICE_TYPE => MobilePeerAspect::NomadNetworkNode,
+        _ => return None,
+    };
+    let observed_at = device.last_announce?;
+    Some(MobilePeer {
+        destination_hash: device.destination_hash,
+        aspect,
+        display_name: (!device.name.is_empty()).then_some(device.name),
+        observed_at,
+        age_secs: u64::try_from(snapshot_observed_at.saturating_sub(observed_at)).unwrap_or(0),
+        source: MobilePeerSource::CanonicalAnnounce,
+        announce_count: device.announce_count,
+    })
+}
+
 pub fn load_mobile_tcp_endpoint(
     config_dir: &std::path::Path,
 ) -> Result<Option<String>, MobileEndpointError> {
@@ -706,6 +853,11 @@ impl MobileNode {
         let store = Arc::new(Mutex::new(
             MessagesStore::open(&db_path).map_err(|e| anyhow::anyhow!("database: {e}"))?,
         ));
+        let node_store_path = db_path.with_file_name("nodes.db");
+        let node_store_path = node_store_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("mobile node store path is not valid UTF-8"))?;
+        let node_store = Arc::new(NodeStore::open(node_store_path)?);
 
         let display_name = config.display_name.as_deref().and_then(normalize_display_name);
         let announce_app_data =
@@ -814,7 +966,7 @@ impl MobileNode {
         compose_mobile_node(
             paths,
             identity,
-            store,
+            MobileStores { messages: store, nodes: node_store },
             transport_runtime,
             display_name,
             config.hub_delivery_hash,
@@ -835,6 +987,12 @@ impl MobileNode {
 
     pub async fn session_snapshot(&self) -> MobileSessionSnapshot {
         let interfaces = self.app_context.transport().interface_snapshots().await;
+        let generation = interfaces
+            .iter()
+            .map(|interface| interface.generation)
+            .max()
+            .unwrap_or(self.generation)
+            .max(1);
         let tcp_states = interfaces
             .iter()
             .filter(|interface| {
@@ -880,7 +1038,7 @@ impl MobileNode {
         MobileSessionSnapshot {
             phase,
             endpoint: self.tcp_endpoint.clone(),
-            generation: self.generation,
+            generation,
             failure,
             bearers: vec![
                 MobileBearerObservation { kind: MobileBearerKind::Tcp, state: tcp },
@@ -891,6 +1049,47 @@ impl MobileNode {
                 },
             ],
         }
+    }
+
+    pub async fn peer_snapshot_at(
+        &self,
+        observed_at: i64,
+    ) -> Result<MobilePeerSnapshot, MobileDiscoveryError> {
+        let generation = self.session_snapshot().await.generation;
+        let devices = self.list_peers().await.map_err(MobileDiscoveryError::Snapshot)?;
+        let peers = devices
+            .into_iter()
+            .filter_map(|device| mobile_peer_from_device(device, observed_at))
+            .collect();
+        Ok(MobilePeerSnapshot { generation, observed_at, peers })
+    }
+
+    pub async fn peer_snapshot(&self) -> Result<MobilePeerSnapshot, MobileDiscoveryError> {
+        self.peer_snapshot_at(rns_core::transport::time::now_epoch_secs_i64()).await
+    }
+
+    pub async fn subscribe_peer_events(&self) -> MobilePeerSubscription {
+        MobilePeerSubscription {
+            generation: self.session_snapshot().await.generation,
+            receiver: self.app_context.events().subscribe_devices(),
+        }
+    }
+
+    pub async fn announce_outcome(&self) -> Result<MobileAnnounceOutcome, MobileAnnounceError> {
+        if !self.is_connected() {
+            return Err(MobileAnnounceError::TransportUnavailable);
+        }
+        self.app_context
+            .transport()
+            .dispatch_announce(None)
+            .await
+            .map_err(|error| MobileAnnounceError::DispatchRejected(error.to_string()))?;
+        Ok(MobileAnnounceOutcome {
+            generation: self.session_snapshot().await.generation,
+            accepted_at: rns_core::transport::time::now_epoch_secs_i64(),
+            local_dispatch_accepted: true,
+            remote_reception_confirmed: false,
+        })
     }
 
     /// Actual addresses bound by configured TCP server profiles.
@@ -1320,7 +1519,7 @@ mod tests {
         compose_mobile_node(
             PlatformPaths::new("test-config".into(), "test-data".into()),
             identity,
-            store,
+            MobileStores { messages: store, nodes: Arc::new(NodeStore::in_memory().unwrap()) },
             MobileTransportRuntime {
                 transport: mock,
                 delivery_hash: Some(delivery_hash),
@@ -1344,7 +1543,10 @@ mod tests {
         let result = compose_mobile_node(
             PlatformPaths::new("test-config".into(), "test-data".into()),
             PrivateIdentity::new_from_name("failed-mobile-composition"),
-            Arc::new(Mutex::new(MessagesStore::in_memory().unwrap())),
+            MobileStores {
+                messages: Arc::new(Mutex::new(MessagesStore::in_memory().unwrap())),
+                nodes: Arc::new(NodeStore::in_memory().unwrap()),
+            },
             MobileTransportRuntime {
                 transport: mock.clone(),
                 delivery_hash: Some(hex::encode(mock.destination_hash().as_slice())),

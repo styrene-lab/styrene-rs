@@ -16,6 +16,7 @@ use styrene_ipc::types::{DeviceInfo, DiscoveredCapability};
 use styrene_services::node_store::{Node, NodeStore};
 
 pub const NATIVE_NOMADNET_HOST_DEVICE_TYPE: &str = "native_nomadnet_host";
+pub const LXMF_DELIVERY_DEVICE_TYPE: &str = "lxmf_delivery";
 pub const STANDARD_LXMF_PROPAGATION_ACTIVE_DEVICE_TYPE: &str =
     "standard_lxmf_propagation_host_active";
 pub const STANDARD_LXMF_PROPAGATION_INACTIVE_DEVICE_TYPE: &str =
@@ -181,7 +182,7 @@ impl DiscoveryService {
             )
             .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-        let metadata = if device_type.is_none() {
+        let metadata = if device_type.is_none() || device_type == Some(LXMF_DELIVERY_DEVICE_TYPE) {
             lxmf::announce::delivery_announce_metadata(app_data)
         } else {
             None
@@ -220,6 +221,22 @@ impl DiscoveryService {
             self.store.lock().map_err(|_| std::io::Error::other("messages store lock poisoned"))?;
         store.insert_announce(&record).map_err(std::io::Error::other)?;
         Ok(record)
+    }
+
+    pub fn accept_delivery_announce(
+        &self,
+        destination_hash: String,
+        timestamp: i64,
+        app_data: &[u8],
+    ) -> Result<AnnounceRecord, std::io::Error> {
+        lxmf::announce::delivery_announce_metadata(app_data)
+            .ok_or_else(|| std::io::Error::other("invalid canonical LXMF delivery app data"))?;
+        self.accept_announce_with_type(
+            destination_hash,
+            timestamp,
+            app_data,
+            Some(LXMF_DELIVERY_DEVICE_TYPE),
+        )
     }
 
     pub fn accept_standard_propagation_announce(

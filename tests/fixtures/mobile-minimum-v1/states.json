@@ -116,7 +116,9 @@
           "aspect": "lxmf.delivery",
           "display_name": "FPIG_SKYWAVE",
           "observed_at": 1787927000,
-          "age_secs": 4
+          "age_secs": 4,
+          "source": "canonical_announce",
+          "announce_count": 1
         }
       ],
       "conversations": [],
