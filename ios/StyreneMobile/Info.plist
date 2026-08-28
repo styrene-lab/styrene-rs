@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Styrene uses Face ID to unlock the mesh identity stored in Keychain.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Styrene connects to an approved Bluetooth RNode radio.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Styrene connects to Reticulum mesh nodes on the local network.</string>
 	<key>UIApplicationSceneManifest</key>
