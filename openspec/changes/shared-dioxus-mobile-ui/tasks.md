@@ -4,7 +4,7 @@
 <!-- specs: mobile-ui/spec -->
 
 - [ ] 1.1 Define mobile route, adaptive layout, navigation restoration, and desktop-route exclusion tests
-- [ ] 1.2 Add iOS and Android Dioxus launchers that render the same fixture-only shell
+- [x] 1.2 Add iOS and Android Dioxus launchers that render the same fixture-only shell
 - [ ] 1.3 Implement shared Messages, People, Network, and More navigation and persistent identity context
 - [ ] 1.4 Add loading, empty, ready, degraded, error, and high-information fixtures for every mobile route
 - [ ] 1.5 Verify one workflow source change appears on both platforms from the same Rust source
