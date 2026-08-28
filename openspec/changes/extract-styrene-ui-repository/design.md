@@ -34,9 +34,7 @@ crates/
   styrene-ui-platform/  platform-service traits
 apps/
   desktop/              desktop launcher and packaging
-native/
-  ios/                  reserved for the later mobile change
-  android/              reserved for the later mobile change
+  mobile/               Rust Dioxus mobile launcher and packaging
 ```
 
 The initial extraction can preserve the current internal layout before a

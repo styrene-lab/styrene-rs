@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "corpus": "styrene-mobile-integration-v1",
-  "description": "Acceptance inventory for the shared Styrene iOS and Android communicator",
+  "description": "Acceptance inventory for the shared Rust Dioxus iOS and Android communicator",
   "execution_lanes": [
     {
       "id": "mobile.messaging.cross-platform-ios-to-android",
@@ -44,7 +44,7 @@
     {"id": "wireguard-underlay", "kind": "device", "nodes": 2, "description": "Direct TCP carried through a pre-created WireGuard tunnel"},
     {"id": "propagation-hub", "kind": "loopback", "nodes": 3, "description": "Sender, receiver, and propagation service with the direct path unavailable"},
     {"id": "micron-host", "kind": "loopback", "nodes": 2, "description": "Mobile node and controlled native Micron page host"},
-    {"id": "host-fixture", "kind": "offline", "nodes": 1, "description": "Deterministic native-host state and accessibility fixture"},
+    {"id": "host-fixture", "kind": "offline", "nodes": 1, "description": "Deterministic Dioxus state and accessibility fixture"},
     {"id": "upstream-live", "kind": "live_interop", "nodes": 2, "description": "Styrene and pinned upstream Python implementations"}
   ],
   "required_areas": [
@@ -62,14 +62,14 @@
       "kind": "offline",
       "evidence_scope": "internal_runtime",
       "topology": "offline-single",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["messages.identity-anchor", "more.identity"],
       "actions": ["boot", "inspect-identity", "restart"],
       "assertions": [
         {"source": "daemon", "claim": "Identity hash is stable and delivery hash is absent without a delivery-capable interface", "oracle": "crates/apps/styrened/tests/mobile_node.rs#offline_boot_reports_no_routable_destination"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#offline_boot_reports_no_routable_destination"],
-      "missing_capabilities": ["Rust restart identity stability assertion", "typed mobile identity custody status", "native host restart automation"],
+      "missing_capabilities": ["Rust restart identity stability assertion", "typed mobile identity custody status", "Dioxus package restart automation"],
       "not_proven": ["device key custody"]
     },
     {
@@ -81,7 +81,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["messages.identity-anchor", "more.identity", "network.connection-setup"],
       "actions": ["boot", "announce", "inspect-peer"],
       "assertions": [
@@ -107,7 +107,7 @@
         {"source": "platform", "claim": "Clipboard content equals the public delivery destination and contains no private key material", "oracle": "docs/mobile-ui-contract.md#operator-priority"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["stable native test identifiers", "iOS and Android clipboard integration tests"],
+      "missing_capabilities": ["stable Dioxus test identifiers", "iOS and Android clipboard integration tests"],
       "not_proven": ["secure custody"]
     },
     {
@@ -138,7 +138,7 @@
       "kind": "offline",
       "evidence_scope": "internal_runtime",
       "topology": "offline-single",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["messages.status", "network.posture"],
       "actions": ["boot", "query-status", "inspect-status"],
       "assertions": [
@@ -157,7 +157,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi"],
+      "platforms": ["rust"],
       "ui_surfaces": ["network.connection-setup"],
       "actions": ["boot", "shutdown", "probe-listener"],
       "assertions": [
@@ -180,10 +180,10 @@
       "ui_surfaces": ["messages", "network", "pages"],
       "actions": ["start-operation", "shutdown", "restart", "complete-old-operation"],
       "assertions": [
-        {"source": "host_state", "claim": "Old results, errors, loading flags, and navigation state do not enter the new generation", "oracle": "docs/mobile-integration-test-corpus.md#native-host-tests"}
+        {"source": "host_state", "claim": "Old results, errors, loading flags, and navigation state do not enter the new generation", "oracle": "docs/mobile-integration-test-corpus.md#dioxus-package-tests"}
       ],
-      "existing_tests": ["ios/StyreneMobileTests/StyreneNodeModelTests.swift", "android/app/src/test/kotlin/io/styrene/mesh/MobileNodeStateHolderTest.kt"],
-      "missing_capabilities": ["native stale page and refresh assertions", "host restart-generation acceptance test"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#message_events_are_generation_scoped_complete_canonical_projections"],
+      "missing_capabilities": ["Dioxus stale page and refresh assertions", "Dioxus restart-generation acceptance test"],
       "not_proven": ["daemon cancellation"]
     },
     {
@@ -202,8 +202,8 @@
         {"source": "daemon", "claim": "Failed composition leaves no retained workers or listeners", "oracle": "crates/apps/styrened/src/mobile.rs"},
         {"source": "host_state", "claim": "Retry enters starting and reaches ready or connected", "oracle": "docs/mobile-ui-contract.md#shared-states"}
       ],
-      "existing_tests": ["ios/StyreneMobileTests/StyreneNodeModelTests.swift", "android/app/src/test/kotlin/io/styrene/mesh/MobileNodeStateHolderTest.kt"],
-      "missing_capabilities": ["Android hydration-failure cleanup and retry assertion", "boot-stage fault injection", "typed boot failure stage"],
+      "existing_tests": ["crates/apps/styrened/src/mobile.rs"],
+      "missing_capabilities": ["Dioxus hydration-failure cleanup and retry assertion", "boot-stage fault injection", "typed boot failure stage"],
       "not_proven": []
     },
     {
@@ -223,7 +223,7 @@
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#two_mobile_nodes_exchange_lxmf_directly_without_hub"],
       "missing_capabilities": [],
-      "not_proven": ["native host rendering", "upstream interoperability"]
+      "not_proven": ["Dioxus package rendering", "upstream interoperability"]
     },
     {
       "id": "mobile.messaging.dual-simulator-roundtrip",
@@ -238,8 +238,8 @@
       "ui_surfaces": ["messages.inbox", "messages.thread", "messages.composer"],
       "actions": ["launch-pair", "send-a-to-b", "observe-b-unread", "reply-b-to-a"],
       "assertions": [
-        {"source": "durable_store", "claim": "Both messages exist once with matching correlation IDs", "oracle": "docs/mobile-integration-test-corpus.md#dual-simulator-integration"},
-        {"source": "accessibility", "claim": "Each host exposes the expected conversation and message semantics", "oracle": "docs/mobile-integration-test-corpus.md#native-host-tests"}
+        {"source": "durable_store", "claim": "Both messages exist once with matching correlation IDs", "oracle": "docs/mobile-integration-test-corpus.md#simulator-integration"},
+        {"source": "accessibility", "claim": "Each host exposes the expected conversation and message semantics", "oracle": "docs/mobile-integration-test-corpus.md#dioxus-package-tests"}
       ],
       "existing_tests": [],
       "missing_capabilities": ["deterministic iOS launch profiles", "XCTest target", "dual-simulator runner", "send-result and message-ID correlation projection", "host evidence query"],
@@ -260,8 +260,8 @@
       "assertions": [
         {"source": "durable_store", "claim": "Each host stores one inbound and one outbound record with matching correlation IDs", "oracle": "docs/mobile-integration-test-corpus.md#cross-platform-and-device-integration"}
       ],
-      "existing_tests": ["ios/StyreneMobileUITests/CrossPlatformHubUITests.swift#testIOSQueuesCorrelatedMessageForAndroid", "scripts/mobile_cross_platform_runner.py"],
-      "missing_capabilities": ["Android-to-iOS reply automation", "send-result and message-ID correlation projection"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#two_mobile_nodes_exchange_lxmf_directly_without_hub"],
+      "missing_capabilities": ["Dioxus cross-platform package automation", "send-result and message-ID correlation projection"],
       "not_proven": ["upstream interoperability"]
     },
     {
@@ -273,14 +273,14 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["messages.inbox", "messages.thread"],
       "actions": ["receive-message", "query-conversations", "open-thread", "query-conversations"],
       "assertions": [
         {"source": "durable_store", "claim": "Unread count changes from one to zero without deleting the conversation", "oracle": "crates/apps/styrened/tests/mobile_node.rs#two_mobile_nodes_exchange_lxmf_directly_without_hub"}
       ],
-      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#two_mobile_nodes_exchange_lxmf_directly_without_hub", "scripts/mobile_cross_platform_runner.py"],
-      "missing_capabilities": ["iOS native host unread semantic assertions"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#two_mobile_nodes_exchange_lxmf_directly_without_hub"],
+      "missing_capabilities": ["Dioxus unread semantic assertions on packaged targets"],
       "not_proven": []
     },
     {
@@ -298,8 +298,8 @@
       "assertions": [
         {"source": "host_state", "claim": "The exact draft remains editable and one failure is visible", "oracle": "docs/mobile-ui-contract.md#message-composition"}
       ],
-      "existing_tests": ["ios/StyreneMobileTests/StyreneNodeModelTests.swift", "android/app/src/test/kotlin/io/styrene/mesh/MobileNodeStateHolderTest.kt"],
-      "missing_capabilities": ["host send-failure fixture assertions"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#draft_revision_prevents_an_older_send_from_clearing_a_newer_edit"],
+      "missing_capabilities": ["packaged Dioxus send-failure fixture assertions"],
       "not_proven": ["daemon retry"]
     },
     {
@@ -315,10 +315,10 @@
       "ui_surfaces": ["messages.composer"],
       "actions": ["enter-draft", "tap-send-repeatedly", "complete-send"],
       "assertions": [
-        {"source": "host_state", "claim": "Only one send operation starts and the composer clears only for its own successful operation", "oracle": "docs/mobile-integration-test-corpus.md#native-host-tests"}
+        {"source": "host_state", "claim": "Only one send operation starts and the composer clears only for its own successful operation", "oracle": "docs/mobile-integration-test-corpus.md#dioxus-package-tests"}
       ],
-      "existing_tests": ["ios/StyreneMobileTests/StyreneNodeModelTests.swift", "android/app/src/test/kotlin/io/styrene/mesh/MobileNodeStateHolderTest.kt"],
-      "missing_capabilities": ["iOS repeated-send assertion"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#draft_revision_prevents_an_older_send_from_clearing_a_newer_edit"],
+      "missing_capabilities": ["packaged Dioxus repeated-send assertion"],
       "not_proven": ["network deduplication"]
     },
     {
@@ -369,7 +369,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["messages.thread", "messages.delivery-details"],
       "actions": ["send-message", "observe-attempt", "receive-evidence", "inspect-details"],
       "assertions": [
@@ -388,7 +388,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["messages.delivery-options", "messages.delivery-details"],
       "actions": ["select-method", "send-message", "trigger-fallback", "inspect-details"],
       "assertions": [
@@ -407,7 +407,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["messages.route-evidence", "network.interfaces"],
       "actions": ["send-message", "query-route", "query-interface", "inspect-message"],
       "assertions": [
@@ -464,7 +464,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["messages.composer", "messages.thread"],
       "actions": ["pick-attachment", "send-message", "open-attachment"],
       "assertions": [
@@ -483,7 +483,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["messages.thread", "messages.attachment-transfer"],
       "actions": ["send-large-attachment", "observe-progress", "verify-integrity"],
       "assertions": [
@@ -502,7 +502,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["messages.attachment-transfer"],
       "actions": ["start-transfer", "partition-path", "cancel-transfer", "retry-transfer"],
       "assertions": [
@@ -521,7 +521,7 @@
       "kind": "simulator",
       "evidence_scope": "host_simulator",
       "topology": "host-fixture",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["people.directory", "people.person"],
       "actions": ["seed-contact", "omit-announce", "open-people"],
       "assertions": [
@@ -529,7 +529,7 @@
         {"source": "accessibility", "claim": "The saved contact remains actionable without an online claim", "oracle": "docs/mobile-ui-contract.md#shared-states"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["shared native directory fixture", "full device discovery projection"],
+      "missing_capabilities": ["shared Dioxus directory fixture", "full device discovery projection"],
       "not_proven": ["route availability"]
     },
     {
@@ -541,7 +541,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["people.directory", "people.person"],
       "actions": ["receive-announce", "remove-route", "inspect-person"],
       "assertions": [
@@ -560,14 +560,14 @@
       "kind": "simulator",
       "evidence_scope": "host_simulator",
       "topology": "host-fixture",
-      "platforms": ["ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["people.person", "messages.inbox", "messages.thread"],
       "actions": ["save-contact", "edit-alias", "open-conversation"],
       "assertions": [
-        {"source": "daemon", "claim": "The contact store returns the new alias for the same peer hash", "oracle": "crates/bindings/styrene-mobile-ffi/src/lib.rs"}
+        {"source": "daemon", "claim": "The contact store returns the new alias for the same peer hash", "oracle": "crates/apps/styrened/src/mobile.rs"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["native alias editor", "contact mutation host tests"],
+      "missing_capabilities": ["Dioxus alias editor", "contact mutation component tests"],
       "not_proven": ["notes", "trust", "block state"]
     },
     {
@@ -579,15 +579,15 @@
       "kind": "offline",
       "evidence_scope": "internal_runtime",
       "topology": "offline-single",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["network.connection-setup", "more.settings"],
       "actions": ["boot-invalid-profile", "boot-malformed-profile", "boot-duplicate-profile"],
       "assertions": [
         {"source": "daemon", "claim": "Each invalid profile is rejected before runtime composition with a descriptive boot error", "oracle": "crates/apps/styrened/tests/mobile_node.rs#invalid_and_duplicate_tcp_profiles_fail_before_boot"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#invalid_and_duplicate_tcp_profiles_fail_before_boot"],
-      "missing_capabilities": ["typed profile validation errors", "UniFFI profile conversion tests", "native profile validation fixtures"],
-      "not_proven": ["native form validation"]
+      "missing_capabilities": ["typed profile validation errors", "Dioxus profile conversion tests", "Dioxus profile validation fixtures"],
+      "not_proven": ["Dioxus form validation"]
     },
     {
       "id": "mobile.network.ephemeral-listener",
@@ -598,15 +598,15 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["network.interfaces"],
       "actions": ["boot-tcp-server", "query-listeners", "shutdown"],
       "assertions": [
         {"source": "daemon", "claim": "The listener has a nonzero bound port and closes on shutdown", "oracle": "crates/apps/styrened/tests/mobile_node.rs#tcp_server_reports_actual_ephemeral_listener"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#tcp_server_reports_actual_ephemeral_listener"],
-      "missing_capabilities": ["UniFFI listener projection test", "native listener acceptance fixtures"],
-      "not_proven": ["native interface card"]
+      "missing_capabilities": ["Rust session listener projection test", "Dioxus listener acceptance fixtures"],
+      "not_proven": ["Dioxus interface card"]
     },
     {
       "id": "mobile.network.interface-observations",
@@ -617,7 +617,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["network.interfaces", "messages.route-evidence"],
       "actions": ["boot-interface", "transfer-packets", "query-interface", "disconnect-interface"],
       "assertions": [
@@ -640,11 +640,11 @@
       "ui_surfaces": ["network.interfaces", "more.settings"],
       "actions": ["attach-rnode", "deny-usb", "grant-usb", "configure-radio", "unplug-rnode"],
       "assertions": [
-        {"source": "platform", "claim": "Permission and device states follow Android USB observations", "oracle": "android/app/src/main/kotlin/io/styrene/mesh/RNodeController.kt"},
+        {"source": "platform", "claim": "Permission and device states follow typed Android USB observations", "oracle": "crates/apps/styrened/src/mobile.rs"},
         {"source": "daemon", "claim": "Online state requires successful radio configuration and packet bridge startup", "oracle": "crates/apps/styrened/src/mobile.rs"}
       ],
-      "existing_tests": ["android/app/src/test/kotlin/io/styrene/mesh/RNodeProtocolTest.kt"],
-      "missing_capabilities": ["device-in-loop RNode harness", "typed RNode failure projection", "secure Android identity backend"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#android_usb_is_explicit_fallback_and_cannot_preempt_approved_bluetooth"],
+      "missing_capabilities": ["Rust device-in-loop RNode harness", "typed RNode failure projection", "secure Android identity backend"],
       "not_proven": ["RF delivery"]
     },
     {
@@ -675,14 +675,14 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "propagation-hub",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["more.propagation", "messages.inbox"],
       "actions": ["queue-at-hub", "poll-hub", "query-messages"],
       "assertions": [
         {"source": "durable_store", "claim": "Accepted messages exist before the poll result is exposed", "oracle": "crates/apps/styrened/src/mobile.rs"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["native propagation configuration", "native projection of per-message poll results"],
+      "missing_capabilities": ["Dioxus propagation configuration", "Dioxus projection of per-message poll results"],
       "not_proven": ["standard LXMF propagation parity"]
     },
     {
@@ -694,7 +694,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "propagation-hub",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["more.propagation"],
       "actions": ["queue-message", "start-sync", "interrupt-sync", "inspect-propagation"],
       "assertions": [
@@ -720,7 +720,7 @@
         {"source": "platform", "claim": "The host does not announce propagated or fallback without typed router evidence", "oracle": "docs/mobile-ui-contract.md#message-composition"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["native semantic fixture for propagation failure"],
+      "missing_capabilities": ["Dioxus semantic fixture for propagation failure"],
       "not_proven": []
     },
     {
@@ -732,11 +732,11 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "micron-host",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["more.pages"],
       "actions": ["enter-page-address", "fetch-page", "inspect-source"],
       "assertions": [
-        {"source": "daemon", "claim": "Returned source corresponds to the requested destination and native path", "oracle": "crates/bindings/styrene-mobile-ffi/src/lib.rs"},
+        {"source": "daemon", "claim": "Returned source corresponds to the requested destination and native path", "oracle": "crates/apps/styrened/src/mobile.rs"},
         {"source": "accessibility", "claim": "The host exposes the address and complete raw source", "oracle": "docs/mobile-ui-contract.md#pages"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/nomadnet_pages_offline.rs"],
@@ -752,7 +752,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "micron-host",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["more.pages"],
       "actions": ["fetch-invalid-address", "fetch-invalid-path", "fetch-unavailable-host", "trigger-timeout"],
       "assertions": [
@@ -771,7 +771,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "micron-host",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["more.pages"],
       "actions": ["open-page-session", "follow-link", "navigate-back", "submit-form", "reload-page"],
       "assertions": [
@@ -790,7 +790,7 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "micron-host",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["more.pages", "pages.download"],
       "actions": ["open-file-link", "observe-progress", "cancel-download", "retry-download", "save-file"],
       "assertions": [
@@ -816,7 +816,7 @@
         {"source": "platform", "claim": "Preferences persist in host storage and do not mutate daemon protocol state", "oracle": "docs/mobile-ui-contract.md#capability-settings"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["native preference tests", "deterministic preview fixture launch"],
+      "missing_capabilities": ["Dioxus preference tests", "deterministic preview fixture launch"],
       "not_proven": []
     },
     {
@@ -828,7 +828,7 @@
       "kind": "simulator",
       "evidence_scope": "host_simulator",
       "topology": "host-fixture",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["more.settings", "more.about", "messages.delivery-options"],
       "actions": ["load-capabilities", "inspect-settings", "change-generation", "inspect-settings"],
       "assertions": [
@@ -866,7 +866,7 @@
       "kind": "simulator",
       "evidence_scope": "host_simulator",
       "topology": "host-fixture",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["more.diagnostics"],
       "actions": ["seed-diagnostic-events", "open-diagnostics", "export-diagnostics"],
       "assertions": [
@@ -886,14 +886,14 @@
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
-      "platforms": ["rust", "ffi", "ios_simulator", "android_instrumentation"],
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
       "ui_surfaces": ["messages", "people", "more.identity"],
       "actions": ["seed-state", "shutdown", "restart", "query-state"],
       "assertions": [
         {"source": "durable_store", "claim": "All durable records and the identity reappear once with unchanged keys", "oracle": "docs/mobile-integration-test-corpus.md#cross-platform-and-device-integration"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs"],
-      "missing_capabilities": ["Rust complete-state restart test", "native restart acceptance test", "mobile storage health projection"],
+      "missing_capabilities": ["Rust complete-state restart test", "Dioxus restart acceptance test", "mobile storage health projection"],
       "not_proven": ["schema migration"]
     },
     {
@@ -928,10 +928,10 @@
       "ui_surfaces": ["messages", "people", "network", "more"],
       "actions": ["inspect-accessibility-tree", "navigate-tabs", "open-thread", "open-identity"],
       "assertions": [
-        {"source": "accessibility", "claim": "Tabs, identity, conversations, composer, preview state, route evidence, and disabled reasons have stable names and roles", "oracle": "docs/mobile-integration-test-corpus.md#native-host-tests"}
+        {"source": "accessibility", "claim": "Tabs, identity, conversations, composer, preview state, route evidence, and disabled reasons have stable names and roles", "oracle": "docs/mobile-integration-test-corpus.md#dioxus-package-tests"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["stable accessibility identifiers", "XCUITest target", "Compose instrumentation target"],
+      "missing_capabilities": ["stable accessibility identifiers", "Dioxus iOS package tests", "Dioxus Android package tests"],
       "not_proven": []
     },
     {
@@ -947,10 +947,10 @@
       "ui_surfaces": ["messages", "people", "network", "more.settings", "more.pages"],
       "actions": ["set-largest-text", "inspect-layout", "enable-screen-reader", "navigate-actions"],
       "assertions": [
-        {"source": "accessibility", "claim": "Text does not hide required actions and touch targets remain at least 44pt or 48dp", "oracle": "docs/mobile-integration-test-corpus.md#native-host-tests"}
+        {"source": "accessibility", "claim": "Text does not hide required actions and touch targets remain at least 44pt or 48dp", "oracle": "docs/mobile-integration-test-corpus.md#dioxus-package-tests"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["native accessibility automation", "deterministic high-information fixtures"],
+      "missing_capabilities": ["Dioxus accessibility automation", "deterministic high-information fixtures"],
       "not_proven": []
     },
     {
@@ -969,7 +969,7 @@
         {"source": "accessibility", "claim": "Shared states, actions, preview labels, and disabled reasons match the mobile UI contract", "oracle": "docs/mobile-ui-contract.md"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["shared fixture injection", "semantic parity comparator", "native test targets"],
+      "missing_capabilities": ["shared fixture injection", "semantic parity comparator", "Dioxus package test targets"],
       "not_proven": ["pixel identity"]
     },
     {
@@ -988,7 +988,7 @@
         {"source": "accessibility", "claim": "Every synthetic row and route example exposes Preview and no packet action reaches the daemon", "oracle": "docs/mobile-ui-contract.md#shared-states"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["native semantic fixture tests"],
+      "missing_capabilities": ["Dioxus semantic fixture tests"],
       "not_proven": ["delivery", "route", "bearer", "interoperability"]
     },
     {

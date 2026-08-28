@@ -42,9 +42,9 @@ reducers. It requires them to consume identical typed daemon semantics.
 
 ## Embedded Mobile Use
 
-Rust Dioxus mobile code will consume `EmbeddedSession` directly. Swift and
-Kotlin bridges continue to provide OS services, but they do not define a second
-daemon API. Existing UniFFI hosts remain supported during migration.
+Rust Dioxus mobile code consumes `EmbeddedSession` directly. Rust platform
+services provide OS integration without defining a second daemon API or a
+generated-language host.
 
 ## Failure Behavior
 

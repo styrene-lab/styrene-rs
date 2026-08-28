@@ -2,8 +2,8 @@
 
 ## Intent
 
-Turn the existing iOS and Android reference hosts into a useful Reticulum and
-LXMF mobile product with the smallest defensible interoperability claim. The
+Deliver a useful Rust-owned Dioxus Reticulum and LXMF mobile product with the
+smallest defensible interoperability claim. The
 mobile product must preserve one identity, connect to a configured public TCP
 interface, discover canonical peers, exchange durable text messages, and use a
 selected standard LXMF propagation node for offline delivery.
@@ -19,15 +19,13 @@ delivery evidence, standard propagation upload and synchronization controls, and
 one shared cross-platform acceptance corpus. One Dioxus application and its
 Rust-owned embedded runtime deliver the behavior on iOS and Android.
 
-The existing SwiftUI and Compose applications are legacy reference surfaces,
-not implementation targets. They receive no new product state or workflow logic.
-This change excludes mobile
+No Swift or Kotlin mobile host is retained. This change excludes mobile
 propagation hosting, automatic propagation-node selection, attachments, Paper
 delivery, NomadNet parity, advanced route or link administration, fleet, tunnel,
 and Lab workflows.
 
-RNode behavior remains governed by `stabilize-mobile-platform-hosts`. A platform
-must not claim RNode support until its applicable physical-device gates pass.
+A platform must not claim RNode support until its Dioxus release candidate passes
+the applicable physical-device gates.
 
 ## Success criteria
 

@@ -4,8 +4,8 @@
 
 This change delivers one Dioxus mobile product from shared Rust source. iOS and
 Android are packaging and runtime targets for that application, not separate
-product implementations. The existing SwiftUI and Compose applications remain
-legacy comparison surfaces until the Dioxus workflows pass acceptance.
+product implementations. No maintained native-language comparison application
+or fallback host exists.
 
 The minimum product contains Messages, People, Network, and More. Propagation is
 a client detail under messaging or network settings, not a mobile administration
@@ -22,8 +22,8 @@ time, queue size, or local button completion.
 
 The current `MobileNode` composition and `DaemonFacade` remain the authoritative
 operation boundary. The Dioxus application uses an in-process typed Rust session.
-It does not route product operations through UniFFI or duplicate propagation and
-delivery logic in platform code.
+It does not route product operations through a generated-language bridge or
+duplicate propagation and delivery logic in platform code.
 
 Platform integration enters through Rust-owned typed services. Unavoidable
 launcher or build-system glue may start the Rust application, but it must not own
@@ -102,10 +102,9 @@ physical-device, and public-network results remain separate.
 
 ## Rollout And Claims
 
-The legacy native hosts remain available only as comparison and rollback
-references throughout the change. Existing persisted identity and message data
-must remain readable. New propagation configuration uses an additive persisted
-field and does not infer a value from the TCP endpoint.
+Existing persisted identity and message data must remain readable. New
+propagation configuration uses an additive persisted field and does not infer a
+value from the TCP endpoint.
 
 The minimum release claim covers only passing TCP, discovery, text messaging,
 and propagation-client gates. RNode, attachment, NomadNet, propagation-host, and

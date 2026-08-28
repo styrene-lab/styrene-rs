@@ -2,18 +2,17 @@
 
 ## Intent
 
-Replace the duplicated SwiftUI and Compose product surfaces with one Dioxus
-application while retaining thin native adapters for operating-system services.
+Deliver one Rust-owned Dioxus application without maintained Swift or Kotlin
+hosts, adapters, or product surfaces.
 
 ## Scope
 
 This change adds iOS and Android Dioxus packaging and a shared mobile shell. It
-adds shared product workflows, platform-service traits, native adapters,
-embedded sessions, accessibility coverage, and incremental native-host retirement.
+adds shared product workflows, Rust platform-service traits and implementations,
+embedded sessions, and accessibility coverage.
 
 This change does not move protocol behavior into UI code or remove Ratatui. It
-excludes mobile Lab, unrestricted Admin workflows, and premature native-host
-removal.
+excludes mobile Lab and unrestricted Admin workflows.
 
 This change depends on `extract-styrene-ui-repository`.
 
@@ -23,9 +22,9 @@ This change depends on `extract-styrene-ui-repository`.
   source.
 - Both platforms consume the same typed backend session and presentation
   reducers.
-- Swift and Kotlin code is limited to declared platform-service and packaging
-  responsibilities.
+- Maintained mobile product and platform-service source is Rust; generated
+  packaging output is not committed.
 - Bluetooth-first RNode behavior and explicit Android USB fallback retain their
   validated lifecycle and evidence semantics.
 - Shared corpus, simulator, emulator, accessibility, and available physical
-  device gates pass before duplicate native screens are removed.
+  device gates pass on the Dioxus application.

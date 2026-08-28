@@ -9,7 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
-  # Linux desktop/FFI crates link against GTK/WebKit through pkg-config.
+  # Linux desktop crates link against GTK/WebKit through pkg-config.
   LINUX_DESKTOP_PACKAGES: libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 
 jobs:
@@ -50,7 +50,6 @@ jobs:
           cargo test -p styrene-e2e --test identity --test lxmf_protocol --test pqc_scenario
           cargo test -p styrene-tui --lib
           cargo test -p styrene --bin styrene
-          cargo test -p styrene-mobile-ffi --lib
 
   test-macos:
     name: Test (macOS workspace)
@@ -66,7 +65,6 @@ jobs:
           cargo test -p styrene-e2e --test identity --test lxmf_protocol --test pqc_scenario
           cargo test -p styrene-tui --lib
           cargo test -p styrene --bin styrene
-          cargo test -p styrene-mobile-ffi --lib
 
   lint:
     name: Lint
@@ -96,7 +94,7 @@ jobs:
       - name: Test committed interoperability fixtures
         run: cargo test --package styrene-rns --features interop-tests,transport
 
-  # Verify all feature profiles compile (mobile, desktop, FFI)
+  # Verify all backend feature profiles compile
   feature-matrix:
     name: Feature Matrix
     runs-on: ubuntu-latest
@@ -119,7 +117,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: "Check: ${{ matrix.name }}"
         run: cargo check -p styrened ${{ matrix.features }}
-
   library-minimal:
     name: Reusable Libraries (defaults disabled)
     runs-on: ubuntu-latest
@@ -135,34 +132,3 @@ jobs:
           cargo check --lib --no-default-features -p styrene-rbac
           cargo check --lib --no-default-features -p styrene-identity
           cargo check --lib --no-default-features -p styrene-secrets
-
-  # UniFFI bridge compilation
-  ffi-bridge:
-    name: FFI Bridge
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.97.0
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check -p styrene-mobile-ffi --no-default-features --features android
-
-  ios-app:
-    name: iOS App
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.0
-        with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
-      - uses: Swatinem/rust-cache@v2
-      - run: ./scripts/build-ios-ffi.sh
-      - run: >-
-          xcodebuild
-          -project ios/StyreneMobile.xcodeproj
-          -scheme StyreneMobile
-          -configuration Debug
-          -sdk iphonesimulator
-          -destination 'generic/platform=iOS Simulator'
-          -derivedDataPath target/ios-derived-data
-          CODE_SIGNING_ALLOWED=NO
-          build

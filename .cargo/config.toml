@@ -6,7 +6,7 @@ target-dir = "target"
 # These targets use cargo-ndk (install: cargo install cargo-ndk).
 # cargo-ndk auto-detects NDK from $ANDROID_NDK_HOME or Android SDK.
 #
-# Usage: cargo ndk -t arm64-v8a build -p styrene-mobile-ffi --release
+# Mobile application packaging is owned by the Rust Dioxus repository.
 #
 # If not using cargo-ndk, set linkers manually by uncommenting below
 # and pointing to your NDK toolchain:

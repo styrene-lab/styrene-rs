@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<lint>
-    <!-- UniFFI selects its Android cleaner implementation behind a runtime SDK check. -->
-    <issue id="NewApi">
-        <ignore path="src/main/kotlin/uniffi/" />
-    </issue>
-</lint>

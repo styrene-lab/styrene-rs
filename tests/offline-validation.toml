@@ -46,7 +46,6 @@ selected_targets = [
   "styrene-e2e:test/pqc_scenario",
   "styrene-tui:lib",
   "styrene:bin/styrene",
-  "styrene-mobile-ffi:lib",
   "styrene-dx:bin/styrene-dx",
 ]
 
@@ -76,10 +75,6 @@ evidence = "excluded-test-target:styrene-i2p; compiled-by:check-offline; explici
 [[sensitive_tests]]
 path = "crates/apps/styrene"
 evidence = "selected-target:styrene-bin; host-supported-cli"
-
-[[sensitive_tests]]
-path = "crates/bindings/styrene-mobile-ffi"
-evidence = "selected-target:library; host-supported-mobile-ffi"
 
 [[sensitive_tests]]
 path = "crates/apps/styrened/src"
