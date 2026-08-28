@@ -20,7 +20,7 @@ use rns_core::transport::core_transport::{
 };
 use rns_core::transport::delivery::LinkSendResult;
 use rns_core::transport::destination_ext::link::{LinkEvent, LinkEventData};
-use rns_core::transport::iface::InterfaceStatsSnapshot;
+use rns_core::transport::iface::{InterfaceState, InterfaceStatsSnapshot};
 use rns_core::transport::resource::ResourceEvent;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -833,7 +833,17 @@ impl MeshTransport for TokioTransportAdapter {
     }
 
     fn is_connected(&self) -> bool {
-        true // Transport object existence implies connectivity
+        if self.shutdown_started.load(Ordering::Acquire) {
+            return false;
+        }
+        self.transport.iface_manager().try_lock().is_ok_and(|manager| {
+            manager.interface_snapshots().iter().any(|interface| {
+                matches!(
+                    interface.state,
+                    InterfaceState::Listening | InterfaceState::Connected | InterfaceState::Active
+                )
+            })
+        })
     }
 
     async fn shutdown(&self) -> Result<(), TransportError> {
