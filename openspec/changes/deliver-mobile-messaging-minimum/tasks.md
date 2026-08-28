@@ -55,7 +55,7 @@
 ## 7. Cross-Platform Acceptance
 <!-- specs: mobile-release-evidence -->
 
-- [ ] 7.1 Run the shared state corpus through Rust reducer and Dioxus component tests for iOS and Android target classes
+- [x] 7.1 Run the shared state corpus through Rust reducer and Dioxus component tests for iOS and Android target classes
 - [ ] 7.2 Run iOS Simulator and Android emulator cold-launch, endpoint failure, reconnect, discovery, conversation, retry, and propagation-state scenarios
 - [ ] 7.3 Run public-Brutus discovery, direct text, propagated upload, offline retrieval, acknowledgement, repeat sync, and hub-restart scenarios with bounded evidence
 - [ ] 7.4 Run applicable physical iOS and Android TCP lifecycle scenarios and retain explicit gaps for unavailable hardware or background execution
