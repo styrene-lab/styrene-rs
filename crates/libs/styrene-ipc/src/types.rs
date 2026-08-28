@@ -684,6 +684,7 @@ pub struct ConversationDraft {
     pub peer_hash: String,
     pub content: String,
     pub updated_at: i64,
+    pub revision: u64,
 }
 
 impl std::fmt::Debug for ConversationDraft {
@@ -693,6 +694,7 @@ impl std::fmt::Debug for ConversationDraft {
             .field("peer_hash", &self.peer_hash)
             .field("content_byte_len", &self.content.len())
             .field("updated_at", &self.updated_at)
+            .field("revision", &self.revision)
             .finish()
     }
 }

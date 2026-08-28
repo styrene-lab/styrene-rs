@@ -64,7 +64,7 @@ use rns_core::transport::iface::{
     RxMessage,
 };
 use serde::{Deserialize, Serialize};
-use styrene_ipc::traits::{Daemon, DaemonIdentity, DaemonStatus};
+use styrene_ipc::traits::{Daemon, DaemonIdentity, DaemonMessaging, DaemonStatus};
 use styrene_services::node_store::NodeStore;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinHandle;
@@ -305,6 +305,112 @@ impl MobileAnnounceError {
     pub const fn retryable(&self) -> bool {
         true
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileDeliveryMethod {
+    Direct,
+    Opportunistic,
+    Propagated,
+}
+
+impl MobileDeliveryMethod {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Opportunistic => "opportunistic",
+            Self::Propagated => "propagated",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "direct" => Some(Self::Direct),
+            "opportunistic" => Some(Self::Opportunistic),
+            "propagated" => Some(Self::Propagated),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobileSendRequest {
+    pub destination_hash: String,
+    pub content: String,
+    pub requested_method: MobileDeliveryMethod,
+    pub draft_revision: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileSendDisposition {
+    Accepted,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileDraftClearDisposition {
+    NotRequested,
+    Cleared,
+    Superseded,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileMessagingFailureCode {
+    InvalidRequest,
+    Unavailable,
+    Timeout,
+    Conflict,
+    Denied,
+    NotFound,
+    NotImplemented,
+    Internal,
+    Transport,
+    DispatchFailed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, thiserror::Error)]
+#[error("{message}")]
+#[serde(deny_unknown_fields)]
+pub struct MobileMessagingFailure {
+    pub code: MobileMessagingFailureCode,
+    pub retryable: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MobileSendOutcome {
+    pub generation: u64,
+    pub disposition: MobileSendDisposition,
+    pub message_id: String,
+    pub message: styrene_ipc::types::MessageInfo,
+    pub requested_method: MobileDeliveryMethod,
+    pub actual_method: MobileDeliveryMethod,
+    pub fallback_reason: Option<String>,
+    pub terminal_failure: Option<MobileMessagingFailure>,
+    pub draft_clear: MobileDraftClearDisposition,
+}
+
+fn mobile_messaging_failure(error: styrene_ipc::IpcError) -> MobileMessagingFailure {
+    use styrene_ipc::IpcError;
+
+    let code = match &error {
+        IpcError::NotImplemented { .. } => MobileMessagingFailureCode::NotImplemented,
+        IpcError::Unavailable { .. } => MobileMessagingFailureCode::Unavailable,
+        IpcError::Timeout { .. } => MobileMessagingFailureCode::Timeout,
+        IpcError::InvalidRequest { .. } => MobileMessagingFailureCode::InvalidRequest,
+        IpcError::NotFound { .. } => MobileMessagingFailureCode::NotFound,
+        IpcError::Conflict { .. } => MobileMessagingFailureCode::Conflict,
+        IpcError::Denied { .. } => MobileMessagingFailureCode::Denied,
+        IpcError::Internal { .. } => MobileMessagingFailureCode::Internal,
+        IpcError::Transport { .. } => MobileMessagingFailureCode::Transport,
+        _ => MobileMessagingFailureCode::Internal,
+    };
+    MobileMessagingFailure { code, retryable: error.is_retryable(), message: error.to_string() }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1090,6 +1196,136 @@ impl MobileNode {
             local_dispatch_accepted: true,
             remote_reception_confirmed: false,
         })
+    }
+
+    pub async fn send_text(
+        &self,
+        request: MobileSendRequest,
+    ) -> Result<MobileSendOutcome, MobileMessagingFailure> {
+        let mut daemon_request = styrene_ipc::types::SendChatRequest::default();
+        daemon_request.peer_hash = request.destination_hash;
+        daemon_request.content = request.content;
+        daemon_request.delivery_method = Some(request.requested_method.as_str().into());
+        let draft_revision = request.draft_revision;
+        let outcome = DaemonMessaging::send_chat_outcome(self.facade.as_ref(), daemon_request)
+            .await
+            .map_err(mobile_messaging_failure)?;
+        let requested_method =
+            MobileDeliveryMethod::parse(&outcome.requested_method).ok_or_else(|| {
+                MobileMessagingFailure {
+                    code: MobileMessagingFailureCode::Internal,
+                    retryable: false,
+                    message: format!(
+                        "backend returned unsupported requested delivery method: {}",
+                        outcome.requested_method
+                    ),
+                }
+            })?;
+        let actual_method =
+            MobileDeliveryMethod::parse(&outcome.actual_method).ok_or_else(|| {
+                MobileMessagingFailure {
+                    code: MobileMessagingFailureCode::Internal,
+                    retryable: false,
+                    message: format!(
+                        "backend returned unsupported actual delivery method: {}",
+                        outcome.actual_method
+                    ),
+                }
+            })?;
+        let disposition = match outcome.disposition {
+            styrene_ipc::types::SendChatDisposition::Accepted => MobileSendDisposition::Accepted,
+            styrene_ipc::types::SendChatDisposition::Failed => MobileSendDisposition::Failed,
+            _ => {
+                return Err(MobileMessagingFailure {
+                    code: MobileMessagingFailureCode::Internal,
+                    retryable: false,
+                    message: "backend returned unsupported mobile send disposition".into(),
+                });
+            }
+        };
+        let terminal_failure = outcome.terminal_error.map(|message| MobileMessagingFailure {
+            code: MobileMessagingFailureCode::DispatchFailed,
+            retryable: true,
+            message,
+        });
+        let draft_clear = if disposition == MobileSendDisposition::Accepted {
+            if let Some(revision) = draft_revision {
+                match DaemonMessaging::clear_draft_if_revision(
+                    self.facade.as_ref(),
+                    &outcome.message.destination_hash,
+                    revision,
+                )
+                .await
+                .map_err(mobile_messaging_failure)?
+                {
+                    styrene_ipc::types::MessagingDisposition::Applied => {
+                        MobileDraftClearDisposition::Cleared
+                    }
+                    _ => MobileDraftClearDisposition::Superseded,
+                }
+            } else {
+                MobileDraftClearDisposition::NotRequested
+            }
+        } else if draft_revision.is_some() {
+            MobileDraftClearDisposition::Superseded
+        } else {
+            MobileDraftClearDisposition::NotRequested
+        };
+        Ok(MobileSendOutcome {
+            generation: self.session_snapshot().await.generation,
+            disposition,
+            message_id: outcome.message_id,
+            message: outcome.message,
+            requested_method,
+            actual_method,
+            fallback_reason: outcome.fallback_reason,
+            terminal_failure,
+            draft_clear,
+        })
+    }
+
+    pub async fn set_draft(
+        &self,
+        destination_hash: &str,
+        content: &str,
+    ) -> Result<styrene_ipc::types::ConversationDraft, MobileMessagingFailure> {
+        DaemonMessaging::set_draft(self.facade.as_ref(), destination_hash, content)
+            .await
+            .map_err(mobile_messaging_failure)
+    }
+
+    pub async fn draft(
+        &self,
+        destination_hash: &str,
+    ) -> Result<Option<styrene_ipc::types::ConversationDraft>, MobileMessagingFailure> {
+        DaemonMessaging::draft(self.facade.as_ref(), destination_hash)
+            .await
+            .map_err(mobile_messaging_failure)
+    }
+
+    pub async fn clear_draft_if_revision(
+        &self,
+        destination_hash: &str,
+        revision: u64,
+    ) -> Result<MobileDraftClearDisposition, MobileMessagingFailure> {
+        DaemonMessaging::clear_draft_if_revision(self.facade.as_ref(), destination_hash, revision)
+            .await
+            .map(|disposition| match disposition {
+                styrene_ipc::types::MessagingDisposition::Applied => {
+                    MobileDraftClearDisposition::Cleared
+                }
+                _ => MobileDraftClearDisposition::Superseded,
+            })
+            .map_err(mobile_messaging_failure)
+    }
+
+    pub async fn message(
+        &self,
+        message_id: &str,
+    ) -> Result<Option<styrene_ipc::types::MessageInfo>, MobileMessagingFailure> {
+        DaemonMessaging::query_message(self.facade.as_ref(), message_id)
+            .await
+            .map_err(mobile_messaging_failure)
     }
 
     /// Actual addresses bound by configured TCP server profiles.

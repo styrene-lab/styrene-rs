@@ -2679,6 +2679,17 @@ impl MessagingService {
         self.lock_store()?.clear_draft(&peer_hash).map_err(std::io::Error::other)
     }
 
+    pub fn clear_draft_if_revision(
+        &self,
+        peer_hash: &str,
+        revision: u64,
+    ) -> Result<bool, std::io::Error> {
+        let peer_hash = canonical_peer_hash(peer_hash)?;
+        self.lock_store()?
+            .clear_draft_if_revision(&peer_hash, revision)
+            .map_err(std::io::Error::other)
+    }
+
     // --- Receipt tracking ---
 
     /// Track a receipt mapping (packet_hash → message_id).
