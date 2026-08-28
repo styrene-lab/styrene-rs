@@ -65,12 +65,13 @@ impl LiveScenarioExecutor for ProcessRunnerExecutor {
             .spawn()
             .map_err(|error| format!("failed to start interoperability runner: {error}"))?;
         let status = loop {
-            if cancellation.is_cancelled() && !cancel_path.exists() {
-                if let Err(error) = std::fs::write(&cancel_path, b"cancel\n") {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!("failed to signal runner cancellation: {error}"));
-                }
+            if cancellation.is_cancelled()
+                && !cancel_path.exists()
+                && let Err(error) = std::fs::write(&cancel_path, b"cancel\n")
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("failed to signal runner cancellation: {error}"));
             }
             if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
                 break status;
@@ -90,7 +91,7 @@ impl LiveScenarioExecutor for ProcessRunnerExecutor {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
-    use styrene_interop_runner::{python_lxmf_scenario, PinnedScenarioId};
+    use styrene_interop_runner::{PinnedScenarioId, python_lxmf_scenario};
 
     #[test]
     #[ignore = "executes an isolated local helper process; run explicitly for runner-boundary validation"]

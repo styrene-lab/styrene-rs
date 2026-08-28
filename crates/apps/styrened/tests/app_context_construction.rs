@@ -141,8 +141,7 @@ fn app_context_set_signer_wires_transport() {
         .get_message(&outcome.message_id)
         .unwrap()
         .expect("failed message must be durable");
-    assert!(persisted
-        .receipt_status
-        .as_deref()
-        .is_some_and(|status| status.starts_with("failed:")));
+    assert!(
+        persisted.receipt_status.as_deref().is_some_and(|status| status.starts_with("failed:"))
+    );
 }

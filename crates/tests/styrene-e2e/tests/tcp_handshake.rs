@@ -3,7 +3,7 @@
 //! Two TestNode instances connect over TCP on localhost.
 //! Validates that the transport layer establishes connectivity.
 
-use styrene_e2e::helpers::{with_timeout, SETTLE};
+use styrene_e2e::helpers::{SETTLE, with_timeout};
 use styrene_e2e::node::TestNodeBuilder;
 
 #[tokio::test]

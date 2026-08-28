@@ -6,11 +6,11 @@ mod types;
 mod wire;
 
 pub use container::MessageContainer;
-pub use delivery::{decide_delivery, DeliveryDecision};
+pub use delivery::{DeliveryDecision, decide_delivery};
 pub use payload::Payload;
 pub use state::State;
 pub use types::{MessageMethod, MessageState, TransportMethod, UnverifiedReason};
-pub use wire::{decrypt_for_identity, WireMessage};
+pub use wire::{WireMessage, decrypt_for_identity};
 
 use crate::error::LxmfError;
 use alloc::string::String;

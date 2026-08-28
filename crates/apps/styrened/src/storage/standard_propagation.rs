@@ -1,5 +1,5 @@
 use super::messages::MessagesStore;
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -1346,12 +1346,12 @@ fn reconcile_deadlines_in_transaction(
              WHERE state = 'running' AND deadline_at IS NOT NULL AND deadline_at <= ?1
              ORDER BY deadline_at, attempt_id",
         )?;
-        let rows = statement
+
+        statement
             .query_map(params![now], |row| {
                 Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Option<Vec<u8>>>(1)?))
             })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        rows
+            .collect::<rusqlite::Result<Vec<_>>>()?
     };
     for (attempt, peer) in &due {
         let attempt: [u8; 16] = blob_array(attempt.clone(), "deadline attempt")?;
@@ -2508,7 +2508,8 @@ impl MessagesStore {
                  FROM standard_lxmf_propagation_peers
                  ORDER BY last_seen_at DESC, identity_hash ASC LIMIT ?1",
             )?;
-            let rows = statement
+
+            statement
                 .query_map(
                     params![to_i64(
                         STANDARD_PROPAGATION_OBSERVATION_PEER_LIMIT + 1,
@@ -2565,8 +2566,7 @@ impl MessagesStore {
                         })
                     },
                 )?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            rows
+                .collect::<rusqlite::Result<Vec<_>>>()?
         };
         let peers_truncated = peers.len() > STANDARD_PROPAGATION_OBSERVATION_PEER_LIMIT;
         peers.truncate(STANDARD_PROPAGATION_OBSERVATION_PEER_LIMIT);
@@ -2582,7 +2582,8 @@ impl MessagesStore {
                    ON o.attempt_id = a.attempt_id
                  ORDER BY a.updated_at DESC, a.attempt_id ASC LIMIT ?1",
             )?;
-            let rows = statement
+
+            statement
                 .query_map(
                     params![to_i64(
                         STANDARD_PROPAGATION_OBSERVATION_ATTEMPT_LIMIT + 1,
@@ -2610,8 +2611,7 @@ impl MessagesStore {
                         })
                     },
                 )?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            rows
+                .collect::<rusqlite::Result<Vec<_>>>()?
         };
         let attempts_truncated = attempts.len() > STANDARD_PROPAGATION_OBSERVATION_ATTEMPT_LIMIT;
         attempts.truncate(STANDARD_PROPAGATION_OBSERVATION_ATTEMPT_LIMIT);
@@ -2625,7 +2625,8 @@ impl MessagesStore {
                    ON o.attempt_id = c.last_attempt
                  ORDER BY c.updated_at DESC, c.peer ASC, c.direction ASC LIMIT ?1",
             )?;
-            let rows = statement
+
+            statement
                 .query_map(
                     params![to_i64(
                         STANDARD_PROPAGATION_OBSERVATION_CHECKPOINT_LIMIT + 1,
@@ -2646,8 +2647,7 @@ impl MessagesStore {
                         })
                     },
                 )?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            rows
+                .collect::<rusqlite::Result<Vec<_>>>()?
         };
         let checkpoints_truncated =
             checkpoints.len() > STANDARD_PROPAGATION_OBSERVATION_CHECKPOINT_LIMIT;
@@ -2659,7 +2659,8 @@ impl MessagesStore {
                  FROM standard_lxmf_propagation_failures
                  ORDER BY occurred_at DESC, failure_id DESC LIMIT ?1",
             )?;
-            let rows = statement
+
+            statement
                 .query_map(
                     params![to_i64(
                         STANDARD_PROPAGATION_OBSERVATION_FAILURE_LIMIT + 1,
@@ -2680,8 +2681,7 @@ impl MessagesStore {
                         })
                     },
                 )?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            rows
+                .collect::<rusqlite::Result<Vec<_>>>()?
         };
         let failures_truncated = failures.len() > STANDARD_PROPAGATION_OBSERVATION_FAILURE_LIMIT;
         failures.truncate(STANDARD_PROPAGATION_OBSERVATION_FAILURE_LIMIT);
@@ -2716,7 +2716,8 @@ impl MessagesStore {
                  FROM standard_lxmf_propagation_items WHERE state = 'queued'
                  ORDER BY transient_id",
             )?;
-            let rows = statement
+
+            statement
                 .query_map([], |row| {
                     let stamp_value: i64 = row.get(4)?;
                     Ok(StandardPropagationItem {
@@ -2731,8 +2732,7 @@ impl MessagesStore {
                         stored_size: to_usize(row.get(7)?, "snapshot stored size")?,
                     })
                 })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            rows
+                .collect::<rusqlite::Result<Vec<_>>>()?
         };
         let stats = stats_in_transaction(&transaction)?;
         if stats.queued_count > policy.queue_max_count
@@ -2918,7 +2918,8 @@ impl MessagesStore {
              FROM standard_lxmf_propagation_failures
              ORDER BY occurred_at DESC, failure_id DESC LIMIT ?1",
         )?;
-        let failures = statement
+
+        statement
             .query_map(params![to_i64(limit, "failure query limit")?], |row| {
                 let peer: Option<Vec<u8>> = row.get(3)?;
                 let transient: Option<Vec<u8>> = row.get(4)?;
@@ -2936,8 +2937,7 @@ impl MessagesStore {
                         .transpose()?,
                 })
             })?
-            .collect();
-        failures
+            .collect()
     }
 
     pub fn standard_propagation_selected_peer(
@@ -3143,13 +3143,13 @@ impl MessagesStore {
                AND r.state IN ('queued','sending') AND r.deadline_unix_ms > ?1
              ORDER BY j.updated_at, j.message_id LIMIT ?2",
         )?;
-        let rows = statement
+
+        statement
             .query_map(
                 params![now_unix_ms, to_i64(limit.min(64), "recoverable job limit")?],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?
-            .collect();
-        rows
+            .collect()
     }
 
     pub fn standard_propagation_resume_outbound_attempt(
@@ -3280,12 +3280,12 @@ impl MessagesStore {
              WHERE relation = 'inbound' AND state = 'pending_ack' AND peer = ?1
              ORDER BY updated_at, transient_id LIMIT ?2",
         )?;
-        let rows = statement
+
+        statement
             .query_map(params![peer.as_slice(), to_i64(limit, "pending haves limit")?], |row| {
                 blob_array(row.get(0)?, "pending have transient")
             })?
-            .collect();
-        rows
+            .collect()
     }
 
     pub fn standard_propagation_mark_haves_acknowledged(
@@ -3429,7 +3429,8 @@ impl MessagesStore {
              FROM standard_lxmf_propagation_message_links WHERE message_id = ?1
              ORDER BY updated_at DESC, transient_id LIMIT ?2",
         )?;
-        let rows = statement
+
+        statement
             .query_map(params![message_id, to_i64(limit.min(64), "message link limit")?], |row| {
                 let attempt: Option<Vec<u8>> = row.get(3)?;
                 let peer: Option<Vec<u8>> = row.get(4)?;
@@ -3446,8 +3447,7 @@ impl MessagesStore {
                     updated_at: row.get(7)?,
                 })
             })?
-            .collect();
-        rows
+            .collect()
     }
 
     pub fn standard_propagation_message_for_transient(
@@ -3596,16 +3596,18 @@ mod tests {
             )
             .unwrap();
         assert!(sql.to_ascii_uppercase().contains(" STRICT"));
-        assert!(store
-            .conn
-            .execute(
-                "INSERT INTO standard_lxmf_propagation_items
+        assert!(
+            store
+                .conn
+                .execute(
+                    "INSERT INTO standard_lxmf_propagation_items
                  (transient_id, destination, stamp_value, received_at, expires_at,
                   stored_size, state, terminal_at)
                  VALUES (?1, ?2, 0, 0, 1, 0, 'bad', NULL)",
-                params![vec![0u8; 32], vec![0u8; 16]],
-            )
-            .is_err());
+                    params![vec![0u8; 32], vec![0u8; 16]],
+                )
+                .is_err()
+        );
         let mut corrupt_data = vec![0x22u8; lxmf::propagation::MIN_PROPAGATED_LXMF_BYTES + 1];
         corrupt_data[..16].copy_from_slice(&[0x23; 16]);
         store
@@ -3693,15 +3695,17 @@ mod tests {
                 .unwrap(),
             1
         );
-        assert!(store
-            .conn
-            .execute(
-                "INSERT INTO standard_lxmf_propagation_message_links
+        assert!(
+            store
+                .conn
+                .execute(
+                    "INSERT INTO standard_lxmf_propagation_message_links
                  (transient_id, message_id, relation, peer, state, created_at, updated_at)
                  VALUES (?1, ?2, 'inbound', ?3, 'spooled', 0, 0)",
-                params![[1u8; 32].as_slice(), "11".repeat(32), [2u8; 16].as_slice()],
-            )
-            .is_err());
+                    params![[1u8; 32].as_slice(), "11".repeat(32), [2u8; 16].as_slice()],
+                )
+                .is_err()
+        );
 
         let root = tempdir().unwrap();
         let path = root.path().join("v12-restart.db");
@@ -3896,15 +3900,19 @@ mod tests {
         store.standard_propagation_link_inbound(&inbound_id, [2; 32], [3; 16], [4; 16], 4).unwrap();
         store.standard_propagation_link_inbound(&inbound_id, [1; 32], [6; 16], [7; 16], 4).unwrap();
         assert_eq!(store.standard_propagation_links_for_message(&inbound_id, 64).unwrap().len(), 3);
-        assert!(store
-            .standard_propagation_link_inbound(&second_id, [1; 32], [5; 16], [4; 16], 5)
-            .is_err());
+        assert!(
+            store
+                .standard_propagation_link_inbound(&second_id, [1; 32], [5; 16], [4; 16], 5)
+                .is_err()
+        );
         assert!(store.delete_message(&inbound_id).unwrap());
-        assert!(store
-            .standard_propagation_links_for_message(&inbound_id, 64)
-            .unwrap()
-            .iter()
-            .all(|link| link.state == "deleted"));
+        assert!(
+            store
+                .standard_propagation_links_for_message(&inbound_id, 64)
+                .unwrap()
+                .iter()
+                .all(|link| link.state == "deleted")
+        );
 
         let opaque = item([0x90; 16], 0x91, 10);
         let opaque_id = opaque.transient_id;
@@ -4473,10 +4481,12 @@ mod tests {
                 })
                 .unwrap();
             let queued_dispositions = dispositions(&store, queued_race.transient_id);
-            assert!(queued_dispositions
-                .iter()
-                .any(|(peer, disposition)| peer.as_slice() == source_peer
-                    && disposition == "handled"));
+            assert!(
+                queued_dispositions
+                    .iter()
+                    .any(|(peer, disposition)| peer.as_slice() == source_peer
+                        && disposition == "handled")
+            );
             assert_eq!(
                 queued_dispositions
                     .into_iter()
@@ -4582,11 +4592,13 @@ mod tests {
         }
         {
             let mut store = MessagesStore::open(&path).unwrap();
-            assert!(store
-                .standard_propagation_snapshot(17, policy())
-                .unwrap()
-                .iter()
-                .all(|item| { item.transient_id != terminal.transient_id }));
+            assert!(
+                store
+                    .standard_propagation_snapshot(17, policy())
+                    .unwrap()
+                    .iter()
+                    .all(|item| { item.transient_id != terminal.transient_id })
+            );
             let checkpoint =
                 store.standard_propagation_checkpoint(source_peer, "ingress").unwrap().unwrap();
             assert_eq!(checkpoint.last_attempt, Some(terminal_attempt));

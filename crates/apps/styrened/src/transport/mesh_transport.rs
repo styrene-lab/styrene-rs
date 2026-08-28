@@ -12,7 +12,7 @@ use rns_core::hash::AddressHash;
 use rns_core::identity::Identity;
 use rns_core::identity::PrivateIdentity;
 use rns_core::transport::core_transport::{
-    path_table::RouteEvent, AnnounceEvent, ReceivedData, SendPacketOutcome,
+    AnnounceEvent, ReceivedData, SendPacketOutcome, path_table::RouteEvent,
 };
 use rns_core::transport::delivery::LinkSendResult;
 use rns_core::transport::destination_ext::link::LinkCloseReason;

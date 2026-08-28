@@ -23,14 +23,12 @@ impl Config {
                 continue;
             }
 
-            if in_interfaces {
-                if let Some((key, value)) = line.split_once('=') {
-                    let key = key.trim();
-                    if key.starts_with("interface") {
-                        let value = value.trim();
-                        if !value.is_empty() {
-                            interfaces.push(value.to_string());
-                        }
+            if in_interfaces && let Some((key, value)) = line.split_once('=') {
+                let key = key.trim();
+                if key.starts_with("interface") {
+                    let value = value.trim();
+                    if !value.is_empty() {
+                        interfaces.push(value.to_string());
                     }
                 }
             }

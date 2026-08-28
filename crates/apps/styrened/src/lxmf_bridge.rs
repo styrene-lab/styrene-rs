@@ -1,6 +1,6 @@
+use lxmf::LxmfError;
 use lxmf::identity;
 use lxmf::message::Message;
-use lxmf::LxmfError;
 use lxmf::{Payload, WireMessage};
 use rmpv::Value as RmpValue;
 use rns_core::identity::PrivateIdentity;

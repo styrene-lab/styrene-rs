@@ -10,7 +10,7 @@ use std::pin::Pin;
 use rmpv::Value as MpValue;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UnixStream;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 
 use styrene_ipc::types::{
     ActiveCapabilitiesInfo, ConversationInfo, DaemonStatusInfo, DegradedCapabilityInfo, DeviceInfo,

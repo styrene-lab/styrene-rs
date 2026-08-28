@@ -6,9 +6,9 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 use styrene_interop_runner::{
+    CancellationHandle, LiveScenario, PINNED_SCENARIOS, PinnedScenarioId, RevisionProbe, RunStatus,
     pinned_scenario, python_lxmf_scenario, reserve_topology, run_live_scenario,
     run_live_scenario_cancellable, topology_start_candidate, topology_start_ports,
-    CancellationHandle, LiveScenario, PinnedScenarioId, RevisionProbe, RunStatus, PINNED_SCENARIOS,
 };
 use tempfile::TempDir;
 
@@ -174,11 +174,9 @@ fn successful_process_exit_is_not_protocol_success() {
     let evidence =
         run_live_scenario(&fake_scenario("exit 0", temp.path())).expect("fake scenario should run");
     assert_eq!(evidence.status, RunStatus::Failed);
-    assert!(evidence
-        .failure
-        .as_deref()
-        .unwrap_or_default()
-        .contains("missing protocol milestones"));
+    assert!(
+        evidence.failure.as_deref().unwrap_or_default().contains("missing protocol milestones")
+    );
 }
 
 #[test]

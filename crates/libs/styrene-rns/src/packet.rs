@@ -6,9 +6,9 @@ use sha2::Digest;
 use crate::buffer::StaticBuffer;
 use crate::crypt::fernet::{FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE};
 use crate::error::RnsError;
+use crate::hash::ADDRESS_HASH_SIZE;
 use crate::hash::AddressHash;
 use crate::hash::Hash;
-use crate::hash::ADDRESS_HASH_SIZE;
 
 // Match Python Reticulum default MTU (500) minus max header and IFAC sizes.
 // 500 - (2 + 1 + 16*2) - 1 = 464

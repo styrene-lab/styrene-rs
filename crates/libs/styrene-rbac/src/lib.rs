@@ -25,9 +25,9 @@ pub mod signed;
 mod warning;
 
 pub use capability::{
-    Capability, ADMIN_CAPS, ALL_CAPABILITIES, MONITOR_CAPS, OPERATOR_CAPS, PEER_CAPS,
+    ADMIN_CAPS, ALL_CAPABILITIES, Capability, MONITOR_CAPS, OPERATOR_CAPS, PEER_CAPS,
 };
-pub use policy::{RbacPolicy, RosterEntry, MIN_BLOCKED_PREFIX_LEN};
+pub use policy::{MIN_BLOCKED_PREFIX_LEN, RbacPolicy, RosterEntry};
 pub use role::Role;
 pub use signed::{SignedRosterEntry, TrustedHub};
 pub use warning::PolicyWarning;

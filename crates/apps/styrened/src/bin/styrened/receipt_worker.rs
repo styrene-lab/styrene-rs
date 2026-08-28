@@ -1,6 +1,6 @@
 use super::bridge_helpers::log_delivery_trace;
 use std::sync::Arc;
-use styrened::receipt_bridge::{handle_receipt_event, ReceiptEvent};
+use styrened::receipt_bridge::{ReceiptEvent, handle_receipt_event};
 use styrened::rpc::RpcDaemon;
 use tokio::sync::mpsc::UnboundedReceiver;
 

@@ -489,7 +489,7 @@ pub mod components {
 }
 
 pub mod capabilities {
-    use super::{components as c, CapabilityContract, StartupComponent};
+    use super::{CapabilityContract, StartupComponent, components as c};
 
     const DIRECT_COMPONENTS: &[StartupComponent] = &[
         c::LXMF_DELIVERY,
@@ -750,10 +750,12 @@ mod tests {
             (styrene_rbac::Capability::POLICY_UPDATE, capabilities::LOCAL_POLICY.id()),
             (styrene_rbac::Capability::RPC_FLEET_APPLY, capabilities::STYRENE_RPC.id()),
         ] {
-            assert!(absent
-                .degraded()
-                .iter()
-                .any(|item| { item.id() == operation && item.reason().contains(runtime) }));
+            assert!(
+                absent
+                    .degraded()
+                    .iter()
+                    .any(|item| { item.id() == operation && item.reason().contains(runtime) })
+            );
         }
 
         let mut builder = StartupContractBuilder::production(RuntimeKind::Canonical);
@@ -794,10 +796,12 @@ mod tests {
                 capabilities::RNS_RESOURCE_CANCELLATION.id(),
             ),
         ] {
-            assert!(degraded
-                .degraded()
-                .iter()
-                .any(|item| { item.id() == operation && item.reason().contains(runtime) }));
+            assert!(
+                degraded
+                    .degraded()
+                    .iter()
+                    .any(|item| { item.id() == operation && item.reason().contains(runtime) })
+            );
         }
 
         let mut builder = StartupContractBuilder::production(RuntimeKind::Canonical);

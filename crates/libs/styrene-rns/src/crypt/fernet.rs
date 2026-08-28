@@ -1,11 +1,11 @@
 use core::cmp;
 use core::convert::From;
 
-use aes::cipher::block_padding::Pkcs7;
 use aes::cipher::BlockDecryptMut;
 use aes::cipher::BlockSizeUser;
 use aes::cipher::Key;
 use aes::cipher::Unsigned;
+use aes::cipher::block_padding::Pkcs7;
 use cbc::cipher::BlockEncryptMut;
 use cbc::cipher::KeyIvInit;
 use crypto_common::{IvSizeUser, KeySizeUser, OutputSizeUser};
@@ -216,7 +216,7 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use crate::crypt::fernet::{Fernet, AES_BLOCK_SIZE, FERNET_OVERHEAD_SIZE};
+    use crate::crypt::fernet::{AES_BLOCK_SIZE, FERNET_OVERHEAD_SIZE, Fernet};
     use core::str;
     use rand_core::OsRng;
 
@@ -312,11 +312,7 @@ impl CachedFernet {
             .unwrap_or(actual_tag.len().cmp(&expected_tag.len()))
             == cmp::Ordering::Equal;
 
-        if valid {
-            Ok(VerifiedToken(token_data))
-        } else {
-            Err(RnsError::IncorrectSignature)
-        }
+        if valid { Ok(VerifiedToken(token_data)) } else { Err(RnsError::IncorrectSignature) }
     }
 
     pub fn decrypt<'a, 'b>(

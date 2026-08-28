@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Mesh mode: --hub-addr + --hub (RNS transport to hub's I2pProxyService)
-    if let (Some(ref hub_addr), Some(ref hub_hash)) = (&cli.hub_addr, &cli.hub) {
+    if let (Some(hub_addr), Some(hub_hash)) = (&cli.hub_addr, &cli.hub) {
         eprintln!("[styrene-i2p] mesh mode — hub at {hub_addr}, hash {hub_hash}");
         let client = mesh_client::MeshClient::new(hub_addr, hub_hash, None).await?;
         let client = std::sync::Arc::new(client);
@@ -74,11 +74,10 @@ async fn main() -> anyhow::Result<()> {
             for addr in defaults {
                 if let Ok(client) =
                     reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build()
+                    && client.get(addr).send().await.is_ok()
                 {
-                    if client.get(addr).send().await.is_ok() {
-                        found = Some(addr.to_string());
-                        break;
-                    }
+                    found = Some(addr.to_string());
+                    break;
                 }
             }
             found.unwrap_or_else(|| {

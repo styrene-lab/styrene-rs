@@ -739,11 +739,7 @@ fn peer_label(peers: &[PeerEntry], hash: &str) -> String {
 }
 
 fn format_epoch(timestamp: i64) -> String {
-    if timestamp <= 0 {
-        "unknown".into()
-    } else {
-        format!("epoch {timestamp}")
-    }
+    if timestamp <= 0 { "unknown".into() } else { format!("epoch {timestamp}") }
 }
 
 fn format_bytes(bytes: u64) -> String {

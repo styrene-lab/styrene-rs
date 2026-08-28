@@ -493,11 +493,7 @@ impl PageService {
         let pages = self.pages.lock().unwrap();
         let entry = pages.get(request_path)?;
 
-        if entry.dynamic {
-            None
-        } else {
-            self.serve_static(&entry.file_path)
-        }
+        if entry.dynamic { None } else { self.serve_static(&entry.file_path) }
     }
 
     fn serve_static(&self, path: &Path) -> Option<Vec<u8>> {
@@ -976,7 +972,7 @@ fn read_allowed_identities(root: &std::fs::File, relative: &Path) -> Option<BTre
 
 #[cfg(unix)]
 fn secure_open_dir(path: &Path) -> io::Result<std::fs::File> {
-    use rustix::fs::{open, Mode, OFlags};
+    use rustix::fs::{Mode, OFlags, open};
 
     Ok(std::fs::File::from(open(
         path,
@@ -987,7 +983,7 @@ fn secure_open_dir(path: &Path) -> io::Result<std::fs::File> {
 
 #[cfg(unix)]
 fn secure_open_file(root: &std::fs::File, relative: &Path) -> io::Result<std::fs::File> {
-    use rustix::fs::{openat, Mode, OFlags};
+    use rustix::fs::{Mode, OFlags, openat};
     use std::path::Component;
 
     let components = relative.components().collect::<Vec<_>>();
@@ -1139,10 +1135,12 @@ mod tests {
             [("/file/manual.bin", false, true, false), ("/page/index.mu", false, false, false),]
         );
         service.mark_native_path_active("/page/index.mu".into());
-        assert!(service
-            .native_inventory()
-            .iter()
-            .any(|(entry, active)| entry.request_path == "/page/index.mu" && *active));
+        assert!(
+            service
+                .native_inventory()
+                .iter()
+                .any(|(entry, active)| entry.request_path == "/page/index.mu" && *active)
+        );
     }
 
     #[cfg(unix)]

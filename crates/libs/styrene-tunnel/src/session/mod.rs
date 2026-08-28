@@ -22,7 +22,7 @@
 use rand_core::{OsRng, RngCore};
 use zeroize::Zeroize;
 
-use crate::crypto::aead::{SessionCipher, CONFIRM_ROLE_INITIATOR, CONFIRM_ROLE_RESPONDER};
+use crate::crypto::aead::{CONFIRM_ROLE_INITIATOR, CONFIRM_ROLE_RESPONDER, SessionCipher};
 use crate::crypto::kdf::{HybridKdf, SESSION_KEY_SIZE};
 use crate::crypto::kem::{MlKemEncapsulated, MlKemKeyPair};
 use crate::error::TunnelError;

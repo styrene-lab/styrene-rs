@@ -214,11 +214,7 @@ const fn fixture_name(fixture: FixtureId) -> &'static str {
 }
 
 fn empty_as_unreported(value: &str) -> String {
-    if value.is_empty() {
-        "Not reported".into()
-    } else {
-        value.into()
-    }
+    if value.is_empty() { "Not reported".into() } else { value.into() }
 }
 
 fn optional(value: Option<&str>) -> String {
@@ -226,11 +222,7 @@ fn optional(value: Option<&str>) -> String {
 }
 
 fn endpoint_presence(value: Option<&str>) -> &'static str {
-    if value.is_some_and(|value| !value.is_empty()) {
-        "reported"
-    } else {
-        "Not reported"
-    }
+    if value.is_some_and(|value| !value.is_empty()) { "reported" } else { "Not reported" }
 }
 
 fn optional_u64(value: Option<u64>) -> String {

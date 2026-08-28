@@ -27,10 +27,10 @@ impl DiscoveryCache {
         self.set.insert(hash);
         self.order.push_back(hash);
 
-        if self.order.len() > self.max_size {
-            if let Some(old) = self.order.pop_front() {
-                self.set.remove(&old);
-            }
+        if self.order.len() > self.max_size
+            && let Some(old) = self.order.pop_front()
+        {
+            self.set.remove(&old);
         }
 
         true

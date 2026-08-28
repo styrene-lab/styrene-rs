@@ -1,7 +1,7 @@
 use std::io;
 use std::net::SocketAddr;
 
-use crate::rpc::{codec, RpcDaemon, RpcRequest, RpcResponse};
+use crate::rpc::{RpcDaemon, RpcRequest, RpcResponse, codec};
 use serde_json::json;
 
 const HEADER_END: &[u8] = b"\r\n\r\n";

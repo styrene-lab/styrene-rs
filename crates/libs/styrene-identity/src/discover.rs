@@ -54,8 +54,20 @@ pub fn discover() -> Option<DiscoveredIdentity> {
         }
     }
 
+    discover_from_sources(
+        home_dir(),
+        std::env::var("STYRENE_IDENTITY_PATH").ok(),
+        std::env::var("STYRENE_IDENTITY_HASH").ok(),
+    )
+}
+
+fn discover_from_sources(
+    home: Option<PathBuf>,
+    custom_path: Option<String>,
+    identity_hash: Option<String>,
+) -> Option<DiscoveredIdentity> {
     // 1. Default config path
-    if let Some(home) = home_dir() {
+    if let Some(home) = home {
         let default_path = home.join(".config").join("styrene").join("identity.key");
         if default_path.is_file() {
             return Some(DiscoveredIdentity {
@@ -67,7 +79,7 @@ pub fn discover() -> Option<DiscoveredIdentity> {
     }
 
     // 2. Custom file path from env var
-    if let Ok(custom_path) = std::env::var("STYRENE_IDENTITY_PATH") {
+    if let Some(custom_path) = custom_path {
         let path = PathBuf::from(&custom_path);
         if path.is_file() {
             return Some(DiscoveredIdentity {
@@ -79,14 +91,14 @@ pub fn discover() -> Option<DiscoveredIdentity> {
     }
 
     // 3. Hash-only mode from env var (CI attribution)
-    if let Ok(hash) = std::env::var("STYRENE_IDENTITY_HASH") {
-        if !hash.is_empty() {
-            return Some(DiscoveredIdentity {
-                path: PathBuf::from(format!("hash:{hash}")),
-                tier: SignerTier::CredentialManager,
-                label: format!("env:STYRENE_IDENTITY_HASH={hash}"),
-            });
-        }
+    if let Some(hash) = identity_hash
+        && !hash.is_empty()
+    {
+        return Some(DiscoveredIdentity {
+            path: PathBuf::from(format!("hash:{hash}")),
+            tier: SignerTier::CredentialManager,
+            label: format!("env:STYRENE_IDENTITY_HASH={hash}"),
+        });
     }
 
     None
@@ -103,105 +115,74 @@ fn home_dir() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::Mutex;
-
-    /// Mutex to serialize tests that mutate environment variables.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    /// Run a closure with specific env vars set, restoring originals afterward.
-    /// Also sets HOME to a temporary directory to avoid finding the real identity.
-    /// Serialized via `ENV_LOCK` to prevent parallel test interference.
-    fn with_clean_env<F: FnOnce(&std::path::Path)>(f: F) {
-        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
-        let tmp = tempfile::tempdir().expect("tempdir");
-
-        // Save originals
-        let orig_home = std::env::var("HOME").ok();
-        let orig_path = std::env::var("STYRENE_IDENTITY_PATH").ok();
-        let orig_hash = std::env::var("STYRENE_IDENTITY_HASH").ok();
-
-        // Clean environment
-        std::env::set_var("HOME", tmp.path());
-        std::env::remove_var("STYRENE_IDENTITY_PATH");
-        std::env::remove_var("STYRENE_IDENTITY_HASH");
-
-        f(tmp.path());
-
-        // Restore originals
-        match orig_home {
-            Some(v) => std::env::set_var("HOME", v),
-            None => std::env::remove_var("HOME"),
-        }
-        match orig_path {
-            Some(v) => std::env::set_var("STYRENE_IDENTITY_PATH", v),
-            None => std::env::remove_var("STYRENE_IDENTITY_PATH"),
-        }
-        match orig_hash {
-            Some(v) => std::env::set_var("STYRENE_IDENTITY_HASH", v),
-            None => std::env::remove_var("STYRENE_IDENTITY_HASH"),
-        }
-    }
 
     #[test]
     fn discover_returns_none_when_nothing_configured() {
-        with_clean_env(|_tmp| {
-            assert!(discover().is_none(), "should return None with no identity");
-        });
+        let tmp = tempfile::tempdir().expect("tempdir");
+        assert!(
+            discover_from_sources(Some(tmp.path().to_path_buf()), None, None).is_none(),
+            "should return None with no identity"
+        );
     }
 
     #[test]
     fn discover_finds_default_path() {
-        with_clean_env(|tmp| {
-            let key_dir = tmp.join(".config").join("styrene");
-            fs::create_dir_all(&key_dir).unwrap();
-            fs::write(key_dir.join("identity.key"), b"fake-key-data").unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let key_dir = tmp.path().join(".config").join("styrene");
+        fs::create_dir_all(&key_dir).unwrap();
+        fs::write(key_dir.join("identity.key"), b"fake-key-data").unwrap();
 
-            let result = discover().expect("should find default identity file");
-            assert_eq!(result.tier, SignerTier::EncryptedFile);
-            assert!(result.path.ends_with("identity.key"));
-            assert!(!result.is_hash_only());
-        });
+        let result = discover_from_sources(Some(tmp.path().to_path_buf()), None, None)
+            .expect("should find default identity file");
+        assert_eq!(result.tier, SignerTier::EncryptedFile);
+        assert!(result.path.ends_with("identity.key"));
+        assert!(!result.is_hash_only());
     }
 
     #[test]
     fn discover_env_path_overrides_when_no_default() {
-        with_clean_env(|tmp| {
-            // No default file exists, but STYRENE_IDENTITY_PATH is set
-            let custom_file = tmp.join("custom.key");
-            fs::write(&custom_file, b"fake-key-data").unwrap();
-            std::env::set_var("STYRENE_IDENTITY_PATH", &custom_file);
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let custom_file = tmp.path().join("custom.key");
+        fs::write(&custom_file, b"fake-key-data").unwrap();
 
-            let result = discover().expect("should find env var identity");
-            assert_eq!(result.tier, SignerTier::EncryptedFile);
-            assert_eq!(result.path, custom_file);
-            assert!(!result.is_hash_only());
-        });
+        let result = discover_from_sources(
+            Some(tmp.path().to_path_buf()),
+            Some(custom_file.to_string_lossy().into_owned()),
+            None,
+        )
+        .expect("should find env var identity");
+        assert_eq!(result.tier, SignerTier::EncryptedFile);
+        assert_eq!(result.path, custom_file);
+        assert!(!result.is_hash_only());
     }
 
     #[test]
     fn discover_hash_only_from_env() {
-        with_clean_env(|_tmp| {
-            std::env::set_var("STYRENE_IDENTITY_HASH", "abcdef1234567890abcdef1234567890");
-
-            let result = discover().expect("should find hash-only identity");
-            assert!(result.is_hash_only(), "should be hash-only");
-            assert_eq!(result.label, "env:STYRENE_IDENTITY_HASH=abcdef1234567890abcdef1234567890");
-        });
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let result = discover_from_sources(
+            Some(tmp.path().to_path_buf()),
+            None,
+            Some("abcdef1234567890abcdef1234567890".to_string()),
+        )
+        .expect("should find hash-only identity");
+        assert!(result.is_hash_only(), "should be hash-only");
+        assert_eq!(result.label, "env:STYRENE_IDENTITY_HASH=abcdef1234567890abcdef1234567890");
     }
 
     #[test]
     fn discover_default_path_takes_priority_over_env() {
-        with_clean_env(|tmp| {
-            // Set up both default file and env vars
-            let key_dir = tmp.join(".config").join("styrene");
-            fs::create_dir_all(&key_dir).unwrap();
-            fs::write(key_dir.join("identity.key"), b"fake-key-data").unwrap();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let key_dir = tmp.path().join(".config").join("styrene");
+        fs::create_dir_all(&key_dir).unwrap();
+        fs::write(key_dir.join("identity.key"), b"fake-key-data").unwrap();
 
-            std::env::set_var("STYRENE_IDENTITY_HASH", "somehash");
-
-            let result = discover().expect("should find identity");
-            assert_eq!(result.tier, SignerTier::EncryptedFile);
-            assert!(result.path.ends_with("identity.key"), "default path should win");
-        });
+        let result = discover_from_sources(
+            Some(tmp.path().to_path_buf()),
+            None,
+            Some("somehash".to_string()),
+        )
+        .expect("should find identity");
+        assert_eq!(result.tier, SignerTier::EncryptedFile);
+        assert!(result.path.ends_with("identity.key"), "default path should win");
     }
 }

@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use ed25519_dalek::{Signer, SigningKey};
 use minicbor::Encoder;
-use serde_json::{json, Value};
-use styrene_identity::{derive::KeyDeriver, IdentityId, RepositorySignerBinding};
+use serde_json::{Value, json};
+use styrene_identity::{IdentityId, RepositorySignerBinding, derive::KeyDeriver};
 
 const PURPOSE: &str = "styrene-repository-signing-v1";
 const SIGNING_DOMAIN: &[u8] = b"styrene-repository-signer-binding-v1";

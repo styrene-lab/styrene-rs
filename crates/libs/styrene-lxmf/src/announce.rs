@@ -12,11 +12,7 @@ pub fn normalize_display_name(value: &str) -> Option<String> {
     }
 
     let normalized: String = trimmed.chars().take(64).collect();
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
+    if normalized.is_empty() { None } else { Some(normalized) }
 }
 
 pub fn encode_delivery_display_name_app_data(display_name: &str) -> Option<Vec<u8>> {

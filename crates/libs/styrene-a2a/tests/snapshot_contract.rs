@@ -1,7 +1,7 @@
 use styrene_a2a::{
     AgentGraphEdge, AgentSnapshot, AgentSnapshotRequest, AgentTaskSnapshot, CancellationState,
-    GraphEdgeRelationship, RootOperationId, RuntimeId, SequenceWatermark, SnapshotValidationError,
-    TaskState, MAX_AGENT_SNAPSHOT_TASKS,
+    GraphEdgeRelationship, MAX_AGENT_SNAPSHOT_TASKS, RootOperationId, RuntimeId, SequenceWatermark,
+    SnapshotValidationError, TaskState,
 };
 
 fn root() -> RootOperationId {

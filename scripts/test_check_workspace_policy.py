@@ -21,6 +21,8 @@ def package(
     return {
         "name": name,
         "version": "0.1.0",
+        "edition": "2024",
+        "rust_version": "1.97",
         "publish": publish,
         "dependencies": dependencies or [],
         "manifest_path": str(root / "crates" / name / "Cargo.toml"),
@@ -38,7 +40,12 @@ class WorkspacePolicyTests(unittest.TestCase):
         (self.root / "Cargo.toml").write_text(
             """\
 [workspace]
+resolver = "3"
 members = []
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.97"
 
 [workspace.dependencies]
 foundation = { version = "0.1.0", path = "crates/foundation" }
@@ -100,6 +107,22 @@ protocol = { version = "0.1.0", path = "crates/protocol" }
             "protocol: workspace path dependency foundation requirement '^0.2.0' != '^0.1.0'",
             errors,
         )
+
+    def test_rejects_outdated_rust_contract(self) -> None:
+        metadata = self.metadata()
+        metadata["packages"][0]["edition"] = "2021"
+        metadata["packages"][0]["rust_version"] = "1.75"
+
+        errors = validate(self.root, metadata)
+
+        self.assertIn("foundation: edition '2021' != workspace edition '2024'", errors)
+        self.assertIn("foundation: rust-version '1.75' != workspace rust-version '1.97'", errors)
+
+    def test_requires_resolver_three(self) -> None:
+        manifest = self.root / "Cargo.toml"
+        manifest.write_text(manifest.read_text().replace('resolver = "3"', 'resolver = "2"'))
+
+        self.assertIn("workspace: resolver must be 3", validate(self.root, self.metadata()))
 
     def test_rejects_nonmember_path_dependency(self) -> None:
         metadata = self.metadata()

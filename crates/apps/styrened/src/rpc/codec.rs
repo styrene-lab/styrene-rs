@@ -1,7 +1,7 @@
 use std::io::{self, ErrorKind};
 
-use rmp_serde::{from_slice, Serializer};
-use serde::{de::DeserializeOwned, Serialize};
+use rmp_serde::{Serializer, from_slice};
+use serde::{Serialize, de::DeserializeOwned};
 
 pub fn encode_frame<T: Serialize>(msg: &T) -> io::Result<Vec<u8>> {
     // Reserve 4 bytes for the length prefix and serialize directly into the output frame

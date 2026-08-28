@@ -1,16 +1,15 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use styrene_ipc::types::{
-    ActiveCapabilitiesInfo, ConfigApplyResult, DaemonStatusInfo, DeviceInfo, ExecResult,
-    IdentityInfo, MessageInfo, NetworkOperationInfo, PropagationQueueEntry, PropagationSnapshot,
-    RebootResult, RemoteStatusInfo, RequestObservationInfo, ResourceTransferInfo,
-    StandardPropagationSnapshot, StartNetworkOperationInfo, StartRequestInfo,
-    ACTIVE_CAPABILITIES_VERSION,
+    ACTIVE_CAPABILITIES_VERSION, ActiveCapabilitiesInfo, ConfigApplyResult, DaemonStatusInfo,
+    DeviceInfo, ExecResult, IdentityInfo, MessageInfo, NetworkOperationInfo, PropagationQueueEntry,
+    PropagationSnapshot, RebootResult, RemoteStatusInfo, RequestObservationInfo,
+    ResourceTransferInfo, StandardPropagationSnapshot, StartNetworkOperationInfo, StartRequestInfo,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 use crate::daemon_bridge::{self, DaemonEvent, InterfaceStats, PathTableEntry};
 

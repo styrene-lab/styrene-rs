@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use rumqttc::v5::mqttbytes::v5::PublishProperties;
-use styrene_a2a::{AgentEnvelope, AgentEnvelopeKind, EnvelopeError, A2A_JSON_CONTENT_TYPE};
+use styrene_a2a::{A2A_JSON_CONTENT_TYPE, AgentEnvelope, AgentEnvelopeKind, EnvelopeError};
 
 use crate::{A2aTopic, A2aTopicKind, MqttA2aError, Result};
 

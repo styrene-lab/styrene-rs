@@ -68,11 +68,7 @@ pub(crate) fn settle_layout(nodes: &mut [GraphNode], edges: &[GraphEdge], pinned
 }
 
 pub(crate) fn layout_iterations(node_count: usize) -> usize {
-    if node_count > 200 {
-        8
-    } else {
-        150
-    }
+    if node_count > 200 { 8 } else { 150 }
 }
 
 #[cfg(test)]

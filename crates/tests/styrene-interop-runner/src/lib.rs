@@ -7,9 +7,9 @@ use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, SyncSender};
-use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -78,8 +78,7 @@ pub const PINNED_SCENARIOS: &[PinnedScenarioDefinition] = &[
     PinnedScenarioDefinition {
         id: PinnedScenarioId::Opportunistic,
         title: "Pinned Opportunistic Interop",
-        description:
-            "Runs the shared opportunistic-delivery harness through the supervised runner.",
+        description: "Runs the shared opportunistic-delivery harness through the supervised runner.",
         controls: &["announce", "send-message", "cancel"],
     },
     PinnedScenarioDefinition {
@@ -1332,11 +1331,7 @@ fn safe_name(name: &str) -> String {
         })
         .take(80)
         .collect();
-    if value.is_empty() {
-        "artifact".to_string()
-    } else {
-        value
-    }
+    if value.is_empty() { "artifact".to_string() } else { value }
 }
 
 struct TerminationResult {

@@ -1,5 +1,5 @@
 use serde_json::json;
-use styrened::receipt_bridge::{handle_receipt_event, ReceiptEvent};
+use styrened::receipt_bridge::{ReceiptEvent, handle_receipt_event};
 use styrened::rpc::{RpcDaemon, RpcRequest};
 
 #[test]

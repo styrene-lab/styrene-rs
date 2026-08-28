@@ -4,8 +4,8 @@
 //! IPC requests to an [`Arc<dyn Daemon>`] implementation.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::net::UnixListener;
 use tokio::sync::broadcast;
@@ -119,7 +119,8 @@ async fn accept_loop(
     event_tx: broadcast::Sender<DaemonEvent>,
 ) {
     loop {
-        match listener.accept().await {
+        let accepted = listener.accept().await;
+        match accepted {
             Ok((stream, _addr)) => {
                 let connection_generation =
                     NEXT_CONNECTION_GENERATION.fetch_add(1, Ordering::Relaxed);

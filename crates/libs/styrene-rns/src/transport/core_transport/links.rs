@@ -1,7 +1,7 @@
 use super::*;
 use crate::transport::channel::{
-    validate_typed_message_type, ChannelError, Envelope as ChannelEnvelope, HandlerId,
-    MessageState as ChannelMessageState, TypedMessage,
+    ChannelError, Envelope as ChannelEnvelope, HandlerId, MessageState as ChannelMessageState,
+    TypedMessage, validate_typed_message_type,
 };
 use crate::transport::destination_ext::link::{
     LinkCloseReason, LinkLifecycleSnapshot, LinkStateSnapshot,
@@ -377,10 +377,10 @@ impl Transport {
             let mut packets = Vec::new();
             for link in handler.out_links.values() {
                 let link = link.lock().await;
-                if link.status() == LinkStatus::Active {
-                    if let Ok(packet) = link.channel_packet(payload) {
-                        packets.push(packet);
-                    }
+                if link.status() == LinkStatus::Active
+                    && let Ok(packet) = link.channel_packet(payload)
+                {
+                    packets.push(packet);
                 }
             }
             packets
@@ -400,10 +400,10 @@ impl Transport {
             let mut packets = Vec::new();
             for link in handler.out_links.values() {
                 let link = link.lock().await;
-                if link.status() == LinkStatus::Active {
-                    if let Ok(packet) = link.data_packet(payload) {
-                        packets.push(packet);
-                    }
+                if link.status() == LinkStatus::Active
+                    && let Ok(packet) = link.data_packet(payload)
+                {
+                    packets.push(packet);
                 }
             }
             packets
@@ -426,10 +426,9 @@ impl Transport {
                 let link = link.lock().await;
                 if link.destination().address_hash == *destination
                     && link.status() == LinkStatus::Active
+                    && let Ok(packet) = link.data_packet(payload)
                 {
-                    if let Ok(packet) = link.data_packet(payload) {
-                        packets.push(packet);
-                    }
+                    packets.push(packet);
                 }
             }
             packets
@@ -457,10 +456,9 @@ impl Transport {
 
                 if link.destination().address_hash == *destination
                     && link.status() == LinkStatus::Active
+                    && let Ok(packet) = link.data_packet(payload)
                 {
-                    if let Ok(packet) = link.data_packet(payload) {
-                        packets.push(packet);
-                    }
+                    packets.push(packet);
                 }
             }
             packets
@@ -911,12 +909,11 @@ pub(super) async fn cancel_correlated_request_resources(
         let link = find_link_in_handler(handler, cancellation.link_id).await;
         if let Some(link) = link {
             let link = link.lock().await;
-            if let Some(iface) = link.ingress_iface() {
-                if let Ok(packet) =
+            if let Some(iface) = link.ingress_iface()
+                && let Ok(packet) =
                     build_resource_cancel_packet(&link, cancellation.hash, cancellation.context)
-                {
-                    handler.send(TxMessage { tx_type: TxMessageType::Direct(iface), packet }).await;
-                }
+            {
+                handler.send(TxMessage { tx_type: TxMessageType::Direct(iface), packet }).await;
             }
         }
     }
@@ -927,10 +924,10 @@ pub(super) async fn cancel_correlated_request_resources(
 impl Drop for Transport {
     fn drop(&mut self) {
         self.cancel.cancel();
-        if let Ok(mut task) = self.manager_task.lock() {
-            if let Some(task) = task.take() {
-                task.abort();
-            }
+        if let Ok(mut task) = self.manager_task.lock()
+            && let Some(task) = task.take()
+        {
+            task.abort();
         }
     }
 }
@@ -947,20 +944,16 @@ impl Transport {
     pub async fn shutdown_manager(&self) -> Result<(), tokio::task::JoinError> {
         self.cancel.cancel();
         let task = self.manager_task.lock().ok().and_then(|mut task| task.take());
-        if let Some(task) = task {
-            task.await
-        } else {
-            Ok(())
-        }
+        if let Some(task) = task { task.await } else { Ok(()) }
     }
 
     /// Abort the transport scheduler when an async join is not possible.
     pub fn abort_manager(&self) {
         self.cancel.cancel();
-        if let Ok(mut task) = self.manager_task.lock() {
-            if let Some(task) = task.take() {
-                task.abort();
-            }
+        if let Ok(mut task) = self.manager_task.lock()
+            && let Some(task) = task.take()
+        {
+            task.abort();
         }
     }
 
