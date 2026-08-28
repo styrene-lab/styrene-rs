@@ -2796,6 +2796,11 @@ mod tests {
 
         let delivery_hash = node.app_context.identity().delivery_destination_hash().unwrap();
         assert_eq!(delivery_hash.len(), 32);
+        let propagation = node.propagation_snapshot().await.unwrap();
+        assert!(propagation.automatic_sync_enabled);
+        assert_eq!(propagation.automatic_sync_cooldown_secs, 30);
+        assert_eq!(propagation.sync_deadline_secs, 32);
+        assert!(node.propagation_foreground_opportunity());
 
         node.announce().await.unwrap();
         let packet = tokio::time::timeout(std::time::Duration::from_secs(1), async {
