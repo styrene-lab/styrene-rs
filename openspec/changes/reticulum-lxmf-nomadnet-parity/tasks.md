@@ -76,7 +76,7 @@
 ## 8. Standard LXMF Propagation
 <!-- specs: lxmf-propagation, production-composition -->
 
-- [ ] 8.1 Generate Python fixtures for propagation announces, request paths, offers, transient IDs, and encrypted payloads
+- [x] 8.1 Generate Python fixtures for propagation announces, request paths, offers, transient IDs, and encrypted payloads
 - [x] 8.2 Register the standard `lxmf.propagation` destination and compatible announce metadata
 - [x] 8.3 Implement offer comparison, transient-ID deduplication, ingest, and identified-client retrieval
 - [x] 8.4 Enforce propagation stamps, transfer limits, recipient authorization, capacity, and expiry policy
