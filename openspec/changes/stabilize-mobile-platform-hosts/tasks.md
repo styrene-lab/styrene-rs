@@ -27,7 +27,7 @@
 ## 4. Integration Corpus And Deployment
 <!-- specs: mobile-platform-foundation -->
 
-- [ ] 4.1 Validate corpus schema, launch profiles, evidence classes, deadlines, cleanup, and artifact policy
+- [x] 4.1 Validate corpus schema, launch profiles, evidence classes, deadlines, cleanup, and artifact policy
 - [x] 4.2 Run local hub and deployment configuration checks without embedding local credentials or addresses
 - [x] 4.3 Run runner unit tests and the available cross-platform simulator or emulator scenarios
 - [x] 4.4 Preserve partial outcomes where required hardware or reply correlation is unavailable
