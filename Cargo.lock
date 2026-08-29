@@ -85,6 +85,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "android-keyring"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b051e1fab4f4c15e384424252c57321173b8fb274d50f30bd46145c35cd0a6a2"
+dependencies = [
+ "base64",
+ "jni",
+ "keyring",
+ "ndk-context",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6486,6 +6500,7 @@ dependencies = [
 name = "styrene-identity"
 version = "0.3.2"
 dependencies = [
+ "android-keyring",
  "argon2",
  "async-trait",
  "base64",
@@ -6496,6 +6511,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "hkdf",
+ "keyring",
  "minicbor",
  "proptest",
  "rand 0.8.5",

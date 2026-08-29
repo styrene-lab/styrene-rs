@@ -69,6 +69,8 @@ wireguard = ["dep:styrene-tunnel"]
 i2p-proxy = ["dep:reqwest"]
 ## Keychain-backed identity for mobile (iOS/macOS biometric)
 mobile-keychain = ["dep:styrene-identity", "styrene-identity/keychain", "styrene-identity/signing"]
+## Android Keystore-wrapped identity for mobile
+mobile-android-keystore = ["dep:styrene-identity", "styrene-identity/android-keystore", "styrene-identity/signing"]
 ## File-based identity for mobile (Android/fallback)
 mobile-identity = ["dep:styrene-identity", "styrene-identity/file-signer"]
 ## Bundle SQLite for cross-compilation (Android/iOS — no system libsqlite3)
