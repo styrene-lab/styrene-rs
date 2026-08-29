@@ -15,6 +15,7 @@
 use rand_core::{OsRng, RngCore};
 use zeroize::Zeroizing;
 
+use security_framework::item::{ItemClass, ItemSearchOptions};
 use security_framework::passwords::{
     PasswordOptions, delete_generic_password, generic_password, set_generic_password_options,
 };
@@ -46,23 +47,15 @@ impl KeychainSigner {
         Self { service: service.into(), account: account.into() }
     }
 
-    /// Check if a biometric-protected identity exists in the Keychain.
-    ///
-    /// Calls `generic_password()` which may trigger a biometric prompt if the
-    /// item is accessible without explicit auth. In practice, biometric-protected
-    /// items return `errSecInteractionNotAllowed` (-25308) or `errSecAuthFailed`
-    /// (-25293) before prompting, which we interpret as "exists".
+    /// Check if a biometric-protected identity exists without reading its secret.
     pub fn exists(&self) -> bool {
-        match generic_password(PasswordOptions::new_generic_password(&self.service, &self.account))
-        {
-            Ok(_) => true,
-            Err(e) => {
-                let code = e.code();
-                // errSecInteractionNotAllowed (-25308) = item exists but needs auth
-                // errSecAuthFailed (-25293) = item exists but auth was cancelled
-                code == -25308 || code == -25293
-            }
-        }
+        ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(&self.service)
+            .account(&self.account)
+            .load_attributes(true)
+            .search()
+            .is_ok_and(|items| !items.is_empty())
     }
 
     /// Generate a new random root secret and store it in the Keychain
