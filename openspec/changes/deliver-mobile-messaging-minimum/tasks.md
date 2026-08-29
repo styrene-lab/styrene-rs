@@ -115,6 +115,10 @@
 ## 12. BLE Physical Acceptance
 <!-- specs: mobile-ble-rnode, mobile-release-evidence -->
 
+**Deferred 2026-08-29:** The operator deferred physical BLE acceptance for the
+moment. Physical RNodes are available when testing resumes. Keep tasks 12.1-12.5
+incomplete and do not publish a BLE support claim before their evidence passes.
+
 - [ ] 12.1 Record board, firmware, NUS UUIDs and properties, mobile model, OS, application and backend revisions, radio profile, and test jurisdiction
 - [ ] 12.2 Verify explicit first approval, stored-identifier reconnect, pairing-window expiry, Forget, denial, powered-off, interruption, and foreground recovery on each claimed platform
 - [ ] 12.3 Verify observed safe write size, fragmented inbound traffic, serialized response writes, exact RNode configuration readback, and bounded queue behavior
