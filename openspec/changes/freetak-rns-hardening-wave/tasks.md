@@ -117,9 +117,9 @@ Dependency gate: `reticulum-1-5-parity-wave` groups 2-6 must all be verified com
 
 Ownership gate: this group is limited to `styrene-rns`. `shared-dioxus-mobile-ui` group 5 and `deliver-mobile-messaging-minimum` groups 6-7 retain all platform implementation and acceptance work.
 
-- [ ] 15.1 Add and run failing fake-attempt tests for ordered reads/writes, empty-read distinction, bearer metadata, negotiated and conservative write caps, startup write gating, cancellation during one open/read/write operation, shutdown-write failure, and idempotent close
-- [ ] 15.2 Add only the low-level attempt trait and shared RNode/KISS protocol engine; add no platform adapter, reconnect loop, permission flow, application lifecycle, mobile bridge, native handle wrapper, or physical-device path
-- [ ] 15.3 Verify focused fake-attempt protocol tests and existing serial/KISS behavior, then prove the diff contains no duplicate mobile bridge or platform-host implementation
+- [x] 15.1 Add and run failing fake-attempt tests for ordered reads/writes, empty-read distinction, bearer metadata, negotiated and conservative write caps, startup write gating, cancellation during one open/read/write operation, shutdown-write failure, and idempotent close
+- [x] 15.2 Add only the low-level attempt trait and shared RNode/KISS protocol engine; add no platform adapter, reconnect loop, permission flow, application lifecycle, mobile bridge, native handle wrapper, or physical-device path
+- [x] 15.3 Verify focused fake-attempt protocol tests and existing serial/KISS behavior, then prove the diff contains no duplicate mobile bridge or platform-host implementation
 
 ## 16. Clean-room and aggregate verification
 <!-- specs: rns-security-hardening, rns-link-transport-hardening, rns-resource-hardening, rns-interface-policy -->
