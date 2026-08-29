@@ -836,6 +836,52 @@ async fn message_events_are_generation_scoped_complete_canonical_projections() {
 }
 
 #[tokio::test]
+async fn state_events_invalidate_authoritative_message_projection() {
+    let root = tempfile::tempdir().unwrap();
+    let node = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let mut subscription = node.subscribe_state_events();
+    let generation = node.session_snapshot().await.generation;
+    let inbound = MessageRecord {
+        id: "state-event-inbound".into(),
+        source: "abababababababababababababababab".into(),
+        destination: "00".repeat(16),
+        title: String::new(),
+        content: "state invalidation".into(),
+        timestamp: 201,
+        direction: "in".into(),
+        fields: None,
+        receipt_status: None,
+        read: false,
+    };
+    assert!(node.app_context.messaging().accept_inbound_record(&inbound).unwrap());
+    node.app_context.events().emit_message_new(&inbound, None);
+
+    let event = tokio::time::timeout(Duration::from_secs(1), subscription.recv())
+        .await
+        .expect("state event timeout")
+        .expect("state event");
+
+    assert_eq!(event.generation, generation);
+    assert_eq!(event.kind, styrened::mobile::MobileStateEventKind::Message);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn state_event_lag_requires_authoritative_resnapshot() {
+    let root = tempfile::tempdir().unwrap();
+    let node = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let mut subscription = node.subscribe_state_events();
+    for observed_at in 0..300 {
+        node.app_context.events().emit_standard_propagation_changed(observed_at);
+    }
+
+    let error = subscription.recv().await.expect_err("bounded stream must report lag");
+
+    assert!(matches!(error, styrened::mobile::MobileStateSubscriptionError::Lagged(_)));
+    shutdown(node).await;
+}
+
+#[tokio::test]
 async fn peer_event_retains_subscription_generation_across_reconnect() {
     let root = tempfile::tempdir().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -878,6 +924,42 @@ async fn peer_event_retains_subscription_generation_across_reconnect() {
     assert_eq!(event.generation, subscription_generation);
     assert_ne!(event.generation, current_generation);
     assert_eq!(event.peer.destination_hash, destination);
+    drop(second_stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn state_event_uses_current_generation_after_reconnect() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (first_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("initial state-event connection timed out")
+        .unwrap();
+    wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+    let mut subscription = node.subscribe_state_events();
+    let first_generation = node.session_snapshot().await.generation;
+
+    drop(first_stream);
+    let (second_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("state-event reconnect timed out")
+        .unwrap();
+    let current_generation =
+        wait_for_generation(&node, first_generation + 1, Duration::from_secs(1)).await;
+    let event = tokio::time::timeout(Duration::from_secs(1), subscription.recv())
+        .await
+        .expect("state reconnect event timeout")
+        .expect("state reconnect event");
+
+    assert_eq!(event.kind, styrened::mobile::MobileStateEventKind::Session);
+    assert_eq!(event.generation, current_generation);
     drop(second_stream);
     shutdown(node).await;
 }

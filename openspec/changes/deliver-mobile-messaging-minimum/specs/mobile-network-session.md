@@ -44,6 +44,12 @@ When that request completes after the session reconnects
 Then its result cannot replace current session state
 And the current generation remains available for new operations
 
+#### Scenario: Mobile state subscriber falls behind
+Given the mobile state subscriber uses bounded event buffering
+When the backend reports that state invalidations were dropped
+Then the session requeries one authoritative current-generation snapshot
+And it does not merge retained events into that snapshot
+
 ### Requirement: Mobile discovery reflects canonical announce state
 
 The mobile directory must derive peers from canonical backend announce
