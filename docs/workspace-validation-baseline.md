@@ -11,7 +11,7 @@ The maintained product and workspace are Rust-only. The validation boundary is i
 - `cargo test --workspace` validates every maintained workspace member;
 - neither command depends on a host language runtime outside the Rust toolchain.
 
-Current Cargo metadata reports 26 workspace members. Ordinary validation uses
+Current Cargo metadata reports 25 workspace members. Ordinary validation uses
 the following exact matrix:
 
 ```bash
@@ -27,7 +27,7 @@ just test-validation-offline # recipes, workflows, targets, product registry
 ## Active validation boundary
 
 `just test` batches pure library packages once, then selects deterministic
-targets for `styrened`, `styrene-e2e`, IPC server, TUI, CLI, mobile FFI, and the DX component and Fixture suites.
+targets for `styrened`, `styrene-e2e`, IPC server, TUI, CLI, and the DX component and Fixture suites.
 The selected application targets include config, identity storage, LXMF
 fidelity, NomadNet pages, TUI rendering/state units, and LXMF protocol gates.
 Named listener, live-peer, Python, broker, and subprocess integration targets

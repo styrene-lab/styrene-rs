@@ -18,7 +18,9 @@ use crate::buffer::{InputBuffer, OutputBuffer};
 use crate::hash::AddressHash;
 use crate::packet::Packet;
 use crate::serde::Serialize;
-use crate::transport::iface::{InterfaceRxSender, InterfaceTxReceiver, RxMessage};
+use crate::transport::iface::{
+    InterfaceDropReason, InterfaceRxSender, InterfaceStats, InterfaceTxReceiver, RxMessage,
+};
 
 use super::hdlc::Hdlc;
 use super::ifac::IfacConfig;
@@ -29,6 +31,17 @@ const HDLC_BUF: usize = 2048;
 const TCP_READ_BUF: usize = HDLC_BUF * 16;
 const FRAME_BUF_LIMIT: usize = HDLC_BUF * 64;
 
+pub(crate) struct RxAdmission {
+    mtu: usize,
+    stats: Arc<InterfaceStats>,
+}
+
+impl RxAdmission {
+    pub(crate) fn new(mtu: usize, stats: Arc<InterfaceStats>) -> Self {
+        Self { mtu, stats }
+    }
+}
+
 /// Run the receive half of an HDLC-framed byte-stream interface.
 ///
 /// Reads bytes from `reader`, accumulates them in a frame buffer, finds and
@@ -37,12 +50,13 @@ const FRAME_BUF_LIMIT: usize = HDLC_BUF * 64;
 /// `cancel` or `stop` is triggered, or when the reader returns 0 bytes.
 ///
 /// Suitable for any transport whose read half implements `AsyncRead + Unpin + Send`.
-pub async fn run_hdlc_rx_loop<R>(
+pub(crate) async fn run_hdlc_rx_loop<R>(
     mut reader: R,
     rx_channel: InterfaceRxSender,
     iface_address: AddressHash,
     cancel: CancellationToken,
     stop: CancellationToken,
+    admission: RxAdmission,
     ifac: Option<Arc<IfacConfig>>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send,
@@ -76,13 +90,18 @@ pub async fn run_hdlc_rx_loop<R>(
                                 // or drop packets that carry IFAC on an Open interface.
                                 let inner: Option<Vec<u8>> = if let Some(ref cfg) = ifac {
                                     // IFAC-enabled interface: must have valid IFAC token.
-                                    super::ifac::ifac_unwrap(raw, cfg)
+                                    let inner = super::ifac::ifac_unwrap(raw, cfg);
+                                    if inner.is_none() {
+                                        admission.stats.record_drop(InterfaceDropReason::IfacFailure);
+                                    }
+                                    inner
                                 } else if !raw.is_empty() && raw[0] & 0x80 != 0 {
                                     // Open interface: reject packets with IFAC flag set.
                                     log::debug!(
                                         "stream_iface: dropping IFAC packet on open interface {}",
                                         iface_address
                                     );
+                                    admission.stats.record_drop(InterfaceDropReason::IfacFailure);
                                     None
                                 } else {
                                     Some(raw.to_vec())
@@ -93,9 +112,10 @@ pub async fn run_hdlc_rx_loop<R>(
                                         &mut InputBuffer::new(&inner_bytes),
                                     ) {
                                         let _ = rx_channel
-                                            .send(RxMessage { address: iface_address, packet })
+                                            .send(RxMessage::physical(iface_address, packet, admission.mtu))
                                             .await;
                                     } else {
+                                        admission.stats.record_drop(InterfaceDropReason::MalformedFrame);
                                         log::warn!(
                                             "stream_iface: packet deserialize failed on {}",
                                             iface_address
@@ -103,6 +123,7 @@ pub async fn run_hdlc_rx_loop<R>(
                                     }
                                 }
                             } else {
+                                admission.stats.record_drop(InterfaceDropReason::MalformedFrame);
                                 log::warn!(
                                     "stream_iface: HDLC decode failed on {}",
                                     iface_address
@@ -113,6 +134,7 @@ pub async fn run_hdlc_rx_loop<R>(
                         }
 
                         if frame_buffer.len() > FRAME_BUF_LIMIT {
+                            admission.stats.record_drop(InterfaceDropReason::MalformedFrame);
                             log::warn!(
                                 "stream_iface: frame buffer overflow on {}, clearing",
                                 iface_address
@@ -203,5 +225,64 @@ pub async fn run_hdlc_tx_loop<W>(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::packet::PacketDataBuffer;
+    use crate::transport::iface::InterfaceChannel;
+    use tokio::io::AsyncWriteExt;
+    use tokio::time::{Duration, timeout};
+
+    fn frame(data: &[u8]) -> Vec<u8> {
+        let mut storage = vec![0_u8; data.len() * 2 + 2];
+        let mut output = OutputBuffer::new(&mut storage);
+        Hdlc::encode(data, &mut output).expect("HDLC frame");
+        output.as_slice().to_vec()
+    }
+
+    #[tokio::test]
+    async fn malformed_and_ifac_drops_do_not_stop_stream_ingress() {
+        let (mut writer, reader) = tokio::io::duplex(4096);
+        let (rx_send, mut rx_recv) = InterfaceChannel::make_rx_channel(4);
+        let address = AddressHash::new([0x41; 16]);
+        let cancel = CancellationToken::new();
+        let stop = CancellationToken::new();
+        let stats = Arc::new(InterfaceStats::new());
+        let task = tokio::spawn(run_hdlc_rx_loop(
+            reader,
+            rx_send,
+            address,
+            cancel.clone(),
+            stop,
+            RxAdmission::new(500, stats.clone()),
+            None,
+        ));
+
+        let valid = Packet {
+            data: PacketDataBuffer::new_from_slice(b"valid after drops"),
+            ..Default::default()
+        }
+        .to_bytes()
+        .expect("valid packet");
+        let mut input = frame(&[0x01]);
+        input.extend(frame(&[0x80]));
+        input.extend(frame(&valid));
+        writer.write_all(&input).await.expect("stream input");
+
+        let received = timeout(Duration::from_secs(1), rx_recv.recv())
+            .await
+            .expect("valid frame deadline")
+            .expect("valid frame");
+        assert_eq!(received.packet.data.as_slice(), b"valid after drops");
+        let snapshot = stats.snapshot();
+        assert_eq!(snapshot.violations.malformed_frame, 1);
+        assert_eq!(snapshot.violations.ifac_failure, 1);
+        assert_eq!(snapshot.filters.valid_blackhole, 0);
+
+        cancel.cancel();
+        task.await.expect("stream worker must not panic");
     }
 }

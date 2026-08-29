@@ -6,7 +6,7 @@
 # Multi-stage: static musl build → minimal Alpine runtime.
 
 # --- Stage 1: Build ---
-FROM rust:1.86-alpine AS build
+FROM rust:1.97-alpine AS build
 
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static sqlite-dev pkgconfig
 
@@ -33,6 +33,7 @@ RUN apk add --no-cache ca-certificates sqlite-libs \
 
 COPY --from=build /build/target/release/styrened /usr/local/bin/styrened
 COPY --from=build /build/target/release/styrene /usr/local/bin/styrene
+COPY deploy/hub.toml /etc/styrene/config.toml
 
 ENV STYRENE_CONFIG_DIR=/etc/styrene
 ENV STYRENE_DATA_DIR=/var/lib/styrene
@@ -41,11 +42,11 @@ ENV STYRENE_DATA_DIR=/var/lib/styrene
 COPY deploy/pages/ /etc/styrene/pages/
 
 RUN mkdir -p /etc/styrene /var/lib/styrene /run/styrene \
-    && chown -R styrene:styrene /var/lib/styrene /run/styrene /etc/styrene/pages
+    && chown -R styrene:styrene /var/lib/styrene /run/styrene /etc/styrene
 
 USER styrene
 
 EXPOSE 4242
 
 ENTRYPOINT ["styrened"]
-CMD ["--transport", "0.0.0.0:4242", "--rpc", "0.0.0.0:4243"]
+CMD ["--config", "/etc/styrene/config.toml", "--transport", "0.0.0.0:4242", "--rpc", "127.0.0.1:4243"]

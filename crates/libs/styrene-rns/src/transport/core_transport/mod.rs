@@ -8,7 +8,7 @@ use path_requests::TagBytes;
 use path_requests::create_path_request_destination;
 use path_table::PathTable;
 use rand_core::OsRng;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Mutex as StdMutex;
 use std::time::{Duration, SystemTime};
@@ -39,6 +39,8 @@ use crate::hash::{AddressHash, HASH_SIZE, Hash};
 use crate::identity::{Identity, PrivateIdentity};
 use crate::transport::error::RnsError;
 
+use crate::transport::iface::IngressQueueCapacities;
+use crate::transport::iface::IngressSnapshot;
 use crate::transport::iface::InterfaceManager;
 use crate::transport::iface::InterfaceRxReceiver;
 use crate::transport::iface::RxMessage;
@@ -204,6 +206,8 @@ pub struct TransportConfig {
     resource_retry_interval_secs: u64,
     resource_retry_limit: u8,
     ratchet_store_path: Option<PathBuf>,
+    blackholed_identities: HashSet<AddressHash>,
+    ingress_queue_capacities: IngressQueueCapacities,
 }
 
 pub struct DeliveryReceipt {

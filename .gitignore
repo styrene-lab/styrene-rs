@@ -9,7 +9,7 @@ __pycache__/
 
 # Distribution / packaging
 LXMF/Utilities/LXMF
-RNS
+/RNS
 .Python
 build/
 develop-eggs/

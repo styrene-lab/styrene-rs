@@ -106,11 +106,23 @@ mod tests {
                     correlation_id: message.id.clone(),
                     retry_of: None,
                     deadline_unix_ms: 0,
-                    state: "sent".into(),
-                    attempt_count: 1,
+                    state: "queued".into(),
+                    attempt_count: 0,
                 },
             )
             .unwrap();
+        store
+            .lock()
+            .unwrap()
+            .begin_outbound_attempt(&crate::storage::messages::OutboundAttemptRecord {
+                message_id: message.id.clone(),
+                attempt_number: 1,
+                started_unix_ms: 0,
+                deadline_unix_ms: 0,
+                state: "sending".into(),
+            })
+            .unwrap();
+        store.lock().unwrap().finish_outbound(&message.id, "sent", "sent: direct").unwrap();
         store
             .lock()
             .unwrap()

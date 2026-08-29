@@ -19,7 +19,6 @@ members = [
   "crates/apps/styrene-dx",
   "crates/apps/styrene-i2p",
   "crates/apps/styrene-tui",
-  "crates/bindings/styrene-mobile-ffi",
   "crates/libs/styrene-services",
   "crates/libs/styrene-mqtt",
   "crates/libs/styrene-a2a",
@@ -94,7 +93,6 @@ domain = [
 interface = ["styrene-ipc", "styrene-ipc-server"]
 runtime = ["styrened"]
 application = ["styrene", "styrene-dx", "styrene-i2p", "styrene-tui"]
-binding = ["styrene-mobile-ffi"]
 tooling = ["styrene-interop-runner"]
 test = ["styrene-e2e"]
 

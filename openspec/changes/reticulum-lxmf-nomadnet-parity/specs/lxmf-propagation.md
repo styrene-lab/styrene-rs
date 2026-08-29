@@ -12,6 +12,18 @@ When it announces its propagation destination
 Then Python LXMF recognizes the node and its metadata
 And the node can be selected without a Styrene-specific capability
 
+#### Scenario: Active propagation discovery remains available
+Given a Rust propagation node remains active after its startup announce
+When its configured propagation announce interval elapses
+Then it dispatches fresh active `lxmf.propagation` metadata
+And discovery does not depend on restarting the node
+
+#### Scenario: Operator requests an announce
+Given an authorized operator requests a network announce on a propagation hub
+When the local transport accepts the operation
+Then both delivery and standard propagation announces are dispatched
+And the operation does not claim remote reception
+
 #### Scenario: Python offers messages to Rust
 Given Python LXMF has propagation messages for a Rust node
 When it performs the standard offer and transfer exchange

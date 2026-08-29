@@ -35,9 +35,12 @@ impl Transport {
         let (resource_events_tx, _) = tokio::sync::broadcast::channel(16);
         let (server_request_tx, _) = tokio::sync::broadcast::channel(16);
 
-        let iface_manager = InterfaceManager::new(128);
+        let path_request_dest = create_path_request_destination().desc.address_hash;
+        let iface_manager =
+            InterfaceManager::new_with_ingress(config.ingress_queue_capacities, path_request_dest);
 
         let rx_receiver = iface_manager.receiver();
+        let ingress_sender = iface_manager.ingress_sender();
 
         let iface_manager = Arc::new(Mutex::new(iface_manager));
 
@@ -65,8 +68,6 @@ impl Transport {
             announce_cap,
             path_request_timeout_secs,
         );
-
-        let path_request_dest = create_path_request_destination().desc.address_hash;
 
         let cancel = CancellationToken::new();
         let name = config.name.clone();
@@ -108,6 +109,37 @@ impl Transport {
             cancel: cancel.clone(),
             receipt_handler: None,
         }));
+
+        let weak_handler = Arc::downgrade(&handler);
+        ingress_sender.set_admission(move |message| {
+            let weak_handler = weak_handler.clone();
+            Box::pin(async move {
+                let address = message.address;
+                let message = match message.admit() {
+                    Ok(message) => message,
+                    Err(_) => {
+                        let Some(handler) = weak_handler.upgrade() else {
+                            return Err(crate::transport::iface::InterfaceRxSendError);
+                        };
+                        handler.lock().await.iface_manager.lock().await.record_drop(
+                            &address,
+                            crate::transport::iface::InterfaceDropReason::MalformedFrame,
+                        );
+                        return Ok(None);
+                    }
+                };
+                let Some(handler) = weak_handler.upgrade() else {
+                    return Err(crate::transport::iface::InterfaceRxSendError);
+                };
+                if let Some(reason) =
+                    super::jobs::protocol_drop_reason(&message.packet, &handler, address).await
+                {
+                    handler.lock().await.iface_manager.lock().await.record_drop(&address, reason);
+                    return Ok(None);
+                }
+                Ok(Some(message))
+            })
+        });
 
         let manager_task = {
             let handler = handler.clone();
@@ -228,6 +260,27 @@ impl Transport {
     ) -> std::collections::HashMap<AddressHash, crate::transport::iface::InterfaceStatsSnapshot>
     {
         self.iface_manager.lock().await.interface_stats()
+    }
+
+    pub async fn ingress_snapshot(&self) -> IngressSnapshot {
+        self.iface_manager.lock().await.ingress_snapshot()
+    }
+
+    pub async fn path_request_snapshot(&self) -> path_requests::PathRequestSnapshot {
+        self.handler.lock().await.path_requests.snapshot()
+    }
+
+    pub async fn set_path_request_rate_controls(
+        &self,
+        interface: &AddressHash,
+        ingress_control: bool,
+        egress_control: bool,
+    ) -> bool {
+        self.iface_manager.lock().await.set_path_request_rate_controls(
+            interface,
+            ingress_control,
+            egress_control,
+        )
     }
 
     pub async fn interface_snapshots(&self) -> Vec<crate::transport::iface::InterfaceSnapshot> {

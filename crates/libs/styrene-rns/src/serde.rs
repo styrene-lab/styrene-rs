@@ -1,8 +1,8 @@
 use crate::{
-    buffer::{InputBuffer, OutputBuffer, StaticBuffer},
+    buffer::{InputBuffer, OutputBuffer},
     error::RnsError,
     hash::AddressHash,
-    packet::{Header, HeaderType, PACKET_MDU, Packet, PacketContext},
+    packet::{Header, Packet, PacketContext},
 };
 
 pub trait Serialize {
@@ -28,19 +28,7 @@ impl Serialize for PacketContext {
 
 impl Serialize for Packet {
     fn serialize(&self, buffer: &mut OutputBuffer) -> Result<usize, RnsError> {
-        self.header.serialize(buffer)?;
-
-        if self.header.header_type == HeaderType::Type2
-            && let Some(transport) = &self.transport
-        {
-            transport.serialize(buffer)?;
-        }
-
-        self.destination.serialize(buffer)?;
-
-        self.context.serialize(buffer)?;
-
-        buffer.write(self.data.as_slice())
+        buffer.write(&self.to_bytes()?)
     }
 }
 
@@ -70,34 +58,8 @@ impl PacketContext {
 }
 impl Packet {
     pub fn deserialize(buffer: &mut InputBuffer) -> Result<Packet, RnsError> {
-        let header = Header::deserialize(buffer)?;
-
-        let transport = if header.header_type == HeaderType::Type2 {
-            Some(AddressHash::deserialize(buffer)?)
-        } else {
-            None
-        };
-
-        let destination = AddressHash::deserialize(buffer)?;
-
-        let context = PacketContext::deserialize(buffer)?;
-
-        let mut packet = Packet {
-            header,
-            ifac: None,
-            destination,
-            transport,
-            context,
-            data: StaticBuffer::new(),
-        };
-
         let remaining = buffer.bytes_left();
-        if remaining > PACKET_MDU {
-            return Err(RnsError::OutOfMemory);
-        }
-        buffer.read(packet.data.accuire_buf(remaining))?;
-
-        Ok(packet)
+        Packet::from_bytes(buffer.read_slice(remaining)?)
     }
 }
 
@@ -136,7 +98,7 @@ mod tests {
             destination: AddressHash::new_from_rand(OsRng),
             transport: None,
             context: PacketContext::None,
-            data: StaticBuffer::new(),
+            data: StaticBuffer::new_from_slice(b"announce"),
         };
 
         packet.serialize(&mut buffer).expect("serialized packet");

@@ -2506,7 +2506,11 @@ impl MessagesStore {
                         peering_cost, first_seen_at, last_seen_at, retry_at, backoff_count,
                         offered_count, wanted_count, accepted_count, accepted_bytes, failure_count
                  FROM standard_lxmf_propagation_peers
-                 ORDER BY last_seen_at DESC, identity_hash ASC LIMIT ?1",
+                 ORDER BY CASE WHEN identity_hash = (
+                         SELECT selected_peer FROM standard_lxmf_propagation_selection
+                         WHERE singleton = 1
+                     ) THEN 0 ELSE 1 END,
+                     last_seen_at DESC, identity_hash ASC LIMIT ?1",
             )?;
 
             statement

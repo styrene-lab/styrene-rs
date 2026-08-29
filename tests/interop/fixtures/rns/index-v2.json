@@ -1,0 +1,146 @@
+{
+  "schema_version": 2,
+  "authorities": {
+    "rns-1.4.2": {
+      "repository": "https://github.com/markqvist/Reticulum.git",
+      "revision": "b48b96e61676504e0a4e527b33b9a0b4495c6872",
+      "release": "1.4.2"
+    },
+    "rns-1.5.1": {
+      "repository": "https://github.com/markqvist/Reticulum.git",
+      "revision": "149e4151095adf098b8f53eab0c03b37169e8559",
+      "release": "1.5.1"
+    }
+  },
+  "vectors": [
+    {
+      "id": "rns-1.4.2-identity-vectors",
+      "authority_id": "rns-1.4.2",
+      "kind": "identity-vector-set",
+      "artifact": "tests/interop/fixtures/identity_vectors.json",
+      "sha256": "7268459b46bbae5680b159e1b751f5928a88ff3a6c575dcb3277a53680993e8d",
+      "generator": "tests/interop/python/generate_fixtures.py",
+      "source_symbols": ["RNS.Identity.Identity.from_bytes", "RNS.Identity.Identity.sign"],
+      "expected": {"type": "legacy-vector-set", "provenance": "legacy-unrecorded"}
+    },
+    {
+      "id": "rns-1.4.2-packet-vectors",
+      "authority_id": "rns-1.4.2",
+      "kind": "packet-vector-set",
+      "artifact": "tests/interop/fixtures/packet_vectors.json",
+      "sha256": "470c63e49d64e7f5474c6550860f40ba4c464119f4a73554a835b0c9b2b6048a",
+      "generator": "tests/interop/python/generate_fixtures.py",
+      "source_symbols": ["RNS.Packet.Packet.pack", "RNS.Packet.Packet.unpack"],
+      "expected": {"type": "legacy-vector-set", "provenance": "legacy-unrecorded"}
+    },
+    {
+      "id": "rns-1.4.2-announce-vectors",
+      "authority_id": "rns-1.4.2",
+      "kind": "announce-vector-set",
+      "artifact": "tests/interop/fixtures/announce_vectors.json",
+      "sha256": "480dbbbfa11ac35b29440f9bf11d2950ccd13fd5fdfc5e08597bca004550bea8",
+      "generator": "tests/interop/python/generate_fixtures.py",
+      "source_symbols": ["RNS.Destination.Destination.announce"],
+      "expected": {"type": "legacy-vector-set", "provenance": "legacy-unrecorded"}
+    },
+    {
+      "id": "rns-1.4.2-fernet-vectors",
+      "authority_id": "rns-1.4.2",
+      "kind": "token-vector-set",
+      "artifact": "tests/interop/fixtures/fernet_vectors.json",
+      "sha256": "3a24c1598da9cb9b5b8ce28d7dd1aff65d94d07918c9e5fbafd29456d007df38",
+      "generator": "tests/interop/python/generate_fixtures.py",
+      "source_symbols": ["RNS.Cryptography.Token.Token.encrypt", "RNS.Cryptography.Token.Token.decrypt"],
+      "expected": {"type": "legacy-vector-set", "provenance": "legacy-unrecorded"}
+    },
+    {
+      "id": "rns-1.4.2-hdlc-vectors",
+      "authority_id": "rns-1.4.2",
+      "kind": "hdlc-vector-set",
+      "artifact": "tests/interop/fixtures/hdlc_vectors.json",
+      "sha256": "a73c56a22370043499719122db8c418acb6559c4d6acfb886281fad3fc139e4a",
+      "generator": "tests/interop/python/generate_fixtures.py",
+      "source_symbols": ["RNS.Interfaces.HDLC.HDLC.escape", "RNS.Interfaces.HDLC.HDLC.unescape"],
+      "expected": {"type": "legacy-vector-set", "provenance": "legacy-unrecorded"}
+    },
+    {
+      "id": "rns-1.4.2-ifac-vectors",
+      "authority_id": "rns-1.4.2",
+      "kind": "ifac-vector-set",
+      "artifact": "tests/interop/fixtures/ifac_vectors.json",
+      "sha256": "c255dbb52f575094c77551c94066fbab27db806f1e57a8273d3a1dd019d37439",
+      "generator": "tests/interop/python/generate_ifac_fixtures.py",
+      "source_symbols": ["RNS.Interfaces.Interface.Interface.get_hash", "RNS.Interfaces.Interface.Interface.ifac_size"],
+      "expected": {"type": "independent-vector-set", "provenance": "independent-reimplementation"}
+    },
+    {
+      "id": "rns-1.5.1-packet-type1-hop127",
+      "authority_id": "rns-1.5.1",
+      "kind": "packet",
+      "artifact": "tests/interop/fixtures/rns/rns-1.5.1/packet-type1-hop127.bin",
+      "sha256": "df11a1754956e50715289912d14cf26d6e430a64a59c2724ff53c827b7f9ab4a",
+      "generator": "tests/interop/python/generate_rns_1_5_fixtures.py",
+      "source_symbols": ["RNS.Packet.Packet.unpack", "RNS.Transport.Transport.PATHFINDER_M"],
+      "expected": {
+        "type": "packet",
+        "accepted": true,
+        "header_type": 0,
+        "packet_type": 1,
+        "hops": 127,
+        "destination_hex": "000102030405060708090a0b0c0d0e0f",
+        "context": 0,
+        "data_hex": "a5"
+      }
+    },
+    {
+      "id": "rns-1.5.1-packet-type2-hop127",
+      "authority_id": "rns-1.5.1",
+      "kind": "packet",
+      "artifact": "tests/interop/fixtures/rns/rns-1.5.1/packet-type2-hop127.bin",
+      "sha256": "3caf02b6da4560e08698856a10b253664a42c978483dbf367ee07afccd99ae2f",
+      "generator": "tests/interop/python/generate_rns_1_5_fixtures.py",
+      "source_symbols": ["RNS.Packet.Packet.unpack", "RNS.Transport.Transport.PATHFINDER_M"],
+      "expected": {
+        "type": "packet",
+        "accepted": true,
+        "header_type": 1,
+        "packet_type": 1,
+        "hops": 127,
+        "transport_hex": "101112131415161718191a1b1c1d1e1f",
+        "destination_hex": "000102030405060708090a0b0c0d0e0f",
+        "context": 0,
+        "data_hex": "a5"
+      }
+    },
+    {
+      "id": "rns-1.5.1-packet-admission",
+      "authority_id": "rns-1.5.1",
+      "kind": "packet-admission-matrix",
+      "artifact": "tests/interop/fixtures/rns/rns-1.5.1/packet-admission.json",
+      "sha256": "ed41fec77df9c06397df21563d90f9c73ab06aacc62c5bc5d6dc79a263fc947b",
+      "generator": "tests/interop/python/generate_rns_1_5_fixtures.py",
+      "source_symbols": ["RNS.Packet.Packet.unpack", "RNS.Transport.Transport.PATHFINDER_M"],
+      "expected": {
+        "type": "acceptance-matrix",
+        "accepted": false,
+        "classes": ["malformed_packet", "empty_data", "excessive_hops"]
+      }
+    },
+    {
+      "id": "rns-1.5.1-token-valid",
+      "authority_id": "rns-1.5.1",
+      "kind": "token",
+      "artifact": "tests/interop/fixtures/rns/rns-1.5.1/token-valid.bin",
+      "sha256": "03660992aa50fc3660106fdbde095af1e77b0e0f9ea63c956192e738bd5b3329",
+      "generator": "tests/interop/python/generate_rns_1_5_fixtures.py",
+      "source_symbols": ["RNS.Cryptography.Token.Token.encrypt", "RNS.Cryptography.Token.Token.decrypt", "RNS.Cryptography.Token.Token.verify_hmac"],
+      "expected": {
+        "type": "token",
+        "authenticated": true,
+        "mode": "AES_256_CBC",
+        "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "plaintext_hex": "524e5320312e352e3120746f6b656e"
+      }
+    }
+  ]
+}

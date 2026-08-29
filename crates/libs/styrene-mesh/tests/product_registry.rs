@@ -202,3 +202,69 @@ fn committed_fixture_provenance_digests_match() {
         }
     }
 }
+
+#[test]
+fn legacy_rns_fixture_identity_paths_and_digests_are_unchanged() {
+    let provenance = document("tests/interop/fixtures/provenance-v1.toml");
+    assert_eq!(provenance.get("schema_version").and_then(toml::Value::as_integer), Some(1));
+    let python_rns = tables(&provenance, "upstreams")
+        .iter()
+        .find(|entry| entry.get("id").and_then(toml::Value::as_str) == Some("python-rns"))
+        .expect("python-rns authority");
+    assert_eq!(
+        python_rns.get("revision").and_then(toml::Value::as_str),
+        Some("b48b96e61676504e0a4e527b33b9a0b4495c6872")
+    );
+    assert_eq!(python_rns.get("version").and_then(toml::Value::as_str), Some("1.4.2"));
+
+    let expected = [
+        (
+            "rns-python-vectors",
+            "tests/interop/fixtures/identity_vectors.json",
+            "7268459b46bbae5680b159e1b751f5928a88ff3a6c575dcb3277a53680993e8d",
+        ),
+        (
+            "rns-python-vectors",
+            "tests/interop/fixtures/packet_vectors.json",
+            "470c63e49d64e7f5474c6550860f40ba4c464119f4a73554a835b0c9b2b6048a",
+        ),
+        (
+            "rns-python-vectors",
+            "tests/interop/fixtures/announce_vectors.json",
+            "480dbbbfa11ac35b29440f9bf11d2950ccd13fd5fdfc5e08597bca004550bea8",
+        ),
+        (
+            "rns-python-vectors",
+            "tests/interop/fixtures/fernet_vectors.json",
+            "3a24c1598da9cb9b5b8ce28d7dd1aff65d94d07918c9e5fbafd29456d007df38",
+        ),
+        (
+            "rns-python-vectors",
+            "tests/interop/fixtures/hdlc_vectors.json",
+            "a73c56a22370043499719122db8c418acb6559c4d6acfb886281fad3fc139e4a",
+        ),
+        (
+            "rns-ifac-vectors",
+            "tests/interop/fixtures/ifac_vectors.json",
+            "c255dbb52f575094c77551c94066fbab27db806f1e57a8273d3a1dd019d37439",
+        ),
+    ];
+    let fixture_sets = tables(&provenance, "fixture_sets");
+    for (fixture_id, path, digest) in expected {
+        let fixture_set = fixture_sets
+            .iter()
+            .find(|entry| entry.get("id").and_then(toml::Value::as_str) == Some(fixture_id))
+            .unwrap_or_else(|| panic!("missing legacy fixture set {fixture_id}"));
+        let artifact = fixture_set
+            .get("artifacts")
+            .and_then(toml::Value::as_array)
+            .and_then(|artifacts| {
+                artifacts
+                    .iter()
+                    .find(|entry| entry.get("path").and_then(toml::Value::as_str) == Some(path))
+            })
+            .unwrap_or_else(|| panic!("missing legacy fixture artifact {path}"));
+        assert_eq!(artifact.get("sha256").and_then(toml::Value::as_str), Some(digest));
+        assert_eq!(hex::encode(Sha256::digest(std::fs::read(root().join(path)).unwrap())), digest);
+    }
+}

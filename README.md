@@ -154,7 +154,7 @@ See:
 | macOS Apple Silicon | Primary development and release target |
 | macOS x86-64 | Release target |
 | Linux x86-64 | Release target |
-| iOS / Android | Library and FFI work in progress |
+| iOS / Android | Rust runtime here; Dioxus product and packaging in `styrene-ui` |
 | Windows | Not currently a release target |
 
 ## License

@@ -18,8 +18,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -37,6 +37,7 @@ use crate::transport::mesh_transport::{
 };
 
 pub const DEFAULT_PROPAGATION_NODE_NAME: &str = "Styrene propagation node";
+pub const DEFAULT_PROPAGATION_ANNOUNCE_INTERVAL_SECS: u64 = 300;
 pub const OFFER_PATH: &str = "/offer";
 pub const GET_PATH: &str = "/get";
 pub const ERROR_NO_IDENTITY: u64 = 0xf0;
@@ -216,6 +217,30 @@ impl PropagationState {
 
 struct IngressWorker {
     lifecycle: JoinHandle<()>,
+}
+
+#[derive(Clone)]
+pub struct StandardPropagationAnnounceTrigger {
+    sender: mpsc::UnboundedSender<oneshot::Sender<Result<SendPacketOutcome, String>>>,
+}
+
+impl StandardPropagationAnnounceTrigger {
+    pub async fn announce(&self) -> Result<SendPacketOutcome, String> {
+        let (result_tx, result_rx) = oneshot::channel();
+        self.sender
+            .send(result_tx)
+            .map_err(|_| "standard propagation announce worker is unavailable".to_string())?;
+        result_rx.await.map_err(|_| "standard propagation announce worker stopped".to_string())?
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn standard_propagation_announce_test_channel() -> (
+    StandardPropagationAnnounceTrigger,
+    mpsc::UnboundedReceiver<oneshot::Sender<Result<SendPacketOutcome, String>>>,
+) {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    (StandardPropagationAnnounceTrigger { sender }, receiver)
 }
 
 impl IngressWorker {
@@ -1118,6 +1143,8 @@ pub struct StandardPropagationEndpoint {
     clock: Arc<dyn PropagationClock>,
     ingress_lifetime: Option<Arc<()>>,
     worker: Option<IngressWorker>,
+    announce_worker: Option<JoinHandle<()>>,
+    announce_trigger: Option<StandardPropagationAnnounceTrigger>,
     runtime_observation: StandardPropagationRuntimeObservation,
     events: Arc<OnceLock<Arc<EventService>>>,
 }
@@ -1198,6 +1225,8 @@ impl StandardPropagationEndpoint {
             clock,
             ingress_lifetime: Some(Arc::new(())),
             worker: None,
+            announce_worker: None,
+            announce_trigger: None,
             runtime_observation,
             events,
         })
@@ -1230,6 +1259,10 @@ impl StandardPropagationEndpoint {
         self.runtime_observation.clone()
     }
 
+    pub fn announce_trigger(&self) -> Option<StandardPropagationAnnounceTrigger> {
+        self.announce_trigger.clone()
+    }
+
     pub fn set_events(&self, events: Arc<EventService>) {
         let _ = self.events.set(events);
     }
@@ -1254,9 +1287,12 @@ impl StandardPropagationEndpoint {
     pub async fn activate(
         &mut self,
         transport: Arc<dyn MeshTransport>,
-        native_transport: &Transport,
+        native_transport: Arc<Transport>,
     ) -> Result<SendPacketOutcome, StandardPropagationActivationError> {
-        if self.state != StandardPropagationState::HandlersReady || self.worker.is_some() {
+        if self.state != StandardPropagationState::HandlersReady
+            || self.worker.is_some()
+            || self.announce_worker.is_some()
+        {
             return Err(StandardPropagationActivationError::InvalidState);
         }
         let app_data = self.active_app_data(unix_time()?)?;
@@ -1296,6 +1332,16 @@ impl StandardPropagationEndpoint {
             }
             return Err(StandardPropagationActivationError::AnnounceNotSent(outcome));
         }
+        let (announce_tx, announce_rx) = mpsc::unbounded_channel();
+        self.announce_trigger = Some(StandardPropagationAnnounceTrigger { sender: announce_tx });
+        self.announce_worker = Some(spawn_standard_propagation_announce_worker(
+            Arc::clone(&native_transport),
+            Arc::clone(&self.destination),
+            self.node_name.clone(),
+            self.policy,
+            propagation_announce_interval(),
+            announce_rx,
+        ));
         self.state = StandardPropagationState::Active;
         self.runtime_observation.set_active(true);
         Ok(outcome)
@@ -1309,6 +1355,11 @@ impl StandardPropagationEndpoint {
         }
         if let Some(mut worker) = self.worker.take() {
             worker.shutdown().await;
+        }
+        self.announce_trigger = None;
+        if let Some(worker) = self.announce_worker.take() {
+            worker.abort();
+            let _ = worker.await;
         }
         if self.state == StandardPropagationState::Active {
             self.state = StandardPropagationState::HandlersReady;
@@ -1379,6 +1430,89 @@ impl Drop for StandardPropagationEndpoint {
         if let Some(worker) = &self.worker {
             worker.abort();
         }
+        if let Some(worker) = &self.announce_worker {
+            worker.abort();
+        }
+    }
+}
+
+fn propagation_announce_interval() -> Duration {
+    std::env::var("STYRENE_PROPAGATION_ANNOUNCE_INTERVAL_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(DEFAULT_PROPAGATION_ANNOUNCE_INTERVAL_SECS))
+}
+
+fn spawn_standard_propagation_announce_worker(
+    transport: Arc<Transport>,
+    destination: Arc<Mutex<SingleInputDestination>>,
+    node_name: String,
+    policy: PropagationPolicy,
+    interval: Duration,
+    mut requests: mpsc::UnboundedReceiver<oneshot::Sender<Result<SendPacketOutcome, String>>>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        if interval.is_zero() {
+            while let Some(response) = requests.recv().await {
+                let _ = response.send(
+                    send_active_announce(&transport, &destination, &node_name, policy)
+                        .await
+                        .map_err(|error| format!("{error:?}")),
+                );
+            }
+            return;
+        }
+        let mut timer = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = timer.tick() => {
+                    if let Err(error) = send_active_announce(
+                        &transport,
+                        &destination,
+                        &node_name,
+                        policy,
+                    ).await {
+                        crate::daemon_diagnostic!(
+                            "[standard-propagation] periodic announce failed: {error:?}"
+                        );
+                    }
+                }
+                request = requests.recv() => {
+                    let Some(response) = request else { break };
+                    let _ = response.send(
+                        send_active_announce(&transport, &destination, &node_name, policy)
+                            .await
+                            .map_err(|error| format!("{error:?}")),
+                    );
+                }
+            }
+        }
+    })
+}
+
+async fn send_active_announce(
+    transport: &Transport,
+    destination: &Arc<Mutex<SingleInputDestination>>,
+    node_name: &str,
+    policy: PropagationPolicy,
+) -> Result<SendPacketOutcome, StandardPropagationActivationError> {
+    let mut announce = StandardPropagationAnnounce::active(
+        unix_time()?,
+        Some(node_name),
+        policy.transfer_limit_kb as i64,
+        policy.sync_limit_kb as i64,
+    )?;
+    announce.stamp_cost = i64::from(policy.target_cost);
+    announce.stamp_cost_flexibility = i64::from(policy.flexibility);
+    announce.peering_cost = i64::from(policy.peering_cost);
+    let app_data = announce.encode()?;
+    let outcome = transport.send_announce(destination, Some(&app_data)).await;
+    if matches!(outcome, SendPacketOutcome::SentDirect | SendPacketOutcome::SentBroadcast) {
+        Ok(outcome)
+    } else {
+        Err(StandardPropagationActivationError::AnnounceNotSent(outcome))
     }
 }
 
@@ -2758,7 +2892,7 @@ mod tests {
             endpoint
                 .activate(
                     Arc::new(crate::transport::null_transport::NullTransport::new()),
-                    &native,
+                    Arc::new(native),
                 )
                 .await,
             Err(StandardPropagationActivationError::AnnounceNotSent(_))
@@ -3387,6 +3521,103 @@ mod tests {
             let endpoint = endpoint_with_store("durable-node", store).await;
             assert!(endpoint.queue_snapshot().is_empty());
             assert!(process(&endpoint, AddressHash::new([0xd6; 16]), &transfer([stamped(&data)])));
+            assert!(endpoint.queue_snapshot().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn pinned_python_upload_fetch_ack_repeat_and_restart_are_byte_exact() {
+        let fixture_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/interop/fixtures/lxmf-propagation-v1");
+        let index: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(fixture_dir.join("index.json")).expect("Python propagation index"),
+        )
+        .expect("valid Python propagation index");
+        let message = &index["message"];
+        let transient_id: [u8; 32] =
+            hex::decode(message["transient_id_hex"].as_str().expect("Python transient ID"))
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let recipient = PrivateIdentity::from_private_key_bytes(
+            &hex::decode(
+                message["recipient_private_key_hex"]
+                    .as_str()
+                    .expect("Python recipient private key"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let recipient_destination: [u8; 16] = hex::decode(
+            message["recipient_destination_hash_hex"]
+                .as_str()
+                .expect("Python recipient destination"),
+        )
+        .unwrap()
+        .try_into()
+        .unwrap();
+        let encrypted = std::fs::read(fixture_dir.join("encrypted_lxmf.bin")).unwrap();
+        let transfer = std::fs::read(fixture_dir.join("propagation_transfer.msgpack")).unwrap();
+        let get = std::fs::read(fixture_dir.join("message_get_request.msgpack")).unwrap();
+        let list = std::fs::read(fixture_dir.join("message_list_request.msgpack")).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("python-propagation.db");
+        let link = AddressHash::new([0xa1; 16]);
+
+        {
+            let store = Arc::new(StdMutex::new(MessagesStore::open(&path).unwrap()));
+            let endpoint = endpoint_with_store("python-fixture-node", store).await;
+            assert!(process(&endpoint, link, &transfer));
+            assert!(process(&endpoint, link, &transfer));
+            assert_eq!(endpoint.queue_snapshot().len(), 1);
+        }
+
+        {
+            let store = Arc::new(StdMutex::new(MessagesStore::open(&path).unwrap()));
+            let endpoint = endpoint_with_store("python-fixture-node", store).await;
+            assert_eq!(endpoint.queue_snapshot().len(), 1);
+            let fetched = decode(
+                &dispatch(
+                    &endpoint,
+                    GET_PATH,
+                    &get,
+                    Some(recipient.as_identity()),
+                    AddressHash::new(recipient_destination),
+                )
+                .await,
+            );
+            assert_eq!(fetched, rmpv::Value::Array(vec![rmpv::Value::Binary(encrypted)]));
+
+            let acknowledge = encode(rmpv::Value::Array(vec![
+                rmpv::Value::Nil,
+                rmpv::Value::Array(vec![rmpv::Value::Binary(transient_id.to_vec())]),
+            ]));
+            dispatch(
+                &endpoint,
+                GET_PATH,
+                &acknowledge,
+                Some(recipient.as_identity()),
+                AddressHash::new(recipient_destination),
+            )
+            .await;
+            assert!(endpoint.queue_snapshot().is_empty());
+        }
+
+        {
+            let store = Arc::new(StdMutex::new(MessagesStore::open(&path).unwrap()));
+            let endpoint = endpoint_with_store("python-fixture-node", store).await;
+            let repeated = decode(
+                &dispatch(
+                    &endpoint,
+                    GET_PATH,
+                    &list,
+                    Some(recipient.as_identity()),
+                    AddressHash::new(recipient_destination),
+                )
+                .await,
+            );
+            assert_eq!(repeated, rmpv::Value::Array(Vec::new()));
+            assert!(process(&endpoint, link, &transfer));
             assert!(endpoint.queue_snapshot().is_empty());
         }
     }
