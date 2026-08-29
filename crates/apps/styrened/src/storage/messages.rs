@@ -8174,52 +8174,62 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(store.canonical_outbound_wire(&message_id).unwrap(), Some(wire.clone()));
-            assert!(store
-                .conn
-                .execute(
-                    "UPDATE canonical_outbound_messages SET wire = ?2 WHERE message_id = ?1",
-                    params![&message_id, vec![1_u8]],
-                )
-                .is_err());
-            assert!(store
-                .begin_outbound_attempt(&OutboundAttemptRecord {
-                    message_id: message_id.clone(),
-                    attempt_number: 1,
-                    started_unix_ms: 1,
-                    deadline_unix_ms: i64::MAX,
-                    state: "sending".into(),
-                })
-                .unwrap());
+            assert!(
+                store
+                    .conn
+                    .execute(
+                        "UPDATE canonical_outbound_messages SET wire = ?2 WHERE message_id = ?1",
+                        params![&message_id, vec![1_u8]],
+                    )
+                    .is_err()
+            );
+            assert!(
+                store
+                    .begin_outbound_attempt(&OutboundAttemptRecord {
+                        message_id: message_id.clone(),
+                        attempt_number: 1,
+                        started_unix_ms: 1,
+                        deadline_unix_ms: i64::MAX,
+                        state: "sending".into(),
+                    })
+                    .unwrap()
+            );
             let evidence_hash = "ab".repeat(32);
             assert!(store.track_outbound_evidence(&evidence_hash, &message_id, "packet").unwrap());
-            assert!(store
-                .finish_outbound_with_detail(
-                    &message_id,
-                    "failed",
-                    "failed: offline",
-                    Some("offline"),
-                )
-                .unwrap());
-            assert!(store
-                .begin_outbound_retry(&OutboundAttemptRecord {
-                    message_id: message_id.clone(),
-                    attempt_number: 2,
-                    started_unix_ms: 2,
-                    deadline_unix_ms: i64::MAX,
-                    state: "sending".into(),
-                })
-                .unwrap());
+            assert!(
+                store
+                    .finish_outbound_with_detail(
+                        &message_id,
+                        "failed",
+                        "failed: offline",
+                        Some("offline"),
+                    )
+                    .unwrap()
+            );
+            assert!(
+                store
+                    .begin_outbound_retry(&OutboundAttemptRecord {
+                        message_id: message_id.clone(),
+                        attempt_number: 2,
+                        started_unix_ms: 2,
+                        deadline_unix_ms: i64::MAX,
+                        state: "sending".into(),
+                    })
+                    .unwrap()
+            );
             assert!(store.track_outbound_evidence(&evidence_hash, &message_id, "packet").unwrap());
-            assert!(store
-                .finish_outbound_with_exact_evidence(
-                    &message_id,
-                    "delivered",
-                    "delivered: packet-receipt",
-                    Some("authenticated packet receipt"),
-                    &evidence_hash,
-                    "packet",
-                )
-                .unwrap());
+            assert!(
+                store
+                    .finish_outbound_with_exact_evidence(
+                        &message_id,
+                        "delivered",
+                        "delivered: packet-receipt",
+                        Some("authenticated packet receipt"),
+                        &evidence_hash,
+                        "packet",
+                    )
+                    .unwrap()
+            );
             let evidence = store.message_delivery_evidence(&message_id).unwrap();
             assert_eq!(evidence.len(), 2);
             assert_eq!(evidence[0].attempt_number, Some(1));
@@ -8351,9 +8361,9 @@ mod tests {
         let completed = evidence.iter().find(|item| item.state == "completed").unwrap();
         assert_eq!(completed.evidence_hash, format!("{:064x}", 39));
         assert_eq!(completed.attempt_number, Some(2));
-        assert!(evidence
-            .iter()
-            .any(|item| item.attempt_number == Some(1) && item.state == "tracked"));
+        assert!(
+            evidence.iter().any(|item| item.attempt_number == Some(1) && item.state == "tracked")
+        );
         assert_eq!(completed.outcome.as_deref(), Some("authenticated packet receipt"));
         assert_eq!(
             store.outbound_terminal_detail(&outbound_id).unwrap().as_deref(),
