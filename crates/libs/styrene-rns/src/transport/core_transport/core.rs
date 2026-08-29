@@ -266,6 +266,23 @@ impl Transport {
         self.iface_manager.lock().await.ingress_snapshot()
     }
 
+    pub async fn path_request_snapshot(&self) -> path_requests::PathRequestSnapshot {
+        self.handler.lock().await.path_requests.snapshot()
+    }
+
+    pub async fn set_path_request_rate_controls(
+        &self,
+        interface: &AddressHash,
+        ingress_control: bool,
+        egress_control: bool,
+    ) -> bool {
+        self.iface_manager.lock().await.set_path_request_rate_controls(
+            interface,
+            ingress_control,
+            egress_control,
+        )
+    }
+
     pub async fn interface_snapshots(&self) -> Vec<crate::transport::iface::InterfaceSnapshot> {
         self.iface_manager.lock().await.interface_snapshots()
     }

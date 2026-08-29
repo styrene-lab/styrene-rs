@@ -158,7 +158,7 @@ impl AnnounceCache {
 
 pub struct AnnounceTable {
     map: BTreeMap<AddressHash, AnnounceEntry>,
-    responses: BTreeMap<AddressHash, AnnounceEntry>,
+    responses: BTreeMap<(AddressHash, AddressHash), AnnounceEntry>,
     cache: AnnounceCache,
     retry_limit: u8,
 }
@@ -210,7 +210,7 @@ impl AnnounceTable {
         response.timeout = Instant::now() + PATH_RESPONSE_GRACE;
         response.response_to_iface = Some(to_iface);
 
-        self.responses.insert(destination, response);
+        self.responses.insert((destination, to_iface), response);
     }
 
     pub fn add_response(
@@ -220,6 +220,7 @@ impl AnnounceTable {
         hops: u8,
     ) -> bool {
         if let Some(entry) = self.map.remove(&destination) {
+            self.cache.insert(destination, entry.clone());
             self.do_add_response(entry, destination, to_iface, hops);
             return true;
         }
@@ -265,7 +266,11 @@ impl AnnounceTable {
         let now = Instant::now();
 
         for (destination, ref mut entry) in &mut self.map {
-            if self.responses.contains_key(destination) {
+            if self
+                .responses
+                .keys()
+                .any(|(response_destination, _)| response_destination == destination)
+            {
                 continue;
             }
 
@@ -417,13 +422,16 @@ mod tests {
 
         table.add(&packet, destination, received_from);
         assert!(table.add_response(destination, to_iface, 3));
+        let second_iface = AddressHash::new_from_rand(OsRng);
+        assert!(table.add_response(destination, second_iface, 3));
         assert!(
             !table.map.contains_key(&destination),
             "live announce entry must be removed when converted into a direct path response"
         );
         assert!(table.to_retransmit(&transport_id).is_empty());
-        assert_eq!(table.responses.len(), 1);
-        let response = table.responses.get(&destination).expect("response entry inserted");
+        assert_eq!(table.responses.len(), 2);
+        let response =
+            table.responses.get(&(destination, to_iface)).expect("response entry inserted");
         let response_delay =
             response.timeout.checked_duration_since(Instant::now()).unwrap_or_default();
         assert!(
@@ -434,8 +442,18 @@ mod tests {
         sleep(StdDuration::from_millis(450));
 
         let messages = table.to_retransmit(&transport_id);
-        assert_eq!(messages.len(), 1);
-        assert!(matches!(messages[0].tx_type, TxMessageType::Direct(iface) if iface == to_iface));
+        assert_eq!(messages.len(), 2);
+        let mut response_ifaces = messages
+            .iter()
+            .filter_map(|message| match message.tx_type {
+                TxMessageType::Direct(iface) => Some(iface),
+                TxMessageType::Broadcast(_) => None,
+            })
+            .collect::<Vec<_>>();
+        response_ifaces.sort();
+        let mut expected_ifaces = vec![to_iface, second_iface];
+        expected_ifaces.sort();
+        assert_eq!(response_ifaces, expected_ifaces);
         assert!(table.responses.is_empty());
         assert!(table.to_retransmit(&transport_id).is_empty());
     }

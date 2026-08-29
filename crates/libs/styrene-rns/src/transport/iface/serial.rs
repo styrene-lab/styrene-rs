@@ -330,6 +330,7 @@ mod inner {
                     baud_rate: self.baud_rate,
                 }),
                 remote_endpoint: None,
+                ..Default::default()
             }
         }
     }

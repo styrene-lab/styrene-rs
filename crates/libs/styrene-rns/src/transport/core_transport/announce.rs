@@ -1,5 +1,6 @@
 use super::announce_limits::AnnounceLimitAction;
 use super::*;
+use crate::packet::{Header, PropagationType};
 
 async fn process_announce<'a>(
     packet: &Packet,
@@ -56,6 +57,34 @@ async fn process_announce<'a>(
         announce.random_blob,
     ) {
         let _ = handler.route_tx.send(event);
+    }
+
+    if handler.config.retransmit {
+        let active_interfaces =
+            handler.iface_manager.lock().await.active_interface_hashes().into_iter().collect();
+        let waiters = handler.path_requests.take_waiters(&dest_hash, &active_interfaces);
+        let transport_id = *handler.config.identity.address_hash();
+        for waiter in waiters {
+            let response = Packet {
+                header: Header {
+                    header_type: HeaderType::Type2,
+                    propagation_type: PropagationType::Broadcast,
+                    destination_type: DestinationType::Single,
+                    packet_type: PacketType::Announce,
+                    hops: packet.header.hops,
+                    context_flag: packet.header.context_flag,
+                    ..Default::default()
+                },
+                destination: dest_hash,
+                transport: Some(transport_id),
+                context: PacketContext::PathResponse,
+                data: packet.data,
+                ..Default::default()
+            };
+            handler
+                .send(TxMessage { tx_type: TxMessageType::Direct(waiter), packet: response })
+                .await;
+        }
     }
 
     let name_hash = {

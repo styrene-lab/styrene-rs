@@ -1,9 +1,10 @@
 use super::announce::{handle_announce, handle_ingress_limited_announce, retransmit_announces};
-use super::path::{handle_fixed_destinations, handle_link_request};
+use super::path::{dispatch_pending_path_requests, handle_fixed_destinations, handle_link_request};
 use super::wire::{handle_data, handle_proof};
 use super::*;
 use crate::transport::destination_ext::link::{LinkCloseReason, LinkWatchdogAction};
 use crate::transport::iface::InterfaceDropReason;
+use alloc::collections::BTreeSet;
 
 pub(super) async fn protocol_drop_reason(
     packet: &Packet,
@@ -184,6 +185,7 @@ pub(super) async fn handle_cleanup<'a>(handler: MutexGuard<'a, TransportHandler>
 pub(super) async fn handle_cull_paths<'a>(mut handler: MutexGuard<'a, TransportHandler>) {
     let active_interfaces = handler.iface_manager.lock().await.active_interface_hashes();
     handler.link_table.remove_unavailable_interfaces(&active_interfaces);
+    handler.path_requests.retain_interfaces(&active_interfaces.iter().copied().collect());
 
     let out_links = handler
         .out_links
@@ -249,6 +251,9 @@ async fn find_live_link(
 
 pub(super) async fn handle_protocol_deadlines(mut handler: MutexGuard<'_, TransportHandler>) {
     let now = handler.protocol_clock.now();
+    let active_interfaces: BTreeSet<_> =
+        handler.iface_manager.lock().await.active_interface_hashes().into_iter().collect();
+    handler.path_requests.retain_interfaces(&active_interfaces);
     let timed_out = handler.request_tracker.timeout_due_ids();
     for request_id in timed_out {
         handler.request_tracker.timeout(request_id);
@@ -376,7 +381,8 @@ pub(super) async fn manage_transport(
                         if handle_fixed_destinations(
                             &packet,
                             &mut handler,
-                            message.address
+                            message.address,
+                            ingress_limited,
                         ).await {
                             continue;
                         }
@@ -562,6 +568,7 @@ pub(super) async fn manage_transport(
                     let mut handler = handler_arc.lock().await;
                     let released = handler.announce_limits.release_ready();
                     let sender = handler.iface_manager.lock().await.ingress_sender();
+                    dispatch_pending_path_requests(&mut handler).await;
                     handle_protocol_deadlines(handler).await;
                     (sender, released)
                 };

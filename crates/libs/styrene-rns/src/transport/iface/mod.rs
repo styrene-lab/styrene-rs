@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 use tokio::task;
@@ -270,6 +270,8 @@ pub struct InterfaceDescriptor {
     pub mode: InterfaceMode,
     pub local_endpoint: Option<InterfaceEndpoint>,
     pub remote_endpoint: Option<InterfaceEndpoint>,
+    pub ingress_control: bool,
+    pub egress_control: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -296,6 +298,11 @@ struct InterfaceRuntimeMetadata {
     state: InterfaceState,
     parent: Option<AddressHash>,
     generation: u64,
+    outgoing_path_requests: std::collections::VecDeque<Instant>,
+    incoming_path_requests: std::collections::VecDeque<Instant>,
+    path_request_ingress_limited_until: Option<Instant>,
+    created_at: Instant,
+    force_path_request_egress_limit: bool,
 }
 
 #[derive(Debug)]
@@ -311,6 +318,11 @@ impl InterfaceRuntime {
                 state: InterfaceState::Starting,
                 parent,
                 generation: 0,
+                outgoing_path_requests: std::collections::VecDeque::new(),
+                incoming_path_requests: std::collections::VecDeque::new(),
+                path_request_ingress_limited_until: None,
+                created_at: Instant::now(),
+                force_path_request_egress_limit: false,
             }),
         }
     }
@@ -343,6 +355,88 @@ impl InterfaceRuntime {
         let mut metadata = self.metadata.lock().expect("interface runtime lock");
         metadata.descriptor.local_endpoint = None;
         metadata.descriptor.remote_endpoint = None;
+    }
+
+    fn should_egress_limit_path_request(&self, now: Instant) -> bool {
+        let mut metadata = self.metadata.lock().expect("interface runtime lock");
+        if metadata.force_path_request_egress_limit {
+            return true;
+        }
+        if !metadata.descriptor.egress_control {
+            return false;
+        }
+        while metadata
+            .outgoing_path_requests
+            .front()
+            .is_some_and(|oldest| now.saturating_duration_since(*oldest) > Duration::from_secs(10))
+        {
+            metadata.outgoing_path_requests.pop_front();
+        }
+        if metadata.outgoing_path_requests.len() <= 1 {
+            return false;
+        }
+        let span = now.saturating_duration_since(metadata.outgoing_path_requests[0]);
+        !span.is_zero()
+            && (metadata.outgoing_path_requests.len() + 1) as f64 / span.as_secs_f64() > 5.0
+    }
+
+    fn record_outgoing_path_request(&self, now: Instant) {
+        let mut metadata = self.metadata.lock().expect("interface runtime lock");
+        metadata.outgoing_path_requests.push_back(now);
+        while metadata.outgoing_path_requests.len() > 48 {
+            metadata.outgoing_path_requests.pop_front();
+        }
+    }
+
+    fn record_and_should_ingress_limit_path_request(&self, now: Instant) -> bool {
+        let mut metadata = self.metadata.lock().expect("interface runtime lock");
+        if !metadata.descriptor.ingress_control {
+            return false;
+        }
+        while metadata
+            .incoming_path_requests
+            .front()
+            .is_some_and(|oldest| now.saturating_duration_since(*oldest) > Duration::from_secs(10))
+        {
+            metadata.incoming_path_requests.pop_front();
+        }
+        metadata.incoming_path_requests.push_back(now);
+        while metadata.incoming_path_requests.len() > 48 {
+            metadata.incoming_path_requests.pop_front();
+        }
+        if metadata
+            .path_request_ingress_limited_until
+            .is_some_and(|limited_until| now < limited_until)
+        {
+            return true;
+        }
+        if metadata.incoming_path_requests.len() <= 2 {
+            return false;
+        }
+        let span = now.saturating_duration_since(metadata.incoming_path_requests[0]);
+        if span.is_zero() {
+            return false;
+        }
+        let threshold = if now.saturating_duration_since(metadata.created_at)
+            < Duration::from_secs(2 * 60 * 60)
+        {
+            3.0
+        } else {
+            8.0
+        };
+        let frequency = metadata.incoming_path_requests.len() as f64 / span.as_secs_f64();
+        if frequency > threshold {
+            metadata.path_request_ingress_limited_until = Some(now + Duration::from_secs(15));
+            true
+        } else {
+            false
+        }
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    fn force_path_request_egress_limit(&self, limited: bool) {
+        self.metadata.lock().expect("interface runtime lock").force_path_request_egress_limit =
+            limited;
     }
 }
 
@@ -477,6 +571,7 @@ pub struct InterfaceManager {
     counter: usize,
     rx_recv: Arc<tokio::sync::Mutex<InterfaceRxReceiver>>,
     rx_send: InterfaceRxSender,
+    path_request_destination: AddressHash,
     cancel: CancellationToken,
     ifaces: Vec<LocalInterface>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
@@ -508,7 +603,7 @@ fn tx_diag_enabled() -> bool {
 impl InterfaceManager {
     pub fn new(rx_cap: usize) -> Self {
         let (rx_send, rx_recv) = InterfaceChannel::make_rx_channel(rx_cap);
-        Self::new_with_channel(rx_send, rx_recv)
+        Self::new_with_channel(rx_send, rx_recv, AddressHash::new_empty())
     }
 
     pub fn new_with_ingress(
@@ -517,16 +612,21 @@ impl InterfaceManager {
     ) -> Self {
         let (rx_send, rx_recv) =
             InterfaceChannel::make_priority_rx_channel(capacities, path_request_destination);
-        Self::new_with_channel(rx_send, rx_recv)
+        Self::new_with_channel(rx_send, rx_recv, path_request_destination)
     }
 
-    fn new_with_channel(rx_send: InterfaceRxSender, rx_recv: InterfaceRxReceiver) -> Self {
+    fn new_with_channel(
+        rx_send: InterfaceRxSender,
+        rx_recv: InterfaceRxReceiver,
+        path_request_destination: AddressHash,
+    ) -> Self {
         let rx_recv = Arc::new(tokio::sync::Mutex::new(rx_recv));
 
         Self {
             counter: 0,
             rx_recv,
             rx_send,
+            path_request_destination,
             cancel: CancellationToken::new(),
             ifaces: Vec::new(),
             tasks: Vec::new(),
@@ -709,6 +809,63 @@ impl InterfaceManager {
             .collect()
     }
 
+    pub fn can_egress_path_request(&self, excluded: Option<AddressHash>) -> bool {
+        let now = Instant::now();
+        self.ifaces.iter().any(|interface| {
+            !interface.stop.is_cancelled()
+                && excluded != Some(interface.address)
+                && !interface.runtime.should_egress_limit_path_request(now)
+        })
+    }
+
+    pub fn can_egress_path_request_to(&self, address: &AddressHash) -> bool {
+        let now = Instant::now();
+        self.ifaces.iter().any(|interface| {
+            interface.address == *address
+                && !interface.stop.is_cancelled()
+                && !interface.runtime.should_egress_limit_path_request(now)
+        })
+    }
+
+    pub fn classify_path_request_ingress(&self, address: &AddressHash) -> bool {
+        self.ifaces
+            .iter()
+            .find(|interface| interface.address == *address && !interface.stop.is_cancelled())
+            .is_some_and(|interface| {
+                interface.runtime.record_and_should_ingress_limit_path_request(Instant::now())
+            })
+    }
+
+    pub fn set_path_request_rate_controls(
+        &self,
+        address: &AddressHash,
+        ingress_control: bool,
+        egress_control: bool,
+    ) -> bool {
+        let Some(interface) = self.ifaces.iter().find(|interface| interface.address == *address)
+        else {
+            return false;
+        };
+        let mut metadata = interface.runtime.metadata.lock().expect("interface runtime lock");
+        metadata.descriptor.ingress_control = ingress_control;
+        metadata.descriptor.egress_control = egress_control;
+        true
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub fn force_path_request_egress_limit_for_test(
+        &self,
+        address: &AddressHash,
+        limited: bool,
+    ) -> bool {
+        let Some(interface) = self.ifaces.iter().find(|interface| interface.address == *address)
+        else {
+            return false;
+        };
+        interface.runtime.force_path_request_egress_limit(limited);
+        true
+    }
+
     /// Cancel one owned interface without stopping the transport.
     #[cfg(feature = "testing")]
     pub fn cancel_interface_for_test(&self, hash: &AddressHash) -> bool {
@@ -771,6 +928,8 @@ impl InterfaceManager {
     pub async fn send(&self, message: TxMessage) -> TxDispatchTrace {
         let mut trace = TxDispatchTrace::default();
         let pkt_bytes = message.packet.data.len() as u64;
+        let is_path_request = message.packet.header.packet_type == crate::packet::PacketType::Data
+            && message.packet.destination == self.path_request_destination;
         for iface in &self.ifaces {
             let should_send = match message.tx_type {
                 TxMessageType::Broadcast(address) => {
@@ -784,12 +943,19 @@ impl InterfaceManager {
                 TxMessageType::Direct(address) => address == iface.address,
             };
 
-            if should_send && !iface.stop.is_cancelled() {
+            let now = Instant::now();
+            if should_send
+                && !iface.stop.is_cancelled()
+                && !(is_path_request && iface.runtime.should_egress_limit_path_request(now))
+            {
                 trace.matched_ifaces += 1;
                 match iface.tx_send.try_send(message) {
                     Ok(()) => {
                         trace.sent_ifaces += 1;
                         iface.stats.tx_bytes.fetch_add(pkt_bytes, Ordering::Relaxed);
+                        if is_path_request {
+                            iface.runtime.record_outgoing_path_request(now);
+                        }
                     }
                     Err(mpsc::error::TrySendError::Full(_)) => {
                         match tokio::time::timeout(
@@ -801,6 +967,9 @@ impl InterfaceManager {
                             Ok(Ok(())) => {
                                 trace.sent_ifaces += 1;
                                 iface.stats.tx_bytes.fetch_add(pkt_bytes, Ordering::Relaxed);
+                                if is_path_request {
+                                    iface.runtime.record_outgoing_path_request(now);
+                                }
                                 if tx_diag_enabled() {
                                     log::warn!(
                                         "iface: recovered from full tx queue on {} for {:?}",
@@ -887,5 +1056,66 @@ mod tests {
 
         assert!(manager.cancel.is_cancelled());
         assert!(local_stop.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn path_request_egress_is_rechecked_immediately_before_dispatch() {
+        let path_destination = AddressHash::new([0x44; 16]);
+        let mut manager =
+            InterfaceManager::new_with_ingress(IngressQueueCapacities::default(), path_destination);
+        let mut channel = manager.new_channel(1);
+        assert!(manager.can_egress_path_request(None));
+        assert!(manager.force_path_request_egress_limit_for_test(&channel.address, true));
+
+        let message = TxMessage {
+            tx_type: TxMessageType::Direct(channel.address),
+            packet: Packet {
+                header: crate::packet::Header {
+                    packet_type: crate::packet::PacketType::Data,
+                    ..Default::default()
+                },
+                destination: path_destination,
+                data: crate::packet::PacketDataBuffer::new_from_slice(b"path request"),
+                ..Default::default()
+            },
+        };
+        let trace = manager.send(message).await;
+
+        assert_eq!(trace.sent_ifaces, 0);
+        assert!(channel.tx_channel.try_recv().is_err());
+    }
+
+    #[test]
+    fn path_request_rate_controls_are_disabled_by_default() {
+        let runtime = InterfaceRuntime::new(InterfaceDescriptor::default(), None);
+        let now = Instant::now();
+        for offset in 0..20 {
+            assert!(
+                !runtime.record_and_should_ingress_limit_path_request(
+                    now + Duration::from_millis(offset)
+                )
+            );
+            runtime.record_outgoing_path_request(now + Duration::from_millis(offset));
+        }
+        assert!(!runtime.should_egress_limit_path_request(now + Duration::from_millis(20)));
+    }
+
+    #[test]
+    fn path_request_ingress_burst_activates_and_expires_limiting() {
+        let runtime = InterfaceRuntime::new(
+            InterfaceDescriptor { ingress_control: true, ..Default::default() },
+            None,
+        );
+        let now = Instant::now();
+        assert!(!runtime.record_and_should_ingress_limit_path_request(now));
+        assert!(
+            !runtime.record_and_should_ingress_limit_path_request(now + Duration::from_millis(100))
+        );
+        assert!(
+            runtime.record_and_should_ingress_limit_path_request(now + Duration::from_millis(200))
+        );
+        assert!(
+            !runtime.record_and_should_ingress_limit_path_request(now + Duration::from_secs(16))
+        );
     }
 }
