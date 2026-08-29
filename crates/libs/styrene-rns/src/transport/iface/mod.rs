@@ -3,6 +3,7 @@ pub mod hdlc;
 pub mod ifac;
 mod ingress;
 pub mod kiss;
+pub mod rnode;
 pub mod serial;
 pub mod stream_iface;
 pub mod tcp_client;

@@ -24,12 +24,26 @@ pub const TFESC: u8 = 0xDD;
 /// KISS command: data frame.
 pub const CMD_DATA: u8 = 0x00;
 
+const DEFAULT_MAX_FRAME_SIZE: usize = 1_024;
+const DEFAULT_READY_CAPACITY: usize = 32;
+
+/// One decoded KISS command and payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KissFrame {
+    pub command: u8,
+    pub payload: Vec<u8>,
+}
+
 /// Encode a raw data frame into KISS framing.
 pub fn kiss_encode(data: &[u8]) -> Vec<u8> {
+    kiss_encode_command(CMD_DATA, data)
+}
+
+/// Encode one KISS command and payload.
+pub fn kiss_encode_command(command: u8, data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len() + 4);
     out.push(FEND);
-    out.push(CMD_DATA);
-    for &b in data {
+    for &b in std::iter::once(&command).chain(data) {
         match b {
             FEND => {
                 out.push(FESC);
@@ -53,15 +67,26 @@ pub struct KissDecoder {
     buf: Vec<u8>,
     in_frame: bool,
     escape: bool,
-    ready: std::collections::VecDeque<Vec<u8>>,
+    discarding: bool,
+    max_frame_size: usize,
+    ready_capacity: usize,
+    ready: std::collections::VecDeque<KissFrame>,
 }
 
 impl KissDecoder {
     pub fn new() -> Self {
+        Self::with_limits(DEFAULT_MAX_FRAME_SIZE, DEFAULT_READY_CAPACITY)
+    }
+
+    #[must_use]
+    pub fn with_limits(max_frame_size: usize, ready_capacity: usize) -> Self {
         Self {
-            buf: Vec::with_capacity(512),
+            buf: Vec::with_capacity(max_frame_size.min(512)),
             in_frame: false,
             escape: false,
+            discarding: false,
+            max_frame_size,
+            ready_capacity,
             ready: std::collections::VecDeque::new(),
         }
     }
@@ -73,10 +98,11 @@ impl KissDecoder {
             if self.escape {
                 self.escape = false;
                 match b {
-                    TFEND => self.buf.push(FEND),
-                    TFESC => self.buf.push(FESC),
+                    TFEND => self.push_byte(FEND),
+                    TFESC => self.push_byte(FESC),
                     _ => {
-                        // Invalid escape — drop byte (per KISS spec)
+                        self.buf.clear();
+                        self.discarding = true;
                     }
                 }
                 continue;
@@ -84,42 +110,66 @@ impl KissDecoder {
 
             match b {
                 FEND => {
-                    if self.in_frame && !self.buf.is_empty() {
-                        // Frame complete — queue it
+                    if self.in_frame
+                        && !self.discarding
+                        && !self.buf.is_empty()
+                        && self.ready.len() < self.ready_capacity
+                    {
                         let frame = std::mem::take(&mut self.buf);
-                        if let Some(data) = Self::strip_cmd(frame) {
-                            self.ready.push_back(data);
+                        if let Some(frame) = Self::decode_frame(frame) {
+                            self.ready.push_back(frame);
                         }
                     }
-                    // Reset for next frame
                     self.buf.clear();
                     self.in_frame = true;
+                    self.discarding = false;
+                    self.escape = false;
                 }
                 FESC => {
-                    self.escape = true;
+                    if self.in_frame && !self.discarding {
+                        self.escape = true;
+                    }
                 }
                 _ => {
-                    if self.in_frame {
-                        self.buf.push(b);
+                    if self.in_frame && !self.discarding {
+                        self.push_byte(b);
                     }
                 }
             }
         }
     }
 
-    /// Strip the CMD byte from a raw frame. Returns data payload for data frames.
-    fn strip_cmd(frame: Vec<u8>) -> Option<Vec<u8>> {
-        if frame.first() == Some(&CMD_DATA) && frame.len() > 1 {
-            Some(frame[1..].to_vec())
-        } else if frame.is_empty() {
-            None
+    fn push_byte(&mut self, byte: u8) {
+        if self.buf.len() >= self.max_frame_size {
+            self.buf.clear();
+            self.discarding = true;
+            self.escape = false;
         } else {
-            Some(frame)
+            self.buf.push(byte);
         }
+    }
+
+    fn decode_frame(mut frame: Vec<u8>) -> Option<KissFrame> {
+        if frame.is_empty() {
+            return None;
+        }
+        let command = frame.remove(0);
+        Some(KissFrame { command, payload: frame })
     }
 
     /// Take a complete decoded frame, if available.
     pub fn take_frame(&mut self) -> Option<Vec<u8>> {
+        self.take_kiss_frame().map(|frame| {
+            if frame.command == CMD_DATA {
+                frame.payload
+            } else {
+                std::iter::once(frame.command).chain(frame.payload).collect()
+            }
+        })
+    }
+
+    /// Take a decoded frame while preserving its command byte.
+    pub fn take_kiss_frame(&mut self) -> Option<KissFrame> {
         self.ready.pop_front()
     }
 }
@@ -225,5 +275,48 @@ mod tests {
         decoder.feed(&encoded);
         let decoded = decoder.take_frame().expect("binary frame");
         assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn command_roundtrip_preserves_command() {
+        let encoded = kiss_encode_command(0x08, &[0x73]);
+        let mut decoder = KissDecoder::new();
+        decoder.feed(&encoded);
+
+        assert_eq!(
+            decoder.take_kiss_frame(),
+            Some(KissFrame { command: 0x08, payload: vec![0x73] })
+        );
+    }
+
+    #[test]
+    fn oversized_unterminated_frame_is_discarded_and_decoder_recovers() {
+        let mut decoder = KissDecoder::with_limits(4, 2);
+        decoder.feed(&[FEND, CMD_DATA, 1, 2, 3, 4, 5, 6]);
+        decoder.feed(&kiss_encode(b"ok"));
+
+        assert_eq!(decoder.take_frame(), Some(b"ok".to_vec()));
+        assert!(decoder.take_frame().is_none());
+    }
+
+    #[test]
+    fn completed_frame_queue_is_bounded() {
+        let mut decoder = KissDecoder::with_limits(16, 1);
+        let mut bytes = kiss_encode(b"first");
+        bytes.extend(kiss_encode(b"second"));
+        decoder.feed(&bytes);
+
+        assert_eq!(decoder.take_frame(), Some(b"first".to_vec()));
+        assert!(decoder.take_frame().is_none());
+    }
+
+    #[test]
+    fn malformed_escape_discards_frame_and_recovers_at_next_delimiter() {
+        let mut decoder = KissDecoder::new();
+        decoder.feed(&[FEND, CMD_DATA, 1, FESC, 2, FEND]);
+        decoder.feed(&kiss_encode(b"valid"));
+
+        assert_eq!(decoder.take_frame(), Some(b"valid".to_vec()));
+        assert!(decoder.take_frame().is_none());
     }
 }
