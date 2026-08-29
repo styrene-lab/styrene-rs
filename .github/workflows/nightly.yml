@@ -29,7 +29,6 @@ jobs:
             --exclude styrene-interop-runner \
             --exclude styrene-i2p \
             --exclude styrene \
-            --exclude styrene-mobile-ffi \
             --exclude styrened \
             --exclude styrene-tui \
             --exclude styrene-ipc-server

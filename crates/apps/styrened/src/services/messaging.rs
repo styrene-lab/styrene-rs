@@ -18,8 +18,8 @@
 use crate::inbound_delivery::{InboundDecodeDiagnostics, decode_canonical_inbound_payload};
 use crate::lxmf_bridge;
 use crate::services::router::{
-    DeliveryMethod, LifecycleEvidence, OutboundState, RetryQueueResult, RouterCoordinator,
-    WireRepresentation,
+    DeliveryMethod, LifecycleEvidence, OutboundState, RetryQueueResult, RetryStartResult,
+    RouterCoordinator, WireRepresentation,
 };
 use crate::storage::messages::{
     AttachmentBlobInput, MessageAttachmentRecord, MessageRecord, MessagesStore,
@@ -42,6 +42,13 @@ use tokio_util::sync::CancellationToken;
 const TICKET_TTL_SECS: i64 = lxmf::stamps::TICKET_EXPIRY_SECS;
 const TICKET_RENEWAL_SECS: i64 = lxmf::stamps::TICKET_RENEW_SECS;
 const STAMP_GENERATION_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn current_unix_time_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+        .unwrap_or(0)
+}
 const MAX_RECEIPT_CORRELATIONS: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -431,9 +438,7 @@ impl MessagingService {
             .outbound_route(message_id)
             .map_err(std::io::Error::other)?
             .ok_or_else(|| std::io::Error::other("committed outbound route is unavailable"))?;
-        let attempts = store
-            .outbound_attempts_for_correlation(&route.correlation_id)
-            .map_err(std::io::Error::other)?;
+        let attempts = store.outbound_attempts(message_id).map_err(std::io::Error::other)?;
         let attachments =
             store.list_message_attachments(message_id).map_err(std::io::Error::other)?;
         let propagation = store
@@ -1083,6 +1088,7 @@ impl MessagingService {
                     ticket_offer.as_ref(),
                     attachments,
                     propagation,
+                    &payload,
                 )
             } else {
                 self.router.queue_with_ticket_offer_and_attachments(
@@ -1093,6 +1099,7 @@ impl MessagingService {
                     correlation_id,
                     ticket_offer.as_ref(),
                     attachments,
+                    &payload,
                 )
             }
         };
@@ -1353,6 +1360,7 @@ impl MessagingService {
             DeliveryMethod::Direct | DeliveryMethod::Opportunistic => {}
         }
 
+        self.router.begin_attempt(&msg_id)?;
         if !transport.is_connected() {
             let operation = operation
                 .as_ref()
@@ -1367,7 +1375,6 @@ impl MessagingService {
         let operation = operation.ok_or_else(|| std::io::Error::other("delivery ownership missing"))?;
 
         // Run the coordinator-selected delivery attempt.
-        self.router.begin_attempt(&msg_id)?;
         let delivery_result = match plan.actual_method {
             DeliveryMethod::Direct => {
                 self.deliver_selected(
@@ -2092,46 +2099,6 @@ impl MessagingService {
             .map_err(std::io::Error::other)
     }
 
-    fn attachment_inputs_for_message(
-        &self,
-        message_id: &str,
-    ) -> Result<Vec<AttachmentBlobInput>, std::io::Error> {
-        let records = self.list_attachments(message_id)?;
-        let mut result = Vec::with_capacity(records.len());
-        for record in records {
-            if record.integrity != "verified" {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "retry attachment is not verified",
-                ));
-            }
-            let mut data = Vec::with_capacity(record.byte_len as usize);
-            let mut offset = 0usize;
-            loop {
-                let Some(chunk) =
-                    self.query_attachment_chunk(message_id, record.ordinal, offset, 256 * 1024)?
-                else {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "retry attachment became unavailable",
-                    ));
-                };
-                data.extend_from_slice(&chunk.data);
-                offset = chunk.next_offset;
-                if chunk.done {
-                    break;
-                }
-            }
-            result.push(AttachmentBlobInput {
-                wire_name: record.wire_name,
-                data,
-                content_type: record.content_type,
-                source: "local".into(),
-            });
-        }
-        Ok(result)
-    }
-
     pub fn outbound_lifecycle(
         &self,
         message_id: &str,
@@ -2139,10 +2106,8 @@ impl MessagingService {
         let Some(route) = self.router.route(message_id)? else {
             return Ok(None);
         };
-        let attempts = self
-            .lock_store()?
-            .outbound_attempts_for_correlation(&route.correlation_id)
-            .map_err(std::io::Error::other)?;
+        let attempts =
+            self.lock_store()?.outbound_attempts(message_id).map_err(std::io::Error::other)?;
         Ok(Some((route, attempts)))
     }
 
@@ -2156,6 +2121,217 @@ impl MessagingService {
                 Err(std::io::Error::other(format!("message is not retryable: {state}")))
             }
         }
+    }
+
+    async fn dispatch_persisted_retry(
+        &self,
+        message: &MessageRecord,
+        payload: Vec<u8>,
+        plan: crate::services::router::DeliveryPlan,
+    ) -> Result<SendCommitOutcome, std::io::Error> {
+        let transport = self
+            .transport
+            .get()
+            .cloned()
+            .ok_or_else(|| std::io::Error::other("transport not available"))?;
+        let peer_hash = canonical_peer_hash(&message.destination)?;
+        let dest_bytes: [u8; 16] = hex::decode(&peer_hash)
+            .map_err(std::io::Error::other)?
+            .try_into()
+            .map_err(|_| std::io::Error::other("canonical peer hash must be 16 bytes"))?;
+        let dest_hash = AddressHash::new(dest_bytes);
+        let opportunistic_payload =
+            rns_core::transport::delivery::strip_destination_prefix(&payload, &dest_bytes);
+        let projection = self.outbound_projection(&message.id)?;
+        let mut committed = SendCommitOutcome::from_plan(&message.id, projection, &plan);
+        let operation = Arc::new(OutboundOperation::new());
+        self.operations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(message.id.clone(), Arc::clone(&operation));
+        if let Err(error) = self.emit_attachment_transfers(&message.id) {
+            crate::daemon_diagnostic!(
+                "[messaging] retry attachment transfer observation failed: {error}"
+            );
+        }
+
+        if plan.actual_method == DeliveryMethod::Propagated {
+            let coordinator = self
+                .standard_propagation
+                .get()
+                .cloned()
+                .ok_or_else(|| std::io::Error::other("propagation coordinator missing"))?;
+            let cancellation = operation.cancellation.clone();
+            let job = self
+                .lock_store()?
+                .standard_propagation_client_job(&message.id)
+                .map_err(std::io::Error::other)?
+                .ok_or_else(|| std::io::Error::other("propagation job disappeared"))?;
+            if job.state == "preparing" {
+                transport.request_path(&dest_hash).await;
+                let resolution_deadline =
+                    plan.deadline.min(std::time::Instant::now() + Duration::from_secs(12));
+                let recipient = loop {
+                    if cancellation.is_cancelled() {
+                        return Err(std::io::Error::other(TransportError::Cancelled));
+                    }
+                    if let Some(identity) = transport.resolve_identity(&dest_hash).await {
+                        break identity;
+                    }
+                    if std::time::Instant::now() >= resolution_deadline {
+                        let detail = "propagated LXMF recipient identity unavailable";
+                        let _ = self.apply_lifecycle_evidence(
+                            &message.id,
+                            LifecycleEvidence::Failed(detail.into()),
+                        )?;
+                        self.remove_operation(&message.id);
+                        return Ok(committed.failed(detail));
+                    }
+                    tokio::select! {
+                        () = cancellation.cancelled() => {}
+                        () = tokio::time::sleep(Duration::from_millis(25)) => {}
+                    }
+                };
+                let materialize_id = message.id.clone();
+                let materialize_cancellation = cancellation.clone();
+                let deadline = plan.deadline;
+                tokio::task::spawn_blocking(move || {
+                    coordinator.materialize_outbound(
+                        &materialize_id,
+                        &recipient,
+                        current_unix_time_secs(),
+                        deadline,
+                        &materialize_cancellation,
+                    )
+                })
+                .await
+                .map_err(|error| {
+                    std::io::Error::other(format!("propagation retry worker: {error}"))
+                })?
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            }
+            let now = current_unix_time_secs();
+            self.lock_store()?
+                .standard_propagation_resume_outbound_attempt(
+                    &message.id,
+                    now,
+                    now.saturating_add(
+                        i64::try_from(
+                            plan.deadline
+                                .saturating_duration_since(std::time::Instant::now())
+                                .as_secs(),
+                        )
+                        .unwrap_or(i64::MAX),
+                    ),
+                )
+                .map_err(std::io::Error::other)?;
+            let gate_operation = Arc::clone(&operation);
+            let dispatch_gate: DispatchGate =
+                Arc::new(move |representation| gate_operation.begin_dispatch(representation));
+            match self
+                .standard_propagation
+                .get()
+                .ok_or_else(|| std::io::Error::other("propagation coordinator missing"))?
+                .upload(&message.id, plan.deadline, cancellation, Some(dispatch_gate))
+                .await
+            {
+                Ok(_) => {
+                    self.lock_store()?
+                        .standard_propagation_mark_upload_accepted(
+                            &message.id,
+                            current_unix_time_secs(),
+                        )
+                        .map_err(std::io::Error::other)?;
+                    self.router.finish(&message.id, OutboundState::Sent, "sent: propagated")?;
+                }
+                Err(error) => {
+                    let _ = self.apply_lifecycle_evidence(
+                        &message.id,
+                        LifecycleEvidence::Failed(error.to_string()),
+                    )?;
+                    committed = committed.failed(error.to_string());
+                }
+            }
+            self.remove_operation(&message.id);
+            if let Ok(projection) = self.outbound_projection(&message.id) {
+                committed.message = projection;
+            }
+            return Ok(committed);
+        }
+
+        if !transport.is_connected() {
+            operation.complete_dispatch(&Err(TransportError::Unavailable));
+            let detail = "transport not connected";
+            let _ = self
+                .apply_lifecycle_evidence(&message.id, LifecycleEvidence::Failed(detail.into()))?;
+            self.remove_operation(&message.id);
+            committed = committed.failed(detail);
+        } else {
+            let delivery_result = match plan.actual_method {
+                DeliveryMethod::Direct => {
+                    self.deliver_selected(
+                        transport.as_ref(),
+                        dest_hash,
+                        &payload,
+                        plan.deadline,
+                        plan.representation,
+                        Arc::clone(&operation),
+                    )
+                    .await
+                }
+                DeliveryMethod::Opportunistic => {
+                    let remaining = self.router.remaining(plan.deadline)?;
+                    operation
+                        .begin_dispatch(LinkRepresentation::Packet)
+                        .map_err(std::io::Error::other)?;
+                    match tokio::time::timeout(
+                        remaining,
+                        transport.send_raw(dest_hash, opportunistic_payload),
+                    )
+                    .await
+                    {
+                        Err(_) => Err(TransportError::SendFailed("router deadline expired".into())),
+                        Ok(Ok(outcome))
+                            if rns_core::transport::delivery::send_outcome_is_sent(outcome) =>
+                        {
+                            Ok((String::new(), WireRepresentation::Packet))
+                        }
+                        Ok(Ok(outcome)) => Err(TransportError::SendFailed(
+                            rns_core::transport::delivery::send_outcome_label(outcome).into(),
+                        )),
+                        Ok(Err(error)) => Err(error),
+                    }
+                }
+                DeliveryMethod::Propagated | DeliveryMethod::Paper => {
+                    Err(TransportError::SendFailed("persisted retry method is unsupported".into()))
+                }
+            };
+            operation.complete_dispatch(&delivery_result);
+            match &delivery_result {
+                Ok((evidence_hash, representation)) => {
+                    debug_assert_eq!(*representation, plan.representation);
+                    let method = plan.actual_method.as_str();
+                    let status = format!("sent: {method}");
+                    self.router.finish(&message.id, OutboundState::Sent, &status)?;
+                    self.emit_attachment_transfers(&message.id)?;
+                    if !evidence_hash.is_empty() {
+                        self.track_receipt(evidence_hash, &message.id);
+                    }
+                }
+                Err(error) => {
+                    let _ = self.apply_lifecycle_evidence(
+                        &message.id,
+                        LifecycleEvidence::Failed(error.to_string()),
+                    )?;
+                    committed = committed.failed(error.to_string());
+                }
+            }
+            self.remove_operation(&message.id);
+        }
+        if let Ok(projection) = self.outbound_projection(&message.id) {
+            committed.message = projection;
+        }
+        Ok(committed)
     }
 
     pub async fn retry_message_outcome(
@@ -2172,31 +2348,46 @@ impl MessagingService {
         let Some(route) = self.router.route(message_id)? else {
             return Ok(RetryMessageOutcome::TerminalConflict("nonretryable".into()));
         };
-        if !matches!(route.state.as_str(), "failed" | "expired") {
+        let recovered_interruption = route.state == "queued"
+            && self
+                .lock_store()?
+                .outbound_attempts(message_id)
+                .map_err(std::io::Error::other)?
+                .last()
+                .is_some_and(|attempt| attempt.state == "interrupted");
+        if !matches!(route.state.as_str(), "failed" | "expired") && !recovered_interruption {
             return Ok(RetryMessageOutcome::TerminalConflict(route.state));
         }
-        if let Some(retry) = self.router.retry_for(message_id)? {
-            return Ok(RetryMessageOutcome::Existing(retry.message_id));
+        let payload = self
+            .lock_store()?
+            .canonical_outbound_wire(message_id)
+            .map_err(std::io::Error::other)?;
+        let Some(payload) = payload else {
+            return Ok(RetryMessageOutcome::TerminalConflict("canonical_wire_unavailable".into()));
+        };
+        if lxmf::inbound_decode::outbound_message_id_hex(&payload).as_deref() != Some(message_id) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "persisted canonical outbound wire does not match message ID",
+            ));
         }
-        let retry_attachments = self.attachment_inputs_for_message(message_id)?;
-        let result = self
-            .send_chat_outcome_with_route(
-                &message.destination,
-                &message.content,
-                Some(&message.title),
-                Some(&route.requested_method),
-                Some(&route.correlation_id),
-                Some(&message.id),
-                &retry_attachments,
-            )
-            .await;
-        match result {
-            Ok(outcome) => Ok(RetryMessageOutcome::Created(outcome.message_id)),
-            Err(error) => match self.router.retry_for(message_id)? {
-                Some(retry) => Ok(RetryMessageOutcome::Created(retry.message_id)),
-                None => Err(error),
-            },
-        }
+        let plan = match self.router.begin_retry(message_id)? {
+            RetryStartResult::Started(plan) => plan,
+            RetryStartResult::Existing(route) => {
+                return Ok(if route.state == "sending" {
+                    RetryMessageOutcome::Existing(message_id.into())
+                } else {
+                    RetryMessageOutcome::TerminalConflict(route.state)
+                });
+            }
+            RetryStartResult::MissingCanonicalWire => {
+                return Ok(RetryMessageOutcome::TerminalConflict(
+                    "canonical_wire_unavailable".into(),
+                ));
+            }
+        };
+        let outcome = self.dispatch_persisted_retry(&message, payload, plan).await?;
+        Ok(RetryMessageOutcome::Created(outcome.message_id))
     }
 
     pub async fn cancel_outbound(&self, message_id: &str) -> Result<bool, std::io::Error> {
@@ -2677,6 +2868,17 @@ impl MessagingService {
     pub fn clear_draft(&self, peer_hash: &str) -> Result<bool, std::io::Error> {
         let peer_hash = canonical_peer_hash(peer_hash)?;
         self.lock_store()?.clear_draft(&peer_hash).map_err(std::io::Error::other)
+    }
+
+    pub fn clear_draft_if_revision(
+        &self,
+        peer_hash: &str,
+        revision: u64,
+    ) -> Result<bool, std::io::Error> {
+        let peer_hash = canonical_peer_hash(peer_hash)?;
+        self.lock_store()?
+            .clear_draft_if_revision(&peer_hash, revision)
+            .map_err(std::io::Error::other)
     }
 
     // --- Receipt tracking ---
@@ -3722,6 +3924,7 @@ mod tests {
             RetryMessageOutcome::Created(id) => id,
             outcome => panic!("expected retry creation, got {outcome:?}"),
         };
+        assert_eq!(retry, original);
         let original_relations = svc.list_attachments(&original).unwrap();
         let retry_relations = svc.list_attachments(&retry).unwrap();
         assert_eq!(original_relations.len(), 2);
@@ -3747,6 +3950,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(wires.len(), 2);
+        assert_eq!(wires[0], wires[1]);
         let parsed = wires
             .into_iter()
             .map(|stripped| {
@@ -3762,6 +3966,11 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(parsed[0], parsed[1]);
+        let (_, attempts) = svc.outbound_lifecycle(&original).unwrap().unwrap();
+        assert_eq!(
+            attempts.iter().map(|attempt| attempt.attempt_number).collect::<Vec<_>>(),
+            [1, 2]
+        );
     }
 
     fn succeeded_request(value: rmpv::Value) -> styrene_ipc::types::RequestObservationInfo {
@@ -3866,6 +4075,7 @@ mod tests {
                 None,
                 &[],
                 &preparing,
+                &canonical_wire,
             )
             .unwrap();
         (message_id, local, recipient, peer)

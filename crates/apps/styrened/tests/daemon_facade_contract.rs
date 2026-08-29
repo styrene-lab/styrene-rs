@@ -360,20 +360,36 @@ async fn retry_retains_original_requested_method() {
     );
     let messages = daemon.query_messages(&hex::encode([0x47; 16]), 10, None).await.unwrap();
     let message_id = messages[0].id.clone();
+    let first_payload = transport
+        .calls()
+        .into_iter()
+        .find_map(|call| match call {
+            MockCall::SendRaw { data, .. } => Some(data),
+            _ => None,
+        })
+        .expect("initial opportunistic payload");
 
     assert!(daemon.retry_message(&message_id).await.unwrap());
 
     let calls = transport.calls();
     assert_eq!(calls.iter().filter(|call| matches!(call, MockCall::SendRaw { .. })).count(), 2);
     assert!(!calls.iter().any(|call| matches!(call, MockCall::SendViaLink { .. })));
+    let retried_payload = calls
+        .iter()
+        .filter_map(|call| match call {
+            MockCall::SendRaw { data, .. } => Some(data),
+            _ => None,
+        })
+        .nth(1)
+        .expect("retried opportunistic payload");
+    assert_eq!(retried_payload, &first_payload);
     let messages = daemon.query_messages(&hex::encode([0x47; 16]), 10, None).await.unwrap();
-    assert_eq!(messages.len(), 2);
-    assert!(messages.iter().all(|message| {
-        message.requested_delivery_method.as_deref() == Some("opportunistic")
-            && message.actual_delivery_method.as_deref() == Some("opportunistic")
-            && message.correlation_id.as_deref() == Some(message_id.as_str())
-            && message.attempts.len() == 2
-    }));
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].id, message_id);
+    assert_eq!(messages[0].requested_delivery_method.as_deref(), Some("opportunistic"));
+    assert_eq!(messages[0].actual_delivery_method.as_deref(), Some("opportunistic"));
+    assert_eq!(messages[0].correlation_id.as_deref(), Some(message_id.as_str()));
+    assert_eq!(messages[0].attempts.len(), 2);
     assert_eq!(
         messages[0].attempts.iter().map(|attempt| attempt.number).collect::<Vec<_>>(),
         [1, 2]
@@ -473,7 +489,7 @@ async fn typed_failed_send_returns_authoritative_id_while_legacy_returns_error()
 }
 
 #[tokio::test]
-async fn offline_direct_failure_is_persisted_without_a_transport_attempt() {
+async fn offline_direct_failure_persists_the_failed_transport_attempt() {
     let (daemon, transport) = make_messaging_daemon();
     transport.set_connected(false);
     let peer_hash = hex::encode([0x58; 16]);
@@ -495,7 +511,8 @@ async fn offline_direct_failure_is_persisted_without_a_transport_attempt() {
     assert!(messages[0].fallback_reason.is_none());
     assert_eq!(messages[0].correlation_id.as_deref(), Some(messages[0].id.as_str()));
     assert_eq!(messages[0].status, "failed: transport not connected");
-    assert!(messages[0].attempts.is_empty());
+    assert_eq!(messages[0].attempts.len(), 1);
+    assert_eq!(messages[0].attempts[0].number, 1);
 }
 
 #[tokio::test]

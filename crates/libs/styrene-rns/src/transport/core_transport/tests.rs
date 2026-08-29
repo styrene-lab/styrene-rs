@@ -1,17 +1,506 @@
 use super::announce::handle_announce;
 use super::*;
+use alloc::collections::BTreeSet;
 
 use crate::destination::{DestinationName, SingleInputDestination};
 use crate::identity::PrivateIdentity;
 use crate::packet::{Header, HeaderType};
+use crate::ratchets::encrypt_for_public_key;
 use crate::transport::destination_ext::link::{
     Link, LinkCloseReason, LinkEvent, LinkEventData, LinkPayload,
 };
-use crate::transport::iface::{InterfaceMode, TxMessageType};
+use crate::transport::iface::{InterfaceMode, RxMessage, TxMessageType};
 use crate::transport::resource::{ResourceEventKind, ResourceFailure};
 use crate::transport::time::{ManualMonotonicClock, MonotonicClock};
 use rand_core::OsRng;
 use tokio::time::{Duration, timeout};
+
+async fn test_interface_channel(
+    transport: &Transport,
+) -> crate::transport::iface::InterfaceChannel {
+    let iface_manager = {
+        let handler = transport.get_handler();
+        handler.lock().await.iface_manager.clone()
+    };
+    iface_manager.lock().await.new_channel(8)
+}
+
+#[tokio::test]
+async fn ingress_observation_and_announce_route_share_canonical_hops() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let transport = Transport::new(TransportConfig::new("canonical-ingress", &identity, true));
+    let channel = test_interface_channel(&transport).await;
+    let mut iface_events = transport.iface_rx();
+    let mut announce_events = transport.recv_announces().await;
+    let mut route_events = transport.route_events().await;
+
+    let remote_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut remote =
+        SingleInputDestination::new(remote_identity, DestinationName::new("lxmf", "delivery"));
+    let announce = remote.announce(OsRng, None).expect("canonical announce");
+    channel
+        .rx_channel
+        .send(RxMessage::physical(channel.address, announce, 500))
+        .await
+        .expect("inject physical announce");
+
+    let admitted = timeout(Duration::from_secs(1), iface_events.recv())
+        .await
+        .expect("ingress observation deadline")
+        .expect("ingress observation");
+    let announced = timeout(Duration::from_secs(1), announce_events.recv())
+        .await
+        .expect("announce observation deadline")
+        .expect("announce observation");
+    let route = timeout(Duration::from_secs(1), route_events.recv())
+        .await
+        .expect("route observation deadline")
+        .expect("route observation");
+
+    assert_eq!(admitted.packet.header.hops, 1);
+    assert_eq!(announced.hops, admitted.packet.header.hops);
+    assert_eq!(route.route.hops, admitted.packet.header.hops);
+}
+
+#[tokio::test]
+async fn physical_ingress_hops_reach_received_data_without_another_increment() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut transport = Transport::new(TransportConfig::new("received-hops", &identity, true));
+    let destination = transport
+        .add_destination_checked(identity.clone(), DestinationName::new("styrene", "hops"))
+        .await
+        .expect("destination registration");
+    let destination_hash = destination.lock().await.desc.address_hash;
+    let public_identity = *identity.as_identity();
+    let ciphertext = encrypt_for_public_key(
+        &public_identity.public_key,
+        public_identity.address_hash.as_slice(),
+        b"canonical hops",
+        OsRng,
+    )
+    .expect("destination encryption");
+    let mut packet = Packet {
+        destination: destination_hash,
+        data: PacketDataBuffer::new_from_slice(&ciphertext),
+        ..Default::default()
+    };
+    packet.header.hops = 7;
+
+    let channel = test_interface_channel(&transport).await;
+    let mut received_data = transport.received_data_events();
+    channel
+        .rx_channel
+        .send(RxMessage::physical(channel.address, packet, 500))
+        .await
+        .expect("inject physical packet");
+
+    let received = timeout(Duration::from_secs(1), received_data.recv())
+        .await
+        .expect("received data deadline")
+        .expect("received data event");
+    assert_eq!(received.data.as_slice(), b"canonical hops");
+    assert_eq!(received.hops, Some(8));
+}
+
+async fn interface_stats_for(
+    transport: &Transport,
+    address: AddressHash,
+) -> crate::transport::iface::InterfaceStatsSnapshot {
+    transport.interface_stats().await[&address]
+}
+
+#[tokio::test]
+async fn transport_exposes_canonical_ingress_queue_defaults() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let transport = Transport::new(TransportConfig::new("ingress-defaults", &identity, true));
+
+    assert_eq!(
+        transport.ingress_snapshot().await,
+        IngressSnapshot {
+            data: crate::transport::iface::IngressClassSnapshot {
+                capacity: 1024,
+                ..Default::default()
+            },
+            announce: crate::transport::iface::IngressClassSnapshot {
+                capacity: 128,
+                ..Default::default()
+            },
+            path_request: crate::transport::iface::IngressClassSnapshot {
+                capacity: 128,
+                ..Default::default()
+            },
+            ingress_limited: crate::transport::iface::IngressClassSnapshot {
+                capacity: 8,
+                ..Default::default()
+            },
+        }
+    );
+
+    let mut config = TransportConfig::new("ingress-overrides", &identity, true);
+    config.set_ingress_queue_capacities(IngressQueueCapacities::new(4, 3, 2, 1).unwrap());
+    let transport = Transport::new(config);
+    let snapshot = transport.ingress_snapshot().await;
+    assert_eq!(snapshot.data.capacity, 4);
+    assert_eq!(snapshot.announce.capacity, 3);
+    assert_eq!(snapshot.path_request.capacity, 2);
+    assert_eq!(snapshot.ingress_limited.capacity, 1);
+}
+
+#[tokio::test]
+async fn path_requests_batch_by_destination_and_answer_each_active_waiter_once() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("path-batching", &identity, true);
+    config.set_retransmit(true);
+    let transport = Transport::new(config);
+    let mut iface_a = test_interface_channel(&transport).await;
+    let mut iface_b = test_interface_channel(&transport).await;
+    let mut iface_c = test_interface_channel(&transport).await;
+    let mut ingress = transport.iface_rx();
+
+    let remote_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut remote =
+        SingleInputDestination::new(remote_identity, DestinationName::new("lxmf", "delivery"));
+    let announce = remote.announce(OsRng, None).expect("matching announce");
+    let destination = announce.destination;
+    let first =
+        transport.handler.lock().await.path_requests.generate(&destination, Some(vec![0xA1; 16]));
+    let second =
+        transport.handler.lock().await.path_requests.generate(&destination, Some(vec![0xB2; 16]));
+    let limited =
+        transport.handler.lock().await.path_requests.generate(&destination, Some(vec![0xC3; 16]));
+
+    iface_a
+        .rx_channel
+        .send(RxMessage::physical(iface_a.address, first, 500))
+        .await
+        .expect("first path request");
+    timeout(Duration::from_secs(1), ingress.recv()).await.unwrap().unwrap();
+    let recursive_b =
+        timeout(Duration::from_secs(1), iface_b.tx_channel.recv()).await.unwrap().unwrap();
+    let recursive_c =
+        timeout(Duration::from_secs(1), iface_c.tx_channel.recv()).await.unwrap().unwrap();
+    assert_eq!(recursive_b.packet.data, recursive_c.packet.data);
+
+    iface_b
+        .rx_channel
+        .send(RxMessage::physical(iface_b.address, second, 500))
+        .await
+        .expect("batched path request");
+    timeout(Duration::from_secs(1), ingress.recv()).await.unwrap().unwrap();
+    assert!(timeout(Duration::from_millis(50), iface_a.tx_channel.recv()).await.is_err());
+    assert!(timeout(Duration::from_millis(50), iface_c.tx_channel.recv()).await.is_err());
+
+    iface_c
+        .rx_channel
+        .send(RxMessage::physical(iface_c.address, limited, 500).ingress_limited())
+        .await
+        .expect("ingress-limited path request");
+    timeout(Duration::from_secs(1), ingress.recv()).await.unwrap().unwrap();
+    assert_eq!(transport.path_request_snapshot().await.in_flight, 1);
+
+    iface_c
+        .rx_channel
+        .send(RxMessage::physical(iface_c.address, announce, 500))
+        .await
+        .expect("matching announce input");
+    timeout(Duration::from_secs(1), ingress.recv()).await.unwrap().unwrap();
+    let response_a =
+        timeout(Duration::from_secs(1), iface_a.tx_channel.recv()).await.unwrap().unwrap();
+    let response_b =
+        timeout(Duration::from_secs(1), iface_b.tx_channel.recv()).await.unwrap().unwrap();
+    assert_eq!(response_a.packet.context, PacketContext::PathResponse);
+    assert_eq!(response_b.packet.context, PacketContext::PathResponse);
+    assert_eq!(response_a.packet.destination, destination);
+    assert_eq!(response_b.packet.destination, destination);
+    assert!(timeout(Duration::from_millis(50), iface_c.tx_channel.recv()).await.is_err());
+    assert_eq!(transport.path_request_snapshot().await.in_flight, 0);
+}
+
+#[tokio::test]
+async fn local_path_resolution_answers_existing_batched_waiters_and_current_requester() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut transport =
+        Transport::new(TransportConfig::new("local-path-batching", &identity, true));
+    let local = transport
+        .add_destination_checked(
+            PrivateIdentity::new_from_rand(OsRng),
+            DestinationName::new("lxmf", "delivery"),
+        )
+        .await
+        .expect("local destination");
+    let destination = local.lock().await.desc.address_hash;
+    let mut iface_a = test_interface_channel(&transport).await;
+    let mut iface_b = test_interface_channel(&transport).await;
+    let mut iface_c = test_interface_channel(&transport).await;
+    let active = BTreeSet::from([iface_a.address, iface_b.address, iface_c.address]);
+    {
+        let mut handler = transport.handler.lock().await;
+        assert_eq!(
+            handler.path_requests.register_discovery(
+                &path_requests::PathRequest {
+                    destination,
+                    requesting_transport: None,
+                    tag_bytes: vec![0xA1; 16],
+                },
+                iface_a.address,
+                false,
+                &active,
+            ),
+            path_requests::DiscoveryAction::StartDiscovery
+        );
+        assert_eq!(
+            handler.path_requests.register_discovery(
+                &path_requests::PathRequest {
+                    destination,
+                    requesting_transport: None,
+                    tag_bytes: vec![0xB2; 16],
+                },
+                iface_b.address,
+                false,
+                &active,
+            ),
+            path_requests::DiscoveryAction::Batched
+        );
+    }
+    let request =
+        transport.handler.lock().await.path_requests.generate(&destination, Some(vec![0xC3; 16]));
+    let mut ingress = transport.iface_rx();
+    iface_c
+        .rx_channel
+        .send(RxMessage::physical(iface_c.address, request, 500))
+        .await
+        .expect("current path request");
+    timeout(Duration::from_secs(1), ingress.recv()).await.unwrap().unwrap();
+
+    for channel in [&mut iface_a, &mut iface_b, &mut iface_c] {
+        let response =
+            timeout(Duration::from_secs(1), channel.tx_channel.recv()).await.unwrap().unwrap();
+        assert_eq!(response.packet.context, PacketContext::PathResponse);
+        assert_eq!(response.packet.destination, destination);
+    }
+    assert_eq!(transport.path_request_snapshot().await.in_flight, 0);
+}
+
+#[tokio::test]
+async fn invalid_announce_is_side_effect_free_and_ingress_continues() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut transport = Transport::new(TransportConfig::new("invalid-announce", &identity, true));
+    let local = transport
+        .add_destination_checked(identity.clone(), DestinationName::new("local", "announce"))
+        .await
+        .expect("local destination");
+    let channel = test_interface_channel(&transport).await;
+    let mut iface_events = transport.iface_rx();
+    let mut announce_events = transport.recv_announces().await;
+    let remote_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut remote =
+        SingleInputDestination::new(remote_identity, DestinationName::new("lxmf", "delivery"));
+    let valid = remote.announce(OsRng, None).expect("valid announce");
+    let mut invalid = valid;
+    let last = invalid.data.len() - 1;
+    invalid.data.as_mut_slice()[last] ^= 0x01;
+
+    let ingress_before = transport.ingress_snapshot().await;
+    let outcome = channel
+        .rx_channel
+        .send(RxMessage::physical(channel.address, invalid, 500))
+        .await
+        .expect("invalid announce input");
+    assert_eq!(outcome, crate::transport::iface::IngressEnqueueOutcome::Rejected);
+    assert!(timeout(Duration::from_millis(50), iface_events.recv()).await.is_err());
+    assert!(timeout(Duration::from_millis(50), announce_events.recv()).await.is_err());
+
+    let mut local_invalid = local.lock().await.announce(OsRng, None).expect("local announce");
+    let last = local_invalid.data.len() - 1;
+    local_invalid.data.as_mut_slice()[last] ^= 0x01;
+    let outcome = channel
+        .rx_channel
+        .send(RxMessage::physical(channel.address, local_invalid, 500))
+        .await
+        .expect("invalid local announce input");
+    assert_eq!(outcome, crate::transport::iface::IngressEnqueueOutcome::Rejected);
+    assert!(timeout(Duration::from_millis(50), iface_events.recv()).await.is_err());
+    assert!(timeout(Duration::from_millis(50), announce_events.recv()).await.is_err());
+    let stats = interface_stats_for(&transport, channel.address).await;
+    assert_eq!(stats.rx_bytes, 0);
+    assert_eq!(stats.violations.invalid_announce, 2);
+    assert_eq!(stats.filters.valid_blackhole, 0);
+    assert_eq!(transport.ingress_snapshot().await, ingress_before);
+
+    channel
+        .rx_channel
+        .send(RxMessage::physical(channel.address, valid, 500))
+        .await
+        .expect("valid announce input");
+    timeout(Duration::from_secs(1), iface_events.recv())
+        .await
+        .expect("worker progress deadline")
+        .expect("valid ingress observation");
+    timeout(Duration::from_secs(1), announce_events.recv())
+        .await
+        .expect("announce deadline")
+        .expect("valid announce");
+}
+
+#[tokio::test]
+async fn valid_blackholed_announce_is_a_policy_drop_only() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let blocked_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("blackhole", &identity, true);
+    config.set_blackholed_identities([blocked_identity.as_identity().address_hash]);
+    let mut transport = Transport::new(config);
+    transport
+        .add_destination_checked(blocked_identity.clone(), DestinationName::new("lxmf", "delivery"))
+        .await
+        .expect("blackholed local destination");
+    let channel = test_interface_channel(&transport).await;
+    let mut iface_events = transport.iface_rx();
+    let mut announce_events = transport.recv_announces().await;
+    let mut blocked =
+        SingleInputDestination::new(blocked_identity, DestinationName::new("lxmf", "delivery"));
+
+    channel
+        .rx_channel
+        .send(RxMessage::physical(
+            channel.address,
+            blocked.announce(OsRng, None).expect("signed blocked announce"),
+            500,
+        ))
+        .await
+        .expect("blocked announce input");
+    assert!(timeout(Duration::from_millis(50), iface_events.recv()).await.is_err());
+    assert!(timeout(Duration::from_millis(50), announce_events.recv()).await.is_err());
+    let stats = interface_stats_for(&transport, channel.address).await;
+    assert_eq!(stats.violations.invalid_announce, 0);
+    assert_eq!(stats.filters.valid_blackhole, 1);
+
+    let allowed_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut allowed =
+        SingleInputDestination::new(allowed_identity, DestinationName::new("lxmf", "delivery"));
+    channel
+        .rx_channel
+        .send(RxMessage::physical(
+            channel.address,
+            allowed.announce(OsRng, None).expect("allowed announce"),
+            500,
+        ))
+        .await
+        .expect("allowed announce input");
+    timeout(Duration::from_secs(1), announce_events.recv())
+        .await
+        .expect("allowed announce deadline")
+        .expect("allowed announce event");
+}
+
+#[tokio::test]
+async fn excessive_path_tag_and_pending_link_data_are_counted_before_observation() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let transport = Transport::new(TransportConfig::new("typed-drops", &identity, true));
+    let channel = test_interface_channel(&transport).await;
+    let mut iface_events = transport.iface_rx();
+    let fixed_destination = transport.handler.lock().await.fixed_dest_path_requests;
+    let requested = AddressHash::new_from_rand(OsRng);
+    let requesting_transport = AddressHash::new_from_rand(OsRng);
+    let mut path_data = requested.as_slice().to_vec();
+    path_data.extend_from_slice(requesting_transport.as_slice());
+    path_data.extend_from_slice(&[0x55; crate::hash::ADDRESS_HASH_SIZE + 1]);
+    let path_packet = Packet {
+        header: Header { destination_type: DestinationType::Plain, ..Default::default() },
+        destination: fixed_destination,
+        data: PacketDataBuffer::new_from_slice(&path_data),
+        ..Default::default()
+    };
+    channel
+        .rx_channel
+        .send(RxMessage::physical(channel.address, path_packet, 500))
+        .await
+        .expect("excessive path tag input");
+    assert!(timeout(Duration::from_millis(50), iface_events.recv()).await.is_err());
+
+    let peer = PrivateIdentity::new_from_rand(OsRng);
+    let peer_identity = *peer.as_identity();
+    let destination = DestinationDesc {
+        identity: peer_identity,
+        address_hash: peer_identity.address_hash,
+        name: DestinationName::new("test", "pending-link-drop"),
+    };
+    let (pending, _) = transport.register_pending_outbound_link(destination).await;
+    let pending_id = *pending.lock().await.id();
+    let pending_before = pending.lock().await.state_snapshot();
+    let link_packet = Packet {
+        header: Header { destination_type: DestinationType::Link, ..Default::default() },
+        destination: pending_id,
+        data: PacketDataBuffer::new_from_slice(b"pre-validation"),
+        ..Default::default()
+    };
+    channel
+        .rx_channel
+        .send(RxMessage::physical(channel.address, link_packet, 500))
+        .await
+        .expect("pending link input");
+    assert!(timeout(Duration::from_millis(50), iface_events.recv()).await.is_err());
+    let pending_after = pending.lock().await.state_snapshot();
+    assert_eq!(pending_after.id, pending_before.id);
+    assert_eq!(pending_after.status, pending_before.status);
+    assert_eq!(pending_after.interface, pending_before.interface);
+    assert_eq!(pending_after.rtt, pending_before.rtt);
+    assert_eq!(pending_after.remote_identity, pending_before.remote_identity);
+    assert_eq!(pending_after.close_reason, pending_before.close_reason);
+
+    let premature_proof = Packet {
+        header: Header {
+            destination_type: DestinationType::Link,
+            packet_type: PacketType::Proof,
+            ..Default::default()
+        },
+        destination: pending_id,
+        context: PacketContext::LinkProof,
+        data: PacketDataBuffer::new_from_slice(b"premature proof"),
+        ..Default::default()
+    };
+    channel
+        .rx_channel
+        .send(RxMessage::physical(channel.address, premature_proof, 500))
+        .await
+        .expect("pending link proof input");
+    assert!(timeout(Duration::from_millis(50), iface_events.recv()).await.is_err());
+
+    let forged_activation = Packet {
+        header: Header {
+            destination_type: DestinationType::Link,
+            packet_type: PacketType::Proof,
+            ..Default::default()
+        },
+        destination: pending_id,
+        context: PacketContext::LinkRequestProof,
+        data: PacketDataBuffer::new_from_slice(&[0xAA; 96]),
+        ..Default::default()
+    };
+    channel
+        .rx_channel
+        .send(RxMessage::physical(channel.address, forged_activation, 500))
+        .await
+        .expect("forged activation proof input");
+    assert!(timeout(Duration::from_millis(50), iface_events.recv()).await.is_err());
+
+    let stats = interface_stats_for(&transport, channel.address).await;
+    assert_eq!(stats.rx_bytes, 0);
+    assert_eq!(stats.violations.excessive_path_request_tags, 1);
+    assert_eq!(stats.violations.pre_validation_link, 3);
+    assert_eq!(stats.violations.malformed_frame, 0);
+
+    let valid =
+        Packet { data: PacketDataBuffer::new_from_slice(b"worker survives"), ..Default::default() };
+    channel
+        .rx_channel
+        .send(RxMessage::physical(channel.address, valid, 500))
+        .await
+        .expect("valid packet input");
+    timeout(Duration::from_secs(1), iface_events.recv())
+        .await
+        .expect("worker progress deadline")
+        .expect("valid packet observation");
+}
 
 #[tokio::test]
 async fn link_in_payload_is_forwarded_to_received_data() {

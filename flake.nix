@@ -229,7 +229,9 @@
           inherit system;
           overlays = [ rust-overlay.overlays.default ];
         };
-        rustToolchain = pkgs.rust-bin.stable.latest.default;
+        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+          targets = [ "aarch64-linux-android" ];
+        };
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
         commitSha =
@@ -418,6 +420,7 @@
             rust-analyzer
             cargo-watch
             cargo-edit
+            cargo-ndk
           ];
         };
       }

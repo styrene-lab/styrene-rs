@@ -107,6 +107,8 @@
 //! [`KeyDeriver`]: derive::KeyDeriver
 //! [`DerivedKeys`]: derive::DerivedKeys
 
+#[cfg(all(feature = "android-keystore", target_os = "android"))]
+pub mod android_keystore_signer;
 pub mod derive;
 pub mod discover;
 #[cfg(feature = "signing")]

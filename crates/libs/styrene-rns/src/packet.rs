@@ -12,9 +12,11 @@ use crate::hash::Hash;
 
 // Match Python Reticulum default MTU (500) minus max header and IFAC sizes.
 // 500 - (2 + 1 + 16*2) - 1 = 464
+pub const MTU: usize = 500;
 pub const PACKET_MDU: usize = 464usize;
 pub const LXMF_MAX_PAYLOAD: usize = PACKET_MDU - FERNET_OVERHEAD_SIZE - FERNET_MAX_PADDING_SIZE;
 pub const PACKET_IFAC_MAX_LENGTH: usize = 64usize;
+pub const MAX_HOPS: u8 = 128;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum IfacFlag {
@@ -271,13 +273,15 @@ impl Packet {
     pub const LXMF_MAX_PAYLOAD: usize = LXMF_MAX_PAYLOAD;
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, RnsError> {
-        let min_len = 2 + ADDRESS_HASH_SIZE + 1;
-        if bytes.len() < min_len {
+        if bytes.len() < 2 {
             return Err(RnsError::InvalidArgument);
         }
 
         let flags = bytes[0];
         let hops = bytes[1];
+        if hops >= MAX_HOPS {
+            return Err(RnsError::InvalidArgument);
+        }
 
         let mut header = Header::from_meta(flags);
         header.hops = hops;
@@ -308,12 +312,21 @@ impl Packet {
         let context = PacketContext::from(bytes[idx]);
         idx += 1;
 
-        let data = PacketDataBuffer::new_from_slice(&bytes[idx..]);
+        let payload = &bytes[idx..];
+        if payload.is_empty() {
+            return Err(RnsError::InvalidArgument);
+        }
+        if payload.len() > PACKET_MDU {
+            return Err(RnsError::OutOfMemory);
+        }
+        let mut data = PacketDataBuffer::new();
+        data.write(payload)?;
 
         Ok(Self { header, ifac: None, destination, transport, context, data })
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, RnsError> {
+        self.validate_outbound()?;
         let mut out = Vec::with_capacity(2 + ADDRESS_HASH_SIZE + 1 + self.data.len());
 
         out.push(self.header.to_meta());
@@ -329,6 +342,16 @@ impl Packet {
         out.extend_from_slice(self.data.as_slice());
 
         Ok(out)
+    }
+
+    pub fn validate_outbound(&self) -> Result<(), RnsError> {
+        if self.header.hops >= MAX_HOPS || self.data.is_empty() {
+            return Err(RnsError::InvalidArgument);
+        }
+        if self.header.header_type == HeaderType::Type2 && self.transport.is_none() {
+            return Err(RnsError::InvalidArgument);
+        }
+        Ok(())
     }
 
     pub fn hash(&self) -> Hash {

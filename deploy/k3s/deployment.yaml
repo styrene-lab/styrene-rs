@@ -19,12 +19,15 @@ spec:
         app.kubernetes.io/name: styrene-hub
         app.kubernetes.io/component: hub
     spec:
+      securityContext:
+        fsGroup: 100
+        fsGroupChangePolicy: OnRootMismatch
       initContainers:
         - name: init-config
           image: ghcr.io/styrene-lab/styrened-hub:latest
-          command: ["/bin/sh", "-c"]
+          command: ["/bin/sh", "-eu", "-c"]
           args:
-            - mkdir -p /data/config/pages && cp /cfg/config.toml /data/config/config.toml && cp /etc/styrene/pages/*.mu /data/config/pages/ 2>/dev/null || true
+            - mkdir -p /data/config && cp /cfg/config.toml /data/config/config.toml
           volumeMounts:
             - name: config
               mountPath: /cfg
@@ -34,7 +37,7 @@ spec:
       containers:
         - name: styrened
           image: ghcr.io/styrene-lab/styrened-hub:latest
-          args: ["--transport", "0.0.0.0:4242", "--rpc", "0.0.0.0:4243"]
+          args: ["--config", "/var/lib/styrene/config/config.toml", "--transport", "0.0.0.0:4242", "--rpc", "127.0.0.1:4243"]
           ports:
             - name: transport
               containerPort: 4242
@@ -46,6 +49,10 @@ spec:
               value: /var/lib/styrene
             - name: LXMF_DISPLAY_NAME
               value: "Styrene Community Hub"
+            - name: STYRENE_PROPAGATION_NODE_NAME
+              value: "Styrene Community Hub"
+            - name: STYRENE_PROPAGATION_ANNOUNCE_INTERVAL_SECS
+              value: "300"
           volumeMounts:
             - name: data
               mountPath: /var/lib/styrene
@@ -57,13 +64,13 @@ spec:
               cpu: 500m
               memory: 256Mi
           readinessProbe:
-            tcpSocket:
-              port: transport
+            exec:
+              command: ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4243/readyz"]
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
-            tcpSocket:
-              port: transport
+            exec:
+              command: ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4243/healthz"]
             initialDelaySeconds: 10
             periodSeconds: 30
           securityContext:

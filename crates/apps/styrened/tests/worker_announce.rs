@@ -145,3 +145,86 @@ async fn invalid_propagation_app_data_fails_closed() {
     assert!(discovery.device(&destination_hash).is_none());
     worker.abort();
 }
+
+async fn delivery_announce_result(
+    aspect: DestinationName,
+    app_data: &[u8],
+    identity_name: &str,
+) -> (bool, String, Arc<DiscoveryService>, tokio::task::JoinHandle<()>) {
+    let transport = Arc::new(MockTransport::new_default());
+    let discovery = Arc::new(DiscoveryService::new());
+    let events = Arc::new(EventService::new());
+    let (milestone_tx, mut milestone_rx) = tokio::sync::mpsc::unbounded_channel();
+    let worker = spawn_announce_worker_with_milestones(
+        transport.clone(),
+        discovery.clone(),
+        events,
+        milestone_tx,
+    );
+    let identity = PrivateIdentity::new_from_name(identity_name);
+    let mut name_hash = [0u8; NAME_HASH_LENGTH];
+    name_hash.copy_from_slice(aspect.as_name_hash_slice());
+    let destination = SingleOutputDestination::new(*identity.as_identity(), aspect);
+    let destination_hash = hex::encode(destination.desc.address_hash.as_slice());
+    transport.inject_announce(AnnounceEvent {
+        destination: Arc::new(tokio::sync::Mutex::new(destination)),
+        app_data: PacketDataBuffer::new_from_slice(app_data),
+        ratchet: None,
+        name_hash,
+        hops: 1,
+        interface: b"test-interface".to_vec(),
+    });
+    let milestone = tokio::time::timeout(std::time::Duration::from_secs(1), milestone_rx.recv())
+        .await
+        .expect("delivery announce milestone timeout")
+        .expect("delivery announce milestone");
+    (milestone.accepted, destination_hash, discovery, worker)
+}
+
+#[tokio::test]
+async fn canonical_delivery_announce_decodes_destination_and_name() {
+    let app_data = lxmf::announce::encode_delivery_display_name_app_data("Canonical Peer")
+        .expect("canonical app data");
+    let (accepted, destination_hash, discovery, worker) = delivery_announce_result(
+        DestinationName::new("lxmf", "delivery"),
+        &app_data,
+        "canonical-delivery-peer",
+    )
+    .await;
+
+    assert!(accepted);
+    let device = discovery.device(&destination_hash).expect("canonical delivery peer");
+    assert_eq!(device.destination_hash, destination_hash);
+    assert_eq!(device.name, "Canonical Peer");
+    worker.abort();
+}
+
+#[tokio::test]
+async fn malformed_delivery_announce_fails_closed() {
+    let (accepted, destination_hash, discovery, worker) = delivery_announce_result(
+        DestinationName::new("lxmf", "delivery"),
+        b"not canonical delivery metadata",
+        "malformed-delivery-peer",
+    )
+    .await;
+
+    assert!(!accepted);
+    assert!(discovery.device(&destination_hash).is_none());
+    worker.abort();
+}
+
+#[tokio::test]
+async fn unrecognized_announce_aspect_is_not_projected_as_delivery() {
+    let app_data = lxmf::announce::encode_delivery_display_name_app_data("Wrong Aspect")
+        .expect("canonical-shaped app data");
+    let (accepted, destination_hash, discovery, worker) = delivery_announce_result(
+        DestinationName::new("other", "service"),
+        &app_data,
+        "unknown-aspect-peer",
+    )
+    .await;
+
+    assert!(!accepted);
+    assert!(discovery.device(&destination_hash).is_none());
+    worker.abort();
+}

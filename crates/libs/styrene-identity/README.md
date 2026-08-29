@@ -185,8 +185,8 @@ to the same identity.
 | Tier | Backend | Feature | Status |
 |------|---------|---------|--------|
 | A | YubiKey FIDO2 hmac-secret | `yubikey` | Implemented |
-| B | iOS Secure Enclave / Android StrongBox | — | Planned |
-| C | Bitwarden / 1Password / macOS Keychain | — | Planned |
+| B | Apple Keychain / Android Keystore | `keychain`, `android-keystore` | Implemented |
+| C | Bitwarden / 1Password | — | Planned |
 | D | Encrypted file (argon2id + ChaCha20Poly1305) | `file-signer` (default) | Implemented |
 
 `SignerChain` tries signers in tier order (A→D), using the first available:
@@ -210,6 +210,8 @@ let root = chain.root_secret().await?;
 | `repository-signing` | no | repository authority bindings and strict Ed25519 verification |
 | `pki` | no | identity-bound X.509 CA/client/server certificates (rcgen) |
 | `yubikey` | no | `YubiKeySigner` (FIDO2 hmac-secret) |
+| `keychain` | no | biometric-protected Apple Keychain signer |
+| `android-keystore` | no | Android Keystore-wrapped root secret |
 | `ssh-agent` | no | `StyreneAgent` SSH agent protocol |
 
 Minimal dependency footprint — disable `default-features` and pick only

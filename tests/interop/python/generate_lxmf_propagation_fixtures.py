@@ -71,7 +71,7 @@ def write_artifact(name: str, data: bytes, artifacts: list[dict]) -> None:
 def check_pins() -> None:
     expected = {
         "rns": ("1.4.2", RNS_REVISION),
-        "lxmf": ("1.1.1", LXMF_REVISION),
+        "lxmf": ("1.1.0", LXMF_REVISION),
     }
     mismatches = []
     for package, (version, revision) in expected.items():
@@ -196,7 +196,7 @@ def main() -> int:
             "generator": "tests/interop/python/generate_lxmf_propagation_fixtures.py",
             "upstreams": {
                 "rns": {"revision": RNS_REVISION, "version": "1.4.2"},
-                "lxmf": {"revision": LXMF_REVISION, "version": "1.1.1"},
+                "lxmf": {"revision": LXMF_REVISION, "version": "1.1.0"},
             },
             "fixed_unix_time": FIXED_TIME,
             "destination": {

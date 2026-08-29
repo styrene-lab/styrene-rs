@@ -1,5 +1,6 @@
 use super::announce_limits::AnnounceLimitAction;
 use super::*;
+use crate::packet::{Header, PropagationType};
 
 async fn process_announce<'a>(
     packet: &Packet,
@@ -58,6 +59,34 @@ async fn process_announce<'a>(
         let _ = handler.route_tx.send(event);
     }
 
+    if handler.config.retransmit {
+        let active_interfaces =
+            handler.iface_manager.lock().await.active_interface_hashes().into_iter().collect();
+        let waiters = handler.path_requests.take_waiters(&dest_hash, &active_interfaces);
+        let transport_id = *handler.config.identity.address_hash();
+        for waiter in waiters {
+            let response = Packet {
+                header: Header {
+                    header_type: HeaderType::Type2,
+                    propagation_type: PropagationType::Broadcast,
+                    destination_type: DestinationType::Single,
+                    packet_type: PacketType::Announce,
+                    hops: packet.header.hops,
+                    context_flag: packet.header.context_flag,
+                    ..Default::default()
+                },
+                destination: dest_hash,
+                transport: Some(transport_id),
+                context: PacketContext::PathResponse,
+                data: packet.data,
+                ..Default::default()
+            };
+            handler
+                .send(TxMessage { tx_type: TxMessageType::Direct(waiter), packet: response })
+                .await;
+        }
+    }
+
     let name_hash = {
         let destination = destination.lock().await;
         let source = destination.desc.name.as_name_hash_slice();
@@ -81,8 +110,25 @@ async fn process_announce<'a>(
 
 pub(super) async fn handle_announce<'a>(
     packet: &Packet,
+    handler: MutexGuard<'a, TransportHandler>,
+    iface: AddressHash,
+) {
+    handle_announce_with_class(packet, handler, iface, false).await;
+}
+
+pub(super) async fn handle_ingress_limited_announce<'a>(
+    packet: &Packet,
+    handler: MutexGuard<'a, TransportHandler>,
+    iface: AddressHash,
+) {
+    handle_announce_with_class(packet, handler, iface, true).await;
+}
+
+async fn handle_announce_with_class<'a>(
+    packet: &Packet,
     mut handler: MutexGuard<'a, TransportHandler>,
     iface: AddressHash,
+    ingress_limited: bool,
 ) {
     // Skip announces for local destinations (upstream PR #83)
     if handler.has_destination(&packet.destination) {
@@ -101,19 +147,21 @@ pub(super) async fn handle_announce<'a>(
         }
     };
 
-    let destination_known = handler.has_destination(&packet.destination)
-        || handler.knows_destination(&packet.destination);
-    match handler.announce_limits.check(iface, packet, destination_known) {
-        AnnounceLimitAction::Allow => {}
-        AnnounceLimitAction::Hold(release_after) => {
-            log::info!(
-                "tp({}): holding announce for {} on iface {} for at least {:?}",
-                handler.config.name,
-                packet.destination,
-                iface,
-                release_after,
-            );
-            return;
+    if !ingress_limited {
+        let destination_known = handler.has_destination(&packet.destination)
+            || handler.knows_destination(&packet.destination);
+        match handler.announce_limits.check(iface, packet, destination_known) {
+            AnnounceLimitAction::Allow => {}
+            AnnounceLimitAction::Hold(release_after) => {
+                log::info!(
+                    "tp({}): holding announce for {} on iface {} for at least {:?}",
+                    handler.config.name,
+                    packet.destination,
+                    iface,
+                    release_after,
+                );
+                return;
+            }
         }
     }
 
@@ -142,29 +190,5 @@ pub(super) async fn retransmit_announces<'a>(
         for message in old_messages {
             handler.send(message).await;
         }
-    }
-}
-
-#[allow(dead_code)] // Awaiting integration into transport job loop
-pub(super) async fn release_held_announces<'a>(handler: MutexGuard<'a, TransportHandler>) {
-    let mut handler = handler;
-    let released = handler.announce_limits.release_ready();
-
-    for released_announce in released {
-        let packet = released_announce.packet;
-        let iface = released_announce.iface;
-        let announce = match DestinationAnnounce::validate(&packet) {
-            Ok(result) => result,
-            Err(err) => {
-                log::warn!(
-                    "tp: dropping held announce for {} after revalidate failure: {:?}",
-                    packet.destination,
-                    err
-                );
-                continue;
-            }
-        };
-
-        handler = process_announce(&packet, handler, iface, announce).await;
     }
 }

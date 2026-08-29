@@ -38,6 +38,7 @@ test:
     cargo test -p styrened --lib \
         --test announce_names --test config --test identity_store \
         --test lxmf_bridge_tests --test lxmf_fidelity_storage \
+        --test mobile_corpus \
         --test nomadnet_pages_offline --test receipt_bridge --test receipt_mapping \
         --test rns_crypto --test transport_contract --test transport_null \
         --test worker_announce --test worker_inbound
@@ -46,7 +47,6 @@ test:
         --test pqc_scenario
     cargo test -p styrene-tui --lib
     cargo test -p styrene --bin styrene
-    cargo test -p styrene-mobile-ffi --lib
     cargo test -p styrene-dx --bin styrene-dx components::
     cargo test -p styrene-dx --bin styrene-dx fixture
 
@@ -58,7 +58,6 @@ test-verbose:
         --exclude styrene-interop-runner \
         --exclude styrene-i2p \
         --exclude styrene \
-        --exclude styrene-mobile-ffi \
         --exclude styrened \
         --exclude styrene-tui \
         --exclude styrene-ipc-server -- --nocapture
@@ -141,6 +140,7 @@ verify-artifact archive:
 validate-product:
     python3 scripts/test_validate_product_capabilities.py
     python3 scripts/test_parity_claim_labels.py
+    python3 scripts/test_validate_fixture_provenance.py
     python3 scripts/validate_product_capabilities.py
     python3 scripts/validate_fixture_provenance.py
 
@@ -232,6 +232,10 @@ upstream-sync-report:
 
 # ─── Mobile ────────────────────────────────────────────────────────────────
 
+# Validate the committed mobile integration corpus and its repository references
+test-mobile-corpus:
+    cargo test -p styrened --test mobile_corpus
+
 # Check mobile library compiles (no desktop deps)
 check-mobile:
     cargo check -p styrened --no-default-features
@@ -244,78 +248,30 @@ check-mobile-keychain:
 check-mobile-identity:
     cargo check -p styrened --no-default-features --features mobile-identity
 
-# Check UniFFI bridge compiles
-check-ffi:
-    cargo check -p styrene-mobile-ffi
-
-# Build iOS static library (requires Xcode + iOS SDK)
-build-ios:
-    cargo build -p styrened --no-default-features --features mobile-keychain \
-        --target aarch64-apple-ios --release
-
-# Build iOS simulator library
-build-ios-sim:
-    cargo build -p styrened --no-default-features --features mobile-keychain \
-        --target aarch64-apple-ios-sim --release
-
-# Build iOS FFI bridge (static library for Swift)
-build-ios-ffi:
-    cargo build -p styrene-mobile-ffi \
-        --target aarch64-apple-ios --release
-
-# Build Android library (requires cargo-ndk + NDK)
-build-android:
-    cargo ndk -t arm64-v8a -t armeabi-v7a \
-        build -p styrened --no-default-features --features mobile-identity,bundled-sqlite --release
-
-# Build Android FFI bridge (shared library for Kotlin)
-build-android-ffi:
-    cargo ndk -t arm64-v8a -t armeabi-v7a \
-        build -p styrene-mobile-ffi --no-default-features --features android --release
-
-# Generate Swift bindings from UniFFI
-gen-swift: build-ios-ffi
-    cargo run -p uniffi-bindgen -- generate \
-        --library target/aarch64-apple-ios/release/libstyrene_mobile_ffi.a \
-        --language swift \
-        --out-dir bindings/swift/Sources/StyreneMobile/
-
-# Generate Kotlin bindings from UniFFI
-gen-kotlin: build-android-ffi
-    cargo run -p uniffi-bindgen -- generate \
-        --library target/aarch64-linux-android/release/libstyrene_mobile_ffi.so \
-        --language kotlin \
-        --out-dir bindings/kotlin/src/main/kotlin/io/styrene/mobile/
-
 # Screenshot the desktop app for visual feedback
 screenshot-dx:
     @./scripts/screenshot-dx.sh /tmp/styrene-dx-screenshot.png
     @echo "View: open /tmp/styrene-dx-screenshot.png"
 
-# Full iOS build: compile + generate Swift bindings
-mobile-ios: build-ios-ffi gen-swift
-    @echo "iOS build complete — Swift bindings in bindings/swift/"
+# Build and start the isolated hub used by mobile simulator tests
+mobile-hub-start:
+    cargo build -p styrened --bin styrened
+    ./scripts/local-mobile-hub.sh start
 
-# Full Android build: compile + generate Kotlin bindings
-mobile-android: build-android-ffi gen-kotlin
-    @echo "Android build complete — Kotlin bindings in bindings/kotlin/"
+# Verify local hub role, propagation activation, RPC, and transport readiness
+mobile-hub-status:
+    ./scripts/local-mobile-hub.sh status
 
-# Copy .so to Android project jniLibs and build APK
-android-deploy: build-android-ffi
-    @mkdir -p android/app/src/main/jniLibs/arm64-v8a
-    cp target/aarch64-linux-android/release/libstyrene_mobile_ffi.so \
-        android/app/src/main/jniLibs/arm64-v8a/
-    @echo "Native library copied to android/app/src/main/jniLibs/arm64-v8a/"
-    cd android && ./gradlew assembleDebug
-    @echo "APK built: android/app/build/outputs/apk/debug/app-debug.apk"
+# Show recent local mobile hub logs
+mobile-hub-logs:
+    ./scripts/local-mobile-hub.sh logs
 
-# Install debug APK on connected device
-android-install: android-deploy
-    adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-    @echo "Installed on device. Launch: adb shell am start -n io.styrene.mesh/.MainActivity"
+# Stop the isolated mobile simulator hub
+mobile-hub-stop:
+    ./scripts/local-mobile-hub.sh stop
 
-# Validate all mobile profiles compile
-check-mobile-all: check-mobile check-mobile-keychain check-mobile-identity check-ffi
+# Validate all backend mobile profiles compile
+check-mobile-all: check-mobile check-mobile-keychain check-mobile-identity
     @echo "All mobile profiles compile ✓"
 
 # ─── Feature Matrix ───────────────────────────────────────────────────────
@@ -334,8 +290,6 @@ check-all-features:
     cargo check -p styrened --no-default-features --features terminal
     @echo "Checking ipc-server only..."
     cargo check -p styrened --no-default-features --features ipc-server
-    @echo "Checking FFI bridge..."
-    cargo check -p styrene-mobile-ffi
     @echo "Checking TUI..."
     cargo check -p styrene-tui
     @echo "All feature combinations compile ✓"
@@ -426,10 +380,21 @@ hub-push:
 # Build and push hub in one step (fast path)
 hub-ship: hub-build-fast hub-push hub-deploy
 
-# Deploy hub to k3s cluster (applies all manifests)
-hub-deploy:
-    KUBECONFIG=~/.kube/brutus.yaml kubectl apply -k deploy/k3s/
-    KUBECONFIG=~/.kube/brutus.yaml kubectl -n styrene rollout restart deployment/styrene-hub
+# Deploy an immutable hub image to k3s and wait for readiness
+hub-deploy tag=hub_tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rendered="$(mktemp "${TMPDIR:-/tmp}/styrene-hub.XXXXXX.yaml")"
+    trap 'rm -f "$rendered"' EXIT
+    kubectl kustomize deploy/k3s/ \
+        | sed "s#{{ hub_image }}:latest#{{ hub_image }}:{{ tag }}#g" \
+        > "$rendered"
+    if [[ "$(grep -c 'image: {{ hub_image }}:{{ tag }}' "$rendered")" -ne 2 ]]; then
+        echo "expected pinned hub image in both init and runtime containers" >&2
+        exit 1
+    fi
+    KUBECONFIG=~/.kube/brutus.yaml kubectl apply -f "$rendered"
+    KUBECONFIG=~/.kube/brutus.yaml kubectl -n styrene rollout status deployment/styrene-hub --timeout=180s
 
 # Show hub status on the cluster
 hub-status:
@@ -448,10 +413,6 @@ hub-destroy:
 # Clean build artifacts
 clean:
     cargo clean
-
-# Clean mobile binding outputs
-clean-bindings:
-    rm -rf bindings/swift/Sources bindings/kotlin/src
 
 # ─── Release ───────────────────────────────────────────────────────────────
 

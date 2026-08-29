@@ -1,0 +1,51 @@
+# Shared Frontend Session Tasks
+
+## 1. Contract Inventory
+<!-- specs: frontend-session/spec -->
+
+- [ ] 1.1 Inventory TUI, Dioxus, embedded mobile, `styrene-ipc`, and `DaemonFacade` operations and typed records
+- [ ] 1.2 Identify duplicate wire parsing, request brokering, polling, subscription, and generation behavior
+- [ ] 1.3 Add contract tests for operation parity, capability preservation, and typed failures
+- [ ] 1.4 Document the public crate boundary and dependency direction before moving code
+
+## 2. Reusable IPC Client
+<!-- specs: frontend-session/spec -->
+
+- [ ] 2.1 Create `styrene-ipc-client` without dependencies on Ratatui or Dioxus
+- [ ] 2.2 Move framing, opcode mapping, negotiation, request correlation, and typed decoding behind the client API
+- [ ] 2.3 Add bounded concurrency, deadlines, cancellation, event fanout, reconnect generations, and compatibility polling
+- [ ] 2.4 Add tests for overlap, out-of-order responses, timeout, cancellation, overload, disconnect, and stale generations
+- [ ] 2.5 Prevent frontend crates from importing `styrene-ipc-server::wire`
+
+## 3. Frontend Sessions
+<!-- specs: frontend-session/spec -->
+
+- [ ] 3.1 Define the common session profile, metadata, capability, generation, and shutdown contracts
+- [ ] 3.2 Implement `LiveSession` with the reusable IPC client and no Embedded fallback
+- [ ] 3.3 Implement `EmbeddedSession` with deterministic startup, ownership, and idempotent shutdown
+- [ ] 3.4 Implement a network-isolated `FixtureSession` for supported deterministic operations
+- [ ] 3.5 Verify Live and Embedded operations return equivalent typed daemon records
+
+## 4. Ratatui Migration
+<!-- specs: frontend-session/spec -->
+
+- [ ] 4.1 Replace TUI socket framing and payload-map parsing with the shared client
+- [ ] 4.2 Preserve TUI command authorization, generation checks, subscriptions, and polling behavior
+- [ ] 4.3 Remove obsolete TUI client code after parity tests pass
+- [ ] 4.4 Run TUI unit, integration, Live-failure, Embedded, and terminal smoke checks
+
+## 5. In-Tree Dioxus Migration
+<!-- specs: frontend-session/spec -->
+
+- [ ] 5.1 Replace `styrene-dx` request broker and daemon bridge with the shared client and sessions
+- [ ] 5.2 Adapt existing stores without creating duplicate IPC domain records
+- [ ] 5.3 Preserve explicit Live, Embedded, and Fixture profile behavior
+- [ ] 5.4 Remove obsolete Dioxus client code after component and smoke tests pass
+
+## 6. Verification And Release Boundary
+<!-- specs: frontend-session/spec -->
+
+- [ ] 6.1 Run focused client, session, daemon, TUI, and Dioxus tests
+- [ ] 6.2 Run warning-denied Clippy, formatting, dependency-boundary, and documentation checks
+- [ ] 6.3 Verify ordinary workspace tests require no external daemon, Python runtime, or network access
+- [ ] 6.4 Publish or expose immutable revisions consumable by the future `styrene-ui` repository

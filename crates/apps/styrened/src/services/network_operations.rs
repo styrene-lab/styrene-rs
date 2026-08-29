@@ -13,6 +13,7 @@ use styrene_ipc::types::{
 use tokio_util::sync::CancellationToken;
 
 use crate::services::EventService;
+use crate::standard_propagation::StandardPropagationAnnounceTrigger;
 use crate::transport::mesh_transport::{
     LinkOpenResult, MeshTransport, TransportError, TransportLifecycleEvent,
 };
@@ -48,6 +49,7 @@ pub struct NetworkOperationService {
     entries: Mutex<BTreeMap<String, OperationEntry>>,
     order: Mutex<VecDeque<String>>,
     probe_locks: Mutex<BTreeMap<AddressHash, Weak<tokio::sync::Mutex<()>>>>,
+    propagation_announce: Mutex<Option<StandardPropagationAnnounceTrigger>>,
     capacity: usize,
 }
 
@@ -67,8 +69,26 @@ impl NetworkOperationService {
             entries: Mutex::new(BTreeMap::new()),
             order: Mutex::new(VecDeque::new()),
             probe_locks: Mutex::new(BTreeMap::new()),
+            propagation_announce: Mutex::new(None),
             capacity,
         })
+    }
+
+    pub fn set_propagation_announce_trigger(&self, trigger: StandardPropagationAnnounceTrigger) {
+        *self.propagation_announce.lock().unwrap() = Some(trigger);
+    }
+
+    pub async fn announce_propagation(
+        &self,
+        deadline: tokio::time::Instant,
+    ) -> Result<bool, TransportError> {
+        let trigger = self.propagation_announce.lock().unwrap().clone();
+        let Some(trigger) = trigger else { return Ok(false) };
+        tokio::time::timeout_at(deadline, trigger.announce())
+            .await
+            .map_err(|_| TransportError::TimedOut)?
+            .map_err(TransportError::SendFailed)?;
+        Ok(true)
     }
 
     pub fn start(
@@ -249,8 +269,9 @@ impl NetworkOperationService {
                 self.progress(operation_id, NetworkOperationProgress::Dispatched, None);
                 ensure_before_deadline(deadline)?;
                 self.transport.dispatch_announce(None).await?;
+                self.announce_propagation(deadline).await?;
                 Ok(OperationCompletion::Dispatched(
-                    "announce accepted by local transport; remote reception is unconfirmed",
+                    "configured announces accepted by local transport; remote reception is unconfirmed",
                 ))
             }
             NetworkOperationKind::PathRequest => {
@@ -652,6 +673,45 @@ mod tests {
         assert_eq!(
             terminal(&service, &close.operation_id).await.outcome,
             Some(NetworkOperationOutcome::Dispatched)
+        );
+    }
+
+    #[tokio::test]
+    async fn operator_announce_waits_for_standard_propagation_dispatch_on_hubs() {
+        let transport = Arc::new(MockTransport::new_default());
+        let service = NetworkOperationService::new(transport, Arc::new(EventService::new()));
+        let (trigger, mut requests) =
+            crate::standard_propagation::standard_propagation_announce_test_channel();
+        service.set_propagation_announce_trigger(trigger);
+
+        let announce = service.start(request(NetworkOperationKind::Announce)).unwrap();
+        let response = requests.recv().await.expect("propagation announce request");
+        response
+            .send(Ok(rns_core::transport::core_transport::SendPacketOutcome::SentBroadcast))
+            .expect("announce operation still waiting");
+
+        let completed = terminal(&service, &announce.operation_id).await;
+        assert_eq!(completed.outcome, Some(NetworkOperationOutcome::Dispatched));
+        assert!(completed.detail.unwrap().contains("configured announces"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_standard_propagation_announce_respects_operation_deadline() {
+        let transport = Arc::new(MockTransport::new_default());
+        let service = NetworkOperationService::new(transport, Arc::new(EventService::new()));
+        let (trigger, mut requests) =
+            crate::standard_propagation::standard_propagation_announce_test_channel();
+        service.set_propagation_announce_trigger(trigger);
+        let mut request = request(NetworkOperationKind::Announce);
+        request.timeout_ms = 10;
+
+        let announce = service.start(request).unwrap();
+        let _stalled = requests.recv().await.expect("propagation announce request");
+        tokio::time::advance(Duration::from_millis(11)).await;
+
+        assert_eq!(
+            terminal(&service, &announce.operation_id).await.outcome,
+            Some(NetworkOperationOutcome::TimedOut)
         );
     }
 

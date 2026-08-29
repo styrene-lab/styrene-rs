@@ -453,6 +453,10 @@ async fn bootstrap_with_transport_override(
                 panic!("standard propagation destination registration failed: {error:?}")
             });
             let propagation_hash = endpoint.destination().lock().await.desc.address_hash;
+            println!(
+                "[daemon] standard propagation destination hash={}",
+                hex::encode(propagation_hash.as_slice())
+            );
             let propagation_policy = endpoint.runtime_observation().policy();
             startup.record(startup_component::STANDARD_LXMF_PROPAGATION_DESTINATION);
             standard_propagation = Some(endpoint);
@@ -772,9 +776,12 @@ async fn bootstrap_with_transport_override(
         (standard_propagation.as_mut(), transport_for_services.as_ref())
     {
         endpoint
-            .activate(app_context.transport_arc(), transport.as_ref())
+            .activate(app_context.transport_arc(), Arc::clone(transport))
             .await
             .unwrap_or_else(|error| panic!("standard propagation activation failed: {error:?}"));
+        app_context.network_operations().set_propagation_announce_trigger(
+            endpoint.announce_trigger().expect("active endpoint"),
+        );
         startup.record(startup_component::STANDARD_LXMF_PROPAGATION_OFFER_HANDLER);
         startup.record(startup_component::STANDARD_LXMF_PROPAGATION_GET_HANDLER);
         startup.record(startup_component::STANDARD_LXMF_PROPAGATION_INGRESS_WORKER);
@@ -819,6 +826,8 @@ async fn bootstrap_with_transport_override(
             startup.record(startup_component::STANDARD_LXMF_PROPAGATION_SYNC_SCHEDULER);
             styrened::workers::standard_propagation::spawn_standard_propagation_sync_worker(
                 app_context.messaging_arc(),
+                app_context.transport().subscribe_lifecycle(),
+                app_context.transport().is_connected(),
             )
         });
     let service_announce = styrened::workers::announce::spawn_announce_worker(
