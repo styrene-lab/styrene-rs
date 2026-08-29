@@ -107,7 +107,7 @@ pub struct MobileConfig {
     pub identity_backend: IdentityBackend,
     /// Direct Reticulum TCP interfaces.
     pub interfaces: Vec<MobileInterfaceConfig>,
-    /// Create a host-driven channel for an Android-owned RNode interface.
+    /// Create a host-driven channel for one mobile RNode bearer.
     pub enable_rnode_channel: bool,
 }
 
@@ -135,6 +135,21 @@ pub enum MobileBearerKind {
     Tcp,
     BluetoothRnode,
     AndroidUsb,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MobileRNodeBearer {
+    BluetoothLe,
+    AndroidUsb,
+}
+
+impl MobileRNodeBearer {
+    const fn observation_kind(self) -> MobileBearerKind {
+        match self {
+            Self::BluetoothLe => MobileBearerKind::BluetoothRnode,
+            Self::AndroidUsb => MobileBearerKind::AndroidUsb,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -294,6 +309,10 @@ impl MobilePlatformService {
 
     pub async fn set_bluetooth_approved(&self, approved: bool) {
         self.state.write().await.bluetooth_approved = approved;
+    }
+
+    async fn bluetooth_approved(&self) -> bool {
+        self.state.read().await.bluetooth_approved
     }
 
     pub async fn request_android_usb_fallback(&self) -> MobileUsbFallbackDisposition {
@@ -939,6 +958,7 @@ struct RNodeBridge {
     tx: AsyncMutex<InterfaceTxReceiver>,
     control: HostInterfaceControl,
     protocol: AsyncMutex<RNodeProtocol>,
+    active_bearer: AsyncMutex<Option<MobileRNodeBearer>>,
 }
 
 impl MobileWorkers {
@@ -1237,6 +1257,7 @@ async fn compose_mobile_node(
         tx: AsyncMutex::new(channel.tx_channel),
         control,
         protocol: AsyncMutex::new(RNodeProtocol::new(RNodeRadioProfile::US_915_DEVELOPMENT)),
+        active_bearer: AsyncMutex::new(None),
     });
 
     Ok(MobileNode {
@@ -2218,7 +2239,7 @@ impl MobileNode {
         }
     }
 
-    /// Poll the next unframed RNS packet destined for the Android-owned RNode.
+    /// Poll the next unframed RNS packet destined for the active mobile RNode.
     pub async fn poll_rnode_packet(&self) -> Result<Option<Vec<u8>>, String> {
         let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
         match rnode.tx.lock().await.try_recv() {
@@ -2235,19 +2256,38 @@ impl MobileNode {
     }
 
     /// Begin one explicitly approved host-owned RNode byte attempt.
-    pub async fn start_rnode_bytes(&self) -> Result<Vec<Vec<u8>>, String> {
+    pub async fn start_rnode_bytes(
+        &self,
+        bearer: MobileRNodeBearer,
+    ) -> Result<Vec<Vec<u8>>, String> {
         let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        if bearer == MobileRNodeBearer::BluetoothLe
+            && !self.platform_service.bluetooth_approved().await
+        {
+            return Err("Bluetooth RNode requires an approved peripheral".into());
+        }
+        let mut active_bearer = rnode.active_bearer.lock().await;
+        if active_bearer.is_some() {
+            return Err("RNode byte attempt is already active".into());
+        }
         rnode.control.set_state(InterfaceState::Connecting);
-        self.platform_service
+        if let Err(error) = self
+            .platform_service
             .report(MobileBearerObservation {
-                kind: MobileBearerKind::AndroidUsb,
+                kind: bearer.observation_kind(),
                 state: MobileBearerState::Connecting,
                 reason: None,
             })
-            .await?;
+            .await
+        {
+            rnode.control.set_state(InterfaceState::Closed);
+            return Err(error.into());
+        }
         let mut protocol = rnode.protocol.lock().await;
         *protocol = RNodeProtocol::new(RNodeRadioProfile::US_915_DEVELOPMENT);
-        protocol.start().map_err(|error| error.to_string())
+        let writes = protocol.start().map_err(|error| error.to_string())?;
+        *active_bearer = Some(bearer);
+        Ok(writes)
     }
 
     /// Accept arbitrary ordered RNode bytes and return any protocol response writes.
@@ -2258,10 +2298,12 @@ impl MobileNode {
             self.submit_rnode_packet(&packet).await?;
         }
         if output.became_ready {
+            let bearer =
+                rnode.active_bearer.lock().await.ok_or("RNode byte attempt is not active")?;
             rnode.control.set_state(InterfaceState::Active);
             self.platform_service
                 .report(MobileBearerObservation {
-                    kind: MobileBearerKind::AndroidUsb,
+                    kind: bearer.observation_kind(),
                     state: MobileBearerState::Connected,
                     reason: None,
                 })
@@ -2291,11 +2333,13 @@ impl MobileNode {
     /// End the current RNode attempt and return the best-effort radio-off frame.
     pub async fn stop_rnode_bytes(&self, reason: MobileBearerReason) -> Result<Vec<u8>, String> {
         let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let bearer =
+            rnode.active_bearer.lock().await.take().ok_or("RNode byte attempt is not active")?;
         let shutdown = rnode.protocol.lock().await.close();
         rnode.control.set_state(InterfaceState::Closed);
         self.platform_service
             .report(MobileBearerObservation {
-                kind: MobileBearerKind::AndroidUsb,
+                kind: bearer.observation_kind(),
                 state: MobileBearerState::Disconnected,
                 reason: Some(reason),
             })
@@ -3188,6 +3232,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configured_rnode_bytes_attribute_bluetooth_without_usb_fallback() {
+        use rns_core::transport::iface::kiss::kiss_encode_command;
+        use rns_core::transport::iface::rnode::{
+            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FREQUENCY, CMD_RADIO_STATE,
+            CMD_SPREADING_FACTOR, CMD_TX_POWER, RNodeRadioProfile,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("test mobile".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: true,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            node.start_rnode_bytes(MobileRNodeBearer::BluetoothLe).await.unwrap_err(),
+            "Bluetooth RNode requires an approved peripheral"
+        );
+        node.platform_service().set_bluetooth_approved(true).await;
+        assert_eq!(node.start_rnode_bytes(MobileRNodeBearer::BluetoothLe).await.unwrap().len(), 4);
+        let connecting = node.session_snapshot().await;
+        assert_eq!(
+            connecting.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
+            MobileBearerState::Connecting
+        );
+        assert_eq!(
+            connecting.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Unavailable
+        );
+
+        let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
+        let detect = kiss_encode_command(CMD_DETECT, &[0x46]);
+        assert_eq!(node.submit_rnode_bytes(&detect).await.unwrap().len(), 6);
+        let readback = [
+            kiss_encode_command(CMD_FREQUENCY, &profile.frequency_hz.to_be_bytes()),
+            kiss_encode_command(CMD_BANDWIDTH, &profile.bandwidth_hz.to_be_bytes()),
+            kiss_encode_command(CMD_TX_POWER, &[profile.tx_power_dbm]),
+            kiss_encode_command(CMD_SPREADING_FACTOR, &[profile.spreading_factor]),
+            kiss_encode_command(CMD_CODING_RATE, &[profile.coding_rate]),
+            kiss_encode_command(CMD_RADIO_STATE, &[1]),
+        ]
+        .concat();
+        node.submit_rnode_bytes(&readback[..readback.len() / 2]).await.unwrap();
+        node.submit_rnode_bytes(&readback[readback.len() / 2..]).await.unwrap();
+
+        let connected = node.session_snapshot().await;
+        assert_eq!(
+            connected.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
+            MobileBearerState::Connected
+        );
+        assert_eq!(
+            connected.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Unavailable
+        );
+        assert_eq!(
+            node.platform_service().request_android_usb_fallback().await,
+            MobileUsbFallbackDisposition::BluetoothActive
+        );
+
+        let shutdown =
+            node.stop_rnode_bytes(MobileBearerReason::ConnectionInterrupted).await.unwrap();
+        assert!(!shutdown.is_empty());
+        let stopped = node.session_snapshot().await;
+        assert_eq!(
+            stopped.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
+            MobileBearerState::Disconnected
+        );
+        assert_eq!(
+            stopped.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Unavailable
+        );
+    }
+
+    #[tokio::test]
     async fn configured_rnode_bytes_activate_usb_and_frame_outbound_packets() {
         use rns_core::transport::iface::kiss::{KissDecoder, kiss_encode_command};
         use rns_core::transport::iface::rnode::{
@@ -3210,14 +3335,14 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            node.start_rnode_bytes().await.unwrap_err(),
+            node.start_rnode_bytes(MobileRNodeBearer::AndroidUsb).await.unwrap_err(),
             "Android USB requires an explicit fallback request"
         );
         assert_eq!(
             node.platform_service().request_android_usb_fallback().await,
             MobileUsbFallbackDisposition::Accepted
         );
-        assert_eq!(node.start_rnode_bytes().await.unwrap().len(), 4);
+        assert_eq!(node.start_rnode_bytes(MobileRNodeBearer::AndroidUsb).await.unwrap().len(), 4);
 
         let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
         let detect = kiss_encode_command(CMD_DETECT, &[0x46]);
