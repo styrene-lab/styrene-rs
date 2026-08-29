@@ -160,6 +160,18 @@ pub struct MobileRNodeByteStart {
     pub writes: Vec<Vec<u8>>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MobileRNodeWriteHandoff {
+    generation: u64,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct MobileRNodeWriteBatch {
+    pub handoff: MobileRNodeWriteHandoff,
+    /// One complete KISS frame split into ordered platform writes.
+    pub writes: Vec<Vec<u8>>,
+}
+
 impl MobileRNodeBearer {
     const fn observation_kind(self) -> MobileBearerKind {
         match self {
@@ -1000,6 +1012,14 @@ struct RNodeBridge {
 struct MobileRNodeAttemptState {
     next_generation: u64,
     active: Option<MobileRNodeAttempt>,
+    next_handoff_generation: u64,
+    pending_packet: Option<MobileRNodePendingPacket>,
+}
+
+struct MobileRNodePendingPacket {
+    handoff: MobileRNodeWriteHandoff,
+    packet: Vec<u8>,
+    offered_to: Option<MobileRNodeAttempt>,
 }
 
 impl MobileWorkers {
@@ -1298,7 +1318,12 @@ async fn compose_mobile_node(
         tx: AsyncMutex::new(channel.tx_channel),
         control,
         protocol: AsyncMutex::new(RNodeProtocol::new(RNodeRadioProfile::US_915_DEVELOPMENT)),
-        attempts: AsyncMutex::new(MobileRNodeAttemptState { next_generation: 1, active: None }),
+        attempts: AsyncMutex::new(MobileRNodeAttemptState {
+            next_generation: 1,
+            active: None,
+            next_handoff_generation: 1,
+            pending_packet: None,
+        }),
     });
 
     Ok(MobileNode {
@@ -2374,17 +2399,36 @@ impl MobileNode {
     pub async fn poll_rnode_bytes(
         &self,
         attempt: MobileRNodeAttempt,
-    ) -> Result<Option<Vec<Vec<u8>>>, String> {
+    ) -> Result<Option<MobileRNodeWriteBatch>, String> {
         let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
-        let attempts = rnode.attempts.lock().await;
+        let mut attempts = rnode.attempts.lock().await;
         if attempts.active != Some(attempt) {
             return Ok(None);
         }
         if rnode.protocol.lock().await.phase() != RNodeProtocolPhase::Ready {
             return Ok(None);
         }
-        let Some(packet) = self.poll_rnode_packet().await? else {
-            return Ok(None);
+        let (handoff, packet) = if let Some(pending) = &attempts.pending_packet {
+            if pending.offered_to.is_some() {
+                return Ok(None);
+            }
+            (pending.handoff, pending.packet.clone())
+        } else {
+            let next_handoff_generation = attempts
+                .next_handoff_generation
+                .checked_add(1)
+                .ok_or("RNode write handoff generation exhausted")?;
+            let Some(packet) = self.poll_rnode_packet().await? else {
+                return Ok(None);
+            };
+            let handoff = MobileRNodeWriteHandoff { generation: attempts.next_handoff_generation };
+            attempts.next_handoff_generation = next_handoff_generation;
+            attempts.pending_packet = Some(MobileRNodePendingPacket {
+                handoff,
+                packet: packet.clone(),
+                offered_to: None,
+            });
+            (handoff, packet)
         };
         let frame = rnode
             .protocol
@@ -2392,7 +2436,56 @@ impl MobileNode {
             .await
             .encode_packet(&packet)
             .map_err(|error| error.to_string())?;
-        Ok(Some(fragment_rnode_writes(attempt.info, [frame])))
+        let pending = attempts.pending_packet.as_mut().ok_or("RNode write handoff was lost")?;
+        if pending.handoff != handoff {
+            return Err("RNode write handoff changed unexpectedly".into());
+        }
+        pending.offered_to = Some(attempt);
+        Ok(Some(MobileRNodeWriteBatch {
+            handoff,
+            writes: fragment_rnode_writes(attempt.info, [frame]),
+        }))
+    }
+
+    /// Remove one packet only after every platform write completed successfully.
+    pub async fn complete_rnode_write(
+        &self,
+        attempt: MobileRNodeAttempt,
+        handoff: MobileRNodeWriteHandoff,
+    ) -> Result<bool, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let mut attempts = rnode.attempts.lock().await;
+        if attempts.active != Some(attempt) {
+            return Ok(false);
+        }
+        let completed = attempts.pending_packet.as_ref().is_some_and(|pending| {
+            pending.handoff == handoff && pending.offered_to == Some(attempt)
+        });
+        if completed {
+            attempts.pending_packet = None;
+        }
+        Ok(completed)
+    }
+
+    /// Release a failed platform write for bounded replay without removing its packet.
+    pub async fn fail_rnode_write(
+        &self,
+        attempt: MobileRNodeAttempt,
+        handoff: MobileRNodeWriteHandoff,
+    ) -> Result<bool, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let mut attempts = rnode.attempts.lock().await;
+        if attempts.active != Some(attempt) {
+            return Ok(false);
+        }
+        let Some(pending) = attempts.pending_packet.as_mut() else {
+            return Ok(false);
+        };
+        if pending.handoff != handoff || pending.offered_to != Some(attempt) {
+            return Ok(false);
+        }
+        pending.offered_to = None;
+        Ok(true)
     }
 
     /// End the current attempt and return bounded best-effort radio-off writes.
@@ -2407,6 +2500,11 @@ impl MobileNode {
             return Ok(Vec::new());
         }
         let shutdown = rnode.protocol.lock().await.close();
+        if let Some(pending) = attempts.pending_packet.as_mut()
+            && pending.offered_to == Some(attempt)
+        {
+            pending.offered_to = None;
+        }
         attempts.active = None;
         rnode.control.set_state(InterfaceState::Closed);
         self.platform_service
@@ -2839,6 +2937,59 @@ mod tests {
             negotiated_mtu: None,
             max_write_size: Some(max_write_size),
         }
+    }
+
+    async fn ready_test_rnode(
+        node: &MobileNode,
+        bearer: MobileRNodeBearer,
+    ) -> MobileRNodeByteStart {
+        use rns_core::transport::iface::kiss::kiss_encode_command;
+        use rns_core::transport::iface::rnode::{
+            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FREQUENCY, CMD_RADIO_STATE,
+            CMD_SPREADING_FACTOR, CMD_TX_POWER, RNodeRadioProfile,
+        };
+
+        match bearer {
+            MobileRNodeBearer::BluetoothLe => {
+                node.platform_service().set_bluetooth_approved(true).await;
+            }
+            MobileRNodeBearer::AndroidUsb => {
+                assert_eq!(
+                    node.platform_service().request_android_usb_fallback().await,
+                    MobileUsbFallbackDisposition::Accepted
+                );
+            }
+        }
+        let start = node.start_rnode_bytes(bearer, test_rnode_info(bearer, 512)).await.unwrap();
+        let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
+        let configured = [
+            kiss_encode_command(CMD_DETECT, &[0x46]),
+            kiss_encode_command(CMD_FREQUENCY, &profile.frequency_hz.to_be_bytes()),
+            kiss_encode_command(CMD_BANDWIDTH, &profile.bandwidth_hz.to_be_bytes()),
+            kiss_encode_command(CMD_TX_POWER, &[profile.tx_power_dbm]),
+            kiss_encode_command(CMD_SPREADING_FACTOR, &[profile.spreading_factor]),
+            kiss_encode_command(CMD_CODING_RATE, &[profile.coding_rate]),
+            kiss_encode_command(CMD_RADIO_STATE, &[1]),
+        ]
+        .concat();
+        node.submit_rnode_bytes(start.attempt, &configured).await.unwrap();
+        start
+    }
+
+    async fn poll_test_handoff(
+        node: &MobileNode,
+        attempt: MobileRNodeAttempt,
+    ) -> MobileRNodeWriteBatch {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(batch) = node.poll_rnode_bytes(attempt).await.unwrap() {
+                    break batch;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap()
     }
 
     async fn compose_with_mock(
@@ -3486,7 +3637,7 @@ mod tests {
         .await
         .unwrap();
         let mut decoder = KissDecoder::new();
-        decoder.feed(&framed.concat());
+        decoder.feed(&framed.writes.concat());
         assert!(!decoder.take_frame().expect("outbound RNS packet").is_empty());
 
         let shutdown = node
@@ -3734,7 +3885,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(packet_writes.iter().all(|write| write.len() <= 3));
+        assert!(packet_writes.writes.iter().all(|write| write.len() <= 3));
 
         let shutdown = node
             .stop_rnode_bytes(start.attempt, MobileBearerReason::ConnectionInterrupted)
@@ -3742,6 +3893,58 @@ mod tests {
             .unwrap();
         assert!(!shutdown.is_empty());
         assert!(shutdown.iter().all(|write| write.len() <= 3));
+    }
+
+    #[tokio::test]
+    async fn outbound_rnode_handoff_replays_after_failure_and_cancellation_until_completed() {
+        let root = tempfile::tempdir().unwrap();
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("test mobile".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: true,
+        })
+        .await
+        .unwrap();
+
+        let first = ready_test_rnode(&node, MobileRNodeBearer::BluetoothLe).await;
+        node.announce().await.unwrap();
+        let failed = poll_test_handoff(&node, first.attempt).await;
+        assert!(node.poll_rnode_bytes(first.attempt).await.unwrap().is_none());
+        assert!(node.fail_rnode_write(first.attempt, failed.handoff).await.unwrap());
+        node.stop_rnode_bytes(first.attempt, MobileBearerReason::ConnectionInterrupted)
+            .await
+            .unwrap();
+
+        let second = ready_test_rnode(&node, MobileRNodeBearer::BluetoothLe).await;
+        let replayed_after_failure = poll_test_handoff(&node, second.attempt).await;
+        assert_eq!(replayed_after_failure.handoff, failed.handoff);
+        assert_eq!(replayed_after_failure.writes.concat(), failed.writes.concat());
+        assert!(!node.complete_rnode_write(first.attempt, failed.handoff).await.unwrap());
+        assert!(node.poll_rnode_bytes(second.attempt).await.unwrap().is_none());
+        node.stop_rnode_bytes(second.attempt, MobileBearerReason::ConnectionInterrupted)
+            .await
+            .unwrap();
+
+        let third = ready_test_rnode(&node, MobileRNodeBearer::BluetoothLe).await;
+        let replayed_after_cancellation = poll_test_handoff(&node, third.attempt).await;
+        assert_eq!(replayed_after_cancellation.handoff, failed.handoff);
+        assert!(
+            node.complete_rnode_write(third.attempt, replayed_after_cancellation.handoff)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !node
+                .complete_rnode_write(third.attempt, replayed_after_cancellation.handoff)
+                .await
+                .unwrap()
+        );
+        assert!(node.poll_rnode_bytes(third.attempt).await.unwrap().is_none());
     }
 
     #[tokio::test]
