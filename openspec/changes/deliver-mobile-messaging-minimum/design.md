@@ -121,6 +121,37 @@ applied under a connection generation so late work cannot replace current state.
 Directory entries are keyed by canonical destination hash. Repeated announces
 update freshness and metadata. They do not create duplicate people.
 
+## Bluetooth RNode Boundary
+
+The shared `styrene-rns` RNode engine owns KISS framing, incremental decoding,
+RNode detection, radio configuration readback, payload admission, write
+fragmentation, and shutdown framing. It consumes one cancellation-safe ordered
+byte attempt. It does not own discovery, permission, approval, reconnect, or
+application lifecycle.
+
+The embedded mobile session owns one active RNode bearer and maps its lifecycle
+to the matching backend bearer observation. Bluetooth attempts require an
+explicitly approved peripheral. Android USB attempts continue to require an
+explicit fallback request and cannot replace active approved Bluetooth.
+
+Rust platform services own BLE discovery and native callbacks. They validate
+the Nordic UART Service and its write and notification characteristics before
+opening the ordered byte attempt. Writes use response mode, remain serialized,
+and do not exceed the platform-reported safe write size. Notification boundaries
+never imply KISS frame boundaries.
+
+The host stores only the approved platform peripheral identifier and operator
+approval state needed for reconnect. Unknown advertisements never connect
+automatically. Attempt generations reject stale discovery, connection, write,
+notification, and disconnect callbacks. Interruption closes the current attempt
+idempotently and permits a bounded reconnect opportunity while the application
+is active. Background execution remains best-effort.
+
+The current `US_915_DEVELOPMENT` profile is a physical test profile, not a
+production default. Physical transmission requires an explicit test
+jurisdiction record. Production enablement requires a separate regional profile
+selection decision.
+
 ## Message State
 
 The mobile composer submits a destination, content, and explicit requested LXMF
@@ -170,6 +201,12 @@ Implementation proceeds by observable slice:
 Every asynchronous test uses a milestone, deadline, and correlation identifier.
 Arbitrary sleeps are not acceptance evidence. Fixture, simulator, emulator,
 physical-device, and public-network results remain separate.
+
+BLE implementation follows red-green slices. Bearer attribution and backend
+readiness are tested before native adapters. A fake ordered-byte attempt proves
+bounds, fragmentation, cancellation, and retention before CoreBluetooth or
+Android GATT code is added. Each native adapter then receives contract tests and
+packaged build gates before physical acceptance.
 
 ## Rollout And Claims
 
