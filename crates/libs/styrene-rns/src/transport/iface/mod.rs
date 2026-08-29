@@ -1,6 +1,7 @@
 pub mod driver;
 pub mod hdlc;
 pub mod ifac;
+mod ingress;
 pub mod kiss;
 pub mod serial;
 pub mod stream_iface;
@@ -26,12 +27,13 @@ use crate::hash::Hash;
 use crate::packet::{MAX_HOPS, Packet};
 
 pub use driver::{InterfaceDriver, InterfaceDriverFactory};
+pub use ingress::{
+    IngressClass, IngressClassSnapshot, IngressEnqueueOutcome, IngressQueueCapacities,
+    IngressSnapshot, InterfaceRxReceiver, InterfaceRxSendError, InterfaceRxSender,
+};
 
 pub type InterfaceTxSender = mpsc::Sender<TxMessage>;
 pub type InterfaceTxReceiver = mpsc::Receiver<TxMessage>;
-
-pub type InterfaceRxSender = mpsc::Sender<RxMessage>;
-pub type InterfaceRxReceiver = mpsc::Receiver<RxMessage>;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum TxMessageType {
@@ -58,6 +60,7 @@ pub struct RxMessage {
     pub packet: Packet,
     origin: IngressOrigin,
     mtu: Option<usize>,
+    ingress_class: IngressClass,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -69,11 +72,32 @@ enum IngressOrigin {
 
 impl RxMessage {
     pub fn physical(address: AddressHash, packet: Packet, mtu: usize) -> Self {
-        Self { address, packet, origin: IngressOrigin::Physical, mtu: Some(mtu) }
+        Self {
+            address,
+            packet,
+            origin: IngressOrigin::Physical,
+            mtu: Some(mtu),
+            ingress_class: IngressClass::Data,
+        }
     }
 
     pub fn local(address: AddressHash, packet: Packet) -> Self {
-        Self { address, packet, origin: IngressOrigin::Local, mtu: None }
+        Self {
+            address,
+            packet,
+            origin: IngressOrigin::Local,
+            mtu: None,
+            ingress_class: IngressClass::Data,
+        }
+    }
+
+    pub(crate) fn ingress_limited(mut self) -> Self {
+        self.ingress_class = IngressClass::IngressLimited;
+        self
+    }
+
+    pub(crate) fn ingress_class(&self) -> IngressClass {
+        self.ingress_class
     }
 
     pub fn admit(mut self) -> Result<Self, RnsError> {
@@ -114,7 +138,14 @@ pub struct InterfaceChannel {
 
 impl InterfaceChannel {
     pub fn make_rx_channel(cap: usize) -> (InterfaceRxSender, InterfaceRxReceiver) {
-        mpsc::channel(cap)
+        InterfaceRxSender::channel(IngressQueueCapacities::uniform(cap), AddressHash::new([0; 16]))
+    }
+
+    pub fn make_priority_rx_channel(
+        capacities: IngressQueueCapacities,
+        path_request_destination: AddressHash,
+    ) -> (InterfaceRxSender, InterfaceRxReceiver) {
+        InterfaceRxSender::channel(capacities, path_request_destination)
     }
 
     pub fn make_tx_channel(cap: usize) -> (InterfaceTxSender, InterfaceTxReceiver) {
@@ -477,6 +508,19 @@ fn tx_diag_enabled() -> bool {
 impl InterfaceManager {
     pub fn new(rx_cap: usize) -> Self {
         let (rx_send, rx_recv) = InterfaceChannel::make_rx_channel(rx_cap);
+        Self::new_with_channel(rx_send, rx_recv)
+    }
+
+    pub fn new_with_ingress(
+        capacities: IngressQueueCapacities,
+        path_request_destination: AddressHash,
+    ) -> Self {
+        let (rx_send, rx_recv) =
+            InterfaceChannel::make_priority_rx_channel(capacities, path_request_destination);
+        Self::new_with_channel(rx_send, rx_recv)
+    }
+
+    fn new_with_channel(rx_send: InterfaceRxSender, rx_recv: InterfaceRxReceiver) -> Self {
         let rx_recv = Arc::new(tokio::sync::Mutex::new(rx_recv));
 
         Self {
@@ -678,6 +722,14 @@ impl InterfaceManager {
 
     pub fn receiver(&self) -> Arc<tokio::sync::Mutex<InterfaceRxReceiver>> {
         self.rx_recv.clone()
+    }
+
+    pub fn ingress_snapshot(&self) -> IngressSnapshot {
+        self.rx_send.snapshot()
+    }
+
+    pub(crate) fn ingress_sender(&self) -> InterfaceRxSender {
+        self.rx_send.clone()
     }
 
     pub fn cleanup(&mut self) {

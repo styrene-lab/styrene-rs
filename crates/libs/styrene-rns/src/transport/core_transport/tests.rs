@@ -109,6 +109,43 @@ async fn interface_stats_for(
 }
 
 #[tokio::test]
+async fn transport_exposes_canonical_ingress_queue_defaults() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let transport = Transport::new(TransportConfig::new("ingress-defaults", &identity, true));
+
+    assert_eq!(
+        transport.ingress_snapshot().await,
+        IngressSnapshot {
+            data: crate::transport::iface::IngressClassSnapshot {
+                capacity: 1024,
+                ..Default::default()
+            },
+            announce: crate::transport::iface::IngressClassSnapshot {
+                capacity: 128,
+                ..Default::default()
+            },
+            path_request: crate::transport::iface::IngressClassSnapshot {
+                capacity: 128,
+                ..Default::default()
+            },
+            ingress_limited: crate::transport::iface::IngressClassSnapshot {
+                capacity: 8,
+                ..Default::default()
+            },
+        }
+    );
+
+    let mut config = TransportConfig::new("ingress-overrides", &identity, true);
+    config.set_ingress_queue_capacities(IngressQueueCapacities::new(4, 3, 2, 1).unwrap());
+    let transport = Transport::new(config);
+    let snapshot = transport.ingress_snapshot().await;
+    assert_eq!(snapshot.data.capacity, 4);
+    assert_eq!(snapshot.announce.capacity, 3);
+    assert_eq!(snapshot.path_request.capacity, 2);
+    assert_eq!(snapshot.ingress_limited.capacity, 1);
+}
+
+#[tokio::test]
 async fn invalid_announce_is_side_effect_free_and_ingress_continues() {
     let identity = PrivateIdentity::new_from_rand(OsRng);
     let mut transport = Transport::new(TransportConfig::new("invalid-announce", &identity, true));
@@ -127,28 +164,32 @@ async fn invalid_announce_is_side_effect_free_and_ingress_continues() {
     let last = invalid.data.len() - 1;
     invalid.data.as_mut_slice()[last] ^= 0x01;
 
-    channel
+    let ingress_before = transport.ingress_snapshot().await;
+    let outcome = channel
         .rx_channel
         .send(RxMessage::physical(channel.address, invalid, 500))
         .await
         .expect("invalid announce input");
+    assert_eq!(outcome, crate::transport::iface::IngressEnqueueOutcome::Rejected);
     assert!(timeout(Duration::from_millis(50), iface_events.recv()).await.is_err());
     assert!(timeout(Duration::from_millis(50), announce_events.recv()).await.is_err());
 
     let mut local_invalid = local.lock().await.announce(OsRng, None).expect("local announce");
     let last = local_invalid.data.len() - 1;
     local_invalid.data.as_mut_slice()[last] ^= 0x01;
-    channel
+    let outcome = channel
         .rx_channel
         .send(RxMessage::physical(channel.address, local_invalid, 500))
         .await
         .expect("invalid local announce input");
+    assert_eq!(outcome, crate::transport::iface::IngressEnqueueOutcome::Rejected);
     assert!(timeout(Duration::from_millis(50), iface_events.recv()).await.is_err());
     assert!(timeout(Duration::from_millis(50), announce_events.recv()).await.is_err());
     let stats = interface_stats_for(&transport, channel.address).await;
     assert_eq!(stats.rx_bytes, 0);
     assert_eq!(stats.violations.invalid_announce, 2);
     assert_eq!(stats.filters.valid_blackhole, 0);
+    assert_eq!(transport.ingress_snapshot().await, ingress_before);
 
     channel
         .rx_channel

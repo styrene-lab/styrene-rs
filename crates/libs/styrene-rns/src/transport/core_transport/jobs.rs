@@ -1,4 +1,4 @@
-use super::announce::{handle_announce, retransmit_announces};
+use super::announce::{handle_announce, handle_ingress_limited_announce, retransmit_announces};
 use super::path::{handle_fixed_destinations, handle_link_request};
 use super::wire::{handle_data, handle_proof};
 use super::*;
@@ -7,7 +7,7 @@ use crate::transport::iface::InterfaceDropReason;
 
 pub(super) async fn protocol_drop_reason(
     packet: &Packet,
-    handler: &TransportHandler,
+    handler: &Arc<Mutex<TransportHandler>>,
     iface: AddressHash,
 ) -> Option<InterfaceDropReason> {
     if packet.header.packet_type == PacketType::Announce {
@@ -15,9 +15,19 @@ pub(super) async fn protocol_drop_reason(
             Ok(announce) => announce,
             Err(_) => return Some(InterfaceDropReason::InvalidAnnounce),
         };
-        if !handler.has_destination(&packet.destination)
-            && let Some(existing) = handler.single_out_destinations.get(&packet.destination)
-        {
+        let (is_local, existing, blackholed) = {
+            let handler = handler.lock().await;
+            let is_local = handler.has_destination(&packet.destination);
+            let existing = (!is_local)
+                .then(|| handler.single_out_destinations.get(&packet.destination).cloned())
+                .flatten();
+            let blackholed = handler
+                .config
+                .blackholed_identities
+                .contains(&announce.destination.identity.address_hash);
+            (is_local, existing, blackholed)
+        };
+        if let Some(existing) = existing {
             let existing = existing.lock().await;
             if existing.identity.public_key != announce.destination.identity.public_key
                 || existing.identity.verifying_key != announce.destination.identity.verifying_key
@@ -25,23 +35,21 @@ pub(super) async fn protocol_drop_reason(
                 return Some(InterfaceDropReason::InvalidAnnounce);
             }
         }
-        if handler
-            .config
-            .blackholed_identities
-            .contains(&announce.destination.identity.address_hash)
-        {
+        if blackholed {
             return Some(InterfaceDropReason::ValidBlackhole);
         }
-        if handler.has_destination(&packet.destination) {
+        if is_local {
             return None;
         }
     }
 
-    if packet.destination == handler.fixed_dest_path_requests {
-        match super::path_requests::PathRequest::decode(
-            packet.data.as_slice(),
-            &handler.config.name,
-        ) {
+    let path_request_name = {
+        let handler = handler.lock().await;
+        (packet.destination == handler.fixed_dest_path_requests)
+            .then(|| handler.config.name.clone())
+    };
+    if let Some(name) = path_request_name {
+        match super::path_requests::PathRequest::decode(packet.data.as_slice(), &name) {
             Err(super::path_requests::PathRequestDecodeError::ExcessiveTag) => {
                 return Some(InterfaceDropReason::ExcessivePathRequestTags);
             }
@@ -51,11 +59,17 @@ pub(super) async fn protocol_drop_reason(
     }
 
     if packet.header.destination_type == DestinationType::Link {
-        let mut link = handler.in_links.get(&packet.destination).cloned();
+        let (mut link, out_links) = {
+            let handler = handler.lock().await;
+            (
+                handler.in_links.get(&packet.destination).cloned(),
+                handler.out_links.values().cloned().collect::<Vec<_>>(),
+            )
+        };
         if link.is_none() {
-            for candidate in handler.out_links.values() {
+            for candidate in out_links {
                 if *candidate.lock().await.id() == packet.destination {
-                    link = Some(candidate.clone());
+                    link = Some(candidate);
                     break;
                 }
             }
@@ -341,25 +355,9 @@ pub(super) async fn manage_transport(
                         break;
                     },
                     Some(message) = rx_receiver.recv() => {
-                        let address = message.address;
-                        let Ok(message) = message.admit() else {
-                            handler_arc
-                                .lock()
-                                .await
-                                .iface_manager
-                                .lock()
-                                .await
-                                .record_drop(&address, InterfaceDropReason::MalformedFrame);
-                            log::warn!("tp: dropping invalid packet before ingress state mutation");
-                            continue;
-                        };
+                        let ingress_limited = message.ingress_class()
+                            == crate::transport::iface::IngressClass::IngressLimited;
                         let mut handler = handler_arc.lock().await;
-                        if let Some(reason) =
-                            protocol_drop_reason(&message.packet, &handler, message.address).await
-                        {
-                            handler.iface_manager.lock().await.record_drop(&message.address, reason);
-                            continue;
-                        }
                         let _ = iface_messages_tx.send(message);
 
                         let packet = message.packet;
@@ -409,11 +407,17 @@ pub(super) async fn manage_transport(
                         }
 
                         match packet.header.packet_type {
-                            PacketType::Announce => handle_announce(
-                                &packet,
-                                handler,
-                                message.address
-                            ).await,
+                            PacketType::Announce if ingress_limited => {
+                                handle_ingress_limited_announce(
+                                    &packet,
+                                    handler,
+                                    message.address,
+                                )
+                                .await
+                            }
+                            PacketType::Announce => {
+                                handle_announce(&packet, handler, message.address).await
+                            }
                             PacketType::LinkRequest => handle_link_request(
                                 &packet,
                                 message.address,
@@ -554,7 +558,28 @@ pub(super) async fn manage_transport(
         tokio::select! {
             _ = cancel.cancelled() => break,
             _ = time::sleep(INTERVAL_PROTOCOL_SCHEDULER) => {
-                handle_protocol_deadlines(handler_arc.lock().await).await;
+                let (ingress_sender, released_announces) = {
+                    let mut handler = handler_arc.lock().await;
+                    let released = handler.announce_limits.release_ready();
+                    let sender = handler.iface_manager.lock().await.ingress_sender();
+                    handle_protocol_deadlines(handler).await;
+                    (sender, released)
+                };
+                for released in released_announces {
+                    match ingress_sender
+                        .send(RxMessage::local(released.iface, released.packet).ingress_limited())
+                        .await
+                    {
+                        Ok(crate::transport::iface::IngressEnqueueOutcome::Accepted) => {}
+                        Ok(crate::transport::iface::IngressEnqueueOutcome::Dropped) => {
+                            log::debug!("tp: dropping released announce because ingress-limited queue is full");
+                        }
+                        Ok(crate::transport::iface::IngressEnqueueOutcome::Rejected) => {
+                            log::debug!("tp: released announce no longer passes ingress admission");
+                        }
+                        Err(_) => break,
+                    }
+                }
             }
         }
     }
