@@ -84,3 +84,39 @@
 - [ ] 8.3 Verify existing identity, messages, contacts, drafts, endpoint, and new propagation selection survive upgrade
 - [ ] 8.4 Publish capability claims from passing evidence and list RNode, attachment, Paper, NomadNet, propagation-host, capacity, and expiry exclusions explicitly
 - [ ] 8.5 Publish the complete application-parity ledger with corpus version, row status, intentional-difference rationale, and evidence references
+
+## 9. BLE Backend Ownership
+<!-- specs: mobile-ble-rnode -->
+
+- [x] 9.1 Add a failing `MobileNode` test proving a Bluetooth byte attempt requires approval and changes only the Bluetooth RNode bearer
+- [x] 9.2 Add explicit BLE and Android USB attempt identity to the mobile byte-session API without changing KISS protocol behavior
+- [ ] 9.3 Add failing tests for one active bearer, stale attempt rejection, exact readback gating, and idempotent stop attribution
+- [ ] 9.4 Integrate the shared `RNodeEngine` attempt metadata so backend-owned fragmentation respects the safe platform write size
+- [ ] 9.5 Add failing retained-handoff tests proving a failed or cancelled platform write does not silently lose an outbound RNS packet
+
+## 10. BLE Platform Contract
+<!-- specs: mobile-ble-rnode -->
+
+- [ ] 10.1 Add failing pure Rust tests for permission, adapter availability, bounded discovery, explicit selection, approval, forget, and generation rejection
+- [ ] 10.2 Define plain Rust BLE candidate, approved-peripheral, NUS property, write-limit, event, and ordered-byte attempt contracts
+- [ ] 10.3 Add fake-attempt tests for arbitrary notification fragmentation, multiple KISS frames per notification, serialized writes, cancellation, disconnect, and reconnect
+- [ ] 10.4 Implement one cancellable session owner that pumps the platform attempt through the backend byte session without owning RNode protocol truth
+- [ ] 10.5 Add Rust-owned Network controls for Scan, explicit peripheral selection, retry, and Forget with typed disabled and failure states
+
+## 11. Native BLE Adapters
+<!-- specs: mobile-ble-rnode -->
+
+- [ ] 11.1 Add failing safe-boundary tests for CoreBluetooth state, NUS discovery, characteristic properties, notification delivery, response writes, write limits, and disconnect
+- [ ] 11.2 Implement the iOS adapter inside the existing Rust Apple bridge without exposing Objective-C objects or adding maintained Swift
+- [ ] 11.3 Add failing Android bridge tests for API-level permission, adapter state, scan identity, NUS discovery, response writes, MTU conversion, callback generation, and close
+- [ ] 11.4 Implement the Android GATT adapter through tracked Rust and approved generated-host extension seams without adding maintained Kotlin product logic
+- [ ] 11.5 Build warning-denied iOS and Android targets and verify generated native output remains untracked
+
+## 12. BLE Physical Acceptance
+<!-- specs: mobile-ble-rnode, mobile-release-evidence -->
+
+- [ ] 12.1 Record board, firmware, NUS UUIDs and properties, mobile model, OS, application and backend revisions, radio profile, and test jurisdiction
+- [ ] 12.2 Verify explicit first approval, stored-identifier reconnect, pairing-window expiry, Forget, denial, powered-off, interruption, and foreground recovery on each claimed platform
+- [ ] 12.3 Verify observed safe write size, fragmented inbound traffic, serialized response writes, exact RNode configuration readback, and bounded queue behavior
+- [ ] 12.4 Verify bidirectional packet and message correlation, packet counters, retained replay after interruption, and no duplicate delivery
+- [ ] 12.5 Publish BLE support only for the exercised platform, board, firmware class, and scenarios. Retain every missing evidence item as an explicit exclusion
