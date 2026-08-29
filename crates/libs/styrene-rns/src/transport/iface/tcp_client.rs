@@ -12,7 +12,7 @@ use crate::transport::error::RnsError;
 
 use alloc::string::String;
 
-use super::stream_iface::{run_hdlc_rx_loop, run_hdlc_tx_loop};
+use super::stream_iface::{RxAdmission, run_hdlc_rx_loop, run_hdlc_tx_loop};
 use super::{
     Interface, InterfaceContext, InterfaceDescriptor, InterfaceEndpoint, InterfaceKind,
     InterfaceMode, InterfaceState,
@@ -153,7 +153,7 @@ impl TcpClient {
                     iface_address,
                     cancel,
                     stop,
-                    Self::mtu(),
+                    RxAdmission::new(Self::mtu(), context.stats.clone()),
                     ifac,
                 ))
             };

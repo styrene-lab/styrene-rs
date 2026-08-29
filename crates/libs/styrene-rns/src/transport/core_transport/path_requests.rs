@@ -35,21 +35,36 @@ pub fn create_random_tag() -> TagBytes {
     AddressHash::new_from_rand(OsRng).as_slice().into()
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct PathRequest {
     pub destination: AddressHash,
     pub requesting_transport: Option<AddressHash>,
     pub tag_bytes: TagBytes,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathRequestDecodeError {
+    MissingDestination,
+    MissingTag,
+    ExcessiveTag,
+}
+
 impl PathRequest {
-    fn decode(data: &[u8], transport_name: &str) -> Option<Self> {
+    pub(super) fn decode(
+        data: &[u8],
+        transport_name: &str,
+    ) -> Result<Self, PathRequestDecodeError> {
         if data.len() <= ADDRESS_HASH_SIZE {
             log::info!(
                 "tp({}): ignoring malformed path request: no {}",
                 transport_name,
                 if data.len() < ADDRESS_HASH_SIZE { "destination" } else { "tag" }
             );
-            return None;
+            return Err(if data.len() < ADDRESS_HASH_SIZE {
+                PathRequestDecodeError::MissingDestination
+            } else {
+                PathRequestDecodeError::MissingTag
+            });
         }
 
         let mut destination = [0u8; ADDRESS_HASH_SIZE];
@@ -58,7 +73,7 @@ impl PathRequest {
 
         let mut requesting_transport = None;
         let mut tag_start = ADDRESS_HASH_SIZE;
-        let mut tag_end = data.len();
+        let tag_end = data.len();
 
         if data.len() > ADDRESS_HASH_SIZE * 2 {
             requesting_transport =
@@ -67,12 +82,12 @@ impl PathRequest {
         }
 
         if tag_end - tag_start > ADDRESS_HASH_SIZE {
-            tag_end = tag_start + ADDRESS_HASH_SIZE;
+            return Err(PathRequestDecodeError::ExcessiveTag);
         }
 
         let tag_bytes = data[tag_start..tag_end].into();
 
-        Some(Self { destination, requesting_transport, tag_bytes })
+        Ok(Self { destination, requesting_transport, tag_bytes })
     }
 }
 
@@ -135,32 +150,33 @@ impl PathRequests {
         }
     }
 
-    pub fn decode(&mut self, data: &[u8]) -> Option<PathRequest> {
+    pub fn decode(&mut self, data: &[u8]) -> Result<Option<PathRequest>, PathRequestDecodeError> {
         self.decode_at(data, Instant::now())
     }
 
-    fn decode_at(&mut self, data: &[u8], now: Instant) -> Option<PathRequest> {
-        let path_request = PathRequest::decode(data, &self.name);
+    fn decode_at(
+        &mut self,
+        data: &[u8],
+        now: Instant,
+    ) -> Result<Option<PathRequest>, PathRequestDecodeError> {
+        let path_request = PathRequest::decode(data, &self.name)?;
         self.prune_cache(now);
 
-        if let Some(ref request) = path_request {
-            let key = (request.destination, request.tag_bytes.clone());
-            let expires_at = now + self.request_timeout;
-            let is_new = self.cache.insert(key.clone(), expires_at).is_none();
+        let key = (path_request.destination, path_request.tag_bytes.clone());
+        let expires_at = now + self.request_timeout;
+        let is_new = self.cache.insert(key.clone(), expires_at).is_none();
 
-            if !is_new {
-                log::info!(
-                    "tp({}): ignoring duplicate path request for destination {}",
-                    self.name,
-                    request.destination
-                );
-                return None;
-            }
-
-            self.cache_queue.push_back((key, expires_at));
+        if !is_new {
+            log::info!(
+                "tp({}): ignoring duplicate path request for destination {}",
+                self.name,
+                path_request.destination
+            );
+            return Ok(None);
         }
 
-        path_request
+        self.cache_queue.push_back((key, expires_at));
+        Ok(Some(path_request))
     }
 
     pub fn generate(&mut self, destination: &AddressHash, tag: Option<TagBytes>) -> Packet {
@@ -302,7 +318,7 @@ mod tests {
         let dest = AddressHash::new_from_rand(OsRng);
 
         let encoded = testee.generate(&dest, None);
-        let decoded = testee.decode(encoded.data.as_slice()).unwrap();
+        let decoded = testee.decode(encoded.data.as_slice()).unwrap().unwrap();
 
         assert_eq!(decoded.destination, dest);
     }
@@ -330,12 +346,29 @@ mod tests {
         let packet = testee.generate(&destination, Some(tag));
         let now = Instant::now();
 
-        assert!(testee.decode_at(packet.data.as_slice(), now).is_some());
-        assert!(testee.decode_at(packet.data.as_slice(), now).is_none());
+        assert!(testee.decode_at(packet.data.as_slice(), now).unwrap().is_some());
+        assert!(testee.decode_at(packet.data.as_slice(), now).unwrap().is_none());
 
         assert!(
-            testee.decode_at(packet.data.as_slice(), now + Duration::from_millis(1100)).is_some()
+            testee
+                .decode_at(packet.data.as_slice(), now + Duration::from_millis(1100))
+                .unwrap()
+                .is_some()
         );
+    }
+
+    #[test]
+    fn excessive_tag_is_rejected_without_truncation_or_replay_state_mutation() {
+        let mut testee = PathRequests::new("", None, 16, 16, 30);
+        let destination = AddressHash::new_from_rand(OsRng);
+        let mut data = destination.as_slice().to_vec();
+        data.extend_from_slice(AddressHash::new_from_rand(OsRng).as_slice());
+        data.extend_from_slice(&[0x55; ADDRESS_HASH_SIZE + 1]);
+        let cache_len = testee.cache.len();
+
+        assert_eq!(testee.decode(&data), Err(PathRequestDecodeError::ExcessiveTag));
+        assert_eq!(testee.cache.len(), cache_len);
+        assert!(testee.cache_queue.is_empty());
     }
 
     #[test]

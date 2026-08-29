@@ -252,6 +252,8 @@ pub struct InterfaceSnapshot {
     pub parent: Option<AddressHash>,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
+    pub violations: InterfaceViolationSnapshot,
+    pub filters: InterfaceFilterSnapshot,
     pub connected_peers: u32,
     /// Monotonic count of operational connection/listener generations.
     pub generation: u64,
@@ -321,11 +323,87 @@ impl InterfaceRuntime {
 pub struct InterfaceStats {
     pub tx_bytes: AtomicU64,
     pub rx_bytes: AtomicU64,
+    malformed_frame: AtomicU64,
+    ifac_failure: AtomicU64,
+    invalid_announce: AtomicU64,
+    pre_validation_link: AtomicU64,
+    excessive_path_request_tags: AtomicU64,
+    valid_blackhole: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterfaceDropReason {
+    MalformedFrame,
+    IfacFailure,
+    InvalidAnnounce,
+    PreValidationLink,
+    ExcessivePathRequestTags,
+    ValidBlackhole,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InterfaceViolationSnapshot {
+    pub malformed_frame: u64,
+    pub ifac_failure: u64,
+    pub invalid_announce: u64,
+    pub pre_validation_link: u64,
+    pub excessive_path_request_tags: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InterfaceFilterSnapshot {
+    pub valid_blackhole: u64,
 }
 
 impl InterfaceStats {
     pub fn new() -> Self {
-        Self { tx_bytes: AtomicU64::new(0), rx_bytes: AtomicU64::new(0) }
+        Self {
+            tx_bytes: AtomicU64::new(0),
+            rx_bytes: AtomicU64::new(0),
+            malformed_frame: AtomicU64::new(0),
+            ifac_failure: AtomicU64::new(0),
+            invalid_announce: AtomicU64::new(0),
+            pre_validation_link: AtomicU64::new(0),
+            excessive_path_request_tags: AtomicU64::new(0),
+            valid_blackhole: AtomicU64::new(0),
+        }
+    }
+
+    fn increment(counter: &AtomicU64) {
+        let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            Some(value.saturating_add(1))
+        });
+    }
+
+    pub fn record_drop(&self, reason: InterfaceDropReason) {
+        let counter = match reason {
+            InterfaceDropReason::MalformedFrame => &self.malformed_frame,
+            InterfaceDropReason::IfacFailure => &self.ifac_failure,
+            InterfaceDropReason::InvalidAnnounce => &self.invalid_announce,
+            InterfaceDropReason::PreValidationLink => &self.pre_validation_link,
+            InterfaceDropReason::ExcessivePathRequestTags => &self.excessive_path_request_tags,
+            InterfaceDropReason::ValidBlackhole => &self.valid_blackhole,
+        };
+        Self::increment(counter);
+    }
+
+    pub fn snapshot(&self) -> InterfaceStatsSnapshot {
+        InterfaceStatsSnapshot {
+            tx_bytes: self.tx_bytes.load(Ordering::Relaxed),
+            rx_bytes: self.rx_bytes.load(Ordering::Relaxed),
+            violations: InterfaceViolationSnapshot {
+                malformed_frame: self.malformed_frame.load(Ordering::Relaxed),
+                ifac_failure: self.ifac_failure.load(Ordering::Relaxed),
+                invalid_announce: self.invalid_announce.load(Ordering::Relaxed),
+                pre_validation_link: self.pre_validation_link.load(Ordering::Relaxed),
+                excessive_path_request_tags: self
+                    .excessive_path_request_tags
+                    .load(Ordering::Relaxed),
+            },
+            filters: InterfaceFilterSnapshot {
+                valid_blackhole: self.valid_blackhole.load(Ordering::Relaxed),
+            },
+        }
     }
 }
 
@@ -335,12 +413,14 @@ impl Default for InterfaceStats {
     }
 }
 
-/// Snapshot of per-interface byte counters returned by
+/// Snapshot of per-interface counters returned by
 /// [`InterfaceManager::interface_stats`].
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct InterfaceStatsSnapshot {
     pub tx_bytes: u64,
     pub rx_bytes: u64,
+    pub violations: InterfaceViolationSnapshot,
+    pub filters: InterfaceFilterSnapshot,
 }
 
 struct LocalInterface {
@@ -358,6 +438,7 @@ pub struct InterfaceContext<T: Interface> {
     /// Optional IFAC configuration for this interface. When `Some`, all packets
     /// are wrapped/unwrapped with IFAC authentication at the stream boundary.
     pub ifac: Option<Arc<ifac::IfacConfig>>,
+    pub(crate) stats: Arc<InterfaceStats>,
     pub(crate) runtime: Arc<InterfaceRuntime>,
 }
 
@@ -451,6 +532,7 @@ impl InterfaceManager {
         let channel =
             self.new_channel_with_runtime(DEFAULT_IFACE_TX_QUEUE_CAPACITY, descriptor, parent);
         let runtime = self.ifaces.last().expect("newly registered interface").runtime.clone();
+        let stats = self.ifaces.last().expect("newly registered interface").stats.clone();
 
         let inner = Arc::new(Mutex::new(inner));
 
@@ -459,6 +541,7 @@ impl InterfaceManager {
             channel,
             cancel: self.cancel.clone(),
             ifac: None,
+            stats,
             runtime,
         }
     }
@@ -533,33 +616,31 @@ impl InterfaceManager {
                     runtime.state,
                     runtime.parent,
                     runtime.generation,
-                    interface.stats.tx_bytes.load(Ordering::Relaxed),
-                    interface.stats.rx_bytes.load(Ordering::Relaxed),
+                    interface.stats.snapshot(),
                 )
             })
             .collect();
         let mut snapshots: Vec<_> = metadata
             .iter()
-            .map(|(hash, descriptor, state, parent, generation, tx_bytes, rx_bytes)| {
-                InterfaceSnapshot {
-                    hash: *hash,
-                    kind: descriptor.kind,
-                    mode: descriptor.mode,
-                    state: *state,
-                    local_endpoint: descriptor.local_endpoint.clone(),
-                    remote_endpoint: descriptor.remote_endpoint.clone(),
-                    parent: *parent,
-                    tx_bytes: *tx_bytes,
-                    rx_bytes: *rx_bytes,
-                    connected_peers: metadata
-                        .iter()
-                        .filter(|(_, _, child_state, child_parent, _, _, _)| {
-                            *child_parent == Some(*hash)
-                                && *child_state == InterfaceState::Connected
-                        })
-                        .count() as u32,
-                    generation: *generation,
-                }
+            .map(|(hash, descriptor, state, parent, generation, stats)| InterfaceSnapshot {
+                hash: *hash,
+                kind: descriptor.kind,
+                mode: descriptor.mode,
+                state: *state,
+                local_endpoint: descriptor.local_endpoint.clone(),
+                remote_endpoint: descriptor.remote_endpoint.clone(),
+                parent: *parent,
+                tx_bytes: stats.tx_bytes,
+                rx_bytes: stats.rx_bytes,
+                violations: stats.violations,
+                filters: stats.filters,
+                connected_peers: metadata
+                    .iter()
+                    .filter(|(_, _, child_state, child_parent, _, _)| {
+                        *child_parent == Some(*hash) && *child_state == InterfaceState::Connected
+                    })
+                    .count() as u32,
+                generation: *generation,
             })
             .collect();
         snapshots.sort_by_key(|snapshot| snapshot.hash.as_slice().to_vec());
@@ -717,21 +798,19 @@ impl InterfaceManager {
         }
     }
 
+    pub fn record_drop(&self, address: &AddressHash, reason: InterfaceDropReason) {
+        if let Some(stats) = self.stats_map.lock().expect("interface stats lock").get(address) {
+            stats.record_drop(reason);
+        }
+    }
+
     /// Return a snapshot of per-interface byte counters.
     pub fn interface_stats(&self) -> HashMap<AddressHash, InterfaceStatsSnapshot> {
         self.stats_map
             .lock()
             .expect("interface stats lock")
             .iter()
-            .map(|(addr, stats)| {
-                (
-                    *addr,
-                    InterfaceStatsSnapshot {
-                        tx_bytes: stats.tx_bytes.load(Ordering::Relaxed),
-                        rx_bytes: stats.rx_bytes.load(Ordering::Relaxed),
-                    },
-                )
-            })
+            .map(|(addr, stats)| (*addr, stats.snapshot()))
             .collect()
     }
 

@@ -3,6 +3,85 @@ use super::path::{handle_fixed_destinations, handle_link_request};
 use super::wire::{handle_data, handle_proof};
 use super::*;
 use crate::transport::destination_ext::link::{LinkCloseReason, LinkWatchdogAction};
+use crate::transport::iface::InterfaceDropReason;
+
+pub(super) async fn protocol_drop_reason(
+    packet: &Packet,
+    handler: &TransportHandler,
+    iface: AddressHash,
+) -> Option<InterfaceDropReason> {
+    if packet.header.packet_type == PacketType::Announce {
+        let announce = match DestinationAnnounce::validate(packet) {
+            Ok(announce) => announce,
+            Err(_) => return Some(InterfaceDropReason::InvalidAnnounce),
+        };
+        if !handler.has_destination(&packet.destination)
+            && let Some(existing) = handler.single_out_destinations.get(&packet.destination)
+        {
+            let existing = existing.lock().await;
+            if existing.identity.public_key != announce.destination.identity.public_key
+                || existing.identity.verifying_key != announce.destination.identity.verifying_key
+            {
+                return Some(InterfaceDropReason::InvalidAnnounce);
+            }
+        }
+        if handler
+            .config
+            .blackholed_identities
+            .contains(&announce.destination.identity.address_hash)
+        {
+            return Some(InterfaceDropReason::ValidBlackhole);
+        }
+        if handler.has_destination(&packet.destination) {
+            return None;
+        }
+    }
+
+    if packet.destination == handler.fixed_dest_path_requests {
+        match super::path_requests::PathRequest::decode(
+            packet.data.as_slice(),
+            &handler.config.name,
+        ) {
+            Err(super::path_requests::PathRequestDecodeError::ExcessiveTag) => {
+                return Some(InterfaceDropReason::ExcessivePathRequestTags);
+            }
+            Err(_) => return Some(InterfaceDropReason::MalformedFrame),
+            Ok(_) => {}
+        }
+    }
+
+    if packet.header.destination_type == DestinationType::Link {
+        let mut link = handler.in_links.get(&packet.destination).cloned();
+        if link.is_none() {
+            for candidate in handler.out_links.values() {
+                if *candidate.lock().await.id() == packet.destination {
+                    link = Some(candidate.clone());
+                    break;
+                }
+            }
+        }
+        if let Some(link) = link {
+            let link = link.lock().await;
+            let status = link.status();
+            let activates_pending_link = status == LinkStatus::Pending
+                && packet.header.packet_type == PacketType::Proof
+                && packet.context == PacketContext::LinkRequestProof
+                && link.ingress_iface().is_none_or(|expected| expected == iface)
+                && crate::transport::destination_ext::link::validate_link_request_proof_packet(
+                    link.destination(),
+                    &packet.destination,
+                    packet,
+                )
+                .is_ok();
+            if !matches!(status, LinkStatus::Active | LinkStatus::Stale) && !activates_pending_link
+            {
+                return Some(InterfaceDropReason::PreValidationLink);
+            }
+        }
+    }
+
+    None
+}
 
 pub(super) async fn handle_check_links<'a>(mut handler: MutexGuard<'a, TransportHandler>) {
     let mut links_to_remove: Vec<AddressHash> = Vec::new();
@@ -262,15 +341,28 @@ pub(super) async fn manage_transport(
                         break;
                     },
                     Some(message) = rx_receiver.recv() => {
+                        let address = message.address;
                         let Ok(message) = message.admit() else {
+                            handler_arc
+                                .lock()
+                                .await
+                                .iface_manager
+                                .lock()
+                                .await
+                                .record_drop(&address, InterfaceDropReason::MalformedFrame);
                             log::warn!("tp: dropping invalid packet before ingress state mutation");
                             continue;
                         };
+                        let mut handler = handler_arc.lock().await;
+                        if let Some(reason) =
+                            protocol_drop_reason(&message.packet, &handler, message.address).await
+                        {
+                            handler.iface_manager.lock().await.record_drop(&message.address, reason);
+                            continue;
+                        }
                         let _ = iface_messages_tx.send(message);
 
                         let packet = message.packet;
-
-                        let mut handler = handler_arc.lock().await;
 
                         // Record rx bytes for the originating interface.
                         handler
