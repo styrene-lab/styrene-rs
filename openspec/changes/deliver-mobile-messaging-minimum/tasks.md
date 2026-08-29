@@ -99,8 +99,8 @@
 
 - [x] 10.1 Add failing pure Rust tests for permission, adapter availability, bounded discovery, explicit selection, approval, forget, and generation rejection
 - [x] 10.2 Define plain Rust BLE candidate, approved-peripheral, NUS property, write-limit, event, and ordered-byte attempt contracts
-- [ ] 10.3 Add fake-attempt tests for arbitrary notification fragmentation, multiple KISS frames per notification, serialized writes, cancellation, disconnect, and reconnect
-- [ ] 10.4 Implement one cancellable session owner that pumps the platform attempt through the backend byte session without owning RNode protocol truth
+- [x] 10.3 Add fake-attempt tests for arbitrary notification fragmentation, multiple KISS frames per notification, serialized writes, cancellation, disconnect, and reconnect
+- [x] 10.4 Implement one cancellable session owner that pumps the platform attempt through the backend byte session without owning RNode protocol truth
 - [ ] 10.5 Add Rust-owned Network controls for Scan, explicit peripheral selection, retry, and Forget with typed disabled and failure states
 
 ## 11. Native BLE Adapters
