@@ -59,9 +59,9 @@ use rns_core::buffer::InputBuffer;
 use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use rns_core::packet::Packet;
+pub use rns_core::transport::iface::rnode::{RNodeBearerInfo, RNodeBearerKind};
 use rns_core::transport::iface::rnode::{
-    RNodeBearerInfo, RNodeBearerKind, RNodeProtocol, RNodeProtocolPhase, RNodeRadioProfile,
-    rnode_write_chunks,
+    RNodeProtocol, RNodeProtocolPhase, RNodeRadioProfile, rnode_write_chunks,
 };
 use rns_core::transport::iface::{
     HostInterfaceControl, IngressEnqueueOutcome, InterfaceChannel, InterfaceDescriptor,
