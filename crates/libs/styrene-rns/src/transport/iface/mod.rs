@@ -1113,7 +1113,8 @@ mod tests {
 
     #[test]
     fn path_request_rate_controls_are_disabled_by_default() {
-        let runtime = InterfaceRuntime::new(InterfaceDescriptor::default(), None);
+        let (state_tx, _state_rx) = broadcast::channel(1);
+        let runtime = InterfaceRuntime::new(InterfaceDescriptor::default(), None, state_tx);
         let now = Instant::now();
         for offset in 0..20 {
             assert!(
@@ -1128,9 +1129,11 @@ mod tests {
 
     #[test]
     fn path_request_ingress_burst_activates_and_expires_limiting() {
+        let (state_tx, _state_rx) = broadcast::channel(1);
         let runtime = InterfaceRuntime::new(
             InterfaceDescriptor { ingress_control: true, ..Default::default() },
             None,
+            state_tx,
         );
         let now = Instant::now();
         assert!(!runtime.record_and_should_ingress_limit_path_request(now));
