@@ -897,10 +897,10 @@ impl MobileWorkers {
 
 impl Drop for MobileNode {
     fn drop(&mut self) {
-        if let Ok(workers) = self.workers.get_mut() {
-            if let Some(workers) = workers.as_mut() {
-                workers.abort();
-            }
+        if let Ok(workers) = self.workers.get_mut()
+            && let Some(workers) = workers.as_mut()
+        {
+            workers.abort();
         }
     }
 }
@@ -1341,10 +1341,10 @@ impl MobileNode {
             [endpoint] => Some(persist_mobile_tcp_endpoint(&paths.config_dir, endpoint)?),
             _ => explicit_tcp_endpoints.first().cloned(),
         };
-        if explicit_tcp_endpoints.is_empty() {
-            if let Some(endpoint) = &tcp_endpoint {
-                interfaces.push(ValidatedMobileInterface::TcpClient(endpoint.clone()));
-            }
+        if explicit_tcp_endpoints.is_empty()
+            && let Some(endpoint) = &tcp_endpoint
+        {
+            interfaces.push(ValidatedMobileInterface::TcpClient(endpoint.clone()));
         }
 
         // Load or create identity via the configured backend.
