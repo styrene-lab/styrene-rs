@@ -25,7 +25,7 @@ pub(super) async fn handle_path_request<'a>(
     handler: &mut MutexGuard<'a, TransportHandler>,
     iface: AddressHash,
 ) {
-    if let Some(request) = handler.path_requests.decode(packet.data.as_slice()) {
+    if let Ok(Some(request)) = handler.path_requests.decode(packet.data.as_slice()) {
         crate::transport_diagnostic!(
             "[tp] path_request dest={} iface={}",
             request.destination,

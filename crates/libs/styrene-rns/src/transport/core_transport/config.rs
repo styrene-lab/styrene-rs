@@ -17,6 +17,7 @@ impl TransportConfig {
             resource_retry_interval_secs: 2,
             resource_retry_limit: 5,
             ratchet_store_path: None,
+            blackholed_identities: HashSet::new(),
         }
     }
 
@@ -66,6 +67,10 @@ impl TransportConfig {
     pub fn set_ratchet_store_path(&mut self, path: PathBuf) {
         self.ratchet_store_path = Some(path);
     }
+
+    pub fn set_blackholed_identities(&mut self, identities: impl IntoIterator<Item = AddressHash>) {
+        self.blackholed_identities = identities.into_iter().collect();
+    }
 }
 
 impl Default for TransportConfig {
@@ -85,6 +90,7 @@ impl Default for TransportConfig {
             resource_retry_interval_secs: 2,
             resource_retry_limit: 5,
             ratchet_store_path: None,
+            blackholed_identities: HashSet::new(),
         }
     }
 }

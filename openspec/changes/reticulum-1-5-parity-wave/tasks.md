@@ -17,9 +17,9 @@
 ## 3. Violations And Policy Drops
 <!-- specs: packet-admission-routing, link-resource-security -->
 
-- [ ] 3.1 Add failing adversarial tests distinguishing malformed frames, IFAC failures, invalid announces, pre-validation link traffic, excessive path-request tags, and valid blackholed announces
-- [ ] 3.2 Minimally add typed per-interface violation/filter counters and preserve blackholed traffic as a policy drop rather than a protocol-invalid event
-- [ ] 3.3 Verify each rejection is side-effect free except for its exact counter and that malformed input cannot stop the ingress worker
+- [x] 3.1 Add failing adversarial tests distinguishing malformed frames, IFAC failures, invalid announces, pre-validation link traffic, excessive path-request tags, and valid blackholed announces
+- [x] 3.2 Minimally add typed per-interface violation/filter counters and preserve blackholed traffic as a policy drop rather than a protocol-invalid event
+- [x] 3.3 Verify each rejection is side-effect free except for its exact counter and that malformed input cannot stop the ingress worker
 
 ## 4. Strict-Priority Bounded Ingress
 <!-- specs: bounded-ingress -->

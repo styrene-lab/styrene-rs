@@ -25,7 +25,7 @@ mod inner {
     use tokio_util::sync::CancellationToken;
 
     use super::super::kiss::{KissDecoder, kiss_encode};
-    use super::super::stream_iface::{run_hdlc_rx_loop, run_hdlc_tx_loop};
+    use super::super::stream_iface::{RxAdmission, run_hdlc_rx_loop, run_hdlc_tx_loop};
     use crate::transport::iface::{
         Interface, InterfaceContext, InterfaceDescriptor, InterfaceEndpoint, InterfaceKind,
         InterfaceMode, InterfaceState,
@@ -271,7 +271,7 @@ mod inner {
                                 iface_address,
                                 context.cancel.clone(),
                                 stop.clone(),
-                                Self::mtu(),
+                                RxAdmission::new(Self::mtu(), context.stats.clone()),
                                 context.ifac.clone(),
                             ));
                             let tx_task = tokio::spawn(run_hdlc_tx_loop(
@@ -291,7 +291,7 @@ mod inner {
                                 iface_address,
                                 context.cancel.clone(),
                                 stop.clone(),
-                                Self::mtu(),
+                                RxAdmission::new(Self::mtu(), context.stats.clone()),
                                 context.ifac.clone(),
                             ));
                             let tx_task = tokio::spawn(run_hdlc_tx_loop(
