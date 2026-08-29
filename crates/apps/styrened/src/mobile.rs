@@ -206,6 +206,7 @@ pub struct MobileBearerObservation {
 #[derive(Clone)]
 pub struct MobilePlatformService {
     state: Arc<tokio::sync::RwLock<MobilePlatformState>>,
+    changes: broadcast::Sender<()>,
 }
 
 struct MobilePlatformState {
@@ -222,6 +223,7 @@ pub enum MobileUsbFallbackDisposition {
 
 impl MobilePlatformService {
     fn new(rnode_channel_enabled: bool) -> Self {
+        let (changes, _) = broadcast::channel(16);
         let bluetooth = if rnode_channel_enabled {
             MobileBearerObservation {
                 kind: MobileBearerKind::BluetoothRnode,
@@ -248,6 +250,7 @@ impl MobilePlatformService {
                 bluetooth_approved: false,
                 usb_fallback_requested: false,
             })),
+            changes,
         }
     }
 
@@ -284,6 +287,8 @@ impl MobilePlatformService {
             .find(|bearer| bearer.kind == observation.kind)
             .ok_or("unsupported mobile platform bearer")?;
         *bearer = observation;
+        drop(state);
+        let _ = self.changes.send(());
         Ok(())
     }
 
@@ -355,6 +360,7 @@ pub struct MobileStateSubscription {
     transport: Arc<dyn MeshTransport>,
     lifecycle: broadcast::Receiver<TransportLifecycleEvent>,
     events: broadcast::Receiver<styrene_ipc::types::DaemonEvent>,
+    platform: broadcast::Receiver<()>,
 }
 
 impl MobileStateSubscription {
@@ -392,6 +398,15 @@ impl MobileStateSubscription {
                         return Err(MobileStateSubscriptionError::Lagged(dropped));
                     }
                     Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                        return Err(MobileStateSubscriptionError::Lagged(dropped));
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        return Err(MobileStateSubscriptionError::Closed);
+                    }
+                },
+                event = self.platform.recv() => match event {
+                    Ok(()) => MobileStateEventKind::Session,
                     Err(broadcast::error::RecvError::Lagged(dropped)) => {
                         return Err(MobileStateSubscriptionError::Lagged(dropped));
                     }
@@ -1681,6 +1696,7 @@ impl MobileNode {
             initial_generation: self.generation,
             lifecycle: transport.subscribe_lifecycle(),
             events: self.app_context.events().subscribe_daemon_events(),
+            platform: self.platform_service.changes.subscribe(),
             transport,
         }
     }
@@ -3245,6 +3261,25 @@ mod tests {
         assert_eq!(
             node.session_snapshot().await.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
             MobileBearerState::Disconnected
+        );
+
+        let mut state_events = node.subscribe_state_events();
+        node.platform_service()
+            .report(MobileBearerObservation {
+                kind: MobileBearerKind::AndroidUsb,
+                state: MobileBearerState::Disconnected,
+                reason: Some(MobileBearerReason::PermissionDenied),
+            })
+            .await
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(1), state_events.recv())
+            .await
+            .expect("platform report invalidation timed out")
+            .expect("platform report invalidation failed");
+        assert_eq!(event.kind, MobileStateEventKind::Session);
+        assert_eq!(
+            node.session_snapshot().await.bearer(MobileBearerKind::AndroidUsb).unwrap().reason,
+            Some(MobileBearerReason::PermissionDenied)
         );
     }
 
