@@ -82,3 +82,15 @@
 - [ ] 9.3 Verify immutable `styrene-rs` dependency resolution and backend compatibility negotiation
 - [ ] 9.4 Run available cross-platform messaging, RNode, restart, and evidence-retention scenarios
 - [ ] 9.5 Publish release status, physical evidence gaps, and rollback instructions
+
+## 10. Dioxus Mobile UX Practice
+<!-- specs: mobile-ui/spec -->
+
+- [x] 10.1 Publish the non-normative workspace `dioxus-mobile-ux` skill with versioned Dioxus, Apple, Android, Material, WebKit, and W3C primary-source references
+- [x] 10.2 Record the pinned `0.8.0-alpha.1` prerelease boundary, generated-output policy, WebView ownership, and evidence limits in this change
+- [ ] 10.3 Add semantic structure, accessible names and states, status regions, focus handling, platform target sizes, and automated document checks to every shared workflow
+- [ ] 10.4 Add adaptive compact and list-detail layouts with single-owner safe-area, system-bar, cutout, and keyboard inset handling
+- [ ] 10.5 Add typed Rust bridges for native Back, window class, text scale, contrast, reduced motion, lifecycle, permission, and notification behavior where WebView support is insufficient
+- [ ] 10.6 Verify 320 CSS-pixel reflow, 200 percent text, platform accessibility text sizes, keyboard-open forms, orientation, dark appearance, increased contrast, and reduced motion
+- [ ] 10.7 Verify VoiceOver in the packaged iOS `WKWebView` and TalkBack in the packaged Android WebView with artifact and environment provenance
+- [ ] 10.8 Maintain a criterion-by-criterion WCAG 2.2 Level AA applicability and evidence matrix before claiming conformance

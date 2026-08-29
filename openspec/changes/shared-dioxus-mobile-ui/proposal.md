@@ -22,6 +22,8 @@ This change depends on `extract-styrene-ui-repository`.
   source.
 - Both platforms consume the same typed backend session and presentation
   reducers.
+- The versioned Dioxus mobile UX corpus governs framework, WebView, adaptive
+  layout, platform interaction, accessibility, and evidence decisions.
 - Maintained mobile product and platform-service source is Rust; generated
   packaging output is not committed.
 - Bluetooth-first RNode behavior and explicit Android USB fallback retain their
