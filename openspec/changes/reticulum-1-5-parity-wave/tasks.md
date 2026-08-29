@@ -10,9 +10,9 @@
 ## 2. Packet Admission And Received Hops
 <!-- specs: packet-admission-routing -->
 
-- [ ] 2.1 Add failing canonical/adversarial tests in `styrene-rns` for short Type 1/Type 2 frames, incomplete IDs, zero data, oversized payload/frame, wire hops 127/128/255, outbound hop limits, and physical versus local ingress
-- [ ] 2.2 Minimally make `Packet::from_bytes` and interface admission reject rather than truncate, increment physical ingress exactly once with checked semantics, and carry canonical post-ingress hops through routing and `ReceivedData`
-- [ ] 2.3 Run focused packet, interface, three-node route, and canonical fixture tests and retain an acceptance matrix for every malformed vector and hop boundary
+- [x] 2.1 Add failing canonical/adversarial tests in `styrene-rns` for short Type 1/Type 2 frames, incomplete IDs, zero data, oversized payload/frame, wire hops 127/128/255, outbound hop limits, and physical versus local ingress
+- [x] 2.2 Minimally make `Packet::from_bytes` and interface admission reject rather than truncate, increment physical ingress exactly once with checked semantics, and carry canonical post-ingress hops through routing and `ReceivedData`
+- [x] 2.3 Run focused packet, interface, three-node route, and canonical fixture tests and retain an acceptance matrix for every malformed vector and hop boundary
 
 ## 3. Violations And Policy Drops
 <!-- specs: packet-admission-routing, link-resource-security -->

@@ -114,7 +114,7 @@ impl UdpInterface {
                                             if PACKET_TRACE {
                                                 log::trace!("udp_interface: rx << ({}) {}", iface_address, packet);
                                             }
-                                            let _ = rx_channel.send(RxMessage { address: iface_address, packet }).await;
+                                            let _ = rx_channel.send(RxMessage::physical(iface_address, packet, Self::mtu())).await;
                                         } else {
                                             log::warn!("udp_interface: couldn't decode packet");
                                         }

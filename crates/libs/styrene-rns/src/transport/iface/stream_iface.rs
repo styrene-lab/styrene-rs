@@ -43,6 +43,7 @@ pub async fn run_hdlc_rx_loop<R>(
     iface_address: AddressHash,
     cancel: CancellationToken,
     stop: CancellationToken,
+    mtu: usize,
     ifac: Option<Arc<IfacConfig>>,
 ) where
     R: tokio::io::AsyncRead + Unpin + Send,
@@ -93,7 +94,7 @@ pub async fn run_hdlc_rx_loop<R>(
                                         &mut InputBuffer::new(&inner_bytes),
                                     ) {
                                         let _ = rx_channel
-                                            .send(RxMessage { address: iface_address, packet })
+                                            .send(RxMessage::physical(iface_address, packet, mtu))
                                             .await;
                                     } else {
                                         log::warn!(

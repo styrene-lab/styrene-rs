@@ -163,7 +163,7 @@ impl PathTable {
         clock: (Instant, SystemTime),
     ) -> Option<RouteEvent> {
         let (now, observed_at) = clock;
-        let hops = announce.header.hops.saturating_add(1);
+        let hops = announce.header.hops;
         let received_from = transport_id.unwrap_or(announce.destination);
 
         let random_blobs = if let Some(existing_entry) = self.map.get(&announce.destination) {
@@ -296,7 +296,7 @@ impl PathTable {
                     ifac_flag: IfacFlag::Open, // IFAC applied at interface layer
                     header_type: HeaderType::Type2,
                     propagation_type: PropagationType::Transport,
-                    hops: original_packet.header.hops.saturating_add(1),
+                    hops: original_packet.header.hops,
                     ..original_packet.header
                 },
                 ifac: None,
@@ -562,7 +562,7 @@ mod tests {
         );
 
         table.handle_announce(
-            &announce(destination, next_hop, 1),
+            &announce(destination, next_hop, 2),
             Some(next_hop),
             iface,
             InterfaceMode::Full,
@@ -633,7 +633,7 @@ mod tests {
         let iface = AddressHash::new_from_hash(&Hash::new_from_slice(b"replace-iface"));
         let mut table = PathTable::new();
         table.handle_announce_at(
-            &announce(destination, first_hop, 1),
+            &announce(destination, first_hop, 2),
             Some(first_hop),
             iface,
             InterfaceMode::Roaming,
@@ -648,7 +648,7 @@ mod tests {
         );
 
         table.handle_announce_at(
-            &announce(destination, second_hop, 2),
+            &announce(destination, second_hop, 3),
             Some(second_hop),
             iface,
             InterfaceMode::Roaming,

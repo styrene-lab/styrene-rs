@@ -153,6 +153,7 @@ impl TcpClient {
                     iface_address,
                     cancel,
                     stop,
+                    Self::mtu(),
                     ifac,
                 ))
             };
