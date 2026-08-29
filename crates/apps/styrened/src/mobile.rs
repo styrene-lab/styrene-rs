@@ -41,7 +41,7 @@ use std::time::Duration;
 
 use crate::announce_names::{encode_delivery_display_name_app_data, normalize_display_name};
 use crate::app_context::AppContext;
-use crate::config::{atomic_write_private, PlatformPaths};
+use crate::config::{PlatformPaths, atomic_write_private};
 use crate::daemon_facade::DaemonFacade;
 use crate::services::discovery::{
     LXMF_DELIVERY_DEVICE_TYPE, NATIVE_NOMADNET_HOST_DEVICE_TYPE,
@@ -2377,8 +2377,8 @@ fn private_identity_from_root(
 async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
     #[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
     {
-        use styrene_identity::keychain_signer::KeychainSigner;
         use styrene_identity::IdentitySigner;
+        use styrene_identity::keychain_signer::KeychainSigner;
 
         let signer = KeychainSigner::default();
 
