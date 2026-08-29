@@ -140,6 +140,7 @@ verify-artifact archive:
 validate-product:
     python3 scripts/test_validate_product_capabilities.py
     python3 scripts/test_parity_claim_labels.py
+    python3 scripts/test_validate_fixture_provenance.py
     python3 scripts/validate_product_capabilities.py
     python3 scripts/validate_fixture_provenance.py
 
