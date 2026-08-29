@@ -92,7 +92,7 @@
 - [x] 9.2 Add explicit BLE and Android USB attempt identity to the mobile byte-session API without changing KISS protocol behavior
 - [x] 9.3 Add failing tests for one active bearer, stale attempt rejection, exact readback gating, and idempotent stop attribution
 - [x] 9.4 Integrate the shared `RNodeEngine` attempt metadata so backend-owned fragmentation respects the safe platform write size
-- [ ] 9.5 Add failing retained-handoff tests proving a failed or cancelled platform write does not silently lose an outbound RNS packet
+- [x] 9.5 Add failing retained-handoff tests proving a failed or cancelled platform write does not silently lose an outbound RNS packet
 
 ## 10. BLE Platform Contract
 <!-- specs: mobile-ble-rnode -->
