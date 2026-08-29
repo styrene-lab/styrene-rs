@@ -79,6 +79,9 @@ pub enum IdentityBackend {
     /// Requires `mobile-keychain` feature.
     #[default]
     Keychain,
+    /// Random root secret wrapped by a non-exportable Android Keystore key.
+    /// Requires `mobile-android-keystore` feature.
+    AndroidKeystore,
     /// Encrypted file with passphrase (argon2id + ChaCha20Poly1305).
     /// Requires `mobile-identity` feature.
     EncryptedFile,
@@ -2327,9 +2330,43 @@ async fn load_or_create_identity(
 ) -> anyhow::Result<PrivateIdentity> {
     match backend {
         IdentityBackend::Keychain => load_or_create_keychain(paths).await,
+        IdentityBackend::AndroidKeystore => load_or_create_android_keystore().await,
         IdentityBackend::EncryptedFile => load_or_create_encrypted_file(paths).await,
         IdentityBackend::PlaintextFile => load_or_create_plaintext_file(paths),
     }
+}
+
+async fn load_or_create_android_keystore() -> anyhow::Result<PrivateIdentity> {
+    #[cfg(all(feature = "mobile-android-keystore", target_os = "android"))]
+    {
+        use styrene_identity::android_keystore_signer::AndroidKeystoreSigner;
+
+        let signer = AndroidKeystoreSigner::new(
+            styrene_identity::android_keystore_signer::SERVICE,
+            styrene_identity::android_keystore_signer::ACCOUNT,
+        )?;
+        let root = signer.load_or_create_root_secret()?;
+        private_identity_from_root(&root)
+    }
+
+    #[cfg(not(all(feature = "mobile-android-keystore", target_os = "android")))]
+    anyhow::bail!("Android Keystore identity backend is unavailable in this build")
+}
+
+#[cfg(any(feature = "mobile-keychain", feature = "mobile-android-keystore"))]
+fn private_identity_from_root(
+    root: &styrene_identity::signer::RootSecret,
+) -> anyhow::Result<PrivateIdentity> {
+    use styrene_identity::{KeyDeriver, KeyPurpose};
+
+    let deriver = KeyDeriver::new(root.as_bytes());
+    let encryption_seed = deriver.derive(KeyPurpose::RnsEncryption);
+    let signing_seed = deriver.derive(KeyPurpose::Signing);
+    let mut key_bytes = [0_u8; 64];
+    key_bytes[..32].copy_from_slice(&encryption_seed);
+    key_bytes[32..].copy_from_slice(&signing_seed);
+    PrivateIdentity::from_private_key_bytes(&key_bytes)
+        .map_err(|error| anyhow::anyhow!("key derivation: {error:?}"))
 }
 
 /// Keychain backend: root secret in platform keychain → HKDF → RNS keys.
@@ -2341,7 +2378,7 @@ async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<Priva
     #[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
     {
         use styrene_identity::keychain_signer::KeychainSigner;
-        use styrene_identity::{IdentitySigner, KeyDeriver, KeyPurpose};
+        use styrene_identity::IdentitySigner;
 
         let signer = KeychainSigner::default();
 
@@ -2356,18 +2393,7 @@ async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<Priva
         let root =
             signer.root_secret().await.map_err(|e| anyhow::anyhow!("keychain access: {e}"))?;
 
-        // Derive RNS identity from root secret via HKDF.
-        // Construct the 64-byte canonical format: [X25519_secret || Ed25519_secret]
-        let deriver = KeyDeriver::new(root.as_bytes());
-        let encryption_seed = deriver.derive(KeyPurpose::RnsEncryption);
-        let signing_seed = deriver.derive(KeyPurpose::Signing);
-
-        let mut key_bytes = [0u8; 64];
-        key_bytes[..32].copy_from_slice(&encryption_seed);
-        key_bytes[32..].copy_from_slice(&signing_seed);
-
-        PrivateIdentity::from_private_key_bytes(&key_bytes)
-            .map_err(|e| anyhow::anyhow!("key derivation: {e:?}"))
+        private_identity_from_root(&root)
     }
 
     #[cfg(not(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios"))))]
@@ -2465,6 +2491,22 @@ mod tests {
     use rns_core::destination::{DestinationName, SingleOutputDestination};
     use rns_core::hash::AddressHash;
     use rns_core::transport::core_transport::{ReceivedData, ReceivedPayloadMode};
+
+    #[cfg(not(target_os = "android"))]
+    #[tokio::test]
+    async fn android_keystore_backend_never_falls_back_to_plaintext() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = PlatformPaths::new(temp.path().join("config"), temp.path().join("data"));
+        paths.ensure_dirs().unwrap();
+
+        let Err(error) = load_or_create_identity(&IdentityBackend::AndroidKeystore, &paths).await
+        else {
+            panic!("unsupported Android Keystore backend created an identity");
+        };
+
+        assert!(error.to_string().contains("unavailable in this build"));
+        assert!(!paths.identity_path().exists());
+    }
     use styrene_ipc::types::DaemonEvent;
     use tokio::time::{Duration, timeout};
 
