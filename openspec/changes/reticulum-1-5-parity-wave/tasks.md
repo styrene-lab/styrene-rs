@@ -31,9 +31,9 @@
 ## 5. Path-Request Batching And Canonical Limits
 <!-- specs: packet-admission-routing, bounded-ingress -->
 
-- [ ] 5.1 Add failing differential/adversarial boundary tests for tag entries 16,000 and the crossing entry, duplicates in current/previous generations, generation aging, one 120-second in-flight gate per destination, duplicate waiters from one interface, waiter count equal to registered-interface count, detached waiters, pending discovery entries 32/33, ingress limiting, and a late egress-state change
-- [ ] 5.2 Minimally separate two-generation tag replay state from destination-keyed in-flight discovery, rotate tags by count rather than time, deduplicate waiters by registered interface, expire gates after 120 seconds, refuse the 33rd pending discovery enqueue observably, answer each eligible interface once, and enforce pre-send plus late egress checks
-- [ ] 5.3 Verify one recursive request per destination, exact cleanup on answer/timeout/local resolution/detach, duplicate rejection across both tag generations, acceptance only after the containing generation ages out, and no invented fixed total in-flight or waiter limit beyond canonical lifetime and registered-interface bounds
+- [x] 5.1 Add failing differential/adversarial boundary tests for tag entries 16,000 and the crossing entry, duplicates in current/previous generations, generation aging, one 120-second in-flight gate per destination, duplicate waiters from one interface, waiter count equal to registered-interface count, detached waiters, pending discovery entries 32/33, ingress limiting, and a late egress-state change
+- [x] 5.2 Minimally separate two-generation tag replay state from destination-keyed in-flight discovery, rotate tags by count rather than time, deduplicate waiters by registered interface, expire gates after 120 seconds, refuse the 33rd pending discovery enqueue observably, answer each eligible interface once, and enforce pre-send plus late egress checks
+- [x] 5.3 Verify one recursive request per destination, exact cleanup on answer/timeout/local resolution/detach, duplicate rejection across both tag generations, acceptance only after the containing generation ages out, and no invented fixed total in-flight or waiter limit beyond canonical lifetime and registered-interface bounds
 
 ## 6. Online Bitrate Metadata And Deadlines
 <!-- specs: packet-admission-routing -->

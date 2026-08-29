@@ -1,4 +1,38 @@
 use super::*;
+use alloc::collections::BTreeSet;
+
+pub(super) async fn dispatch_pending_path_requests<'a>(
+    handler: &mut MutexGuard<'a, TransportHandler>,
+) {
+    let Some(destination) = handler.path_requests.pending_front() else {
+        return;
+    };
+    let Some(packet) = handler.path_requests.pending_packet(&destination) else {
+        return;
+    };
+    let active_interfaces: BTreeSet<_> =
+        handler.iface_manager.lock().await.active_interface_hashes().into_iter().collect();
+    let targets = handler.path_requests.pending_targets(&destination, &active_interfaces);
+    if targets.is_empty() {
+        handler.path_requests.mark_dispatched(&destination);
+        return;
+    }
+    for target in targets {
+        if !handler.iface_manager.lock().await.can_egress_path_request_to(&target) {
+            continue;
+        }
+        let dispatch =
+            handler.send(TxMessage { tx_type: TxMessageType::Direct(target), packet }).await;
+        if dispatch.sent_ifaces > 0 {
+            handler.path_requests.mark_iface_dispatched(&destination, target);
+        }
+    }
+    if handler.path_requests.pending_targets(&destination, &active_interfaces).is_empty() {
+        handler.path_requests.mark_dispatched(&destination);
+    } else {
+        handler.path_requests.rotate_pending(&destination);
+    }
+}
 
 pub(super) async fn send_to_next_hop<'a>(
     packet: &Packet,
@@ -24,8 +58,11 @@ pub(super) async fn handle_path_request<'a>(
     packet: &Packet,
     handler: &mut MutexGuard<'a, TransportHandler>,
     iface: AddressHash,
+    ingress_limited: bool,
 ) {
     if let Ok(Some(request)) = handler.path_requests.decode(packet.data.as_slice()) {
+        let ingress_limited = ingress_limited
+            || handler.iface_manager.lock().await.classify_path_request_ingress(&iface);
         crate::transport_diagnostic!(
             "[tp] path_request dest={} iface={}",
             request.destination,
@@ -37,10 +74,20 @@ pub(super) async fn handle_path_request<'a>(
                 .await
                 .path_response_with_tag(OsRng, None, Some(request.tag_bytes.as_slice()))
                 .expect("valid path response");
-
-            handler
-                .send(TxMessage { tx_type: TxMessageType::Direct(iface), packet: response })
-                .await;
+            let active_interfaces: BTreeSet<_> =
+                handler.iface_manager.lock().await.active_interface_hashes().into_iter().collect();
+            let mut waiters =
+                handler.path_requests.take_waiters(&request.destination, &active_interfaces);
+            if active_interfaces.contains(&iface) {
+                waiters.push(iface);
+                waiters.sort();
+                waiters.dedup();
+            }
+            for waiter in waiters {
+                handler
+                    .send(TxMessage { tx_type: TxMessageType::Direct(waiter), packet: response })
+                    .await;
+            }
             crate::transport_diagnostic!(
                 "[tp] path_response dest={} iface={}",
                 request.destination,
@@ -67,8 +114,18 @@ pub(super) async fn handle_path_request<'a>(
             }
 
             let hops = entry.hops;
-
-            handler.announce_table.add_response(request.destination, iface, hops);
+            let active_interfaces: BTreeSet<_> =
+                handler.iface_manager.lock().await.active_interface_hashes().into_iter().collect();
+            let mut waiters =
+                handler.path_requests.take_waiters(&request.destination, &active_interfaces);
+            if active_interfaces.contains(&iface) {
+                waiters.push(iface);
+                waiters.sort();
+                waiters.dedup();
+            }
+            for waiter in waiters {
+                handler.announce_table.add_response(request.destination, waiter, hops);
+            }
 
             log::trace!(
                 "tp({}): scheduled remote path response to {} ({} hops) over {}",
@@ -81,16 +138,15 @@ pub(super) async fn handle_path_request<'a>(
             return;
         }
 
-        if handler.config.retransmit
-            && let Some(packet) = handler.path_requests.generate_recursive(
-                &request.destination,
-                Some(iface),
-                Some(request.tag_bytes.clone()),
-            )
-        {
-            handler
-                .send(TxMessage { tx_type: TxMessageType::Broadcast(Some(iface)), packet })
-                .await;
+        if handler.config.retransmit {
+            let active_interfaces =
+                handler.iface_manager.lock().await.active_interface_hashes().into_iter().collect();
+            handler.path_requests.register_discovery(
+                &request,
+                iface,
+                ingress_limited,
+                &active_interfaces,
+            );
         }
     }
 }
@@ -99,9 +155,10 @@ pub(super) async fn handle_fixed_destinations<'a>(
     packet: &Packet,
     handler: &mut MutexGuard<'a, TransportHandler>,
     iface: AddressHash,
+    ingress_limited: bool,
 ) -> bool {
     if packet.destination == handler.fixed_dest_path_requests {
-        handle_path_request(packet, handler, iface).await;
+        handle_path_request(packet, handler, iface, ingress_limited).await;
         true
     } else {
         false

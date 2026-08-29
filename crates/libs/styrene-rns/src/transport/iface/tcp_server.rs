@@ -148,6 +148,7 @@ impl Interface for TcpServer {
             mode: InterfaceMode::Full,
             local_endpoint: None,
             remote_endpoint: None,
+            ..Default::default()
         }
     }
 }

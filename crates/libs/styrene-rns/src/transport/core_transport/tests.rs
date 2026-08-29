@@ -1,5 +1,6 @@
 use super::announce::handle_announce;
 use super::*;
+use alloc::collections::BTreeSet;
 
 use crate::destination::{DestinationName, SingleInputDestination};
 use crate::identity::PrivateIdentity;
@@ -143,6 +144,141 @@ async fn transport_exposes_canonical_ingress_queue_defaults() {
     assert_eq!(snapshot.announce.capacity, 3);
     assert_eq!(snapshot.path_request.capacity, 2);
     assert_eq!(snapshot.ingress_limited.capacity, 1);
+}
+
+#[tokio::test]
+async fn path_requests_batch_by_destination_and_answer_each_active_waiter_once() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("path-batching", &identity, true);
+    config.set_retransmit(true);
+    let transport = Transport::new(config);
+    let mut iface_a = test_interface_channel(&transport).await;
+    let mut iface_b = test_interface_channel(&transport).await;
+    let mut iface_c = test_interface_channel(&transport).await;
+    let mut ingress = transport.iface_rx();
+
+    let remote_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut remote =
+        SingleInputDestination::new(remote_identity, DestinationName::new("lxmf", "delivery"));
+    let announce = remote.announce(OsRng, None).expect("matching announce");
+    let destination = announce.destination;
+    let first =
+        transport.handler.lock().await.path_requests.generate(&destination, Some(vec![0xA1; 16]));
+    let second =
+        transport.handler.lock().await.path_requests.generate(&destination, Some(vec![0xB2; 16]));
+    let limited =
+        transport.handler.lock().await.path_requests.generate(&destination, Some(vec![0xC3; 16]));
+
+    iface_a
+        .rx_channel
+        .send(RxMessage::physical(iface_a.address, first, 500))
+        .await
+        .expect("first path request");
+    timeout(Duration::from_secs(1), ingress.recv()).await.unwrap().unwrap();
+    let recursive_b =
+        timeout(Duration::from_secs(1), iface_b.tx_channel.recv()).await.unwrap().unwrap();
+    let recursive_c =
+        timeout(Duration::from_secs(1), iface_c.tx_channel.recv()).await.unwrap().unwrap();
+    assert_eq!(recursive_b.packet.data, recursive_c.packet.data);
+
+    iface_b
+        .rx_channel
+        .send(RxMessage::physical(iface_b.address, second, 500))
+        .await
+        .expect("batched path request");
+    timeout(Duration::from_secs(1), ingress.recv()).await.unwrap().unwrap();
+    assert!(timeout(Duration::from_millis(50), iface_a.tx_channel.recv()).await.is_err());
+    assert!(timeout(Duration::from_millis(50), iface_c.tx_channel.recv()).await.is_err());
+
+    iface_c
+        .rx_channel
+        .send(RxMessage::physical(iface_c.address, limited, 500).ingress_limited())
+        .await
+        .expect("ingress-limited path request");
+    timeout(Duration::from_secs(1), ingress.recv()).await.unwrap().unwrap();
+    assert_eq!(transport.path_request_snapshot().await.in_flight, 1);
+
+    iface_c
+        .rx_channel
+        .send(RxMessage::physical(iface_c.address, announce, 500))
+        .await
+        .expect("matching announce input");
+    timeout(Duration::from_secs(1), ingress.recv()).await.unwrap().unwrap();
+    let response_a =
+        timeout(Duration::from_secs(1), iface_a.tx_channel.recv()).await.unwrap().unwrap();
+    let response_b =
+        timeout(Duration::from_secs(1), iface_b.tx_channel.recv()).await.unwrap().unwrap();
+    assert_eq!(response_a.packet.context, PacketContext::PathResponse);
+    assert_eq!(response_b.packet.context, PacketContext::PathResponse);
+    assert_eq!(response_a.packet.destination, destination);
+    assert_eq!(response_b.packet.destination, destination);
+    assert!(timeout(Duration::from_millis(50), iface_c.tx_channel.recv()).await.is_err());
+    assert_eq!(transport.path_request_snapshot().await.in_flight, 0);
+}
+
+#[tokio::test]
+async fn local_path_resolution_answers_existing_batched_waiters_and_current_requester() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut transport =
+        Transport::new(TransportConfig::new("local-path-batching", &identity, true));
+    let local = transport
+        .add_destination_checked(
+            PrivateIdentity::new_from_rand(OsRng),
+            DestinationName::new("lxmf", "delivery"),
+        )
+        .await
+        .expect("local destination");
+    let destination = local.lock().await.desc.address_hash;
+    let mut iface_a = test_interface_channel(&transport).await;
+    let mut iface_b = test_interface_channel(&transport).await;
+    let mut iface_c = test_interface_channel(&transport).await;
+    let active = BTreeSet::from([iface_a.address, iface_b.address, iface_c.address]);
+    {
+        let mut handler = transport.handler.lock().await;
+        assert_eq!(
+            handler.path_requests.register_discovery(
+                &path_requests::PathRequest {
+                    destination,
+                    requesting_transport: None,
+                    tag_bytes: vec![0xA1; 16],
+                },
+                iface_a.address,
+                false,
+                &active,
+            ),
+            path_requests::DiscoveryAction::StartDiscovery
+        );
+        assert_eq!(
+            handler.path_requests.register_discovery(
+                &path_requests::PathRequest {
+                    destination,
+                    requesting_transport: None,
+                    tag_bytes: vec![0xB2; 16],
+                },
+                iface_b.address,
+                false,
+                &active,
+            ),
+            path_requests::DiscoveryAction::Batched
+        );
+    }
+    let request =
+        transport.handler.lock().await.path_requests.generate(&destination, Some(vec![0xC3; 16]));
+    let mut ingress = transport.iface_rx();
+    iface_c
+        .rx_channel
+        .send(RxMessage::physical(iface_c.address, request, 500))
+        .await
+        .expect("current path request");
+    timeout(Duration::from_secs(1), ingress.recv()).await.unwrap().unwrap();
+
+    for channel in [&mut iface_a, &mut iface_b, &mut iface_c] {
+        let response =
+            timeout(Duration::from_secs(1), channel.tx_channel.recv()).await.unwrap().unwrap();
+        assert_eq!(response.packet.context, PacketContext::PathResponse);
+        assert_eq!(response.packet.destination, destination);
+    }
+    assert_eq!(transport.path_request_snapshot().await.in_flight, 0);
 }
 
 #[tokio::test]
