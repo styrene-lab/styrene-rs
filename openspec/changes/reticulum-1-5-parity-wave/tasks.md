@@ -3,9 +3,9 @@
 ## 1. Shared Versioned RNS Fixture Authority
 <!-- specs: parity-evidence -->
 
-- [ ] 1.1 Add failing schema/provenance tests requiring `tests/interop/fixtures/rns/index-v2.json`, schema version 2, separate `rns-1.4.2` and `rns-1.5.1` authority records, typed vector expectations, source symbols, and artifact SHA-256 values while asserting every existing 1.4.2 ID, path, byte sequence, and checksum is unchanged
-- [ ] 1.2 Minimally add the shared additive v2 index and bounded 1.5.1 vectors, retain `provenance-v1.toml` readability, and expose one fixture-loader contract for `beechat-rns-corrections-wave`, `freetak-rns-hardening-wave`, and `leviculum-rns-corpus-wave` consumers without vendoring Python or mutable revisions
-- [ ] 1.3 Verify both authority revisions and all checksums offline, prove old 1.4.2 fixture consumers still pass, and prove the three consumer waves can reference the v2 authority IDs without defining another canonical RNS schema
+- [x] 1.1 Add failing schema/provenance tests requiring `tests/interop/fixtures/rns/index-v2.json`, schema version 2, separate `rns-1.4.2` and `rns-1.5.1` authority records, typed vector expectations, source symbols, and artifact SHA-256 values while asserting every existing 1.4.2 ID, path, byte sequence, and checksum is unchanged
+- [x] 1.2 Minimally add the shared additive v2 index and bounded 1.5.1 vectors, retain `provenance-v1.toml` readability, and expose one fixture-loader contract for `beechat-rns-corrections-wave`, `freetak-rns-hardening-wave`, and `leviculum-rns-corpus-wave` consumers without vendoring Python or mutable revisions
+- [x] 1.3 Verify both authority revisions and all checksums offline, prove old 1.4.2 fixture consumers still pass, and prove the three consumer waves can reference the v2 authority IDs without defining another canonical RNS schema
 
 ## 2. Packet Admission And Received Hops
 <!-- specs: packet-admission-routing -->
