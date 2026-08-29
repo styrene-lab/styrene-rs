@@ -40,6 +40,18 @@ pub struct RNodeBearerInfo {
     pub max_write_size: Option<usize>,
 }
 
+/// Split one encoded RNode frame into ordered writes accepted by the bearer.
+pub fn rnode_write_chunks(
+    info: Option<RNodeBearerInfo>,
+    frame: &[u8],
+) -> impl Iterator<Item = &[u8]> {
+    let cap = info
+        .and_then(|info| info.max_write_size.or(info.negotiated_mtu))
+        .unwrap_or(DEFAULT_WRITE_CAP)
+        .max(1);
+    frame.chunks(cap)
+}
+
 /// Cancellation-safe, one-attempt ordered-byte bearer.
 ///
 /// Dropping an in-flight operation must not prevent an idempotent `close`.
@@ -321,12 +333,7 @@ impl<B: RNodeByteAttempt> RNodeEngine<B> {
     }
 
     async fn write_frame(&mut self, frame: Vec<u8>) -> Result<(), String> {
-        let cap = self
-            .info
-            .and_then(|info| info.max_write_size.or(info.negotiated_mtu))
-            .unwrap_or(DEFAULT_WRITE_CAP)
-            .max(1);
-        for chunk in frame.chunks(cap) {
+        for chunk in rnode_write_chunks(self.info, &frame) {
             self.backend.write(chunk.to_vec()).await?;
         }
         Ok(())
@@ -501,6 +508,51 @@ mod tests {
         );
         engine.open().await.expect("open");
         assert_eq!(engine.poll().await.expect("empty read"), RNodeProtocolOutput::default());
+    }
+
+    #[test]
+    fn write_chunks_share_the_engine_metadata_precedence_and_preserve_bytes() {
+        let frame = (0..45).collect::<Vec<_>>();
+        let cases = [
+            (
+                Some(RNodeBearerInfo {
+                    kind: RNodeBearerKind::Ble,
+                    negotiated_mtu: Some(64),
+                    max_write_size: Some(3),
+                }),
+                3,
+            ),
+            (
+                Some(RNodeBearerInfo {
+                    kind: RNodeBearerKind::Ble,
+                    negotiated_mtu: Some(4),
+                    max_write_size: None,
+                }),
+                4,
+            ),
+            (
+                Some(RNodeBearerInfo {
+                    kind: RNodeBearerKind::Ble,
+                    negotiated_mtu: None,
+                    max_write_size: None,
+                }),
+                20,
+            ),
+            (
+                Some(RNodeBearerInfo {
+                    kind: RNodeBearerKind::Ble,
+                    negotiated_mtu: None,
+                    max_write_size: Some(0),
+                }),
+                1,
+            ),
+        ];
+
+        for (info, expected_cap) in cases {
+            let chunks = rnode_write_chunks(info, &frame).map(<[u8]>::to_vec).collect::<Vec<_>>();
+            assert!(chunks.iter().all(|chunk| chunk.len() <= expected_cap));
+            assert_eq!(chunks.concat(), frame);
+        }
     }
 
     #[tokio::test]
