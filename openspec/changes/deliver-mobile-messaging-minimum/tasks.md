@@ -26,6 +26,7 @@
 - [x] 2.3 Add failing Rust store and Dioxus component tests for cold restoration, reconnect, stale completion rejection, and TCP operation without an RNode
 - [x] 2.4 Implement persisted endpoint editing, automatic boot, reconnect presentation, and recoverable failure in shared Rust and Dioxus code
 - [x] 2.5 Add deterministic local TCP integration tests proving connection, interruption, reconnect, identity continuity, and clean shutdown
+- [x] 2.6 Expose bounded current-generation mobile state invalidations with explicit lag recovery
 
 ## 3. Canonical Discovery
 <!-- specs: mobile-network-session -->

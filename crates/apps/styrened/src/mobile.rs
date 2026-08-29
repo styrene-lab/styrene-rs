@@ -53,20 +53,20 @@ use crate::startup_contract::{
     capabilities as startup_capability, components as startup_component,
 };
 use crate::storage::messages::MessagesStore;
-use crate::transport::mesh_transport::MeshTransport;
+use crate::transport::mesh_transport::{MeshTransport, TransportLifecycleEvent};
 
 use rns_core::buffer::InputBuffer;
 use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use rns_core::packet::Packet;
 use rns_core::transport::iface::{
-    IngressEnqueueOutcome, InterfaceChannel, InterfaceKind, InterfaceRxSender, InterfaceState,
-    InterfaceTxReceiver, RxMessage,
+    IngressEnqueueOutcome, InterfaceChannel, InterfaceKind, InterfaceRxSender, InterfaceSnapshot,
+    InterfaceState, InterfaceTxReceiver, RxMessage,
 };
 use serde::{Deserialize, Serialize};
 use styrene_ipc::traits::{Daemon, DaemonIdentity, DaemonMessaging, DaemonStatus};
 use styrene_services::node_store::NodeStore;
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -324,6 +324,87 @@ pub struct MobileSessionSnapshot {
     pub generation: u64,
     pub failure: Option<MobileFailure>,
     pub bearers: Vec<MobileBearerObservation>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MobileStateEventKind {
+    Session,
+    Peer,
+    Message,
+    Propagation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MobileStateEvent {
+    pub generation: u64,
+    pub kind: MobileStateEventKind,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MobileStateSubscriptionError {
+    #[error("mobile state event stream lagged by {0} events")]
+    Lagged(u64),
+    #[error("mobile state event stream closed")]
+    Closed,
+}
+
+pub struct MobileStateSubscription {
+    initial_generation: u64,
+    transport: Arc<dyn MeshTransport>,
+    lifecycle: broadcast::Receiver<TransportLifecycleEvent>,
+    events: broadcast::Receiver<styrene_ipc::types::DaemonEvent>,
+}
+
+impl MobileStateSubscription {
+    pub async fn recv(&mut self) -> Result<MobileStateEvent, MobileStateSubscriptionError> {
+        loop {
+            let kind = tokio::select! {
+                event = self.lifecycle.recv() => match event {
+                    Ok(
+                        TransportLifecycleEvent::Connected
+                        | TransportLifecycleEvent::Disconnected
+                        | TransportLifecycleEvent::Reconnected
+                        | TransportLifecycleEvent::InterfaceChanged
+                        | TransportLifecycleEvent::InterfaceReconcileRequired
+                        | TransportLifecycleEvent::LinkReconcileRequired,
+                    ) => MobileStateEventKind::Session,
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                        return Err(MobileStateSubscriptionError::Lagged(dropped));
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        return Err(MobileStateSubscriptionError::Closed);
+                    }
+                },
+                event = self.events.recv() => match event {
+                    Ok(styrene_ipc::types::DaemonEvent::Device { .. }) => {
+                        MobileStateEventKind::Peer
+                    }
+                    Ok(styrene_ipc::types::DaemonEvent::Message { .. }) => {
+                        MobileStateEventKind::Message
+                    }
+                    Ok(styrene_ipc::types::DaemonEvent::StandardPropagationChanged { .. }) => {
+                        MobileStateEventKind::Propagation
+                    }
+                    Ok(styrene_ipc::types::DaemonEvent::ReconcileRequired { dropped }) => {
+                        return Err(MobileStateSubscriptionError::Lagged(dropped));
+                    }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                        return Err(MobileStateSubscriptionError::Lagged(dropped));
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        return Err(MobileStateSubscriptionError::Closed);
+                    }
+                },
+            };
+            let interfaces = self.transport.interface_snapshots().await;
+            return Ok(MobileStateEvent {
+                generation: mobile_session_generation(&interfaces, self.initial_generation),
+                kind,
+            });
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -781,6 +862,15 @@ impl MobileSessionSnapshot {
     pub fn bearer(&self, kind: MobileBearerKind) -> Option<&MobileBearerObservation> {
         self.bearers.iter().find(|bearer| bearer.kind == kind)
     }
+}
+
+fn mobile_session_generation(interfaces: &[InterfaceSnapshot], initial_generation: u64) -> u64 {
+    interfaces
+        .iter()
+        .map(|interface| interface.generation)
+        .max()
+        .unwrap_or(initial_generation)
+        .max(1)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1489,12 +1579,7 @@ impl MobileNode {
 
     pub async fn session_snapshot(&self) -> MobileSessionSnapshot {
         let interfaces = self.app_context.transport().interface_snapshots().await;
-        let generation = interfaces
-            .iter()
-            .map(|interface| interface.generation)
-            .max()
-            .unwrap_or(self.generation)
-            .max(1);
+        let generation = mobile_session_generation(&interfaces, self.generation);
         let tcp_states = interfaces
             .iter()
             .filter(|interface| {
@@ -1571,6 +1656,16 @@ impl MobileNode {
         MobilePeerSubscription {
             generation: self.session_snapshot().await.generation,
             receiver: self.app_context.events().subscribe_devices(),
+        }
+    }
+
+    pub fn subscribe_state_events(&self) -> MobileStateSubscription {
+        let transport = self.app_context.transport_arc();
+        MobileStateSubscription {
+            initial_generation: self.generation,
+            lifecycle: transport.subscribe_lifecycle(),
+            events: self.app_context.events().subscribe_daemon_events(),
+            transport,
         }
     }
 
