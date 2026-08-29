@@ -271,6 +271,7 @@ mod inner {
                                 iface_address,
                                 context.cancel.clone(),
                                 stop.clone(),
+                                Self::mtu(),
                                 context.ifac.clone(),
                             ));
                             let tx_task = tokio::spawn(run_hdlc_tx_loop(
@@ -290,6 +291,7 @@ mod inner {
                                 iface_address,
                                 context.cancel.clone(),
                                 stop.clone(),
+                                Self::mtu(),
                                 context.ifac.clone(),
                             ));
                             let tx_task = tokio::spawn(run_hdlc_tx_loop(

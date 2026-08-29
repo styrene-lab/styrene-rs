@@ -113,6 +113,20 @@
       }
     },
     {
+      "id": "rns-1.5.1-packet-admission",
+      "authority_id": "rns-1.5.1",
+      "kind": "packet-admission-matrix",
+      "artifact": "tests/interop/fixtures/rns/rns-1.5.1/packet-admission.json",
+      "sha256": "ed41fec77df9c06397df21563d90f9c73ab06aacc62c5bc5d6dc79a263fc947b",
+      "generator": "tests/interop/python/generate_rns_1_5_fixtures.py",
+      "source_symbols": ["RNS.Packet.Packet.unpack", "RNS.Transport.Transport.PATHFINDER_M"],
+      "expected": {
+        "type": "acceptance-matrix",
+        "accepted": false,
+        "classes": ["malformed_packet", "empty_data", "excessive_hops"]
+      }
+    },
+    {
       "id": "rns-1.5.1-token-valid",
       "authority_id": "rns-1.5.1",
       "kind": "token",

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import pathlib
 import subprocess
 import sys
@@ -46,6 +47,23 @@ def main() -> int:
         if packet.unpack() is not True:
             raise SystemExit("canonical RNS rejected a seed packet")
 
+    mutations = [
+        ("type1-incomplete-destination", TYPE1[:17], "malformed_packet"),
+        ("type1-zero-data", TYPE1[:19], "empty_data"),
+        ("hop-128", TYPE1[:1] + bytes([128]) + TYPE1[2:], "excessive_hops"),
+        ("hop-255", TYPE1[:1] + bytes([255]) + TYPE1[2:], "excessive_hops"),
+        ("type2-incomplete-transport", TYPE2[:17], "malformed_packet"),
+        ("type2-incomplete-destination", TYPE2[:34], "malformed_packet"),
+        ("type2-zero-data", TYPE2[:35], "empty_data"),
+    ]
+    admission = []
+    for case_id, raw, rejection in mutations:
+        if RNS.Packet(None, raw).unpack() is not False:
+            raise SystemExit(f"canonical RNS unexpectedly accepted {case_id}")
+        admission.append(
+            {"id": case_id, "raw_hex": raw.hex(), "accepted": False, "class": rejection}
+        )
+
     original_urandom = token_module.os.urandom
     token_module.os.urandom = lambda length: TOKEN_IV if length == len(TOKEN_IV) else original_urandom(length)
     try:
@@ -60,6 +78,9 @@ def main() -> int:
     (args.output / "packet-type1-hop127.bin").write_bytes(TYPE1)
     (args.output / "packet-type2-hop127.bin").write_bytes(TYPE2)
     (args.output / "token-valid.bin").write_bytes(encrypted)
+    (args.output / "packet-admission.json").write_text(
+        json.dumps(admission, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return 0
 
 

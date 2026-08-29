@@ -2078,7 +2078,7 @@ impl MobileNode {
         let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
         rnode
             .rx
-            .send(RxMessage { address: rnode.address, packet })
+            .send(RxMessage::physical(rnode.address, packet, rns_core::packet::MTU))
             .await
             .map_err(|_| "RNode receive channel closed".to_string())
     }

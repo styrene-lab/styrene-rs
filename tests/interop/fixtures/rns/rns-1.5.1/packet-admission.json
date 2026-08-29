@@ -1,0 +1,44 @@
+[
+  {
+    "accepted": false,
+    "class": "malformed_packet",
+    "id": "type1-incomplete-destination",
+    "raw_hex": "017f000102030405060708090a0b0c0d0e"
+  },
+  {
+    "accepted": false,
+    "class": "empty_data",
+    "id": "type1-zero-data",
+    "raw_hex": "017f000102030405060708090a0b0c0d0e0f00"
+  },
+  {
+    "accepted": false,
+    "class": "excessive_hops",
+    "id": "hop-128",
+    "raw_hex": "0180000102030405060708090a0b0c0d0e0f00a5"
+  },
+  {
+    "accepted": false,
+    "class": "excessive_hops",
+    "id": "hop-255",
+    "raw_hex": "01ff000102030405060708090a0b0c0d0e0f00a5"
+  },
+  {
+    "accepted": false,
+    "class": "malformed_packet",
+    "id": "type2-incomplete-transport",
+    "raw_hex": "417f101112131415161718191a1b1c1d1e"
+  },
+  {
+    "accepted": false,
+    "class": "malformed_packet",
+    "id": "type2-incomplete-destination",
+    "raw_hex": "417f101112131415161718191a1b1c1d1e1f000102030405060708090a0b0c0d0e0f"
+  },
+  {
+    "accepted": false,
+    "class": "empty_data",
+    "id": "type2-zero-data",
+    "raw_hex": "417f101112131415161718191a1b1c1d1e1f000102030405060708090a0b0c0d0e0f00"
+  }
+]

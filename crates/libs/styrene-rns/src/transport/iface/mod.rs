@@ -20,9 +20,10 @@ use tokio::sync::mpsc;
 use tokio::task;
 use tokio_util::sync::CancellationToken;
 
+use crate::RnsError;
 use crate::hash::AddressHash;
 use crate::hash::Hash;
-use crate::packet::Packet;
+use crate::packet::{MAX_HOPS, Packet};
 
 pub use driver::{InterfaceDriver, InterfaceDriverFactory};
 
@@ -55,6 +56,53 @@ pub struct TxDispatchTrace {
 pub struct RxMessage {
     pub address: AddressHash,
     pub packet: Packet,
+    origin: IngressOrigin,
+    mtu: Option<usize>,
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+enum IngressOrigin {
+    Physical,
+    Local,
+    Canonical,
+}
+
+impl RxMessage {
+    pub fn physical(address: AddressHash, packet: Packet, mtu: usize) -> Self {
+        Self { address, packet, origin: IngressOrigin::Physical, mtu: Some(mtu) }
+    }
+
+    pub fn local(address: AddressHash, packet: Packet) -> Self {
+        Self { address, packet, origin: IngressOrigin::Local, mtu: None }
+    }
+
+    pub fn admit(mut self) -> Result<Self, RnsError> {
+        if self.packet.data.is_empty() {
+            return Err(RnsError::InvalidArgument);
+        }
+        match self.origin {
+            IngressOrigin::Physical => {
+                if self.packet.header.hops >= MAX_HOPS {
+                    return Err(RnsError::InvalidArgument);
+                }
+                if self.mtu.is_some_and(|mtu| {
+                    self.packet.to_bytes().map_or(true, |bytes| bytes.len() > mtu)
+                }) {
+                    return Err(RnsError::InvalidArgument);
+                }
+                self.packet.header.hops += 1;
+                self.origin = IngressOrigin::Canonical;
+            }
+            IngressOrigin::Local => {
+                if self.packet.header.hops >= MAX_HOPS {
+                    return Err(RnsError::InvalidArgument);
+                }
+                self.origin = IngressOrigin::Canonical;
+            }
+            IngressOrigin::Canonical => {}
+        }
+        Ok(self)
+    }
 }
 
 pub struct InterfaceChannel {

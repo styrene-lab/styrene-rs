@@ -262,6 +262,10 @@ pub(super) async fn manage_transport(
                         break;
                     },
                     Some(message) = rx_receiver.recv() => {
+                        let Ok(message) = message.admit() else {
+                            log::warn!("tp: dropping invalid packet before ingress state mutation");
+                            continue;
+                        };
                         let _ = iface_messages_tx.send(message);
 
                         let packet = message.packet;
