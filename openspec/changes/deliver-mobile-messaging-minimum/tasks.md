@@ -106,7 +106,7 @@
 ## 11. Native BLE Adapters
 <!-- specs: mobile-ble-rnode -->
 
-- [ ] 11.1 Add failing safe-boundary tests for CoreBluetooth state, NUS discovery, characteristic properties, notification delivery, response writes, write limits, and disconnect
+- [x] 11.1 Add failing safe-boundary tests for CoreBluetooth state, NUS discovery, characteristic properties, notification delivery, response writes, write limits, and disconnect
 - [ ] 11.2 Implement the iOS adapter inside the existing Rust Apple bridge without exposing Objective-C objects or adding maintained Swift
 - [ ] 11.3 Add failing Android bridge tests for API-level permission, adapter state, scan identity, NUS discovery, response writes, MTU conversion, callback generation, and close
 - [ ] 11.4 Implement the Android GATT adapter through tracked Rust and approved generated-host extension seams without adding maintained Kotlin product logic
