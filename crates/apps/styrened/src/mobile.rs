@@ -60,8 +60,8 @@ use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use rns_core::packet::Packet;
 use rns_core::transport::iface::{
-    InterfaceChannel, InterfaceKind, InterfaceRxSender, InterfaceState, InterfaceTxReceiver,
-    RxMessage,
+    IngressEnqueueOutcome, InterfaceChannel, InterfaceKind, InterfaceRxSender, InterfaceState,
+    InterfaceTxReceiver, RxMessage,
 };
 use serde::{Deserialize, Serialize};
 use styrene_ipc::traits::{Daemon, DaemonIdentity, DaemonMessaging, DaemonStatus};
@@ -2076,11 +2076,19 @@ impl MobileNode {
             .map_err(|error| format!("invalid RNS packet ({} bytes): {error:?}", packet.len()))?;
 
         let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
-        rnode
+        match rnode
             .rx
             .send(RxMessage::physical(rnode.address, packet, rns_core::packet::MTU))
             .await
             .map_err(|_| "RNode receive channel closed".to_string())
+        {
+            Ok(IngressEnqueueOutcome::Accepted) => Ok(()),
+            Ok(IngressEnqueueOutcome::Dropped) => Err("RNode receive queue is full".to_string()),
+            Ok(IngressEnqueueOutcome::Rejected) => {
+                Err("RNode packet rejected by transport admission".to_string())
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Poll the next unframed RNS packet destined for the Android-owned RNode.

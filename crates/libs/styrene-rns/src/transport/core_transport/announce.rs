@@ -81,8 +81,25 @@ async fn process_announce<'a>(
 
 pub(super) async fn handle_announce<'a>(
     packet: &Packet,
+    handler: MutexGuard<'a, TransportHandler>,
+    iface: AddressHash,
+) {
+    handle_announce_with_class(packet, handler, iface, false).await;
+}
+
+pub(super) async fn handle_ingress_limited_announce<'a>(
+    packet: &Packet,
+    handler: MutexGuard<'a, TransportHandler>,
+    iface: AddressHash,
+) {
+    handle_announce_with_class(packet, handler, iface, true).await;
+}
+
+async fn handle_announce_with_class<'a>(
+    packet: &Packet,
     mut handler: MutexGuard<'a, TransportHandler>,
     iface: AddressHash,
+    ingress_limited: bool,
 ) {
     // Skip announces for local destinations (upstream PR #83)
     if handler.has_destination(&packet.destination) {
@@ -101,19 +118,21 @@ pub(super) async fn handle_announce<'a>(
         }
     };
 
-    let destination_known = handler.has_destination(&packet.destination)
-        || handler.knows_destination(&packet.destination);
-    match handler.announce_limits.check(iface, packet, destination_known) {
-        AnnounceLimitAction::Allow => {}
-        AnnounceLimitAction::Hold(release_after) => {
-            log::info!(
-                "tp({}): holding announce for {} on iface {} for at least {:?}",
-                handler.config.name,
-                packet.destination,
-                iface,
-                release_after,
-            );
-            return;
+    if !ingress_limited {
+        let destination_known = handler.has_destination(&packet.destination)
+            || handler.knows_destination(&packet.destination);
+        match handler.announce_limits.check(iface, packet, destination_known) {
+            AnnounceLimitAction::Allow => {}
+            AnnounceLimitAction::Hold(release_after) => {
+                log::info!(
+                    "tp({}): holding announce for {} on iface {} for at least {:?}",
+                    handler.config.name,
+                    packet.destination,
+                    iface,
+                    release_after,
+                );
+                return;
+            }
         }
     }
 
@@ -142,29 +161,5 @@ pub(super) async fn retransmit_announces<'a>(
         for message in old_messages {
             handler.send(message).await;
         }
-    }
-}
-
-#[allow(dead_code)] // Awaiting integration into transport job loop
-pub(super) async fn release_held_announces<'a>(handler: MutexGuard<'a, TransportHandler>) {
-    let mut handler = handler;
-    let released = handler.announce_limits.release_ready();
-
-    for released_announce in released {
-        let packet = released_announce.packet;
-        let iface = released_announce.iface;
-        let announce = match DestinationAnnounce::validate(&packet) {
-            Ok(result) => result,
-            Err(err) => {
-                log::warn!(
-                    "tp: dropping held announce for {} after revalidate failure: {:?}",
-                    packet.destination,
-                    err
-                );
-                continue;
-            }
-        };
-
-        handler = process_announce(&packet, handler, iface, announce).await;
     }
 }

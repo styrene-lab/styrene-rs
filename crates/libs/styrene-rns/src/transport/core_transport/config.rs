@@ -18,6 +18,7 @@ impl TransportConfig {
             resource_retry_limit: 5,
             ratchet_store_path: None,
             blackholed_identities: HashSet::new(),
+            ingress_queue_capacities: IngressQueueCapacities::default(),
         }
     }
 
@@ -71,6 +72,10 @@ impl TransportConfig {
     pub fn set_blackholed_identities(&mut self, identities: impl IntoIterator<Item = AddressHash>) {
         self.blackholed_identities = identities.into_iter().collect();
     }
+
+    pub fn set_ingress_queue_capacities(&mut self, capacities: IngressQueueCapacities) {
+        self.ingress_queue_capacities = capacities;
+    }
 }
 
 impl Default for TransportConfig {
@@ -91,6 +96,7 @@ impl Default for TransportConfig {
             resource_retry_limit: 5,
             ratchet_store_path: None,
             blackholed_identities: HashSet::new(),
+            ingress_queue_capacities: IngressQueueCapacities::default(),
         }
     }
 }

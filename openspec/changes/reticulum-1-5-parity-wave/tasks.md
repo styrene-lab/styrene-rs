@@ -24,9 +24,9 @@
 ## 4. Strict-Priority Bounded Ingress
 <!-- specs: bounded-ingress -->
 
-- [ ] 4.1 Add failing deterministic tests for FIFO order within each class, strict `data > announce > path request > ingress limited` selection, indefinite lower-class starvation under sustained higher-class load, immediate lower-class progress after higher classes empty, capacities `1024/128/128/8`, and per-class overflow drops
-- [ ] 4.2 Minimally replace the single transport FIFO with configurable bounded class queues that restart selection at data after every dequeue and expose one lock-consistent unsigned-integer snapshot of `capacity`, `depth`, and monotonic `dropped` per class
-- [ ] 4.3 Verify sustained concurrent producers cannot exceed class capacities, no fairness/aging silently changes canonical starvation, FIFO resumes correctly after starvation, and all occupancy/drop assertions run offline
+- [x] 4.1 Add failing deterministic tests for FIFO order within each class, strict `data > announce > path request > ingress limited` selection, indefinite lower-class starvation under sustained higher-class load, immediate lower-class progress after higher classes empty, capacities `1024/128/128/8`, and per-class overflow drops
+- [x] 4.2 Minimally replace the single transport FIFO with configurable bounded class queues that restart selection at data after every dequeue and expose one lock-consistent unsigned-integer snapshot of `capacity`, `depth`, and monotonic `dropped` per class
+- [x] 4.3 Verify sustained concurrent producers cannot exceed class capacities, no fairness/aging silently changes canonical starvation, FIFO resumes correctly after starvation, and all occupancy/drop assertions run offline
 
 ## 5. Path-Request Batching And Canonical Limits
 <!-- specs: packet-admission-routing, bounded-ingress -->
