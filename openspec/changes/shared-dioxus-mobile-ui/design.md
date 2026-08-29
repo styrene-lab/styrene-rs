@@ -66,6 +66,35 @@ The UI keeps LXMF method, active bearer, and delivery evidence separate. It does
 not derive one from another. Preview or fixture data remains visibly marked and
 cannot enter live backend stores.
 
+## Mobile UX Sources
+
+The requirements in this change are the self-contained normative product
+contract. A workspace-local `dioxus-mobile-ux` skill provides a non-normative
+implementation checklist and versioned primary-source corpus. That corpus
+separates four source classes:
+
+- The exact Dioxus crate, CLI, tagged source, and WebView renderer behavior.
+- Apple and WebKit platform interaction guidance.
+- Android and Material 3 platform interaction guidance.
+- WCAG 2.2, semantic HTML, ARIA, viewport, and mobile web requirements.
+
+Stable Dioxus documentation can describe concepts used by the pinned
+`0.8.0-alpha.1` prerelease. It is not an API or configuration contract for that
+prerelease. Every version-sensitive API and `Dioxus.toml` field must match the
+pinned source. A clean packaged build confirms that the selected configuration
+is accepted; runtime behavior still requires evidence from the applicable
+packaged scenario.
+
+The shared document owns semantic structure, adaptive panes, presentation,
+focus, status announcements, theme tokens, and ordinary form behavior. Rust
+platform services own system Back, lifecycle, permissions, notifications,
+secure storage, and any required bridge for window classes, insets, keyboard
+geometry, Dynamic Type, Android font scaling, contrast, or reduced motion.
+
+One layer applies each safe-area, system-bar, cutout, and keyboard inset. The
+document uses progressive Web APIs only when a tested fallback or platform
+bridge preserves the workflow on supported WebView versions.
+
 ## Migration Slices
 
 1. Package a fixture-only Dioxus shell on iOS and Android.
@@ -92,6 +121,12 @@ The mobile-minimum state corpus supplies deterministic typed states. Dioxus
 package tests replay accepted application journeys. Pinned Python RNS and LXMF
 tests remain the separate protocol authority. Passing one evidence class cannot
 substitute for another.
+
+WCAG and rendered-markup checks detect structural defects but do not prove
+native accessibility. VoiceOver must exercise the shipping `WKWebView`, and
+TalkBack must exercise the shipping Android WebView. Evidence also records
+window size, text scale, appearance, motion preference, WebView version when
+applicable, and packaged artifact identity.
 
 ## Failure And Rollback
 
