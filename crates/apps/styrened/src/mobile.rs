@@ -59,9 +59,11 @@ use rns_core::buffer::InputBuffer;
 use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use rns_core::packet::Packet;
+use rns_core::transport::iface::rnode::{RNodeProtocol, RNodeProtocolPhase, RNodeRadioProfile};
 use rns_core::transport::iface::{
-    IngressEnqueueOutcome, InterfaceChannel, InterfaceKind, InterfaceRxSender, InterfaceSnapshot,
-    InterfaceState, InterfaceTxReceiver, RxMessage,
+    HostInterfaceControl, IngressEnqueueOutcome, InterfaceChannel, InterfaceDescriptor,
+    InterfaceKind, InterfaceRxSender, InterfaceSnapshot, InterfaceState, InterfaceTxReceiver,
+    RxMessage,
 };
 use serde::{Deserialize, Serialize};
 use styrene_ipc::traits::{Daemon, DaemonIdentity, DaemonMessaging, DaemonStatus};
@@ -913,14 +915,15 @@ struct MobileTransportRuntime {
     tcp_listen_addresses: Vec<SocketAddr>,
     service_receipt_target:
         Option<Arc<std::sync::OnceLock<std::sync::Weak<crate::services::MessagingService>>>>,
-    rnode_channel: Option<InterfaceChannel>,
+    rnode_channel: Option<(InterfaceChannel, HostInterfaceControl)>,
 }
 
 struct RNodeBridge {
     address: AddressHash,
     rx: InterfaceRxSender,
     tx: AsyncMutex<InterfaceTxReceiver>,
-    _stop: CancellationToken,
+    control: HostInterfaceControl,
+    protocol: AsyncMutex<RNodeProtocol>,
 }
 
 impl MobileWorkers {
@@ -1213,11 +1216,12 @@ async fn compose_mobile_node(
     };
     app_context.publish_startup_contract(startup_contract.clone());
     let rnode_channel_enabled = rnode_channel.is_some();
-    let rnode = rnode_channel.map(|channel| RNodeBridge {
+    let rnode = rnode_channel.map(|(channel, control)| RNodeBridge {
         address: channel.address,
         rx: channel.rx_channel,
         tx: AsyncMutex::new(channel.tx_channel),
-        _stop: channel.stop,
+        control,
+        protocol: AsyncMutex::new(RNodeProtocol::new(RNodeRadioProfile::US_915_DEVELOPMENT)),
     });
 
     Ok(MobileNode {
@@ -1481,7 +1485,10 @@ impl MobileNode {
 
             let iface_mgr = transport_instance.iface_manager();
             let rnode_channel = if config.enable_rnode_channel {
-                Some(iface_mgr.lock().await.new_channel(128))
+                Some(iface_mgr.lock().await.new_host_channel(
+                    128,
+                    InterfaceDescriptor { kind: InterfaceKind::Kiss, ..Default::default() },
+                ))
             } else {
                 None
             };
@@ -1607,13 +1614,22 @@ impl MobileNode {
         let platform_bearers = self.platform_service.snapshot().await;
         let failure = (tcp == MobileBearerState::Reconnecting)
             .then_some(MobileFailure { code: MobileFailureCode::TcpRetrying, retryable: true });
-        let phase = match tcp {
-            MobileBearerState::Connected => MobileConnectionPhase::Connected,
-            MobileBearerState::Connecting => MobileConnectionPhase::Connecting,
-            MobileBearerState::Reconnecting => MobileConnectionPhase::Reconnecting,
-            MobileBearerState::Unavailable
-            | MobileBearerState::Unverified
-            | MobileBearerState::Disconnected => MobileConnectionPhase::Stopped,
+        let operational = interfaces.iter().any(|interface| {
+            matches!(
+                interface.state,
+                InterfaceState::Listening | InterfaceState::Connected | InterfaceState::Active
+            )
+        });
+        let phase = if operational {
+            MobileConnectionPhase::Connected
+        } else if interfaces.iter().any(|interface| interface.state == InterfaceState::Retrying) {
+            MobileConnectionPhase::Reconnecting
+        } else if interfaces.iter().any(|interface| {
+            matches!(interface.state, InterfaceState::Starting | InterfaceState::Connecting)
+        }) {
+            MobileConnectionPhase::Connecting
+        } else {
+            MobileConnectionPhase::Stopped
         };
         MobileSessionSnapshot {
             phase,
@@ -2200,6 +2216,75 @@ impl MobileNode {
                 Err("RNode transmit channel closed".to_string())
             }
         }
+    }
+
+    /// Begin one explicitly approved host-owned RNode byte attempt.
+    pub async fn start_rnode_bytes(&self) -> Result<Vec<Vec<u8>>, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        rnode.control.set_state(InterfaceState::Connecting);
+        self.platform_service
+            .report(MobileBearerObservation {
+                kind: MobileBearerKind::AndroidUsb,
+                state: MobileBearerState::Connecting,
+                reason: None,
+            })
+            .await?;
+        let mut protocol = rnode.protocol.lock().await;
+        *protocol = RNodeProtocol::new(RNodeRadioProfile::US_915_DEVELOPMENT);
+        protocol.start().map_err(|error| error.to_string())
+    }
+
+    /// Accept arbitrary ordered RNode bytes and return any protocol response writes.
+    pub async fn submit_rnode_bytes(&self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let output = rnode.protocol.lock().await.feed(bytes).map_err(|error| error.to_string())?;
+        for packet in output.packets {
+            self.submit_rnode_packet(&packet).await?;
+        }
+        if output.became_ready {
+            rnode.control.set_state(InterfaceState::Active);
+            self.platform_service
+                .report(MobileBearerObservation {
+                    kind: MobileBearerKind::AndroidUsb,
+                    state: MobileBearerState::Connected,
+                    reason: None,
+                })
+                .await?;
+        }
+        Ok(output.writes)
+    }
+
+    /// Poll and KISS-frame one outbound RNS packet after RNode startup validation.
+    pub async fn poll_rnode_bytes(&self) -> Result<Option<Vec<u8>>, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        if rnode.protocol.lock().await.phase() != RNodeProtocolPhase::Ready {
+            return Ok(None);
+        }
+        let Some(packet) = self.poll_rnode_packet().await? else {
+            return Ok(None);
+        };
+        rnode
+            .protocol
+            .lock()
+            .await
+            .encode_packet(&packet)
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+
+    /// End the current RNode attempt and return the best-effort radio-off frame.
+    pub async fn stop_rnode_bytes(&self, reason: MobileBearerReason) -> Result<Vec<u8>, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let shutdown = rnode.protocol.lock().await.close();
+        rnode.control.set_state(InterfaceState::Closed);
+        self.platform_service
+            .report(MobileBearerObservation {
+                kind: MobileBearerKind::AndroidUsb,
+                state: MobileBearerState::Disconnected,
+                reason: Some(reason),
+            })
+            .await?;
+        Ok(shutdown)
     }
 
     /// Poll the propagation hub for queued messages.
@@ -3084,6 +3169,83 @@ mod tests {
         .await
         .unwrap();
         assert!(!packet.is_empty());
+    }
+
+    #[tokio::test]
+    async fn configured_rnode_bytes_activate_usb_and_frame_outbound_packets() {
+        use rns_core::transport::iface::kiss::{KissDecoder, kiss_encode_command};
+        use rns_core::transport::iface::rnode::{
+            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FREQUENCY, CMD_RADIO_STATE,
+            CMD_SPREADING_FACTOR, CMD_TX_POWER, RNodeRadioProfile,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("test mobile".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: true,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            node.start_rnode_bytes().await.unwrap_err(),
+            "Android USB requires an explicit fallback request"
+        );
+        assert_eq!(
+            node.platform_service().request_android_usb_fallback().await,
+            MobileUsbFallbackDisposition::Accepted
+        );
+        assert_eq!(node.start_rnode_bytes().await.unwrap().len(), 4);
+
+        let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
+        let detect = kiss_encode_command(CMD_DETECT, &[0x46]);
+        let config_writes = node.submit_rnode_bytes(&detect).await.unwrap();
+        assert_eq!(config_writes.len(), 6);
+        let readback = [
+            kiss_encode_command(CMD_FREQUENCY, &profile.frequency_hz.to_be_bytes()),
+            kiss_encode_command(CMD_BANDWIDTH, &profile.bandwidth_hz.to_be_bytes()),
+            kiss_encode_command(CMD_TX_POWER, &[profile.tx_power_dbm]),
+            kiss_encode_command(CMD_SPREADING_FACTOR, &[profile.spreading_factor]),
+            kiss_encode_command(CMD_CODING_RATE, &[profile.coding_rate]),
+            kiss_encode_command(CMD_RADIO_STATE, &[1]),
+        ]
+        .concat();
+        node.submit_rnode_bytes(&readback).await.unwrap();
+
+        let snapshot = node.session_snapshot().await;
+        assert_eq!(snapshot.phase, MobileConnectionPhase::Connected);
+        assert_eq!(
+            snapshot.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Connected
+        );
+        node.announce().await.unwrap();
+        let framed = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(frame) = node.poll_rnode_bytes().await.unwrap() {
+                    break frame;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut decoder = KissDecoder::new();
+        decoder.feed(&framed);
+        assert!(!decoder.take_frame().expect("outbound RNS packet").is_empty());
+
+        let shutdown =
+            node.stop_rnode_bytes(MobileBearerReason::ConnectionInterrupted).await.unwrap();
+        assert!(!shutdown.is_empty());
+        assert_eq!(
+            node.session_snapshot().await.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Disconnected
+        );
     }
 
     #[tokio::test]

@@ -137,6 +137,23 @@ pub struct InterfaceChannel {
     pub stop: CancellationToken,
 }
 
+#[derive(Clone)]
+pub struct HostInterfaceControl {
+    runtime: Arc<InterfaceRuntime>,
+    stop: CancellationToken,
+}
+
+impl HostInterfaceControl {
+    pub fn set_state(&self, state: InterfaceState) {
+        self.runtime.set_state(state);
+    }
+
+    pub fn close(&self) {
+        self.runtime.set_state(InterfaceState::Closed);
+        self.stop.cancel();
+    }
+}
+
 impl InterfaceChannel {
     pub fn make_rx_channel(cap: usize) -> (InterfaceRxSender, InterfaceRxReceiver) {
         InterfaceRxSender::channel(IngressQueueCapacities::uniform(cap), AddressHash::new([0; 16]))
@@ -695,6 +712,18 @@ impl InterfaceManager {
 
     pub fn new_channel(&mut self, tx_cap: usize) -> InterfaceChannel {
         self.new_channel_with_runtime(tx_cap, InterfaceDescriptor::default(), None, None)
+    }
+
+    /// Register a channel whose byte transport and lifecycle are driven by an embedding host.
+    pub fn new_host_channel(
+        &mut self,
+        tx_cap: usize,
+        descriptor: InterfaceDescriptor,
+    ) -> (InterfaceChannel, HostInterfaceControl) {
+        let channel = self.new_channel_with_runtime(tx_cap, descriptor, None);
+        let runtime = self.ifaces.last().expect("newly registered host interface").runtime.clone();
+        let control = HostInterfaceControl { runtime, stop: channel.stop.clone() };
+        (channel, control)
     }
 
     pub fn new_context<T: Interface>(&mut self, inner: T) -> InterfaceContext<T> {
