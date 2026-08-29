@@ -54,6 +54,7 @@ safe_sensitive_tests = [
   "crates/apps/styrened/src/services/pages.rs#registered_content_and_allowed_policy_cannot_be_replaced_with_symlink_escape",
   "crates/apps/styrened/src/workers/native_nomadnet.rs#dynamic_page_timeout_cleans_up_descendants",
   "crates/apps/styrened/src/workers/native_nomadnet.rs#successful_dynamic_page_returns_without_deadline_and_cleans_descendants",
+  "crates/libs/styrene-rns/src/transport/iface/udp.rs#udp_worker_survives_empty_datagram_and_wraps_egress_with_ifac",
 ]
 
 [[sensitive_tests]]
