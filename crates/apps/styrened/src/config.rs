@@ -187,6 +187,10 @@ pub struct DaemonConfig {
     pub interfaces: Vec<InterfaceConfig>,
     #[serde(default)]
     pub role: NodeRole,
+    /// Whether this node forwards and retransmits transit RNS traffic.
+    /// Defaults to true for existing full-node and hub configurations.
+    #[serde(default)]
+    pub transport_retransmit: Option<bool>,
     /// RBAC policy — role roster, blocked prefixes, default role.
     #[serde(default)]
     pub rbac: Option<RbacPolicy>,
@@ -200,6 +204,28 @@ pub struct InterfaceConfig {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub name: Option<String>,
+    #[serde(flatten)]
+    pub rnode: RNodeInterfaceSettings,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RNodeInterfaceSettings {
+    pub device: Option<String>,
+    pub baud_rate: Option<u32>,
+    pub frequency_hz: Option<u32>,
+    pub bandwidth_hz: Option<u32>,
+    pub tx_power_dbm: Option<u8>,
+    pub spreading_factor: Option<u8>,
+    pub coding_rate: Option<u8>,
+    pub reconnect_delay_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedRNodeInterface {
+    pub device: String,
+    pub baud_rate: u32,
+    pub profile: rns_core::transport::iface::rnode::RNodeRadioProfile,
+    pub reconnect_delay_ms: u64,
 }
 
 impl std::fmt::Display for NodeRole {
@@ -213,6 +239,10 @@ impl std::fmt::Display for NodeRole {
 }
 
 impl DaemonConfig {
+    pub fn transport_retransmit(&self) -> bool {
+        self.transport_retransmit.unwrap_or(true)
+    }
+
     pub fn from_toml(input: &str) -> Result<Self, toml::de::Error> {
         toml::from_str(input)
     }
@@ -249,6 +279,56 @@ impl DaemonConfig {
                 let host = iface.host.as_ref()?;
                 let port = iface.port?;
                 Some((host.clone(), port))
+            })
+            .collect()
+    }
+
+    pub fn rnode_interfaces(&self) -> Result<Vec<ValidatedRNodeInterface>, String> {
+        let mut devices = std::collections::HashSet::new();
+        self.interfaces
+            .iter()
+            .filter(|interface| interface.enabled.unwrap_or(false) && interface.kind == "rnode")
+            .map(|interface| {
+                let device = interface
+                    .rnode
+                    .device
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|device| !device.is_empty())
+                    .ok_or_else(|| "rnode interface requires device".to_string())?
+                    .to_string();
+                if !devices.insert(device.clone()) {
+                    return Err("duplicate rnode device".to_string());
+                }
+                let profile = rns_core::transport::iface::rnode::RNodeRadioProfile::new(
+                    interface
+                        .rnode
+                        .frequency_hz
+                        .ok_or_else(|| "rnode interface requires frequency_hz".to_string())?,
+                    interface
+                        .rnode
+                        .bandwidth_hz
+                        .ok_or_else(|| "rnode interface requires bandwidth_hz".to_string())?,
+                    interface
+                        .rnode
+                        .tx_power_dbm
+                        .ok_or_else(|| "rnode interface requires tx_power_dbm".to_string())?,
+                    interface
+                        .rnode
+                        .spreading_factor
+                        .ok_or_else(|| "rnode interface requires spreading_factor".to_string())?,
+                    interface
+                        .rnode
+                        .coding_rate
+                        .ok_or_else(|| "rnode interface requires coding_rate".to_string())?,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(ValidatedRNodeInterface {
+                    device,
+                    baud_rate: interface.rnode.baud_rate.unwrap_or(115_200),
+                    profile,
+                    reconnect_delay_ms: interface.rnode.reconnect_delay_ms.unwrap_or(3_000),
+                })
             })
             .collect()
     }

@@ -22,6 +22,8 @@ use crate::transport::mesh_transport::MeshTransport;
 use crate::transport::null_transport::NullTransport;
 use rns_core::destination::DestinationName;
 use rns_core::transport::core_transport::{Transport, TransportConfig};
+#[cfg(feature = "native-serial")]
+use rns_core::transport::iface::rnode::RNodeInterface;
 use rns_core::transport::iface::tcp_client::TcpClient;
 use rns_core::transport::iface::tcp_server::TcpServer;
 
@@ -174,6 +176,16 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         default.exists().then_some(default)
     });
     let daemon_config = config_path.as_ref().and_then(|p| DaemonConfig::from_path(p).ok());
+    let rnode_interfaces = daemon_config
+        .as_ref()
+        .map(DaemonConfig::rnode_interfaces)
+        .transpose()
+        .map_err(anyhow::Error::msg)?
+        .unwrap_or_default();
+    #[cfg(not(feature = "native-serial"))]
+    if !rnode_interfaces.is_empty() {
+        anyhow::bail!("RNode interfaces require the styrened native-serial feature");
+    }
 
     let node_role = daemon_config.as_ref().map(|c| c.role).unwrap_or_default();
     crate::daemon_diagnostic!("[styrene] node role: {}", node_role);
@@ -201,7 +213,8 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         // Enable announce retransmission for nodes that run transport.
         // This allows the node to relay announces between non-adjacent peers,
         // enabling multi-hop mesh routing (equivalent to Reticulum transport.enabled).
-        config.set_retransmit(true);
+        config
+            .set_retransmit(daemon_config.as_ref().is_none_or(DaemonConfig::transport_retransmit));
         let mut transport_instance = Transport::new(config);
         startup.record(startup_component::NATIVE_RESOURCE_RETRY_SCHEDULER);
         let receipt_target = Arc::new(std::sync::OnceLock::new());
@@ -223,6 +236,15 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         let bind_addr = tcp_server_bind_addr(daemon_config.as_ref(), cfg.ephemeral);
 
         let iface_manager = transport_instance.iface_manager();
+        #[cfg(feature = "native-serial")]
+        for interface in rnode_interfaces {
+            let rnode = RNodeInterface::new(interface.device, interface.profile)?
+                .with_baud_rate(interface.baud_rate)
+                .with_reconnect_delay(std::time::Duration::from_millis(
+                    interface.reconnect_delay_ms,
+                ));
+            iface_manager.lock().await.spawn(rnode, RNodeInterface::spawn);
+        }
         let (tcp_server, _bound_rx) = TcpServer::new(bind_addr.clone(), iface_manager.clone());
         iface_manager.lock().await.spawn(tcp_server, TcpServer::spawn);
         crate::daemon_diagnostic!("[styrene] tcp_server bind={}", bind_addr);
