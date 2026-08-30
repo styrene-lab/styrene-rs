@@ -126,7 +126,9 @@ fn assert_canonical_wire_fields(message: &[(rmpv::Value, rmpv::Value)]) {
 }
 
 fn test_observation(source: ObservationSource) -> ObservationMetadata {
-    ObservationMetadata::at(source, Some(90), 100, 30)
+    let mut observation = ObservationMetadata::at(source, Some(90), 100, 30);
+    observation.connection_generation = Some(73);
+    observation
 }
 
 fn test_path() -> PathInfo {
@@ -202,6 +204,47 @@ impl DaemonStatus for TestDaemon {
         capabilities.authorized_operations = vec!["chat.send".into()];
         info.active_capabilities = Some(capabilities);
         Ok(info)
+    }
+    async fn mobile_diagnostics(&self) -> Result<MobileDiagnosticSnapshot, IpcError> {
+        Ok(MobileDiagnosticSnapshot {
+            schema_version: MOBILE_DIAGNOSTIC_SCHEMA_VERSION,
+            backend_revision: "styrened/test".into(),
+            first_sequence: Some(7),
+            last_sequence: Some(7),
+            event_count: 1,
+            retained_bytes: 128,
+            max_events: MOBILE_DIAGNOSTIC_MAX_EVENTS,
+            max_bytes: MOBILE_DIAGNOSTIC_MAX_BYTES,
+            truncated: true,
+            dropped_events: 2,
+            events: vec![MobileDiagnosticEvent {
+                sequence: 7,
+                unix_time_ms: Some(1_700_000_000_000),
+                source: MobileDiagnosticSource::Messaging,
+                stage: MobileDiagnosticStage::Outbound,
+                severity: MobileDiagnosticSeverity::Warning,
+                generation: 3,
+                safe_correlation: Some("sha256:abcd".into()),
+            }],
+        })
+    }
+    async fn export_mobile_diagnostics(&self) -> Result<MobileDiagnosticExport, IpcError> {
+        let bytes = br#"{"schema_version":1}"#.to_vec();
+        Ok(MobileDiagnosticExport {
+            schema_version: MOBILE_DIAGNOSTIC_SCHEMA_VERSION,
+            backend_revision: "styrened/test".into(),
+            content_type: "application/vnd.styrene.mobile-diagnostics+json".into(),
+            digest_sha256: "ab".repeat(32),
+            first_sequence: Some(7),
+            last_sequence: Some(7),
+            event_count: 1,
+            byte_count: bytes.len() as u64,
+            max_events: MOBILE_DIAGNOSTIC_MAX_EVENTS,
+            max_bytes: MOBILE_DIAGNOSTIC_MAX_BYTES,
+            truncated: true,
+            dropped_events: 2,
+            bytes,
+        })
     }
     async fn query_standard_propagation(&self) -> Result<StandardPropagationSnapshot, IpcError> {
         let mut snapshot = StandardPropagationSnapshot::default();
@@ -292,6 +335,7 @@ impl DaemonStatus for TestDaemon {
         interface.rx_bytes = i64::MAX as u64 + 1;
         interface.peers_connected = 3;
         interface.observation = test_observation(ObservationSource::RuntimeInterfaceRegistry);
+        interface.observation.interface_generation = Some(5);
         Ok(vec![interface])
     }
     async fn search_peers(&self, _q: &str, _limit: u32) -> Result<Vec<DeviceInfo>, IpcError> {
@@ -311,6 +355,15 @@ impl DaemonIdentity for TestDaemon {
         let mut info = IdentityInfo::default();
         info.identity_hash = "deadbeef".into();
         info.display_name = "Test Node".into();
+        info.custody = Some(IdentityCustodyInfo {
+            requested_backend: IdentityCustodyBackend::EncryptedFile,
+            active_backend: Some(IdentityCustodyBackend::EncryptedFile),
+            protection: Some(IdentityCustodyProtection::EncryptedAtRest),
+            authentication: IdentityCustodyAuthentication::DeviceAuthentication,
+            availability: IdentityCustodyAvailability::Available,
+            downgrade: IdentityCustodyDowngrade::None,
+            failure: None,
+        });
         Ok(info)
     }
     async fn set_identity(
@@ -415,6 +468,17 @@ impl DaemonMessaging for TestDaemon {
         attempt.started_unix_ms = 100;
         attempt.deadline_unix_ms = 200;
         attempt.state = "failed".into();
+        attempt.route.outcome = MessageAttemptRouteOutcome::Observed;
+        attempt.route.connection_generation = Some(4);
+        attempt.route.observed_at = Some(150);
+        attempt.route.next_hop = Some("33".repeat(16));
+        attempt.route.hops = Some(1);
+        attempt.route.stale = false;
+        let mut interface = MessageAttemptInterfaceObservation::default();
+        interface.id = "44".repeat(16);
+        interface.kind = "tcp_client".into();
+        interface.generation = 4;
+        attempt.route.interface = Some(interface);
         let mut message = canonical_test_message();
         message.requested_delivery_method = Some("opportunistic".into());
         message.actual_delivery_method = Some("direct".into());
@@ -1815,6 +1879,111 @@ async fn query_identity() {
     let resp = send_and_recv(&mut stream, MessageType::QueryIdentity, &HashMap::new()).await;
     assert_eq!(resp.msg_type, MessageType::Result);
     assert_eq!(resp.payload.get("identity_hash").and_then(|v| v.as_str()), Some("deadbeef"));
+    let custody = resp.payload.get("custody").and_then(rmpv::Value::as_map).expect("custody map");
+    let keys = custody
+        .iter()
+        .map(|(key, _)| key.as_str().expect("string key"))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        keys,
+        [
+            "active_backend",
+            "authentication",
+            "availability",
+            "downgrade",
+            "failure",
+            "protection",
+            "requested_backend",
+        ]
+        .into_iter()
+        .collect()
+    );
+    let encoded = format!("{custody:?}");
+    for forbidden in ["private", "passphrase", "credential", "key_material", "export"] {
+        assert!(!encoded.contains(forbidden), "custody projection leaked {forbidden}");
+    }
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn mobile_diagnostics_snapshot_and_export_have_exact_bounded_wire_fields() {
+    let (mut server, sock) = setup_server().await;
+    let mut stream = UnixStream::connect(&sock).await.expect("connect");
+    let snapshot =
+        send_and_recv(&mut stream, MessageType::QueryMobileDiagnostics, &HashMap::new()).await;
+    assert_eq!(snapshot.msg_type, MessageType::Result);
+    assert_eq!(
+        snapshot.payload.keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(),
+        [
+            "backend_revision",
+            "dropped_events",
+            "event_count",
+            "events",
+            "first_sequence",
+            "last_sequence",
+            "max_bytes",
+            "max_events",
+            "retained_bytes",
+            "schema_version",
+            "truncated",
+        ]
+        .into_iter()
+        .collect()
+    );
+    let event = snapshot
+        .payload
+        .get("events")
+        .and_then(rmpv::Value::as_array)
+        .and_then(|events| events.first())
+        .and_then(rmpv::Value::as_map)
+        .expect("diagnostic event");
+    assert_eq!(
+        event
+            .iter()
+            .map(|(key, _)| key.as_str().expect("string key"))
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            "generation",
+            "safe_correlation",
+            "sequence",
+            "severity",
+            "source",
+            "stage",
+            "unix_time_ms",
+        ]
+        .into_iter()
+        .collect()
+    );
+
+    let export =
+        send_and_recv(&mut stream, MessageType::CmdExportMobileDiagnostics, &HashMap::new()).await;
+    assert_eq!(export.msg_type, MessageType::Result);
+    assert_eq!(
+        export.payload.keys().map(String::as_str).collect::<std::collections::BTreeSet<_>>(),
+        [
+            "backend_revision",
+            "byte_count",
+            "bytes",
+            "content_type",
+            "digest_sha256",
+            "dropped_events",
+            "event_count",
+            "first_sequence",
+            "last_sequence",
+            "max_bytes",
+            "max_events",
+            "schema_version",
+            "truncated",
+        ]
+        .into_iter()
+        .collect()
+    );
+    let bytes = export.payload.get("bytes").and_then(rmpv::Value::as_slice).expect("export bytes");
+    assert!(bytes.len() <= MOBILE_DIAGNOSTIC_MAX_BYTES as usize);
+    assert_eq!(
+        export.payload.get("byte_count").and_then(rmpv::Value::as_u64),
+        Some(bytes.len() as u64)
+    );
     server.stop().await;
 }
 
@@ -1856,6 +2025,49 @@ async fn query_messages_serializes_authoritative_lifecycle() {
     assert_eq!(attempt_field("started_unix_ms").and_then(rmpv::Value::as_i64), Some(100));
     assert_eq!(attempt_field("deadline_unix_ms").and_then(rmpv::Value::as_i64), Some(200));
     assert_eq!(attempt_field("state").and_then(rmpv::Value::as_str), Some("failed"));
+    assert_eq!(attempt_field("bearer"), Some(&rmpv::Value::Nil));
+    assert_eq!(
+        attempt
+            .iter()
+            .map(|(key, _)| key.as_str().expect("string key"))
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            "bearer",
+            "deadline_unix_ms",
+            "message_id",
+            "number",
+            "route",
+            "started_unix_ms",
+            "state",
+        ]
+        .into_iter()
+        .collect()
+    );
+    let route = attempt_field("route").and_then(rmpv::Value::as_map).expect("route observation");
+    assert_eq!(
+        route
+            .iter()
+            .map(|(key, _)| key.as_str().expect("string key"))
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            "connection_generation",
+            "hops",
+            "interface",
+            "next_hop",
+            "observed_at",
+            "outcome",
+            "stale",
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert_eq!(
+        route
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("outcome"))
+            .and_then(|(_, value)| value.as_str()),
+        Some("observed")
+    );
     assert_canonical_wire_fields(message);
     assert_eq!(
         response.payload.get("next_cursor").and_then(rmpv::Value::as_str),
@@ -2143,7 +2355,9 @@ async fn interface_counters_remain_unsigned_on_the_wire() {
     assert_eq!(item("rx_bytes").and_then(rmpv::Value::as_u64), Some(i64::MAX as u64 + 1));
     assert_eq!(item("source").and_then(rmpv::Value::as_str), Some("runtime_interface_registry"));
     assert_eq!(item("age_secs").and_then(rmpv::Value::as_u64), Some(10));
-    assert!(item("connection_generation").and_then(rmpv::Value::as_u64).is_some());
+    assert_eq!(item("connection_generation").and_then(rmpv::Value::as_u64), Some(73));
+    assert!(item("ipc_connection_generation").and_then(rmpv::Value::as_u64).is_some());
+    assert_eq!(item("interface_generation").and_then(rmpv::Value::as_u64), Some(5));
     assert_eq!(item("type").and_then(rmpv::Value::as_str), Some("tcp_server"));
     assert!(item("kind").is_none());
     assert_eq!(item("mode").and_then(rmpv::Value::as_str), Some("full"));
@@ -2162,7 +2376,7 @@ async fn interface_counters_remain_unsigned_on_the_wire() {
 }
 
 #[tokio::test]
-async fn path_observations_share_the_physical_connection_generation() {
+async fn path_observations_preserve_daemon_generation_and_separate_socket_generation() {
     let (mut server, sock) = setup_server().await;
     let mut stream = UnixStream::connect(&sock).await.expect("connect");
     let mut request = HashMap::new();
@@ -2177,9 +2391,9 @@ async fn path_observations_share_the_physical_connection_generation() {
         .and_then(|paths| paths.first())
         .and_then(rmpv::Value::as_map)
         .unwrap();
-    let table_generation = table_path
+    let table_ipc_generation = table_path
         .iter()
-        .find(|(key, _)| key.as_str() == Some("connection_generation"))
+        .find(|(key, _)| key.as_str() == Some("ipc_connection_generation"))
         .and_then(|(_, value)| value.as_u64());
 
     assert_eq!(
@@ -2188,10 +2402,19 @@ async fn path_observations_share_the_physical_connection_generation() {
     );
     assert_eq!(single.payload.get("age_secs").and_then(rmpv::Value::as_u64), Some(10));
     assert_eq!(single.payload.get("expires").and_then(rmpv::Value::as_i64), Some(700));
+    assert_eq!(single.payload.get("connection_generation").and_then(rmpv::Value::as_u64), Some(73));
     assert_eq!(
-        single.payload.get("connection_generation").and_then(rmpv::Value::as_u64),
-        table_generation
+        table_path
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("connection_generation"))
+            .and_then(|(_, value)| value.as_u64()),
+        Some(73)
     );
+    assert_eq!(
+        single.payload.get("ipc_connection_generation").and_then(rmpv::Value::as_u64),
+        table_ipc_generation
+    );
+    assert!(table_ipc_generation.is_some());
     assert!(!single.payload.contains_key("correlation_id"));
     server.stop().await;
 }

@@ -29,6 +29,25 @@ fn cbor_decode<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T, std::io
     ciborium::from_reader(data).map_err(|e| std::io::Error::other(format!("CBOR decode: {e}")))
 }
 
+pub const PROPAGATION_FETCH_MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+
+fn decode_propagation_fetch_response(
+    payload: &[u8],
+) -> Result<Vec<(String, Vec<u8>)>, std::io::Error> {
+    if payload.len() > PROPAGATION_FETCH_MAX_RESPONSE_BYTES {
+        return Err(std::io::Error::other(format!(
+            "propagation fetch response exceeds {PROPAGATION_FETCH_MAX_RESPONSE_BYTES} bytes"
+        )));
+    }
+    if let Ok(status) = cbor_decode::<styrene_mesh::wire::PropagationStatusPayload>(payload)
+        && !status.success
+    {
+        return Err(std::io::Error::other(status.error.unwrap_or_else(|| "fetch rejected".into())));
+    }
+    let result: styrene_mesh::wire::PropagationFetchResultPayload = cbor_decode(payload)?;
+    Ok(result.messages.into_iter().map(|message| (message.id, message.lxmf_bytes)).collect())
+}
+
 /// A pending RPC request awaiting response.
 pub(crate) struct PendingRequest {
     pub(crate) tx: oneshot::Sender<StyreneMessage>,
@@ -388,18 +407,7 @@ impl FleetService {
                 response.message_type
             )));
         }
-        // Check for error response (RBAC denial, etc.)
-        if let Ok(status) =
-            cbor_decode::<styrene_mesh::wire::PropagationStatusPayload>(&response.payload)
-            && !status.success
-        {
-            return Err(std::io::Error::other(
-                status.error.unwrap_or_else(|| "fetch rejected".into()),
-            ));
-        }
-        let result: styrene_mesh::wire::PropagationFetchResultPayload =
-            cbor_decode(&response.payload)?;
-        Ok(result.messages.into_iter().map(|m| (m.id, m.lxmf_bytes)).collect())
+        decode_propagation_fetch_response(&response.payload)
     }
 
     /// Delete (ACK) messages on a propagation hub.
@@ -580,6 +588,22 @@ mod tests {
     fn starts_with_no_pending() {
         let svc = FleetService::new();
         assert_eq!(svc.pending_count(), 0);
+    }
+
+    #[test]
+    fn propagation_fetch_rejects_oversized_payload_before_cbor_decode() {
+        let error = decode_propagation_fetch_response(&vec![
+            0xff;
+            PROPAGATION_FETCH_MAX_RESPONSE_BYTES
+                + 1
+        ])
+        .unwrap_err();
+        assert!(error.to_string().contains("exceeds"));
+
+        let decode_error =
+            decode_propagation_fetch_response(&vec![0xff; PROPAGATION_FETCH_MAX_RESPONSE_BYTES])
+                .unwrap_err();
+        assert!(decode_error.to_string().contains("CBOR decode"));
     }
 
     #[test]

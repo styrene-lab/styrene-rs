@@ -235,6 +235,7 @@ async fn outbound_resource_completion_updates_the_service_store() {
             started_unix_ms: 1,
             deadline_unix_ms: i64::MAX,
             state: "sent".into(),
+            route_observation: None,
         })
         .unwrap();
     let messaging = Arc::new(MessagingService::with_store(store.clone()));
@@ -316,6 +317,7 @@ async fn outbound_resource_integrity_failure_is_terminal_and_sticky() {
             started_unix_ms: 1,
             deadline_unix_ms: i64::MAX,
             state: "sent".into(),
+            route_observation: None,
         })
         .unwrap();
     let messaging = Arc::new(MessagingService::with_store(store.clone()));

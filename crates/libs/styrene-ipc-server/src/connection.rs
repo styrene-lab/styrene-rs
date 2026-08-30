@@ -772,6 +772,14 @@ async fn event_to_frame(
             ]);
             (MessageType::EventMessagingOperation, SubTopic::Messages, p)
         }
+        DaemonEvent::ConversationInvalidated { invalidation } => {
+            let value = rmpv::ext::to_value(serde_json::to_value(invalidation).ok()?).ok()?;
+            let p = HashMap::from([
+                ("invalidation".into(), value),
+                ("connection_generation".into(), rmpv::Value::from(connection_generation)),
+            ]);
+            (MessageType::EventConversationInvalidated, SubTopic::Messages, p)
+        }
         DaemonEvent::StandardPropagationChanged { observed_at } => {
             let p = HashMap::from([
                 ("kind".into(), rmpv::Value::from("standard_propagation_changed")),

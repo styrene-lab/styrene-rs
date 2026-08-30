@@ -171,6 +171,24 @@ wire_compat_test!(error_response, 0x82);
 wire_compat_test!(event_device, 0xC0);
 wire_compat_test!(event_message, 0xC1);
 
+#[test]
+fn mobile_diagnostic_request_discriminants_are_stable_and_round_trip() {
+    for (msg_type, discriminant) in [
+        (MessageType::QueryMobileDiagnostics, 0xAB),
+        (MessageType::CmdExportMobileDiagnostics, 0xAC),
+    ] {
+        let encoded =
+            styrene_ipc_server::wire::encode_frame(msg_type, &FIXED_REQUEST_ID, &HashMap::new())
+                .expect("encode diagnostic request");
+        assert_eq!(encoded[4], discriminant);
+        let decoded =
+            styrene_ipc_server::wire::decode_frame(&encoded).expect("decode diagnostic request");
+        assert_eq!(decoded.msg_type, msg_type);
+        assert_eq!(MessageType::from_byte(discriminant).expect("known discriminant"), msg_type);
+        assert!(decoded.msg_type.is_request());
+    }
+}
+
 // TUI-specific types (newly dispatched)
 wire_compat_test!(query_config, 0x13);
 wire_compat_test!(cmd_device_status, 0x23);

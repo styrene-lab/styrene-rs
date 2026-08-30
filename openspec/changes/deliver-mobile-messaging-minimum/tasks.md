@@ -8,13 +8,13 @@
 - [x] 1.3 Add failing Dioxus component tests for both mobile target classes using the same fixture identifiers and required accessibility identifiers
 - [x] 1.4 Remove live-path preview substitution and retain preview records only in explicitly marked fixture sessions
 - [ ] 1.5 Recover and admit the versioned RNS-compatible application corpus with exact application, build, platform, protocol-version, provenance, observation-date, and artifact records
-- [ ] 1.6 Classify each corpus entry as protocol authority, observed RNS/LXMF application, or interaction-only reference and reject evidence-scope promotion
-- [ ] 1.7 Build the P0 workflow parity matrix for identity, TCP setup, discovery, conversations, drafts, direct send, receipts, retry, restart, propagation, and degraded states
-- [ ] 1.8 Record the designated floor, observable Styrene outcome, intentional differences, exclusions, and status for every parity row
-- [ ] 1.9 Add validation that rejects missing P0 rows, unresolved differences, invalid status, stale provenance, and application observations used as protocol evidence
+- [x] 1.6 Classify each corpus entry as protocol authority, observed RNS/LXMF application, or interaction-only reference and reject evidence-scope promotion
+- [x] 1.7 Build the P0 workflow parity matrix for identity, TCP setup, discovery, conversations, drafts, direct send, receipts, retry, restart, propagation, and degraded states
+- [x] 1.8 Record the designated floor, observable Styrene outcome, intentional differences, exclusions, and status for every parity row
+- [x] 1.9 Add validation that rejects missing P0 rows, unresolved differences, invalid status, stale provenance, and application observations used as protocol evidence
 - [ ] 1.10 Copy the versioned application corpus into `styrene-ui` with exact backend revision provenance and add journey fixtures before implementing unmatched UI workflows
-- [ ] 1.11 Seed the recovered inventory with Skywave `1.0` build `5` and the pinned Python RNS, LXMF, and NomadNet references
-- [ ] 1.12 Record Sideband, Columba, and MeshChat as unevidenced candidates and Meshtastic and MeshCore as interaction-only references
+- [x] 1.11 Seed the recovered inventory with Skywave `1.0` build `5` and the pinned Python RNS, LXMF, and NomadNet references
+- [x] 1.12 Record Sideband, Columba, and MeshChat as unevidenced candidates and Meshtastic and MeshCore as interaction-only references
 - [ ] 1.13 Resolve the `795fdaa2b0777c13033787d933d1afc94a2377cb` LXMF `1.1.0` versus `1.1.1` provenance conflict before admitting dependent rows
 - [ ] 1.14 Reject deleted Styrene native hosts and RNode firmware evidence as substitutes for external application-parity rows
 

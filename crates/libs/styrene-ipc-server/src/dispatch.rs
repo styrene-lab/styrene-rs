@@ -32,6 +32,8 @@ pub async fn dispatch_for_connection(
 ) -> Result<HashMap<String, rmpv::Value>, String> {
     match msg_type {
         MessageType::QueryStatus => dispatch_query_status(daemon, connection_generation).await,
+        MessageType::QueryMobileDiagnostics => dispatch_mobile_diagnostics(daemon).await,
+        MessageType::CmdExportMobileDiagnostics => dispatch_export_mobile_diagnostics(daemon).await,
         MessageType::QueryPropagation => dispatch_query_propagation(daemon, &payload).await,
         MessageType::QueryStandardPropagation => {
             dispatch_query_standard_propagation(daemon, connection_generation).await
@@ -71,6 +73,7 @@ pub async fn dispatch_for_connection(
         MessageType::QueryAutoReply => dispatch_query_auto_reply(daemon).await,
         MessageType::CmdAnnounce => dispatch_announce(daemon).await,
         MessageType::QueryConversations => dispatch_query_conversations(daemon, &payload).await,
+        MessageType::CmdStartConversation => dispatch_start_conversation(daemon, &payload).await,
         MessageType::QueryMessages => dispatch_query_messages(daemon, &payload).await,
         MessageType::QueryMessage => dispatch_query_message(daemon, &payload).await,
         MessageType::CmdSendChat => dispatch_send_chat(daemon, payload, false).await,
@@ -590,6 +593,16 @@ fn request_info_value(
 
 // ── Status ──────────────────────────────────────────────────────────────
 
+fn capability_failure_code(code: styrene_ipc::types::CapabilityFailureCode) -> &'static str {
+    match code {
+        styrene_ipc::types::CapabilityFailureCode::Unavailable => "unavailable",
+        styrene_ipc::types::CapabilityFailureCode::Unauthorized => "unauthorized",
+        styrene_ipc::types::CapabilityFailureCode::Degraded => "degraded",
+        styrene_ipc::types::CapabilityFailureCode::Unverified => "unverified",
+        _ => "unknown",
+    }
+}
+
 async fn dispatch_query_status(
     daemon: &Arc<dyn Daemon>,
     connection_generation: u64,
@@ -632,37 +645,174 @@ async fn dispatch_query_status(
                 rmpv::Value::Map(vec![
                     (rmpv::Value::from("id"), rmpv::Value::from(capability.id)),
                     (rmpv::Value::from("reason"), rmpv::Value::from(capability.reason)),
+                    (
+                        rmpv::Value::from("reason_code"),
+                        rmpv::Value::from(capability_failure_code(capability.reason_code)),
+                    ),
                 ])
             })
             .collect();
-        p.insert(
-            "active_capabilities".into(),
-            rmpv::Value::Map(vec![
-                (rmpv::Value::from("version"), rmpv::Value::from(capabilities.version)),
-                (
-                    rmpv::Value::from("runtime"),
-                    rmpv::Value::Array(
-                        capabilities.runtime.into_iter().map(rmpv::Value::from).collect(),
+        let failures = capabilities
+            .failures
+            .into_iter()
+            .map(|failure| {
+                rmpv::Value::Map(vec![
+                    (rmpv::Value::from("id"), rmpv::Value::from(failure.id)),
+                    (
+                        rmpv::Value::from("code"),
+                        rmpv::Value::from(capability_failure_code(failure.code)),
                     ),
+                    (rmpv::Value::from("retryable"), rmpv::Value::from(failure.retryable)),
+                ])
+            })
+            .collect();
+        let mut capability_map = vec![
+            (rmpv::Value::from("version"), rmpv::Value::from(capabilities.version)),
+            (
+                rmpv::Value::from("runtime"),
+                rmpv::Value::Array(
+                    capabilities.runtime.into_iter().map(rmpv::Value::from).collect(),
                 ),
-                (rmpv::Value::from("degraded"), rmpv::Value::Array(degraded)),
-                (
-                    rmpv::Value::from("authorized_operations"),
-                    rmpv::Value::Array(
-                        capabilities
-                            .authorized_operations
-                            .into_iter()
-                            .map(rmpv::Value::from)
-                            .collect(),
-                    ),
+            ),
+            (rmpv::Value::from("degraded"), rmpv::Value::Array(degraded)),
+            (rmpv::Value::from("failures"), rmpv::Value::Array(failures)),
+            (
+                rmpv::Value::from("authorized_operations"),
+                rmpv::Value::Array(
+                    capabilities.authorized_operations.into_iter().map(rmpv::Value::from).collect(),
                 ),
-            ]),
-        );
+            ),
+        ];
+        if let Some(generation) = capabilities.generation {
+            capability_map.push((rmpv::Value::from("generation"), rmpv::Value::from(generation)));
+        }
+        p.insert("active_capabilities".into(), rmpv::Value::Map(capability_map));
     }
     if let Some(generation) = info.connection_generation {
         p.insert("connection_generation".into(), rmpv::Value::from(generation));
     }
     ok_payload(p)
+}
+
+async fn dispatch_mobile_diagnostics(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
+    let snapshot = daemon.mobile_diagnostics().await.map_err(typed_ipc_error)?;
+    if snapshot.events.len() > styrene_ipc::types::MOBILE_DIAGNOSTIC_MAX_EVENTS as usize {
+        return Err("mobile diagnostic snapshot exceeds event limit".into());
+    }
+    let events = snapshot.events.iter().map(mobile_diagnostic_event_value).collect();
+    ok_payload(Payload::from([
+        ("schema_version".into(), snapshot.schema_version.into()),
+        ("backend_revision".into(), snapshot.backend_revision.into()),
+        ("first_sequence".into(), optional_value(snapshot.first_sequence)),
+        ("last_sequence".into(), optional_value(snapshot.last_sequence)),
+        ("event_count".into(), snapshot.event_count.into()),
+        ("retained_bytes".into(), snapshot.retained_bytes.into()),
+        ("max_events".into(), snapshot.max_events.into()),
+        ("max_bytes".into(), snapshot.max_bytes.into()),
+        ("truncated".into(), snapshot.truncated.into()),
+        ("dropped_events".into(), snapshot.dropped_events.into()),
+        ("events".into(), rmpv::Value::Array(events)),
+    ]))
+}
+
+async fn dispatch_export_mobile_diagnostics(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
+    let export = daemon.export_mobile_diagnostics().await.map_err(typed_ipc_error)?;
+    mobile_diagnostic_export_payload(export)
+}
+
+fn mobile_diagnostic_export_payload(
+    export: styrene_ipc::types::MobileDiagnosticExport,
+) -> Result<Payload, String> {
+    let actual_bytes = u64::try_from(export.bytes.len())
+        .map_err(|_| "mobile diagnostic export byte count exceeds u64 range")?;
+    if actual_bytes > styrene_ipc::types::MOBILE_DIAGNOSTIC_MAX_BYTES {
+        return Err(format!(
+            "mobile diagnostic export is {actual_bytes} bytes; maximum is {}",
+            styrene_ipc::types::MOBILE_DIAGNOSTIC_MAX_BYTES
+        ));
+    }
+    if export.byte_count != actual_bytes {
+        return Err("mobile diagnostic export byte_count does not match bytes".into());
+    }
+    ok_payload(Payload::from([
+        ("schema_version".into(), export.schema_version.into()),
+        ("backend_revision".into(), export.backend_revision.into()),
+        ("content_type".into(), export.content_type.into()),
+        ("digest_sha256".into(), export.digest_sha256.into()),
+        ("first_sequence".into(), optional_value(export.first_sequence)),
+        ("last_sequence".into(), optional_value(export.last_sequence)),
+        ("event_count".into(), export.event_count.into()),
+        ("byte_count".into(), export.byte_count.into()),
+        ("max_events".into(), export.max_events.into()),
+        ("max_bytes".into(), export.max_bytes.into()),
+        ("truncated".into(), export.truncated.into()),
+        ("dropped_events".into(), export.dropped_events.into()),
+        ("bytes".into(), rmpv::Value::Binary(export.bytes)),
+    ]))
+}
+
+#[cfg(test)]
+mod mobile_diagnostic_projection_tests {
+    use super::*;
+
+    #[test]
+    fn export_rejects_bytes_over_the_public_limit() {
+        let bytes = vec![0; styrene_ipc::types::MOBILE_DIAGNOSTIC_MAX_BYTES as usize + 1];
+        let export = styrene_ipc::types::MobileDiagnosticExport {
+            schema_version: styrene_ipc::types::MOBILE_DIAGNOSTIC_SCHEMA_VERSION,
+            backend_revision: "test".into(),
+            content_type: "application/json".into(),
+            digest_sha256: String::new(),
+            first_sequence: None,
+            last_sequence: None,
+            event_count: 0,
+            byte_count: bytes.len() as u64,
+            max_events: styrene_ipc::types::MOBILE_DIAGNOSTIC_MAX_EVENTS,
+            max_bytes: styrene_ipc::types::MOBILE_DIAGNOSTIC_MAX_BYTES,
+            truncated: false,
+            dropped_events: 0,
+            bytes,
+        };
+
+        assert!(mobile_diagnostic_export_payload(export).unwrap_err().contains("maximum"));
+    }
+}
+
+fn mobile_diagnostic_event_value(event: &styrene_ipc::types::MobileDiagnosticEvent) -> rmpv::Value {
+    use styrene_ipc::types::{
+        MobileDiagnosticSeverity as Severity, MobileDiagnosticSource as Source,
+        MobileDiagnosticStage as Stage,
+    };
+
+    let source = match event.source {
+        Source::Runtime => "runtime",
+        Source::Transport => "transport",
+        Source::Messaging => "messaging",
+        Source::Storage => "storage",
+        Source::Platform => "platform",
+    };
+    let stage = match event.stage {
+        Stage::Boot => "boot",
+        Stage::Lifecycle => "lifecycle",
+        Stage::Inbound => "inbound",
+        Stage::Outbound => "outbound",
+        Stage::Synchronization => "synchronization",
+        Stage::Persistence => "persistence",
+    };
+    let severity = match event.severity {
+        Severity::Info => "info",
+        Severity::Warning => "warning",
+        Severity::Error => "error",
+    };
+    string_map([
+        ("sequence", event.sequence.into()),
+        ("unix_time_ms", optional_value(event.unix_time_ms)),
+        ("source", source.into()),
+        ("stage", stage.into()),
+        ("severity", severity.into()),
+        ("generation", event.generation.into()),
+        ("safe_correlation", optional_value(event.safe_correlation.as_deref())),
+    ])
 }
 
 async fn dispatch_query_propagation(
@@ -929,7 +1079,66 @@ async fn dispatch_query_identity(daemon: &Arc<dyn Daemon>) -> Result<Payload, St
     if let Some(ref sn) = info.short_name {
         p.insert("short_name".into(), rmpv::Value::from(sn.as_str()));
     }
+    if let Some(custody) = info.custody.as_ref() {
+        p.insert("custody".into(), identity_custody_value(custody));
+    }
     ok_payload(p)
+}
+
+fn identity_custody_value(info: &styrene_ipc::types::IdentityCustodyInfo) -> rmpv::Value {
+    use styrene_ipc::types::{
+        IdentityCustodyAuthentication as Authentication,
+        IdentityCustodyAvailability as Availability, IdentityCustodyBackend as Backend,
+        IdentityCustodyDowngrade as Downgrade, IdentityCustodyFailureCode as FailureCode,
+        IdentityCustodyProtection as Protection,
+    };
+
+    let backend = |backend| match backend {
+        Backend::Keychain => "keychain",
+        Backend::AndroidKeystore => "android_keystore",
+        Backend::EncryptedFile => "encrypted_file",
+        Backend::PlaintextFile => "plaintext_file",
+    };
+    let protection = |protection| match protection {
+        Protection::PlatformProtected => "platform_protected",
+        Protection::EncryptedAtRest => "encrypted_at_rest",
+        Protection::DevelopmentPlaintext => "development_plaintext",
+    };
+    let authentication = match info.authentication {
+        Authentication::DeviceAuthentication => "device_authentication",
+        Authentication::HostKeyMaterial => "host_key_material",
+        Authentication::None => "none",
+    };
+    let availability = match info.availability {
+        Availability::Available => "available",
+        Availability::Unavailable => "unavailable",
+    };
+    let downgrade = match info.downgrade {
+        Downgrade::None => "none",
+        Downgrade::ActiveBackendMismatch => "active_backend_mismatch",
+    };
+    let failure = info.failure.as_ref().map_or(rmpv::Value::Nil, |failure| {
+        let code = match failure.code {
+            FailureCode::UnsupportedTarget => "unsupported_target",
+            FailureCode::FeatureDisabled => "feature_disabled",
+            FailureCode::AuthenticationRequired => "authentication_required",
+            FailureCode::KeyMaterialRequired => "key_material_required",
+            FailureCode::BackendFailure => "backend_failure",
+        };
+        string_map([("code", code.into()), ("retryable", failure.retryable.into())])
+    });
+    string_map([
+        ("requested_backend", backend(info.requested_backend).into()),
+        (
+            "active_backend",
+            info.active_backend.map_or(rmpv::Value::Nil, |value| backend(value).into()),
+        ),
+        ("protection", info.protection.map_or(rmpv::Value::Nil, |value| protection(value).into())),
+        ("authentication", authentication.into()),
+        ("availability", availability.into()),
+        ("downgrade", downgrade.into()),
+        ("failure", failure),
+    ])
 }
 
 // ── Devices ─────────────────────────────────────────────────────────────
@@ -1002,6 +1211,17 @@ async fn dispatch_announce(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> 
 }
 
 // ── Conversations ───────────────────────────────────────────────────────
+
+async fn dispatch_start_conversation(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let peer_hash = required_peer_hash(payload, "peer_hash")?;
+    let outcome = daemon.start_conversation(peer_hash).await.map_err(typed_ipc_error)?;
+    let mut response = Payload::new();
+    add_outcome(&mut response, &outcome)?;
+    ok_payload(response)
+}
 
 async fn dispatch_query_conversations(
     daemon: &Arc<dyn Daemon>,
@@ -1165,6 +1385,11 @@ pub(crate) fn message_info_value(message: &styrene_ipc::types::MessageInfo) -> r
                             rmpv::Value::from(attempt.deadline_unix_ms),
                         ),
                         (rmpv::Value::from("state"), rmpv::Value::from(attempt.state.as_str())),
+                        (
+                            rmpv::Value::from("bearer"),
+                            attempt.bearer.as_deref().map_or(rmpv::Value::Nil, rmpv::Value::from),
+                        ),
+                        (rmpv::Value::from("route"), message_attempt_route_value(&attempt.route)),
                     ])
                 })
                 .collect(),
@@ -1226,6 +1451,61 @@ pub(crate) fn message_info_value(message: &styrene_ipc::types::MessageInfo) -> r
             .map(|(key, value)| (rmpv::Value::from(key), value)),
     );
     rmpv::Value::Map(values)
+}
+
+fn message_attempt_route_value(
+    route: &styrene_ipc::types::MessageAttemptRouteObservation,
+) -> rmpv::Value {
+    use styrene_ipc::types::MessageAttemptRouteOutcome;
+
+    let outcome = match route.outcome {
+        MessageAttemptRouteOutcome::Observed => "observed",
+        MessageAttemptRouteOutcome::Unknown => "unknown",
+        _ => "unknown",
+    };
+    let interface = route.interface.as_ref().map_or(rmpv::Value::Nil, |interface| {
+        string_map([
+            ("id", interface.id.as_str().into()),
+            ("kind", interface.kind.as_str().into()),
+            ("generation", interface.generation.into()),
+        ])
+    });
+    string_map([
+        ("outcome", outcome.into()),
+        ("connection_generation", optional_value(route.connection_generation)),
+        ("observed_at", optional_value(route.observed_at)),
+        ("next_hop", optional_value(route.next_hop.as_deref())),
+        ("hops", optional_value(route.hops)),
+        ("stale", route.stale.into()),
+        ("interface", interface),
+    ])
+}
+
+#[cfg(test)]
+mod message_attempt_projection_tests {
+    use super::*;
+
+    #[test]
+    fn default_route_is_projected_as_explicit_unknown() {
+        let route = styrene_ipc::types::MessageAttemptRouteObservation::default();
+        let rmpv::Value::Map(fields) = message_attempt_route_value(&route) else {
+            panic!("route projection must be a map");
+        };
+        let field = |name: &str| {
+            fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some(name))
+                .map(|(_, value)| value)
+                .expect("route field")
+        };
+        assert_eq!(field("outcome").as_str(), Some("unknown"));
+        assert!(field("connection_generation").is_nil());
+        assert!(field("observed_at").is_nil());
+        assert!(field("next_hop").is_nil());
+        assert!(field("hops").is_nil());
+        assert!(!field("stale").as_bool().expect("stale boolean"));
+        assert!(field("interface").is_nil());
+    }
 }
 
 fn attachment_info_value(attachment: &styrene_ipc::types::AttachmentInfo) -> rmpv::Value {
@@ -2286,11 +2566,18 @@ fn append_observation(
     if let Some(observed_at) = observation.observed_at {
         values.push((rmpv::Value::from("observed_at"), rmpv::Value::from(observed_at)));
     }
-    let generation = (connection_generation != 0)
-        .then_some(connection_generation)
-        .or(observation.connection_generation);
-    if let Some(generation) = generation {
+    if let Some(generation) = observation.connection_generation {
         values.push((rmpv::Value::from("connection_generation"), rmpv::Value::from(generation)));
+    }
+    let ipc_generation = (connection_generation != 0)
+        .then_some(connection_generation)
+        .or(observation.ipc_connection_generation);
+    if let Some(generation) = ipc_generation {
+        values
+            .push((rmpv::Value::from("ipc_connection_generation"), rmpv::Value::from(generation)));
+    }
+    if let Some(generation) = observation.interface_generation {
+        values.push((rmpv::Value::from("interface_generation"), rmpv::Value::from(generation)));
     }
     if let Some(age) = observation.age_secs {
         values.push((rmpv::Value::from("age_secs"), rmpv::Value::from(age)));
@@ -2416,6 +2703,21 @@ async fn dispatch_query_interface_stats(
                 rmpv::Value::from(iface.peers_connected as i64),
             ));
             append_observation(&mut m, &iface.observation, connection_generation);
+            if let Some(failure) = &iface.failure {
+                let code = match failure.code {
+                    styrene_ipc::types::InterfaceFailureCode::Retrying => "retrying",
+                    styrene_ipc::types::InterfaceFailureCode::Closed => "closed",
+                    styrene_ipc::types::InterfaceFailureCode::UnknownState => "unknown_state",
+                    _ => "unknown",
+                };
+                m.push((
+                    rmpv::Value::from("failure"),
+                    rmpv::Value::Map(vec![
+                        (rmpv::Value::from("code"), rmpv::Value::from(code)),
+                        (rmpv::Value::from("retryable"), rmpv::Value::from(failure.retryable)),
+                    ]),
+                ));
+            }
             rmpv::Value::Map(m)
         })
         .collect();

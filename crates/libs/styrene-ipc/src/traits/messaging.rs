@@ -6,6 +6,14 @@ use crate::types::*;
 /// Core chat operations — the heart of the TUI.
 #[async_trait]
 pub trait DaemonMessaging: Send + Sync {
+    /// Idempotently create a durable empty conversation for a canonical destination.
+    async fn start_conversation(
+        &self,
+        _peer_hash: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        Err(IpcError::not_implemented("start_conversation"))
+    }
+
     /// Send a chat message to a peer.
     async fn send_chat(&self, request: SendChatRequest) -> Result<MessageId, IpcError>;
 

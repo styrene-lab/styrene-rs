@@ -74,7 +74,38 @@ impl DegradedCapability {
 pub struct ActiveCapabilities {
     runtime: Box<[&'static str]>,
     degraded: Box<[DegradedCapability]>,
+    failures: Box<[CapabilityFailure]>,
     authorized_operations: Box<[String]>,
+    generation: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapabilityFailureKind {
+    Unavailable,
+    Unauthorized,
+    Degraded,
+    Unverified,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityFailure {
+    id: Box<str>,
+    kind: CapabilityFailureKind,
+    retryable: bool,
+}
+
+impl CapabilityFailure {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn kind(&self) -> CapabilityFailureKind {
+        self.kind
+    }
+
+    pub fn retryable(&self) -> bool {
+        self.retryable
+    }
 }
 
 impl ActiveCapabilities {
@@ -88,6 +119,19 @@ impl ActiveCapabilities {
 
     pub fn authorized_operations(&self) -> &[String] {
         &self.authorized_operations
+    }
+
+    pub fn failures(&self) -> &[CapabilityFailure] {
+        &self.failures
+    }
+
+    pub fn generation(&self) -> Option<u64> {
+        self.generation
+    }
+
+    pub fn with_generation(mut self, generation: u64) -> Self {
+        self.generation = Some(generation);
+        self
     }
 }
 
@@ -171,27 +215,59 @@ impl StartupContract {
         let runtime: Box<[_]> =
             self.advertised_capabilities.iter().map(|capability| capability.id).collect();
         let mut degraded = self.degraded_capabilities.to_vec();
+        let authorized_operations =
+            authorized_operations.into_iter().map(Into::into).collect::<Vec<_>>();
         let mut active_operations = Vec::new();
-        for operation in authorized_operations.into_iter().map(Into::into) {
-            match operation_requirement(&operation) {
-                OperationRequirement::Core => active_operations.push(operation),
+        let mut failures = self
+            .degraded_capabilities
+            .iter()
+            .map(|capability| CapabilityFailure {
+                id: capability.id.into(),
+                kind: CapabilityFailureKind::Degraded,
+                retryable: true,
+            })
+            .collect::<Vec<_>>();
+        for operation in &authorized_operations {
+            match operation_requirement(operation) {
+                OperationRequirement::Core => active_operations.push(operation.clone()),
                 OperationRequirement::Runtime(required) if runtime.contains(&required) => {
-                    active_operations.push(operation);
+                    active_operations.push(operation.clone());
                 }
                 OperationRequirement::Runtime(required) => degraded.push(DegradedCapability {
-                    id: known_operation_id(&operation),
+                    id: known_operation_id(operation),
                     reason: format!("required runtime capability {required} is not active").into(),
                 }),
                 OperationRequirement::Unavailable => degraded.push(DegradedCapability {
-                    id: known_operation_id(&operation),
+                    id: known_operation_id(operation),
                     reason: "operation is not exposed by the active daemon composition".into(),
                 }),
             }
         }
+        failures.extend(degraded[self.degraded_capabilities.len()..].iter().map(|capability| {
+            CapabilityFailure {
+                id: capability.id.into(),
+                kind: CapabilityFailureKind::Unavailable,
+                retryable: true,
+            }
+        }));
+        failures.extend(
+            styrene_rbac::ALL_CAPABILITIES
+                .iter()
+                .filter(|operation| {
+                    !authorized_operations.iter().any(|active| active == **operation)
+                })
+                .map(|operation| CapabilityFailure {
+                    id: (*operation).into(),
+                    kind: CapabilityFailureKind::Unauthorized,
+                    retryable: false,
+                }),
+        );
         ActiveCapabilities {
             runtime,
             degraded: degraded.into_boxed_slice(),
+            failures: failures.into_boxed_slice(),
             authorized_operations: active_operations.into_boxed_slice(),
+            generation: None,
         }
     }
 

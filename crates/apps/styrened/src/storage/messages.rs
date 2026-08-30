@@ -65,6 +65,15 @@ const PAGE_METADATA_SCHEMA_DDL: &str = "
     );";
 const MESSAGE_INSPECTION_MIGRATION: &str = "2026-08-25-authoritative-message-inspection-v13";
 const CANONICAL_OUTBOUND_MIGRATION: &str = "2026-08-28-canonical-outbound-retry-v14";
+const CONVERSATION_SHELL_MIGRATION: &str = "2026-08-29-conversation-shells-v15";
+const ATTEMPT_ROUTE_OBSERVATION_MIGRATION: &str = "2026-08-29-attempt-route-observations-v16";
+const MOBILE_STORAGE_LIFECYCLE_MIGRATION: &str = "2026-08-29-mobile-storage-lifecycle-v17";
+const MOBILE_STORAGE_SESSION_MIGRATION: &str = "2026-08-30-mobile-storage-session-v18";
+pub const MOBILE_STORAGE_SCHEMA_VERSION: u32 = 18;
+const CONVERSATION_SHELL_TABLE_SQL: &str = "CREATE TABLE conversation_shells (
+    peer_hash TEXT PRIMARY KEY CHECK(typeof(peer_hash) = 'text' AND length(peer_hash) = 32 AND peer_hash = lower(peer_hash) AND peer_hash NOT GLOB '*[^0-9a-f]*'),
+    created_seq INTEGER NOT NULL UNIQUE CHECK(typeof(created_seq) = 'integer' AND created_seq > 0)
+) STRICT";
 const CANONICAL_INSPECTION_TABLE_SQL: &str = "CREATE TABLE canonical_inbound_inspection (
     message_id TEXT PRIMARY KEY REFERENCES canonical_inbound_messages(message_id) ON DELETE CASCADE CHECK(typeof(message_id) = 'text'),
     stamp_target INTEGER CHECK(stamp_target IS NULL OR (typeof(stamp_target) = 'integer' AND stamp_target BETWEEN 0 AND 254))
@@ -246,6 +255,31 @@ fn canonical_outbound_schema_is_valid(conn: &Connection) -> rusqlite::Result<boo
         |row| row.get(0),
     )?;
     Ok(attempt_columns == 1)
+}
+
+fn attempt_route_observation_schema_is_valid(conn: &Connection) -> rusqlite::Result<bool> {
+    for (kind, name) in [
+        ("table", "outbound_attempt_route_observations"),
+        ("trigger", "outbound_attempt_route_observations_immutable"),
+    ] {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2)",
+            params![kind, name],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Ok(false);
+        }
+    }
+    let strict: Option<i64> = conn
+        .query_row(
+            "SELECT strict FROM pragma_table_list
+             WHERE schema = 'main' AND name = 'outbound_attempt_route_observations'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(strict == Some(1))
 }
 
 fn ensure_canonical_outbound_schema(conn: &mut Connection) -> rusqlite::Result<()> {
@@ -451,6 +485,13 @@ pub struct ContactMutationOutcome {
     pub disposition: MutationDisposition,
     pub affected_count: u64,
     pub contact: Option<ContactRecord>,
+    pub alias_invalidation: Option<ContactAliasInvalidation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContactAliasInvalidation {
+    Changed,
+    Removed,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -473,7 +514,8 @@ fn conversation_exists(
 ) -> rusqlite::Result<bool> {
     transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM messages
-         WHERE lower(source) = ?1 OR lower(destination) = ?1)",
+         WHERE lower(source) = ?1 OR lower(destination) = ?1)
+         OR EXISTS(SELECT 1 FROM conversation_shells WHERE peer_hash = ?1)",
         params![peer_hash],
         |row| row.get(0),
     )
@@ -495,9 +537,12 @@ fn conversation_summary(
                     SUM(CASE WHEN direction = 'in' AND lower(source) = ?1
                                   AND COALESCE(read, 0) = 0 THEN 1 ELSE 0 END),
                     COUNT(*), COALESCE(s.pinned, 0), COALESCE(s.muted, 0)
-             FROM messages LEFT JOIN conversation_state s ON s.peer_hash = ?1
-             WHERE lower(source) = ?1 OR lower(destination) = ?1
-             HAVING COUNT(*) > 0",
+             FROM (SELECT 1)
+             LEFT JOIN messages ON lower(source) = ?1 OR lower(destination) = ?1
+             LEFT JOIN conversation_state s ON s.peer_hash = ?1
+             WHERE EXISTS(SELECT 1 FROM conversation_shells WHERE peer_hash = ?1)
+                OR EXISTS(SELECT 1 FROM messages
+                          WHERE lower(source) = ?1 OR lower(destination) = ?1)",
             params![peer_hash],
             |row| {
                 Ok(ConversationSummary {
@@ -591,6 +636,80 @@ pub struct OutboundAttemptRecord {
     pub started_unix_ms: i64,
     pub deadline_unix_ms: i64,
     pub state: String,
+    pub route_observation: Option<AttemptRouteObservationRecord>,
+}
+
+fn parse_outbound_attempt_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OutboundAttemptRecord> {
+    let outcome: Option<String> = row.get(5)?;
+    let route_observation = match outcome {
+        Some(outcome) => Some(AttemptRouteObservationRecord {
+            message_id: row.get(0)?,
+            attempt_number: row.get(1)?,
+            outcome,
+            connection_generation: row.get(6)?,
+            observed_at: row.get(7)?,
+            next_hop: row.get(8)?,
+            hops: row.get(9)?,
+            stale: row.get::<_, i64>(10)? != 0,
+            interface_id: row.get(11)?,
+            interface_kind: row.get(12)?,
+            interface_generation: row.get(13)?,
+            bearer: row.get(14)?,
+        }),
+        None => None,
+    };
+    Ok(OutboundAttemptRecord {
+        message_id: row.get(0)?,
+        attempt_number: row.get(1)?,
+        started_unix_ms: row.get(2)?,
+        deadline_unix_ms: row.get(3)?,
+        state: row.get(4)?,
+        route_observation,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttemptRouteObservationRecord {
+    pub message_id: String,
+    pub attempt_number: u32,
+    pub outcome: String,
+    pub connection_generation: Option<u64>,
+    pub observed_at: Option<i64>,
+    pub next_hop: Option<String>,
+    pub hops: Option<u32>,
+    pub stale: bool,
+    pub interface_id: Option<String>,
+    pub interface_kind: Option<String>,
+    pub interface_generation: Option<u64>,
+    pub bearer: Option<String>,
+}
+
+fn insert_attempt_route_observation(
+    transaction: &rusqlite::Transaction<'_>,
+    attempt: &OutboundAttemptRecord,
+    observation: Option<&AttemptRouteObservationRecord>,
+) -> rusqlite::Result<()> {
+    transaction.execute(
+        "INSERT INTO outbound_attempt_route_observations
+         (message_id, attempt_number, outcome, connection_generation, observed_at,
+          next_hop, hops, stale, interface_id, interface_kind, interface_generation, bearer)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            &attempt.message_id,
+            attempt.attempt_number,
+            observation.map_or("unknown", |value| value.outcome.as_str()),
+            observation.and_then(|value| value.connection_generation),
+            observation.and_then(|value| value.observed_at),
+            observation.and_then(|value| value.next_hop.as_deref()),
+            observation.and_then(|value| value.hops),
+            observation.is_some_and(|value| value.stale),
+            observation.and_then(|value| value.interface_id.as_deref()),
+            observation.and_then(|value| value.interface_kind.as_deref()),
+            observation.and_then(|value| value.interface_generation),
+            observation.and_then(|value| value.bearer.as_deref()),
+        ],
+    )?;
+    Ok(())
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -1710,22 +1829,18 @@ fn load_projection_snapshots(
         let lifecycle = if let Some(route) = route {
             let mut statement = transaction.prepare(
                 "SELECT a.message_id, a.attempt_number, a.started_unix_ms,
-                        a.deadline_unix_ms, a.state
+                        a.deadline_unix_ms, a.state, o.outcome, o.connection_generation,
+                        o.observed_at, o.next_hop, o.hops, o.stale, o.interface_id,
+                        o.interface_kind, o.interface_generation, o.bearer
                  FROM outbound_attempts a
                  JOIN outbound_routes r ON r.message_id = a.message_id
+                 LEFT JOIN outbound_attempt_route_observations o
+                   ON o.message_id = a.message_id AND o.attempt_number = a.attempt_number
                  WHERE r.correlation_id = ?1
                  ORDER BY a.attempt_number, a.started_unix_ms, a.message_id",
             )?;
             let attempts = statement
-                .query_map(params![&route.correlation_id], |row| {
-                    Ok(OutboundAttemptRecord {
-                        message_id: row.get(0)?,
-                        attempt_number: row.get(1)?,
-                        started_unix_ms: row.get(2)?,
-                        deadline_unix_ms: row.get(3)?,
-                        state: row.get(4)?,
-                    })
-                })?
+                .query_map(params![&route.correlation_id], parse_outbound_attempt_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Some((route, attempts))
         } else {
@@ -1771,8 +1886,82 @@ fn tombstone_standard_propagation_links(
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageOpenOutcome {
+    Opened,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageRecoveryOutcome {
+    NewStore,
+    CleanShutdown,
+    InterruptedProcessRecovered,
+    LocalSessionJoined,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageDegradedReason {
+    IntegrityCheckFailed,
+    RecoveryFailed,
+    CommitTrackingFailed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageCommitKind {
+    SessionOpened,
+    CleanShutdown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StorageCommitEvidence {
+    pub kind: StorageCommitKind,
+    pub sequence: u64,
+    pub unix_time_secs: i64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StorageStatus {
+    pub schema_version: u32,
+    pub open: StorageOpenOutcome,
+    pub recovery: StorageRecoveryOutcome,
+    pub last_commit: Option<StorageCommitEvidence>,
+    pub degraded: Option<StorageDegradedReason>,
+}
+
 pub struct MessagesStore {
     pub(super) conn: Connection,
+    status: StorageStatus,
+    lifecycle_owner: Option<StorageLifecycleOwner>,
+    ephemeral_session: Option<[u8; 16]>,
+}
+
+struct StorageLifecycleOwner {
+    path: std::path::PathBuf,
+    owner_id: u64,
+    session_id: [u8; 16],
+    orderly: bool,
+}
+
+struct LocalStorageSession {
+    session_id: [u8; 16],
+    owners: std::collections::HashMap<u64, bool>,
+    last_commit: Option<StorageCommitEvidence>,
+    clean_committed: bool,
+    unclean_owner_closed: bool,
+}
+
+static STORAGE_SESSIONS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, LocalStorageSession>>,
+> = std::sync::OnceLock::new();
+static NEXT_STORAGE_OWNER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn storage_sessions()
+-> &'static std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, LocalStorageSession>> {
+    STORAGE_SESSIONS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn storage_session_lock_error() -> rusqlite::Error {
+    rusqlite::Error::InvalidParameterName("mobile storage session registry poisoned".into())
 }
 
 fn validate_attachment_input(input: &AttachmentBlobInput) -> rusqlite::Result<()> {
@@ -2314,8 +2503,23 @@ impl MessagesStore {
     pub fn in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
         Self::configure_connection(&conn)?;
-        let mut store = Self { conn };
+        let mut store = Self {
+            conn,
+            status: StorageStatus {
+                schema_version: MOBILE_STORAGE_SCHEMA_VERSION,
+                open: StorageOpenOutcome::Opened,
+                recovery: StorageRecoveryOutcome::NewStore,
+                last_commit: None,
+                degraded: None,
+            },
+            lifecycle_owner: None,
+            ephemeral_session: None,
+        };
         store.init_schema()?;
+        let mut session_id = [0_u8; 16];
+        OsRng.fill_bytes(&mut session_id);
+        store.status = store.begin_storage_session(session_id)?;
+        store.ephemeral_session = Some(session_id);
         Ok(store)
     }
 
@@ -2325,11 +2529,210 @@ impl MessagesStore {
         // WAL permits concurrent readers while the busy timeout absorbs brief
         // writer contention between daemon workers and compatibility paths.
         Self::configure_connection(&conn)?;
-        let mut store = Self { conn };
+        let mut store = Self {
+            conn,
+            status: StorageStatus {
+                schema_version: MOBILE_STORAGE_SCHEMA_VERSION,
+                open: StorageOpenOutcome::Opened,
+                recovery: StorageRecoveryOutcome::NewStore,
+                last_commit: None,
+                degraded: None,
+            },
+            lifecycle_owner: None,
+            ephemeral_session: None,
+        };
         store.init_schema()?;
+        store.register_storage_owner(secured_path.clone())?;
         guarded_file_matches_path(&secured_path, &guarded)?;
         set_sqlite_sidecar_permissions(&secured_path)?;
         Ok(store)
+    }
+
+    #[must_use]
+    pub const fn storage_status(&self) -> StorageStatus {
+        self.status
+    }
+
+    pub fn mark_clean_shutdown(&mut self) -> rusqlite::Result<()> {
+        let Some(owner) = self.lifecycle_owner.as_ref() else {
+            if let Some(session_id) = self.ephemeral_session {
+                let commit = self.commit_clean_storage_session(session_id)?;
+                self.status.last_commit = Some(commit);
+            }
+            return Ok(());
+        };
+        let path = owner.path.clone();
+        let owner_id = owner.owner_id;
+        let session_id = owner.session_id;
+        let mut sessions = storage_sessions().lock().map_err(|_| storage_session_lock_error())?;
+        let session = sessions.get_mut(&path).ok_or_else(storage_session_lock_error)?;
+        if session.session_id != session_id {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "mobile storage session ownership changed".into(),
+            ));
+        }
+        *session.owners.get_mut(&owner_id).ok_or_else(storage_session_lock_error)? = true;
+        self.lifecycle_owner.as_mut().expect("checked lifecycle owner").orderly = true;
+        if session.owners.len() == 1 && !session.unclean_owner_closed && !session.clean_committed {
+            let commit = self.commit_clean_storage_session(session_id)?;
+            session.last_commit = Some(commit);
+            session.clean_committed = true;
+            self.status.last_commit = Some(commit);
+        }
+        Ok(())
+    }
+
+    fn commit_clean_storage_session(
+        &mut self,
+        session_id: [u8; 16],
+    ) -> rusqlite::Result<StorageCommitEvidence> {
+        let transaction = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute(
+            "UPDATE mobile_storage_lifecycle
+             SET clean_shutdown = 1, commit_sequence = commit_sequence + 1,
+                 last_commit_at = CAST(strftime('%s','now') AS INTEGER)
+             WHERE singleton = 1 AND owner_session = ?1",
+            params![session_id.as_slice()],
+        )?;
+        if changed != 1 {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "mobile storage session no longer owns lifecycle record".into(),
+            ));
+        }
+        let (sequence, unix_time_secs): (u64, i64) = transaction.query_row(
+            "SELECT commit_sequence, last_commit_at FROM mobile_storage_lifecycle WHERE singleton = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        transaction.commit()?;
+        Ok(StorageCommitEvidence {
+            kind: StorageCommitKind::CleanShutdown,
+            sequence,
+            unix_time_secs,
+        })
+    }
+
+    fn register_storage_owner(&mut self, path: std::path::PathBuf) -> rusqlite::Result<()> {
+        use std::sync::atomic::Ordering;
+
+        let owner_id = NEXT_STORAGE_OWNER_ID.fetch_add(1, Ordering::Relaxed);
+        let mut sessions = storage_sessions().lock().map_err(|_| storage_session_lock_error())?;
+        if let Some(session) = sessions.get_mut(&path) {
+            if session.clean_committed {
+                let commit = self.resume_storage_session(session.session_id)?;
+                session.last_commit = Some(commit);
+                session.clean_committed = false;
+            }
+            session.owners.insert(owner_id, false);
+            self.status = StorageStatus {
+                schema_version: MOBILE_STORAGE_SCHEMA_VERSION,
+                open: StorageOpenOutcome::Opened,
+                recovery: StorageRecoveryOutcome::LocalSessionJoined,
+                last_commit: session.last_commit,
+                degraded: None,
+            };
+            self.lifecycle_owner = Some(StorageLifecycleOwner {
+                path,
+                owner_id,
+                session_id: session.session_id,
+                orderly: false,
+            });
+            return Ok(());
+        }
+
+        let mut session_id = [0_u8; 16];
+        OsRng.fill_bytes(&mut session_id);
+        let status = self.begin_storage_session(session_id)?;
+        let mut owners = std::collections::HashMap::new();
+        owners.insert(owner_id, false);
+        sessions.insert(
+            path.clone(),
+            LocalStorageSession {
+                session_id,
+                owners,
+                last_commit: status.last_commit,
+                clean_committed: false,
+                unclean_owner_closed: false,
+            },
+        );
+        self.status = status;
+        self.lifecycle_owner =
+            Some(StorageLifecycleOwner { path, owner_id, session_id, orderly: false });
+        Ok(())
+    }
+
+    fn resume_storage_session(
+        &mut self,
+        session_id: [u8; 16],
+    ) -> rusqlite::Result<StorageCommitEvidence> {
+        let transaction = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute(
+            "UPDATE mobile_storage_lifecycle
+             SET clean_shutdown = 0, commit_sequence = commit_sequence + 1,
+                 last_commit_at = CAST(strftime('%s','now') AS INTEGER)
+             WHERE singleton = 1 AND owner_session = ?1",
+            params![session_id.as_slice()],
+        )?;
+        if changed != 1 {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "mobile storage session no longer owns lifecycle record".into(),
+            ));
+        }
+        let (sequence, unix_time_secs): (u64, i64) = transaction.query_row(
+            "SELECT commit_sequence, last_commit_at FROM mobile_storage_lifecycle WHERE singleton = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        transaction.commit()?;
+        Ok(StorageCommitEvidence {
+            kind: StorageCommitKind::SessionOpened,
+            sequence,
+            unix_time_secs,
+        })
+    }
+
+    fn begin_storage_session(&mut self, session_id: [u8; 16]) -> rusqlite::Result<StorageStatus> {
+        let transaction = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let previous: Option<bool> = transaction
+            .query_row(
+                "SELECT clean_shutdown != 0 FROM mobile_storage_lifecycle WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let recovery = match previous {
+            None => StorageRecoveryOutcome::NewStore,
+            Some(true) => StorageRecoveryOutcome::CleanShutdown,
+            Some(false) => StorageRecoveryOutcome::InterruptedProcessRecovered,
+        };
+        transaction.execute(
+            "INSERT INTO mobile_storage_lifecycle
+                 (singleton, clean_shutdown, commit_sequence, last_commit_at, owner_session)
+             VALUES (1, 0, 1, CAST(strftime('%s','now') AS INTEGER), ?1)
+             ON CONFLICT(singleton) DO UPDATE SET
+                 clean_shutdown = 0,
+                 commit_sequence = mobile_storage_lifecycle.commit_sequence + 1,
+                 last_commit_at = excluded.last_commit_at,
+                 owner_session = excluded.owner_session",
+            params![session_id.as_slice()],
+        )?;
+        let (sequence, unix_time_secs): (u64, i64) = transaction.query_row(
+            "SELECT commit_sequence, last_commit_at FROM mobile_storage_lifecycle WHERE singleton = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        transaction.commit()?;
+        Ok(StorageStatus {
+            schema_version: MOBILE_STORAGE_SCHEMA_VERSION,
+            open: StorageOpenOutcome::Opened,
+            recovery,
+            last_commit: Some(StorageCommitEvidence {
+                kind: StorageCommitKind::SessionOpened,
+                sequence,
+                unix_time_secs,
+            }),
+            degraded: None,
+        })
     }
 
     pub fn insert_message(&self, record: &MessageRecord) -> rusqlite::Result<()> {
@@ -3212,6 +3615,14 @@ impl MessagesStore {
         &self,
         attempt: &OutboundAttemptRecord,
     ) -> rusqlite::Result<bool> {
+        self.begin_outbound_attempt_with_route(attempt, None)
+    }
+
+    pub fn begin_outbound_attempt_with_route(
+        &self,
+        attempt: &OutboundAttemptRecord,
+        observation: Option<&AttemptRouteObservationRecord>,
+    ) -> rusqlite::Result<bool> {
         let transaction = self.conn.unchecked_transaction()?;
         let changed = transaction.execute(
             "UPDATE outbound_routes SET state = 'sending', attempt_count = ?2 WHERE message_id = ?1 AND state NOT IN ('delivered', 'failed', 'cancelled', 'expired', 'rejected')",
@@ -3230,6 +3641,7 @@ impl MessagesStore {
                 &attempt.state,
             ],
         )?;
+        insert_attempt_route_observation(&transaction, attempt, observation)?;
         transaction.execute(
             "UPDATE attachment_transfers SET state = 'transferring', updated_at = ?2
              WHERE message_id = ?1 AND state = 'queued'",
@@ -3240,6 +3652,14 @@ impl MessagesStore {
     }
 
     pub fn begin_outbound_retry(&self, attempt: &OutboundAttemptRecord) -> rusqlite::Result<bool> {
+        self.begin_outbound_retry_with_route(attempt, None)
+    }
+
+    pub fn begin_outbound_retry_with_route(
+        &self,
+        attempt: &OutboundAttemptRecord,
+        observation: Option<&AttemptRouteObservationRecord>,
+    ) -> rusqlite::Result<bool> {
         let transaction = self.conn.unchecked_transaction()?;
         let previous_attempt = attempt.attempt_number.saturating_sub(1);
         let changed = transaction.execute(
@@ -3275,6 +3695,7 @@ impl MessagesStore {
                 &attempt.state,
             ],
         )?;
+        insert_attempt_route_observation(&transaction, attempt, observation)?;
         transaction.execute(
             "UPDATE messages SET receipt_status = 'sending: retry' WHERE id = ?1",
             params![&attempt.message_id],
@@ -3550,20 +3971,50 @@ impl MessagesStore {
         message_id: &str,
     ) -> rusqlite::Result<Vec<OutboundAttemptRecord>> {
         let mut statement = self.conn.prepare(
-            "SELECT message_id, attempt_number, started_unix_ms, deadline_unix_ms, state FROM outbound_attempts WHERE message_id = ?1 ORDER BY attempt_number",
+            "SELECT a.message_id, a.attempt_number, a.started_unix_ms, a.deadline_unix_ms,
+                    a.state, o.outcome, o.connection_generation, o.observed_at, o.next_hop,
+                    o.hops, o.stale, o.interface_id, o.interface_kind,
+                    o.interface_generation, o.bearer
+             FROM outbound_attempts a
+             LEFT JOIN outbound_attempt_route_observations o
+               ON o.message_id = a.message_id AND o.attempt_number = a.attempt_number
+             WHERE a.message_id = ?1 ORDER BY a.attempt_number",
         )?;
 
-        statement
-            .query_map(params![message_id], |row| {
-                Ok(OutboundAttemptRecord {
-                    message_id: row.get(0)?,
-                    attempt_number: row.get(1)?,
-                    started_unix_ms: row.get(2)?,
-                    deadline_unix_ms: row.get(3)?,
-                    state: row.get(4)?,
-                })
-            })?
-            .collect()
+        statement.query_map(params![message_id], parse_outbound_attempt_row)?.collect()
+    }
+
+    pub fn attempt_route_observation(
+        &self,
+        message_id: &str,
+        attempt_number: u32,
+    ) -> rusqlite::Result<Option<AttemptRouteObservationRecord>> {
+        self.conn
+            .query_row(
+                "SELECT message_id, attempt_number, outcome, connection_generation, observed_at,
+                        next_hop, hops, stale, interface_id, interface_kind,
+                        interface_generation, bearer
+                 FROM outbound_attempt_route_observations
+                 WHERE message_id = ?1 AND attempt_number = ?2",
+                params![message_id, attempt_number],
+                |row| {
+                    Ok(AttemptRouteObservationRecord {
+                        message_id: row.get(0)?,
+                        attempt_number: row.get(1)?,
+                        outcome: row.get(2)?,
+                        connection_generation: row.get(3)?,
+                        observed_at: row.get(4)?,
+                        next_hop: row.get(5)?,
+                        hops: row.get(6)?,
+                        stale: row.get::<_, i64>(7)? != 0,
+                        interface_id: row.get(8)?,
+                        interface_kind: row.get(9)?,
+                        interface_generation: row.get(10)?,
+                        bearer: row.get(11)?,
+                    })
+                },
+            )
+            .optional()
     }
 
     pub fn outbound_attempts_for_correlation(
@@ -3571,24 +4022,19 @@ impl MessagesStore {
         correlation_id: &str,
     ) -> rusqlite::Result<Vec<OutboundAttemptRecord>> {
         let mut statement = self.conn.prepare(
-            "SELECT a.message_id, a.attempt_number, a.started_unix_ms, a.deadline_unix_ms, a.state
+            "SELECT a.message_id, a.attempt_number, a.started_unix_ms, a.deadline_unix_ms,
+                    a.state, o.outcome, o.connection_generation, o.observed_at, o.next_hop,
+                    o.hops, o.stale, o.interface_id, o.interface_kind,
+                    o.interface_generation, o.bearer
              FROM outbound_attempts a
              JOIN outbound_routes r ON r.message_id = a.message_id
+             LEFT JOIN outbound_attempt_route_observations o
+               ON o.message_id = a.message_id AND o.attempt_number = a.attempt_number
              WHERE r.correlation_id = ?1
              ORDER BY a.attempt_number, a.started_unix_ms, a.message_id",
         )?;
 
-        statement
-            .query_map(params![correlation_id], |row| {
-                Ok(OutboundAttemptRecord {
-                    message_id: row.get(0)?,
-                    attempt_number: row.get(1)?,
-                    started_unix_ms: row.get(2)?,
-                    deadline_unix_ms: row.get(3)?,
-                    state: row.get(4)?,
-                })
-            })?
-            .collect()
+        statement.query_map(params![correlation_id], parse_outbound_attempt_row)?.collect()
     }
 
     pub fn reconcile_outbound_startup(&self, now_unix_ms: i64) -> rusqlite::Result<()> {
@@ -3969,6 +4415,8 @@ impl MessagesStore {
             .execute("DELETE FROM conversation_state WHERE peer_hash = ?1", params![peer_hash])?;
         transaction
             .execute("DELETE FROM conversation_drafts WHERE peer_hash = ?1", params![peer_hash])?;
+        transaction
+            .execute("DELETE FROM conversation_shells WHERE peer_hash = ?1", params![peer_hash])?;
         transaction.commit()?;
         Ok((
             ConversationMutationOutcome {
@@ -4145,7 +4593,23 @@ impl MessagesStore {
         &self,
         unread_only: bool,
     ) -> rusqlite::Result<Vec<ConversationSummary>> {
-        let base = "SELECT g.peer, g.last_ts,
+        let base = "WITH message_groups AS (
+                         SELECT CASE WHEN direction = 'out' THEN
+                                     CASE WHEN length(destination) = 32
+                                               AND destination NOT GLOB '*[^0-9A-Fa-f]*'
+                                          THEN lower(destination) ELSE destination END
+                                     ELSE CASE WHEN length(source) = 32
+                                                    AND source NOT GLOB '*[^0-9A-Fa-f]*'
+                                               THEN lower(source) ELSE source END END AS peer,
+                                MAX(timestamp) AS last_ts,
+                                SUM(CASE WHEN direction = 'in' AND COALESCE(read, 0) = 0 THEN 1 ELSE 0 END) AS unread,
+                                COUNT(*) AS total
+                         FROM messages GROUP BY peer
+                     ), peers AS (
+                         SELECT peer FROM message_groups
+                         UNION SELECT peer_hash FROM conversation_shells
+                     )
+                     SELECT p.peer, g.last_ts,
                     (SELECT m2.content FROM messages m2
                      WHERE (CASE WHEN m2.direction = 'out' THEN
                                 CASE WHEN length(m2.destination) = 32
@@ -4153,30 +4617,20 @@ impl MessagesStore {
                                      THEN lower(m2.destination) ELSE m2.destination END
                             ELSE CASE WHEN length(m2.source) = 32
                                           AND m2.source NOT GLOB '*[^0-9A-Fa-f]*'
-                                     THEN lower(m2.source) ELSE m2.source END END) = g.peer
+                                      THEN lower(m2.source) ELSE m2.source END END) = p.peer
                      ORDER BY m2.timestamp DESC, m2.id DESC LIMIT 1) AS last_content,
-                    g.unread, g.total, COALESCE(s.pinned, 0), COALESCE(s.muted, 0)
-                    FROM (
-                        SELECT CASE WHEN direction = 'out' THEN
-                                    CASE WHEN length(destination) = 32
-                                              AND destination NOT GLOB '*[^0-9A-Fa-f]*'
-                                         THEN lower(destination) ELSE destination END
-                                    ELSE CASE WHEN length(source) = 32
-                                                   AND source NOT GLOB '*[^0-9A-Fa-f]*'
-                                              THEN lower(source) ELSE source END END AS peer,
-                               MAX(timestamp) AS last_ts,
-                               SUM(CASE WHEN direction = 'in' AND COALESCE(read, 0) = 0 THEN 1 ELSE 0 END) AS unread,
-                               COUNT(*) AS total
-                        FROM messages GROUP BY peer
-                    ) g
-                    LEFT JOIN conversation_state s ON s.peer_hash = g.peer";
+                     COALESCE(g.unread, 0), COALESCE(g.total, 0),
+                     COALESCE(s.pinned, 0), COALESCE(s.muted, 0)
+                     FROM peers p
+                     LEFT JOIN message_groups g ON g.peer = p.peer
+                     LEFT JOIN conversation_state s ON s.peer_hash = p.peer";
         let sql = if unread_only {
             format!(
-                "{base} WHERE g.unread > 0
-                 ORDER BY COALESCE(s.pinned, 0) DESC, g.last_ts DESC, g.peer ASC"
+                "{base} WHERE COALESCE(g.unread, 0) > 0
+                 ORDER BY COALESCE(s.pinned, 0) DESC, g.last_ts DESC, p.peer ASC"
             )
         } else {
-            format!("{base} ORDER BY COALESCE(s.pinned, 0) DESC, g.last_ts DESC, g.peer ASC")
+            format!("{base} ORDER BY COALESCE(s.pinned, 0) DESC, g.last_ts DESC, p.peer ASC")
         };
         let mut stmt = self.conn.prepare(&sql)?;
         let mut rows = stmt.query([])?;
@@ -4246,11 +4700,14 @@ impl MessagesStore {
                 WHERE k.ingest_seq <= ?1
                   AND length(k.conversation_peer) = 32
                   AND k.conversation_peer NOT GLOB '*[^0-9a-f]*'
-            ), peers AS (
+            ), message_peers AS (
                 SELECT conversation_peer AS peer,
                        SUM(CASE WHEN direction = 'in' AND is_read = 0 THEN 1 ELSE 0 END) AS unread,
                        COUNT(*) AS total
                 FROM eligible GROUP BY conversation_peer
+            ), peers AS (
+                SELECT peer FROM message_peers
+                UNION SELECT peer_hash FROM conversation_shells
             ), summaries AS (
                 SELECT p.peer,
                        (SELECT e.sort_timestamp FROM eligible e WHERE e.conversation_peer = p.peer
@@ -4259,18 +4716,27 @@ impl MessagesStore {
                         ORDER BY e.sort_timestamp DESC, e.ingest_seq DESC LIMIT 1) AS last_seq,
                        (SELECT e.content FROM eligible e WHERE e.conversation_peer = p.peer
                         ORDER BY e.sort_timestamp DESC, e.ingest_seq DESC LIMIT 1) AS last_content,
-                       p.unread, p.total, COALESCE(s.pinned, 0) AS pinned,
-                       COALESCE(s.muted, 0) AS muted
-                FROM peers p LEFT JOIN conversation_state s ON s.peer_hash = p.peer
+                       COALESCE(mp.unread, 0) AS unread, COALESCE(mp.total, 0) AS total,
+                       COALESCE(s.pinned, 0) AS pinned, COALESCE(s.muted, 0) AS muted,
+                       COALESCE((SELECT e.sort_timestamp FROM eligible e
+                                 WHERE e.conversation_peer = p.peer
+                                 ORDER BY e.sort_timestamp DESC, e.ingest_seq DESC LIMIT 1), 0) AS sort_ts,
+                       COALESCE((SELECT e.ingest_seq FROM eligible e
+                                 WHERE e.conversation_peer = p.peer
+                                 ORDER BY e.sort_timestamp DESC, e.ingest_seq DESC LIMIT 1),
+                                (SELECT created_seq FROM conversation_shells WHERE peer_hash = p.peer)) AS sort_seq
+                FROM peers p
+                LEFT JOIN message_peers mp ON mp.peer = p.peer
+                LEFT JOIN conversation_state s ON s.peer_hash = p.peer
             )
-            SELECT peer, last_ts, last_content, unread, total, pinned, muted, last_seq
+            SELECT peer, last_ts, last_content, unread, total, pinned, muted, sort_seq, sort_ts
             FROM summaries
             WHERE (?2 = 0 OR unread > 0)
               AND (?3 IS NULL OR pinned < ?3
-                   OR (pinned = ?3 AND last_ts < ?4)
-                   OR (pinned = ?3 AND last_ts = ?4 AND last_seq < ?5)
-                   OR (pinned = ?3 AND last_ts = ?4 AND last_seq = ?5 AND peer > ?6))
-            ORDER BY pinned DESC, last_ts DESC, last_seq DESC, peer ASC LIMIT ?7";
+                   OR (pinned = ?3 AND sort_ts < ?4)
+                   OR (pinned = ?3 AND sort_ts = ?4 AND sort_seq < ?5)
+                   OR (pinned = ?3 AND sort_ts = ?4 AND sort_seq = ?5 AND peer > ?6))
+            ORDER BY pinned DESC, sort_ts DESC, sort_seq DESC, peer ASC LIMIT ?7";
         let mut statement = transaction.prepare(sql)?;
         let mut rows = statement.query(params![
             snapshot_seq,
@@ -4286,13 +4752,13 @@ impl MessagesStore {
         let mut keys = Vec::with_capacity(fetch_limit);
         while let Some(row) = rows.next()? {
             let peer_hash: String = row.get(0)?;
-            let last_sort_timestamp: i64 = row.get(1)?;
+            let last_sort_timestamp: i64 = row.get(8)?;
             let pinned = row.get::<_, i64>(5)? != 0;
             keys.push((pinned, last_sort_timestamp, row.get::<_, i64>(7)?, peer_hash.clone()));
             items.push(ConversationSummary {
                 peer_hash,
                 peer_name: None,
-                last_message_timestamp: Some(last_sort_timestamp),
+                last_message_timestamp: row.get(1)?,
                 last_message_content: row.get(2)?,
                 unread_count: row.get::<_, i64>(3)? as u32,
                 message_count: row.get::<_, i64>(4)? as u32,
@@ -4329,6 +4795,31 @@ impl MessagesStore {
             .transpose()?;
         transaction.commit()?;
         Ok(ConversationPage { items, next_cursor })
+    }
+
+    pub fn start_conversation(
+        &self,
+        peer_hash: &str,
+    ) -> rusqlite::Result<ConversationMutationOutcome> {
+        let transaction =
+            rusqlite::Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let created = transaction.execute(
+            "INSERT OR IGNORE INTO conversation_shells (peer_hash, created_seq)
+             VALUES (?1, (SELECT COALESCE(MAX(created_seq), 0) + 1 FROM conversation_shells))",
+            params![peer_hash],
+        )? > 0;
+        let summary = conversation_summary(&transaction, peer_hash)?;
+        transaction.commit()?;
+        Ok(ConversationMutationOutcome {
+            disposition: if created {
+                MutationDisposition::Created
+            } else {
+                MutationDisposition::Unchanged
+            },
+            affected_count: u64::from(created),
+            summary,
+            terminal_state: None,
+        })
     }
 
     pub fn set_conversation_pinned(&self, peer_hash: &str, pinned: bool) -> rusqlite::Result<bool> {
@@ -4535,8 +5026,21 @@ impl MessagesStore {
                 disposition: MutationDisposition::Unchanged,
                 affected_count: 0,
                 contact: existing,
+                alias_invalidation: None,
             });
         }
+        let existing_alias = existing
+            .as_ref()
+            .and_then(|contact| contact.alias.as_deref())
+            .filter(|value| !value.trim().is_empty());
+        let new_alias = alias.filter(|value| !value.trim().is_empty());
+        let alias_invalidation = if existing_alias == new_alias {
+            None
+        } else if new_alias.is_some() {
+            Some(ContactAliasInvalidation::Changed)
+        } else {
+            Some(ContactAliasInvalidation::Removed)
+        };
         let now = unix_now();
         transaction.execute(
             "INSERT INTO contacts (peer_hash, alias, notes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)
@@ -4567,6 +5071,7 @@ impl MessagesStore {
             },
             affected_count: 1,
             contact: Some(contact),
+            alias_invalidation,
         })
     }
 
@@ -4581,6 +5086,12 @@ impl MessagesStore {
     ) -> rusqlite::Result<ContactMutationOutcome> {
         let transaction =
             rusqlite::Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let had_alias: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM contacts
+             WHERE peer_hash = ?1 AND alias IS NOT NULL AND trim(alias) <> '')",
+            params![peer_hash],
+            |row| row.get(0),
+        )?;
         let count =
             transaction.execute("DELETE FROM contacts WHERE peer_hash = ?1", params![peer_hash])?;
         transaction.commit()?;
@@ -4592,7 +5103,28 @@ impl MessagesStore {
             },
             affected_count: count as u64,
             contact: None,
+            alias_invalidation: had_alias.then_some(ContactAliasInvalidation::Removed),
         })
+    }
+
+    /// List all contacts.
+    pub fn contact(&self, peer_hash: &str) -> rusqlite::Result<Option<ContactRecord>> {
+        self.conn
+            .query_row(
+                "SELECT peer_hash, alias, notes, created_at, updated_at
+                 FROM contacts WHERE peer_hash = ?1",
+                params![peer_hash],
+                |row| {
+                    Ok(ContactRecord {
+                        peer_hash: row.get(0)?,
+                        alias: row.get(1)?,
+                        notes: row.get(2)?,
+                        created_at: row.get(3)?,
+                        updated_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
     }
 
     /// List all contacts.
@@ -5384,6 +5916,137 @@ impl MessagesStore {
         super::standard_propagation::ensure_standard_propagation_schema(&mut self.conn)?;
         ensure_message_inspection_schema(&mut self.conn)?;
         ensure_canonical_outbound_schema(&mut self.conn)?;
+        let shell_migration_applied: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = ?1)",
+            params![CONVERSATION_SHELL_MIGRATION],
+            |row| row.get(0),
+        )?;
+        if !shell_migration_applied {
+            let transaction =
+                self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            transaction.execute_batch(CONVERSATION_SHELL_TABLE_SQL)?;
+            transaction.execute_batch(
+                "CREATE TRIGGER conversation_shells_epoch_after_insert
+                     AFTER INSERT ON conversation_shells BEGIN
+                     UPDATE message_page_metadata
+                     SET conversation_epoch = conversation_epoch + 1 WHERE singleton = 1;
+                 END;
+                 CREATE TRIGGER conversation_shells_epoch_after_delete
+                     AFTER DELETE ON conversation_shells BEGIN
+                     UPDATE message_page_metadata
+                     SET conversation_epoch = conversation_epoch + 1 WHERE singleton = 1;
+                 END;",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (id, applied_at)
+                 VALUES (?1, CAST(strftime('%s','now') AS INTEGER))",
+                params![CONVERSATION_SHELL_MIGRATION],
+            )?;
+            transaction.commit()?;
+        }
+        let attempt_route_migration_applied: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = ?1)",
+            params![ATTEMPT_ROUTE_OBSERVATION_MIGRATION],
+            |row| row.get(0),
+        )?;
+        if !attempt_route_migration_applied {
+            let transaction =
+                self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            transaction.execute_batch(
+                "CREATE TABLE outbound_attempt_route_observations (
+                     message_id TEXT NOT NULL,
+                     attempt_number INTEGER NOT NULL CHECK(attempt_number BETWEEN 1 AND 32),
+                     outcome TEXT NOT NULL CHECK(outcome IN ('observed', 'unknown')),
+                     connection_generation INTEGER CHECK(connection_generation IS NULL OR connection_generation >= 1),
+                     observed_at INTEGER CHECK(observed_at IS NULL OR observed_at >= 0),
+                     next_hop TEXT CHECK(next_hop IS NULL OR (length(next_hop) = 32 AND next_hop = lower(next_hop) AND next_hop NOT GLOB '*[^0-9a-f]*')),
+                     hops INTEGER CHECK(hops IS NULL OR hops BETWEEN 0 AND 255),
+                     stale INTEGER NOT NULL CHECK(stale IN (0, 1)),
+                     interface_id TEXT CHECK(interface_id IS NULL OR (length(interface_id) = 32 AND interface_id = lower(interface_id) AND interface_id NOT GLOB '*[^0-9a-f]*')),
+                     interface_kind TEXT CHECK(interface_kind IS NULL OR interface_kind IN ('tcp_server','tcp_client','udp','serial','kiss','unknown')),
+                     interface_generation INTEGER CHECK(interface_generation IS NULL OR interface_generation >= 1),
+                     bearer TEXT CHECK(bearer IS NULL OR bearer IN ('tcp','udp','serial','kiss','unknown')),
+                     PRIMARY KEY(message_id, attempt_number),
+                     FOREIGN KEY(message_id, attempt_number)
+                         REFERENCES outbound_attempts(message_id, attempt_number) ON DELETE CASCADE,
+                     CHECK((outcome = 'unknown' AND connection_generation IS NULL AND observed_at IS NULL
+                            AND next_hop IS NULL AND hops IS NULL AND stale = 0
+                            AND interface_id IS NULL AND interface_kind IS NULL
+                            AND interface_generation IS NULL AND bearer IS NULL)
+                           OR outcome = 'observed'),
+                     CHECK((interface_id IS NULL AND interface_kind IS NULL
+                            AND interface_generation IS NULL AND bearer IS NULL)
+                           OR (interface_id IS NOT NULL AND interface_kind IS NOT NULL
+                               AND interface_generation IS NOT NULL))
+                 ) STRICT;
+                 CREATE TRIGGER outbound_attempt_route_observations_immutable
+                 BEFORE UPDATE ON outbound_attempt_route_observations BEGIN
+                     SELECT RAISE(ABORT, 'attempt route observation is immutable');
+                 END;
+                 INSERT INTO outbound_attempt_route_observations
+                     (message_id, attempt_number, outcome, stale)
+                     SELECT message_id, attempt_number, 'unknown', 0 FROM outbound_attempts;",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (id, applied_at)
+                 VALUES (?1, CAST(strftime('%s','now') AS INTEGER))",
+                params![ATTEMPT_ROUTE_OBSERVATION_MIGRATION],
+            )?;
+            if !attempt_route_observation_schema_is_valid(&transaction)? {
+                return Err(rusqlite::Error::InvalidParameterName(
+                    "v16 attempt route observation schema validation failed".into(),
+                ));
+            }
+            transaction.commit()?;
+        } else if !attempt_route_observation_schema_is_valid(&self.conn)? {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "v16 attempt route observation schema attestation failed".into(),
+            ));
+        }
+        let lifecycle_migration_applied: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = ?1)",
+            params![MOBILE_STORAGE_LIFECYCLE_MIGRATION],
+            |row| row.get(0),
+        )?;
+        if !lifecycle_migration_applied {
+            let transaction =
+                self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            transaction.execute_batch(
+                "CREATE TABLE mobile_storage_lifecycle (
+                     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                     clean_shutdown INTEGER NOT NULL CHECK(clean_shutdown IN (0, 1)),
+                     commit_sequence INTEGER NOT NULL CHECK(commit_sequence >= 1),
+                     last_commit_at INTEGER NOT NULL CHECK(last_commit_at >= 0)
+                 ) STRICT;",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (id, applied_at)
+                 VALUES (?1, CAST(strftime('%s','now') AS INTEGER))",
+                params![MOBILE_STORAGE_LIFECYCLE_MIGRATION],
+            )?;
+            transaction.commit()?;
+        }
+        let session_migration_applied: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = ?1)",
+            params![MOBILE_STORAGE_SESSION_MIGRATION],
+            |row| row.get(0),
+        )?;
+        if !session_migration_applied {
+            let transaction =
+                self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            transaction.execute_batch(
+                "ALTER TABLE mobile_storage_lifecycle
+                 ADD COLUMN owner_session BLOB
+                 CHECK(owner_session IS NULL OR
+                       (typeof(owner_session) = 'blob' AND length(owner_session) = 16));",
+            )?;
+            transaction.execute(
+                "INSERT INTO schema_migrations (id, applied_at)
+                 VALUES (?1, CAST(strftime('%s','now') AS INTEGER))",
+                params![MOBILE_STORAGE_SESSION_MIGRATION],
+            )?;
+            transaction.commit()?;
+        }
         self.prune_delivery_evidence(unix_time_secs())?;
         Ok(())
     }
@@ -5611,6 +6274,39 @@ impl MessagesStore {
             stmt.execute(rusqlite::params![id])?;
         }
         Ok(())
+    }
+}
+
+impl Drop for MessagesStore {
+    fn drop(&mut self) {
+        let Some(owner) = self.lifecycle_owner.take() else {
+            return;
+        };
+        let Ok(mut sessions) = storage_sessions().lock() else {
+            return;
+        };
+        let mut remove_session = false;
+        if let Some(session) = sessions.get_mut(&owner.path)
+            && session.session_id == owner.session_id
+        {
+            if !owner.orderly {
+                session.unclean_owner_closed = true;
+            }
+            if session.owners.len() == 1
+                && owner.orderly
+                && !session.unclean_owner_closed
+                && !session.clean_committed
+                && let Ok(commit) = self.commit_clean_storage_session(owner.session_id)
+            {
+                session.last_commit = Some(commit);
+                session.clean_committed = true;
+            }
+            session.owners.remove(&owner.owner_id);
+            remove_session = session.owners.is_empty();
+        }
+        if remove_session {
+            sessions.remove(&owner.path);
+        }
     }
 }
 
@@ -6163,6 +6859,7 @@ mod tests {
                 started_unix_ms: 1,
                 deadline_unix_ms: 100,
                 state: "delivered".into(),
+                route_observation: None,
             })
             .unwrap();
     }
@@ -6314,6 +7011,7 @@ mod tests {
                         started_unix_ms: 10_000,
                         deadline_unix_ms: 42_000,
                         state: "sending".into(),
+                        route_observation: None,
                     })
                     .unwrap()
             );
@@ -6356,6 +7054,7 @@ mod tests {
                 started_unix_ms: 1,
                 deadline_unix_ms: 42_000,
                 state: "sending".into(),
+                route_observation: None,
             })
             .unwrap();
 
@@ -6391,6 +7090,7 @@ mod tests {
                 started_unix_ms: 1,
                 deadline_unix_ms: 100,
                 state: "sending".into(),
+                route_observation: None,
             })
             .unwrap();
         let mut updated = outbound_message("upsert-route", 2, Some("delivered"));
@@ -7440,6 +8140,7 @@ mod tests {
                     started_unix_ms: 10,
                     deadline_unix_ms: 100,
                     state: "sending".into(),
+                    route_observation: None,
                 })
                 .unwrap();
             store.set_contact(&peer, Some("Peer"), Some("preserve")).unwrap();
@@ -8191,6 +8892,7 @@ mod tests {
                         started_unix_ms: 1,
                         deadline_unix_ms: i64::MAX,
                         state: "sending".into(),
+                        route_observation: None,
                     })
                     .unwrap()
             );
@@ -8214,6 +8916,7 @@ mod tests {
                         started_unix_ms: 2,
                         deadline_unix_ms: i64::MAX,
                         state: "sending".into(),
+                        route_observation: None,
                     })
                     .unwrap()
             );
@@ -8296,6 +8999,7 @@ mod tests {
                     started_unix_ms: 1,
                     deadline_unix_ms: i64::MAX,
                     state: "sending".into(),
+                    route_observation: None,
                 })
                 .unwrap()
         );
@@ -8317,6 +9021,7 @@ mod tests {
                     started_unix_ms: 2,
                     deadline_unix_ms: i64::MAX,
                     state: "sending".into(),
+                    route_observation: None,
                 })
                 .unwrap()
         );
@@ -8441,6 +9146,7 @@ mod tests {
                     started_unix_ms: 1,
                     deadline_unix_ms: i64::MAX,
                     state: "sending".into(),
+                    route_observation: None,
                 })
                 .unwrap();
             assert!(
@@ -8460,6 +9166,7 @@ mod tests {
                     started_unix_ms: 1,
                     deadline_unix_ms: i64::MAX,
                     state: "sending".into(),
+                    route_observation: None,
                 })
                 .unwrap();
             assert!(
@@ -8508,6 +9215,7 @@ mod tests {
                     started_unix_ms: 1,
                     deadline_unix_ms: i64::MAX,
                     state: "sending".into(),
+                    route_observation: None,
                 })
                 .unwrap();
             for hash in &hashes {
@@ -8578,5 +9286,34 @@ mod tests {
         store.conn.execute_batch(DELIVERY_EVIDENCE_INDEX_SQL).unwrap();
         store.conn.execute_batch(DELIVERY_EVIDENCE_RETENTION_INDEX_SQL).unwrap();
         assert!(!message_inspection_schema_is_valid(&store.conn).unwrap());
+    }
+
+    #[test]
+    fn v15_conversation_shell_migrates_and_reopens_idempotently() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("conversation-shell-v15.sqlite");
+        let peer = "0123456789abcdef0123456789abcdef";
+        let store = MessagesStore::open(&path).unwrap();
+        store
+            .conn
+            .execute(
+                "DELETE FROM schema_migrations WHERE id = ?1",
+                params![CONVERSATION_SHELL_MIGRATION],
+            )
+            .unwrap();
+        store.conn.execute_batch("DROP TABLE conversation_shells;").unwrap();
+        drop(store);
+
+        for expected in [MutationDisposition::Created, MutationDisposition::Unchanged] {
+            let store = MessagesStore::open(&path).unwrap();
+            let outcome = store.start_conversation(peer).unwrap();
+            assert_eq!(outcome.disposition, expected);
+            let summary = store.list_conversations(false).unwrap().pop().unwrap();
+            assert_eq!(summary.peer_hash, peer);
+            assert_eq!(summary.last_message_timestamp, None);
+            assert_eq!(summary.last_message_content, None);
+            assert_eq!(summary.unread_count, 0);
+            assert_eq!(summary.message_count, 0);
+        }
     }
 }

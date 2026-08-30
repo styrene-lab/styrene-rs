@@ -59,6 +59,37 @@ async fn wait_for_interface_status(
     .unwrap_or_else(|_| panic!("TCP client did not enter {status}"))
 }
 
+async fn wait_for_interface_generation(
+    node: &MobileNode,
+    remote_endpoint: &str,
+    minimum: u64,
+    deadline: Duration,
+) -> InterfaceDetail {
+    tokio::time::timeout(deadline, async {
+        loop {
+            if let Some(interface) = node
+                .facade
+                .list_interfaces()
+                .await
+                .expect("interface observations")
+                .into_iter()
+                .find(|interface| {
+                    interface.remote_endpoint.as_deref() == Some(remote_endpoint)
+                        && interface
+                            .observation
+                            .interface_generation
+                            .is_some_and(|value| value >= minimum)
+                })
+            {
+                return interface;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("interface did not reach generation {minimum}"))
+}
+
 async fn wait_for_generation(node: &MobileNode, minimum: u64, deadline: Duration) -> u64 {
     tokio::time::timeout(deadline, async {
         loop {
@@ -71,6 +102,26 @@ async fn wait_for_generation(node: &MobileNode, minimum: u64, deadline: Duration
     })
     .await
     .unwrap_or_else(|_| panic!("mobile session did not reach generation {minimum}"))
+}
+
+async fn wait_for_transport_generation(node: &MobileNode, minimum: u64, deadline: Duration) {
+    tokio::time::timeout(deadline, async {
+        loop {
+            if node
+                .app_context
+                .transport()
+                .interface_snapshots()
+                .await
+                .iter()
+                .any(|interface| interface.generation >= minimum)
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("transport did not reach interface generation {minimum}"));
 }
 
 #[tokio::test]
@@ -534,6 +585,120 @@ async fn established_tcp_interruption_reconnects_without_replacing_node() {
         tokio::time::timeout(Duration::from_millis(150), listener.accept()).await.is_err(),
         "shutdown client reconnected after ownership ended"
     );
+}
+
+#[tokio::test]
+async fn reconnect_updates_capabilities_without_session_snapshot() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (first_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("initial TCP connection timed out")
+        .unwrap();
+    wait_for_transport_generation(&node, 1, Duration::from_secs(2)).await;
+    let first = node
+        .active_capabilities(node.app_context.identity().identity_hash())
+        .generation()
+        .expect("initial capability generation");
+
+    drop(first_stream);
+    let (second_stream, _) = tokio::time::timeout(Duration::from_secs(6), listener.accept())
+        .await
+        .expect("TCP client did not reconnect")
+        .unwrap();
+    wait_for_transport_generation(&node, 2, Duration::from_secs(2)).await;
+    let active = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let active = node.active_capabilities(node.app_context.identity().identity_hash());
+            if active.generation() == Some(first + 1) {
+                break active;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("lifecycle tracker did not publish reconnect generation");
+    let status = node.facade.query_status().await.unwrap();
+    assert_eq!(active.generation(), Some(first + 1));
+    assert_eq!(status.active_capabilities.unwrap().generation, Some(first + 1));
+
+    drop(second_stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn interface_list_uses_common_session_generation_and_local_generations() {
+    let root = tempfile::tempdir().unwrap();
+    let first_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let second_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let first_address = first_listener.local_addr().unwrap();
+    let second_address = second_listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    for address in [first_address, second_address] {
+        mobile_config
+            .interfaces
+            .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+    }
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (first_stream, _) = tokio::time::timeout(Duration::from_secs(2), first_listener.accept())
+        .await
+        .expect("first TCP connection timed out")
+        .unwrap();
+    let (second_stream, _) = tokio::time::timeout(Duration::from_secs(2), second_listener.accept())
+        .await
+        .expect("second TCP connection timed out")
+        .unwrap();
+    wait_for_interface_generation(&node, &second_address.to_string(), 1, Duration::from_secs(2))
+        .await;
+
+    drop(first_stream);
+    let (reconnected_stream, _) =
+        tokio::time::timeout(Duration::from_secs(6), first_listener.accept())
+            .await
+            .expect("first TCP client did not reconnect")
+            .unwrap();
+    wait_for_interface_generation(&node, &first_address.to_string(), 2, Duration::from_secs(2))
+        .await;
+    let interfaces = node.facade.list_interfaces().await.unwrap();
+    let session_generation =
+        interfaces[0].observation.connection_generation.expect("session generation");
+
+    assert_eq!(interfaces.len(), 2);
+    assert!(interfaces.iter().all(|interface| {
+        interface.observation.connection_generation == Some(session_generation)
+            && !interface.observation.stale
+    }));
+    assert_eq!(session_generation, 2);
+    assert_eq!(
+        interfaces
+            .iter()
+            .find(|interface| interface.remote_endpoint.as_deref()
+                == Some(&first_address.to_string()))
+            .unwrap()
+            .observation
+            .interface_generation,
+        Some(2)
+    );
+    assert_eq!(
+        interfaces
+            .iter()
+            .find(|interface| interface.remote_endpoint.as_deref()
+                == Some(&second_address.to_string()))
+            .unwrap()
+            .observation
+            .interface_generation,
+        Some(1)
+    );
+
+    drop(second_stream);
+    drop(reconnected_stream);
+    shutdown(node).await;
 }
 
 #[test]
