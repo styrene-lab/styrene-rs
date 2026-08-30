@@ -12,6 +12,10 @@ under `target/mobile-integration/` and are never committed.
 `styrene-ui` owns Dioxus rendering, mobile packaging, platform-service tests, and
 copies of versioned fixtures with backend revision provenance.
 
+`docs/mobile-testing-targets-and-exclusions.md` records the current target
+inventory, P0 claim boundary, explicit exclusions, and future corpus lanes. It
+does not promote any evidence status.
+
 The independent application workflow corpus lives at
 `tests/fixtures/mobile-application-parity-v1/corpus.json`. It records reference
 provenance, retained execution evidence, static candidate evidence, and the 11
@@ -62,9 +66,10 @@ iOS and Android target classes. Package acceptance requires deterministic launch
 profiles, stable accessibility identifiers, bounded logs, artifact identity,
 and cleanup evidence.
 
-No maintained Swift or Kotlin host, adapter, test target, or runner is an
-acceptance dependency. Platform tooling may generate packaging scaffolding, but
-that output is disposable and untracked.
+No maintained Swift or Kotlin product host or adapter is an acceptance
+dependency. External platform test harnesses may drive the installed package.
+They must not own product state, protocol behavior, or platform-service logic.
+Generated packaging scaffolding remains disposable and untracked.
 
 ## Simulator Integration
 
