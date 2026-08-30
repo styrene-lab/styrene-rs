@@ -10,6 +10,7 @@ keywords = ["styrene", "ipc", "client", "async"]
 categories = ["network-programming"]
 
 [dependencies]
+base64.workspace = true
 rmpv.workspace = true
 serde.workspace = true
 serde_json.workspace = true

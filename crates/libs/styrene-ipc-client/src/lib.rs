@@ -3,7 +3,7 @@
 //! This crate owns request correlation and transport failure semantics. Typed
 //! daemon operations are added here as they migrate out of frontend crates.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -12,8 +12,9 @@ use rmpv::Value;
 use serde::de::DeserializeOwned;
 use styrene_ipc::IpcError;
 use styrene_ipc::types::{
-    ConversationInfo, DaemonStatusInfo, DeviceInfo, IdentityInfo, MessageInfo, SendChatOutcome,
-    SendChatRequest, StandardPropagationSnapshot,
+    ConfigApplyResult, ConfigSnapshot, ConversationInfo, DaemonStatusInfo, DeviceInfo, ExecResult,
+    IdentityInfo, MessageInfo, PathInfo, RebootResult, RemoteStatusInfo, SendChatOutcome,
+    SendChatRequest, StandardPropagationSnapshot, TunnelInfo, TunnelOperationInfo,
 };
 use styrene_ipc_wire::{self as wire, Frame, MessageType, REQUEST_ID_SIZE};
 use thiserror::Error;
@@ -21,9 +22,18 @@ use tokio::net::UnixStream;
 use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 use tokio::time::timeout;
 
+pub use styrene_ipc_wire::default_socket_path;
+
 pub const DEFAULT_CAPACITY: usize = 32;
 pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(5);
 pub const SEND_DEADLINE: Duration = Duration::from_secs(35);
+
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum TunnelStatus {
+    Tunnel(TunnelInfo),
+    Operation(TunnelOperationInfo),
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ConnectionGeneration(pub u64);
@@ -343,6 +353,186 @@ impl Client {
         required_bool(&frame.payload, "success", "announce response")
     }
 
+    pub async fn config(&self) -> Result<ConfigSnapshot, ClientError> {
+        let frame =
+            self.request(MessageType::QueryConfig, HashMap::new(), DEFAULT_DEADLINE).await?;
+        let mut values = BTreeMap::new();
+        for (key, value) in frame.payload {
+            let json = rmpv::ext::from_value(value).map_err(|error| ClientError::Protocol {
+                message: format!("invalid config value {key}: {error}"),
+            })?;
+            values.insert(key, json);
+        }
+        let mut snapshot = ConfigSnapshot::default();
+        snapshot.values = values;
+        Ok(snapshot)
+    }
+
+    pub async fn path_info(&self, destination: &str) -> Result<Option<PathInfo>, ClientError> {
+        let payload = HashMap::from([("destination_hash".into(), Value::from(destination))]);
+        let frame = self.request(MessageType::QueryPathInfo, payload, DEFAULT_DEADLINE).await?;
+        if !required_bool(&frame.payload, "found", "path response")? {
+            return Ok(None);
+        }
+        decode_map(&frame.payload, "path").map(Some)
+    }
+
+    pub async fn list_tunnels(&self) -> Result<Vec<TunnelInfo>, ClientError> {
+        let frame =
+            self.request(MessageType::QueryTunnels, HashMap::new(), DEFAULT_DEADLINE).await?;
+        required_array(&frame.payload, "tunnels", "tunnel list")?.iter().map(tunnel_info).collect()
+    }
+
+    pub async fn tunnel_status(&self, peer_hash: &str) -> Result<TunnelStatus, ClientError> {
+        let payload = HashMap::from([("peer_hash".into(), Value::from(peer_hash))]);
+        let frame = self.request(MessageType::QueryTunnelStatus, payload, DEFAULT_DEADLINE).await?;
+        if frame.payload.contains_key("operation_id") {
+            decode_map(&frame.payload, "tunnel operation").map(TunnelStatus::Operation)
+        } else {
+            tunnel_info_from_payload(&frame.payload).map(TunnelStatus::Tunnel)
+        }
+    }
+
+    pub async fn tunnel_establish(
+        &self,
+        peer_hash: &str,
+    ) -> Result<TunnelOperationInfo, ClientError> {
+        let payload = HashMap::from([("peer_hash".into(), Value::from(peer_hash))]);
+        let frame = self.request(MessageType::CmdTunnelEstablish, payload, SEND_DEADLINE).await?;
+        Ok(TunnelOperationInfo {
+            operation_id: required_text(&frame.payload, "operation_id", "tunnel establish")?,
+            peer_hash: required_text(&frame.payload, "peer_hash", "tunnel establish")?,
+            kind: "establish".into(),
+            state: required_text(&frame.payload, "state", "tunnel establish")?,
+            ..TunnelOperationInfo::default()
+        })
+    }
+
+    pub async fn tunnel_teardown(&self, peer_hash: &str) -> Result<bool, ClientError> {
+        let payload = HashMap::from([("peer_hash".into(), Value::from(peer_hash))]);
+        let frame = self.request(MessageType::CmdTunnelTeardown, payload, DEFAULT_DEADLINE).await?;
+        required_bool(&frame.payload, "success", "tunnel teardown")
+    }
+
+    pub async fn device_status(
+        &self,
+        destination: &str,
+        timeout_secs: u64,
+    ) -> Result<RemoteStatusInfo, ClientError> {
+        let payload = HashMap::from([
+            ("destination_hash".into(), Value::from(destination)),
+            ("timeout".into(), Value::from(timeout_secs)),
+        ]);
+        let frame = self
+            .request(MessageType::CmdDeviceStatus, payload, operation_deadline(timeout_secs))
+            .await?;
+        let mut status = RemoteStatusInfo::default();
+        status.destination_hash =
+            required_text(&frame.payload, "destination_hash", "device status")?;
+        status.uptime = frame.payload.get("uptime").and_then(Value::as_u64);
+        status.daemon_version = frame
+            .payload
+            .get("daemon_version")
+            .or_else(|| frame.payload.get("version"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        for (key, value) in &frame.payload {
+            if matches!(key.as_str(), "destination_hash" | "uptime" | "daemon_version" | "version")
+            {
+                continue;
+            }
+            let value =
+                rmpv::ext::from_value(value.clone()).map_err(|error| ClientError::Protocol {
+                    message: format!("invalid device status value {key}: {error}"),
+                })?;
+            status.extra.insert(key.clone(), value);
+        }
+        Ok(status)
+    }
+
+    pub async fn exec(
+        &self,
+        destination: &str,
+        command: &str,
+        args: &[String],
+        timeout_secs: u64,
+    ) -> Result<ExecResult, ClientError> {
+        let payload = HashMap::from([
+            ("destination_hash".into(), Value::from(destination)),
+            ("command".into(), Value::from(command)),
+            (
+                "args".into(),
+                Value::Array(args.iter().map(|arg| Value::from(arg.as_str())).collect()),
+            ),
+            ("timeout".into(), Value::from(timeout_secs)),
+        ]);
+        let frame =
+            self.request(MessageType::CmdExec, payload, operation_deadline(timeout_secs)).await?;
+        decode_map(&frame.payload, "exec result")
+    }
+
+    pub async fn reboot_device(
+        &self,
+        destination: &str,
+        delay_secs: u64,
+    ) -> Result<RebootResult, ClientError> {
+        let payload = HashMap::from([
+            ("destination_hash".into(), Value::from(destination)),
+            ("delay".into(), Value::from(delay_secs)),
+        ]);
+        let frame = self.request(MessageType::CmdRebootDevice, payload, DEFAULT_DEADLINE).await?;
+        decode_map(&frame.payload, "reboot result")
+    }
+
+    pub async fn fleet_apply(
+        &self,
+        destination: &str,
+        profile_bytes: &[u8],
+        verify: bool,
+        timeout_secs: u64,
+    ) -> Result<ConfigApplyResult, ClientError> {
+        use base64::Engine;
+        let profile = base64::engine::general_purpose::STANDARD.encode(profile_bytes);
+        let payload = HashMap::from([
+            ("destination_hash".into(), Value::from(destination)),
+            ("profile".into(), Value::from(profile)),
+            ("verify".into(), Value::from(verify)),
+            ("timeout".into(), Value::from(timeout_secs)),
+        ]);
+        let frame = self
+            .request(MessageType::CmdFleetApply, payload, operation_deadline(timeout_secs))
+            .await?;
+        decode_map(&frame.payload, "fleet apply result")
+    }
+
+    pub async fn fleet_grant(
+        &self,
+        identity_hash: &str,
+        role: &str,
+        label: &str,
+        grants: &[String],
+    ) -> Result<bool, ClientError> {
+        let mut payload = HashMap::from([
+            ("identity_hash".into(), Value::from(identity_hash)),
+            ("role".into(), Value::from(role)),
+            ("label".into(), Value::from(label)),
+        ]);
+        if !grants.is_empty() {
+            payload.insert(
+                "grants".into(),
+                Value::Array(grants.iter().map(|grant| Value::from(grant.as_str())).collect()),
+            );
+        }
+        let frame = self.request(MessageType::CmdFleetGrant, payload, DEFAULT_DEADLINE).await?;
+        required_bool(&frame.payload, "success", "fleet grant")
+    }
+
+    pub async fn fleet_revoke(&self, identity_hash: &str) -> Result<bool, ClientError> {
+        let payload = HashMap::from([("identity_hash".into(), Value::from(identity_hash))]);
+        let frame = self.request(MessageType::CmdFleetRevoke, payload, DEFAULT_DEADLINE).await?;
+        required_bool(&frame.payload, "success", "fleet revoke")
+    }
+
     #[must_use]
     pub fn diagnostics(&self) -> ClientDiagnostics {
         ClientDiagnostics {
@@ -532,6 +722,67 @@ fn required_bool(
     payload.get(key).and_then(Value::as_bool).ok_or_else(|| ClientError::Protocol {
         message: format!("{context} omitted boolean {key}"),
     })
+}
+
+fn required_text(
+    payload: &HashMap<String, Value>,
+    key: &str,
+    context: &str,
+) -> Result<String, ClientError> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| ClientError::Protocol { message: format!("{context} omitted string {key}") })
+}
+
+fn required_array<'a>(
+    payload: &'a HashMap<String, Value>,
+    key: &str,
+    context: &str,
+) -> Result<&'a [Value], ClientError> {
+    payload
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .ok_or_else(|| ClientError::Protocol { message: format!("{context} omitted array {key}") })
+}
+
+fn tunnel_info(value: &Value) -> Result<TunnelInfo, ClientError> {
+    let map: HashMap<String, Value> = value
+        .as_map()
+        .ok_or_else(|| ClientError::Protocol { message: "tunnel list entry is not a map".into() })?
+        .iter()
+        .map(|(key, value)| {
+            key.as_str().map(|key| (key.to_owned(), value.clone())).ok_or_else(|| {
+                ClientError::Protocol { message: "tunnel list entry has a non-string key".into() }
+            })
+        })
+        .collect::<Result<_, _>>()?;
+    tunnel_info_from_payload(&map)
+}
+
+fn tunnel_info_from_payload(payload: &HashMap<String, Value>) -> Result<TunnelInfo, ClientError> {
+    let mut info = TunnelInfo::default();
+    info.peer_hash = required_text(payload, "peer_hash", "tunnel")?;
+    info.backend = payload.get("backend").and_then(Value::as_str).unwrap_or_default().to_owned();
+    info.state = required_text(payload, "state", "tunnel")?;
+    info.remote_endpoint = optional_nonempty_text(payload, "remote_endpoint");
+    info.interface_name = optional_nonempty_text(payload, "interface_name");
+    info.tx_bytes = payload.get("tx_bytes").and_then(Value::as_u64).unwrap_or_default();
+    info.rx_bytes = payload.get("rx_bytes").and_then(Value::as_u64).unwrap_or_default();
+    info.established_at = payload.get("established_at").and_then(Value::as_i64).filter(|v| *v != 0);
+    info.last_rekey = payload.get("last_rekey").and_then(Value::as_i64).filter(|v| *v != 0);
+    info.pqc_session_id = optional_nonempty_text(payload, "pqc_session_id");
+    Ok(info)
+}
+
+fn optional_nonempty_text(payload: &HashMap<String, Value>, key: &str) -> Option<String> {
+    payload.get(key).and_then(Value::as_str).filter(|value| !value.is_empty()).map(str::to_owned)
+}
+
+fn operation_deadline(timeout_secs: u64) -> Duration {
+    Duration::from_secs(timeout_secs.saturating_add(5))
 }
 
 fn insert_optional_text(payload: &mut HashMap<String, Value>, key: &str, value: Option<&str>) {
@@ -800,5 +1051,69 @@ mod tests {
         reply(&mut server, MessageType::Result, &request.request_id, &payload).await;
 
         assert_eq!(query.await.expect("send task").expect("send outcome"), outcome);
+    }
+
+    #[tokio::test]
+    async fn decodes_legacy_path_and_tunnel_maps_as_canonical_records() {
+        let (client, mut server) = pair(2);
+        let path_query = tokio::spawn({
+            let client = client.clone();
+            async move { client.path_info("aa11aa11aa11aa11").await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("path request");
+        assert_eq!(request.msg_type, MessageType::QueryPathInfo);
+        assert_eq!(request.payload["destination_hash"].as_str(), Some("aa11aa11aa11aa11"));
+        let payload = HashMap::from([
+            ("destination_hash".into(), Value::from("aa11aa11aa11aa11")),
+            ("found".into(), Value::from(true)),
+            ("hops".into(), Value::from(3)),
+            ("interface".into(), Value::from("rnode")),
+        ]);
+        reply(&mut server, MessageType::Result, &request.request_id, &payload).await;
+        let path = path_query.await.expect("path task").expect("path response").expect("path");
+        assert_eq!(path.hops, Some(3));
+        assert_eq!(path.interface.as_deref(), Some("rnode"));
+
+        let tunnel_query = tokio::spawn({
+            let client = client.clone();
+            async move { client.list_tunnels().await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("tunnel request");
+        assert_eq!(request.msg_type, MessageType::QueryTunnels);
+        let tunnel = Value::Map(vec![
+            (Value::from("peer_hash"), Value::from("bb22bb22bb22bb22")),
+            (Value::from("backend"), Value::from("wireguard")),
+            (Value::from("state"), Value::from("established")),
+            (Value::from("remote_endpoint"), Value::from("")),
+            (Value::from("established_at"), Value::from(0)),
+        ]);
+        let payload = HashMap::from([("tunnels".into(), Value::Array(vec![tunnel]))]);
+        reply(&mut server, MessageType::Result, &request.request_id, &payload).await;
+        let tunnels = tunnel_query.await.expect("tunnel task").expect("tunnel response");
+        assert_eq!(tunnels[0].remote_endpoint, None);
+        assert_eq!(tunnels[0].established_at, None);
+    }
+
+    #[tokio::test]
+    async fn preserves_fleet_aliases_and_extra_status_fields() {
+        let (client, mut server) = pair(2);
+        let query = tokio::spawn({
+            let client = client.clone();
+            async move { client.device_status("cc33cc33cc33cc33", 20).await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("fleet request");
+        assert_eq!(request.msg_type, MessageType::CmdDeviceStatus);
+        assert_eq!(request.payload["timeout"].as_u64(), Some(20));
+        let payload = HashMap::from([
+            ("destination_hash".into(), Value::from("cc33cc33cc33cc33")),
+            ("uptime".into(), Value::from(45)),
+            ("version".into(), Value::from("0.3.0")),
+            ("battery_percent".into(), Value::from(80)),
+        ]);
+        reply(&mut server, MessageType::Result, &request.request_id, &payload).await;
+
+        let status = query.await.expect("fleet task").expect("fleet response");
+        assert_eq!(status.daemon_version.as_deref(), Some("0.3.0"));
+        assert_eq!(status.extra["battery_percent"], serde_json::json!(80));
     }
 }

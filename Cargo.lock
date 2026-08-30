@@ -4157,14 +4157,10 @@ name = "styrene"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "base64",
  "clap",
  "console",
- "rmpv",
  "styrene-ipc",
  "styrene-ipc-client",
- "styrene-ipc-server",
- "styrene-ipc-wire",
  "styrene-tui",
  "styrened",
  "tokio",
@@ -4356,6 +4352,7 @@ dependencies = [
 name = "styrene-ipc-client"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "rmpv",
  "serde",
  "serde_json",
