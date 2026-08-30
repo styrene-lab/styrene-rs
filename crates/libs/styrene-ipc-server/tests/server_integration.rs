@@ -1753,6 +1753,9 @@ async fn authorization_denial_is_typed_and_non_retryable_over_socket() {
     assert_eq!(response.payload["kind"].as_str(), Some("denied"));
     assert_eq!(response.payload["code"].as_str(), Some("denied"));
     let error = IpcError::Denied { capability: "messaging.history.read".into() };
+    let typed_error: IpcError = rmpv::ext::from_value(response.payload["typed_error"].clone())
+        .expect("typed authorization error");
+    assert_eq!(typed_error, error);
     assert!(!error.is_retryable());
     let invalid = HashMap::from([
         ("query".into(), rmpv::Value::from("")),
@@ -1790,6 +1793,18 @@ async fn query_status() {
     assert_eq!(item("version").and_then(|v| v.as_u64()), Some(1));
     assert_eq!(item("runtime").and_then(|v| v.as_array()).map(Vec::len), Some(1));
     assert_eq!(item("degraded").and_then(|v| v.as_array()).map(Vec::len), Some(1));
+    let capability_json: serde_json::Value = rmpv::ext::from_value(
+        resp.payload.get("active_capabilities").expect("active capabilities").clone(),
+    )
+    .expect("JSON-compatible active capabilities");
+    let typed_capabilities: ActiveCapabilitiesInfo =
+        serde_json::from_value(capability_json).expect("typed active capabilities");
+    assert_eq!(typed_capabilities.version, ACTIVE_CAPABILITIES_VERSION);
+    assert_eq!(typed_capabilities.runtime, ["runtime.lxmf.direct"]);
+    assert_eq!(typed_capabilities.authorized_operations, ["chat.send"]);
+    assert_eq!(typed_capabilities.degraded.len(), 1);
+    assert_eq!(typed_capabilities.degraded[0].id, "runtime.native-nomadnet.host");
+    assert_eq!(typed_capabilities.degraded[0].reason, "request handler unavailable");
     server.stop().await;
 }
 
@@ -2208,6 +2223,9 @@ async fn typed_daemon_errors_add_metadata_without_removing_legacy_error_string()
     assert_eq!(response.payload["message"].as_str(), Some("conflict: cursor_stale"));
     assert_eq!(response.payload["kind"].as_str(), Some("conflict"));
     assert_eq!(response.payload["code"].as_str(), Some("cursor_stale"));
+    let typed_error: IpcError = rmpv::ext::from_value(response.payload["typed_error"].clone())
+        .expect("typed conflict error");
+    assert_eq!(typed_error, IpcError::Conflict { message: "cursor_stale".into() });
     server.stop().await;
 }
 

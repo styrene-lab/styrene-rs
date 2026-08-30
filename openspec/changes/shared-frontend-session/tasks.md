@@ -5,7 +5,7 @@
 
 - [x] 1.1 Inventory CLI, TUI, Dioxus, embedded mobile, `styrene-ipc`, and `DaemonFacade` operations and typed records
 - [x] 1.2 Identify duplicate wire parsing, request brokering, polling, subscription, and generation behavior
-- [ ] 1.3 Add contract tests for operation parity, capability preservation, and typed failures
+- [x] 1.3 Add contract tests for operation parity, capability preservation, and typed failures
 - [x] 1.4 Document the public crate boundary and dependency direction before moving code
 
 ## 2. Reusable IPC Client

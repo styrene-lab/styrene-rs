@@ -1715,7 +1715,7 @@ async fn dispatch_query_messages(
         (daemon.query_messages(peer_hash, limit, before_ts).await.map_err(|e| e.to_string())?, None)
     } else {
         let page =
-            daemon.query_message_page(peer_hash, limit, cursor).await.map_err(|e| e.to_string())?;
+            daemon.query_message_page(peer_hash, limit, cursor).await.map_err(typed_ipc_error)?;
         (page.messages, page.next_cursor)
     };
     let list: Vec<rmpv::Value> = msgs.iter().map(message_info_value).collect();
