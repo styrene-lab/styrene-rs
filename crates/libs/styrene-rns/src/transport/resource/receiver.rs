@@ -5,6 +5,7 @@ struct ResourceReceiver {
     random_hash: [u8; RANDOM_HASH_SIZE],
     parts: Vec<Option<Vec<u8>>>,
     hashmap: Vec<Option<[u8; MAPHASH_LEN]>>,
+    consecutive_completed: usize,
     received: usize,
     received_bytes: u64,
     total_bytes: u64,
@@ -105,6 +106,7 @@ impl ResourceReceiver {
             random_hash: adv.random_hash,
             parts: vec![None; total_parts],
             hashmap: vec![None; total_parts],
+            consecutive_completed: 0,
             received: 0,
             received_bytes: 0,
             total_bytes: adv.transfer_size,
@@ -145,7 +147,9 @@ impl ResourceReceiver {
         let mut last_known: Option<[u8; MAPHASH_LEN]> = None;
         let mut hashmap_exhausted = false;
 
-        for (idx, entry) in self.hashmap.iter().enumerate() {
+        let end = (self.consecutive_completed + WINDOW).min(self.hashmap.len());
+        for idx in self.consecutive_completed..end {
+            let entry = &self.hashmap[idx];
             if let Some(hash) = entry {
                 last_known = Some(*hash);
                 if self.parts[idx].is_none() {
@@ -182,7 +186,12 @@ impl ResourceReceiver {
         }
 
         let hash = map_hash(part, &self.random_hash);
-        let Some(index) = self.hashmap.iter().position(|entry| entry.as_ref() == Some(&hash))
+        let start = self.consecutive_completed;
+        let end = (start + WINDOW).min(self.hashmap.len());
+        let Some(index) = self.hashmap[start..end]
+            .iter()
+            .position(|entry| entry.as_ref() == Some(&hash))
+            .map(|index| start + index)
         else {
             return PartOutcome::NoMatch;
         };
@@ -203,6 +212,13 @@ impl ResourceReceiver {
             self.received += 1;
             self.received_bytes = self.received_bytes.saturating_add(part.len() as u64);
             self.last_progress = now;
+            while self
+                .parts
+                .get(self.consecutive_completed)
+                .is_some_and(Option::is_some)
+            {
+                self.consecutive_completed += 1;
+            }
         }
 
         if self.received == self.parts.len() && !self.parts.is_empty() {
