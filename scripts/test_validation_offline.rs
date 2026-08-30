@@ -313,6 +313,121 @@ fn table_blocks<'a>(document: &'a str, header: &str) -> Vec<&'a str> {
     document.split(header).skip(1).map(|tail| tail.split("\n[[").next().unwrap_or(tail)).collect()
 }
 
+fn rns_parity_policy_errors(
+    index: &str,
+    consumers: &str,
+    handoff: &str,
+    product: &str,
+    authority_documents: &[(&str, &str)],
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for (authority_id, revision) in [
+        ("rns-1.4.2", "b48b96e61676504e0a4e527b33b9a0b4495c6872"),
+        ("rns-1.5.1", "149e4151095adf098b8f53eab0c03b37169e8559"),
+    ] {
+        if !index.contains(&format!("\"{authority_id}\""))
+            || !index.contains(&format!("\"revision\": \"{revision}\""))
+        {
+            errors.push(format!("missing immutable authority {authority_id}"));
+        }
+    }
+    let authority_files = authority_documents
+        .iter()
+        .filter(|(_, document)| document.contains("\"authorities\""))
+        .map(|(path, _)| *path)
+        .collect::<Vec<_>>();
+    if authority_files != ["tests/interop/fixtures/rns/index-v2.json"] {
+        errors.push(format!("competing RNS fixture authority schemas: {authority_files:?}"));
+    }
+    for consumer in [
+        "beechat-rns-corrections-wave",
+        "freetak-rns-hardening-wave",
+        "leviculum-rns-corpus-wave",
+    ] {
+        if !consumers.contains(&format!("\"change_id\": \"{consumer}\"")) {
+            errors.push(format!("missing shared-loader consumer {consumer}"));
+        }
+    }
+    if !consumers.contains("\"fixture_index\": \"tests/interop/fixtures/rns/index-v2.json\"") {
+        errors.push("consumer registry does not select the shared v2 index".to_string());
+    }
+    for required in [
+        "\"runner\": \"styrene-interop-runner\"",
+        "\"authority_id\": \"rns-1.5.1\"",
+        "\"authority_revision\": \"149e4151095adf098b8f53eab0c03b37169e8559\"",
+        "\"registered\": false",
+        "\"enabled\": false",
+        "\"claim_status\": \"unevidenced\"",
+    ] {
+        if !handoff.contains(required) {
+            errors.push(format!("live handoff lost '{required}'"));
+        }
+    }
+    let scenario_ids = [
+        "rns-1.5.1-routed-link-request-channel-resource",
+        "rns-1.5.1-mixed-interface-mtu",
+        "rns-1.5.1-interface-discovery-observation",
+    ];
+    if handoff.matches("\"state\": \"handoff_only\"").count() != scenario_ids.len() {
+        errors.push("expected three handoff-only live scenarios".to_string());
+    }
+    for required in [
+        "\"timeout_secs\": ",
+        "\"max_log_bytes\": ",
+        "\"max_artifacts\": ",
+        "\"max_artifact_bytes\": ",
+        "\"artifact_sha256_required\": true",
+        "\"revision_attestation_required\": true",
+        "\"cancellation\": ",
+        "\"cleanup\": ",
+    ] {
+        if handoff.matches(required).count() != scenario_ids.len() {
+            errors.push(format!("live handoff scenarios lost '{required}'"));
+        }
+    }
+    for id in scenario_ids {
+        if !handoff.contains(&format!("\"id\": \"{id}\"")) {
+            errors.push(format!("missing live handoff scenario {id}"));
+        }
+        if product.contains(&format!("id = \"{id}\"")) {
+            errors.push(format!("unverified live handoff was registered as parity gate {id}"));
+        }
+    }
+    for task in [
+        "reticulum-lxmf-nomadnet-parity:4.7",
+        "reticulum-lxmf-nomadnet-parity:5.7",
+        "reticulum-lxmf-nomadnet-parity:8.8",
+        "reticulum-lxmf-nomadnet-parity:12.6",
+    ] {
+        if !handoff.contains(task) {
+            errors.push(format!("live handoff lost owner {task}"));
+        }
+    }
+    for upstream in table_blocks(product, "[[parity_upstreams]]") {
+        let revision = upstream
+            .lines()
+            .find_map(|line| line.strip_prefix("revision = \"").and_then(|value| value.strip_suffix('"')));
+        if !revision.is_some_and(|revision| {
+            revision.len() == 40
+                && revision.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        }) {
+            errors.push("parity upstream revision is mutable or malformed".to_string());
+        }
+    }
+    errors
+}
+
+fn enables_hardware_by_default(manifest: &str) -> bool {
+    manifest
+        .lines()
+        .find(|line| line.starts_with("default ="))
+        .is_some_and(|line| {
+            ["hardware-trng", "serial", "yubikey", "keychain"]
+                .iter()
+                .any(|feature| line.contains(feature))
+        })
+}
+
 fn workspace_packages() -> HashMap<String, PathBuf> {
     let mut packages = HashMap::new();
     for manifest in repository_files("crates", &["toml"])
@@ -1003,7 +1118,6 @@ fn every_workflow_obeys_trigger_and_reuse_boundaries() {
         if ordinary_validation {
             ordinary_count += 1;
             for forbidden in [
-                "cargo test -p styrene-interop-runner",
                 "--test mobile_node",
                 "--test server_integration",
                 "--ignored",
@@ -1033,6 +1147,15 @@ fn every_workflow_obeys_trigger_and_reuse_boundaries() {
                 }
             }
             for invocation in cargo_invocations(&workflow) {
+                if invocation.command == "test"
+                    && invocation.packages.iter().any(|package| package == "styrene-interop-runner")
+                {
+                    assert_eq!(
+                        invocation.tests,
+                        ["rns_fixtures", "rns_handoff_manifests"],
+                        "ordinary workflow {path} selects live interoperability targets"
+                    );
+                }
                 if invocation.command == "test"
                     && invocation.packages.iter().any(|package| package == "styrene-e2e")
                 {
@@ -1171,6 +1294,7 @@ fn parity_gate_inventory_is_non_vacuous_and_live_gates_are_isolated() {
     assert!(live_count > 0, "live gate checks were vacuous");
     for (gate, command_fragment) in [
         ("rns-python-fixtures", "--features interop-tests,transport"),
+        ("rns-parity-contracts", "--test rns_fixtures --test rns_handoff_manifests"),
         ("lxmf-rust-codec", "--test lxmf_protocol"),
         ("micron-conformance", "-p styrene-micron"),
         ("nomadnet-styrene-pages", "--test nomadnet_pages_offline"),
@@ -1184,6 +1308,105 @@ fn parity_gate_inventory_is_non_vacuous_and_live_gates_are_isolated() {
 }
 
 #[test]
+fn rns_parity_policy_rejects_unsafe_validation_and_claim_promotion() {
+    let index_path = "tests/interop/fixtures/rns/index-v2.json";
+    let index = read(index_path);
+    let consumers = read("tests/interop/fixtures/rns/consumers-v1.json");
+    let handoff = read("tests/interop/handoffs/reticulum-1.5.1-live.json");
+    let product = read("product/capabilities-v1.toml");
+    let rns_json = repository_files("tests/interop/fixtures/rns", &["json"])
+        .into_iter()
+        .map(|path| {
+            let relative = relative(&path);
+            let document = fs::read_to_string(path).expect("read RNS JSON document");
+            (relative, document)
+        })
+        .collect::<Vec<_>>();
+    let authority_documents = rns_json
+        .iter()
+        .map(|(path, document)| (path.as_str(), document.as_str()))
+        .collect::<Vec<_>>();
+    assert!(
+        rns_parity_policy_errors(&index, &consumers, &handoff, &product, &authority_documents)
+            .is_empty()
+    );
+    for (path, authority_ids) in [
+        (
+            "openspec/changes/beechat-rns-corrections-wave/specs/rns-wire-corrections.md",
+            ["rns-1.5.1", "rns-1.5.1"],
+        ),
+        (
+            "openspec/changes/freetak-rns-hardening-wave/specs/rns-security-hardening.md",
+            ["rns-1.5.1", "rns-1.5.1"],
+        ),
+        (
+            "openspec/changes/leviculum-rns-corpus-wave/specs/rns-corpus-governance.md",
+            ["rns-1.4.2", "rns-1.5.1"],
+        ),
+    ] {
+        let contract = read(path);
+        assert!(contract.contains("styrene_interop_runner::rns_fixtures"));
+        assert!(contract.contains("tests/interop/fixtures/rns/index-v2.json"));
+        assert!(authority_ids.iter().all(|id| contract.contains(id)));
+    }
+
+    assert!(inspect_offline_commands("curl https://example.invalid", "network mutation").is_err());
+    assert!(inspect_offline_commands("python3 generate.py", "Python launch").is_err());
+    assert!(enables_hardware_by_default("default = [\"serial\"]"));
+
+    let mutable = handoff.replace(
+        "149e4151095adf098b8f53eab0c03b37169e8559",
+        "main",
+    );
+    assert!(!rns_parity_policy_errors(
+        &index,
+        &consumers,
+        &mutable,
+        &product,
+        &authority_documents,
+    )
+    .is_empty());
+
+    let mut competing = authority_documents.clone();
+    competing.push(("tests/interop/fixtures/rns/other.json", "{\"authorities\":{}}"));
+    assert!(!rns_parity_policy_errors(&index, &consumers, &handoff, &product, &competing).is_empty());
+
+    let no_checksum = handoff.replacen("\"artifact_sha256_required\": true", "", 1);
+    assert!(!rns_parity_policy_errors(
+        &index,
+        &consumers,
+        &no_checksum,
+        &product,
+        &authority_documents,
+    )
+    .is_empty());
+
+    let promoted = handoff.replace(
+        "\"claim_status\": \"unevidenced\"",
+        "\"claim_status\": \"supported\"",
+    );
+    assert!(!rns_parity_policy_errors(
+        &index,
+        &consumers,
+        &promoted,
+        &product,
+        &authority_documents,
+    )
+    .is_empty());
+
+    let registered = product.clone()
+        + "\n[[parity_gates]]\nid = \"rns-1.5.1-mixed-interface-mtu\"\n";
+    assert!(!rns_parity_policy_errors(
+        &index,
+        &consumers,
+        &handoff,
+        &registered,
+        &authority_documents,
+    )
+    .is_empty());
+}
+
+#[test]
 fn hardware_features_remain_opt_in() {
     for (path, declaration) in [
         ("crates/libs/styrene-entropy/Cargo.toml", "hardware-trng = [\"dep:serialport\"]"),
@@ -1193,9 +1416,6 @@ fn hardware_features_remain_opt_in() {
     ] {
         let manifest = read(path);
         assert!(manifest.contains(declaration), "{path} lost '{declaration}'");
-        let defaults = manifest.lines().find(|line| line.starts_with("default =")).unwrap_or("");
-        for feature in ["hardware-trng", "serial", "yubikey", "keychain"] {
-            assert!(!defaults.contains(feature), "{path} enables {feature} by default");
-        }
+        assert!(!enables_hardware_by_default(&manifest), "{path} enables hardware by default");
     }
 }

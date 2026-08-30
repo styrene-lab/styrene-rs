@@ -24,6 +24,8 @@ selected_targets = [
   "styrene-mqtt:*",
   "styrene-forge:*",
   "styrene-amcp:*",
+  "styrene-interop-runner:test/rns_fixtures",
+  "styrene-interop-runner:test/rns_handoff_manifests",
   "styrene-ipc-server:lib",
   "styrene-ipc-server:test/wire_compat",
   "styrened:lib",
@@ -79,7 +81,7 @@ evidence = "excluded-targets:listener-and-peer-tests; selected-offline-targets:i
 
 [[sensitive_tests]]
 path = "crates/tests/styrene-interop-runner"
-evidence = "excluded-target:runner; explicit-recipe:test-live-harness; manual-workflow:network-tests.yml"
+evidence = "selected-offline-targets:rns_fixtures,rns_handoff_manifests; excluded-target:runner; explicit-recipe:test-live-harness; manual-workflow:network-tests.yml"
 
 [[sensitive_tests]]
 path = "crates/apps/styrene-i2p"

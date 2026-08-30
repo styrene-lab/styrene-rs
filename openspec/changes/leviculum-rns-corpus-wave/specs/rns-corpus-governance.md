@@ -9,6 +9,10 @@ and provenance validation contract owned by `reticulum-1-5-parity-wave`. It
 must not define a competing authority, schema, fixture root, or canonical
 generator. Leviculum metadata may extend the owner-provided schema only through
 its declared extension mechanism.
+Canonical controls must load `tests/interop/fixtures/rns/index-v2.json` through
+`styrene_interop_runner::rns_fixtures` and select `rns-1.4.2` or `rns-1.5.1`
+authority IDs. Leviculum-specific provenance remains category metadata and must
+not become a canonical RNS authority record.
 
 #### Scenario: Authority and schema are unavailable
 Given the Reticulum 1.5 parity wave has not published its authority record or schema contract

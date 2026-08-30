@@ -14,6 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub mod rns_fixtures;
+pub mod rns_handoffs;
 
 const EVENT_PREFIX: &str = "STYRENE_EVENT ";
 const MAX_EVENT_LINE_BYTES: usize = 16 * 1024;

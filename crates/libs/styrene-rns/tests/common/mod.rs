@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-pub use styrene_interop_runner::rns_fixtures::RnsFixtureIndex;
+pub use styrene_interop_runner::rns_fixtures::{RnsFixtureConsumer, RnsFixtureIndex};
 
 pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
@@ -18,6 +18,11 @@ pub fn load_rns_index() -> Result<RnsFixtureIndex, Vec<String>> {
     styrene_interop_runner::rns_fixtures::load_rns_index(&repo_root())
 }
 
+pub fn load_rns_fixture_consumers()
+-> Result<(RnsFixtureIndex, Vec<RnsFixtureConsumer>), Vec<String>> {
+    styrene_interop_runner::rns_fixtures::load_rns_fixture_consumers(&repo_root())
+}
+
 pub fn rns_vector<'a>(
     index: &'a RnsFixtureIndex,
     id: &str,
@@ -31,11 +36,16 @@ pub fn load_rns_vector_bytes(index: &RnsFixtureIndex, id: &str) -> Result<Vec<u8
 
 /// Load a JSON fixture file and deserialise it into `T`.
 pub fn load_fixture<T: serde::de::DeserializeOwned>(filename: &str) -> T {
-    let path = fixtures_dir().join(filename);
-    let data = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read fixture {}: {e}", path.display()));
-    serde_json::from_str(&data)
-        .unwrap_or_else(|e| panic!("failed to parse fixture {}: {e}", path.display()))
+    let index = load_rns_index().expect("committed RNS fixture index must validate");
+    let artifact = format!("tests/interop/fixtures/{filename}");
+    let vector =
+        index.vectors.iter().find(|vector| vector.artifact == artifact).unwrap_or_else(|| {
+            panic!("fixture is not indexed by the shared RNS loader: {filename}")
+        });
+    let data = load_rns_vector_bytes(&index, &vector.id)
+        .unwrap_or_else(|error| panic!("failed to load fixture {filename}: {error}"));
+    serde_json::from_slice(&data)
+        .unwrap_or_else(|error| panic!("failed to parse fixture {filename}: {error}"))
 }
 
 /// Decode a hex string to bytes.
