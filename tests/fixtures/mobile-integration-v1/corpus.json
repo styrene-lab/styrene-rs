@@ -130,6 +130,44 @@
       "not_proven": ["backup and recovery", "biometric access policy"]
     },
     {
+      "id": "mobile.identity.custody-fail-closed",
+      "area": "identity",
+      "priority": "p0",
+      "title": "Unavailable production custody fails before plaintext identity material is created",
+      "maturity": "blocked",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.identity", "messages.status"],
+      "actions": ["select-unavailable-secure-backend", "boot", "inspect-storage", "query-custody"],
+      "assertions": [
+        {"source": "daemon", "claim": "Boot returns a typed custody failure before writing plaintext identity material", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-identity.md"}
+      ],
+      "existing_tests": ["crates/apps/styrened/src/mobile.rs#unavailable_android_keystore_does_not_fall_back_to_plaintext"],
+      "missing_capabilities": ["fail-closed Keychain path", "fail-closed encrypted-file path", "typed custody status"],
+      "not_proven": ["physical secure storage"]
+    },
+    {
+      "id": "mobile.identity.durable-edit",
+      "area": "identity",
+      "priority": "p0",
+      "title": "Normalized public identity metadata survives process restart without changing identity keys",
+      "maturity": "blocked",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.identity"],
+      "actions": ["boot", "edit-public-identity", "shutdown", "restart", "query-identity"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Normalized display metadata is restored while identity and delivery hashes remain unchanged", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-identity.md"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["durable public identity metadata", "typed mobile identity edit", "restart assertion"],
+      "not_proven": ["private key export", "profile synchronization"]
+    },
+    {
       "id": "mobile.lifecycle.offline-ready",
       "area": "lifecycle",
       "priority": "p0",
@@ -320,6 +358,44 @@
       "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#draft_revision_prevents_an_older_send_from_clearing_a_newer_edit"],
       "missing_capabilities": ["packaged Dioxus repeated-send assertion"],
       "not_proven": ["network deduplication"]
+    },
+    {
+      "id": "mobile.messaging.retry-canonical-attempt",
+      "area": "messaging",
+      "priority": "p0",
+      "title": "Retry retains one canonical message and appends a correlated attempt",
+      "maturity": "partial",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.thread", "messages.delivery-details"],
+      "actions": ["send-message", "observe-retryable-failure", "restart", "retry-message", "query-message"],
+      "assertions": [
+        {"source": "daemon", "claim": "Retry preserves the canonical message identifier and records another correlated attempt without duplicate content", "oracle": "crates/apps/styrened/tests/mobile_node.rs#typed_direct_send_returns_and_restores_the_authoritative_failed_projection"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#typed_direct_send_returns_and_restores_the_authoritative_failed_projection", "crates/apps/styrened/tests/daemon_facade_contract.rs"],
+      "missing_capabilities": ["packaged Dioxus retry journey"],
+      "not_proven": ["remote duplicate suppression"]
+    },
+    {
+      "id": "mobile.messaging.unicode-preview",
+      "area": "messaging",
+      "priority": "p0",
+      "title": "Bounded notification and conversation previews preserve valid Unicode",
+      "maturity": "blocked",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.inbox"],
+      "actions": ["persist-unicode-message", "build-bounded-preview", "query-conversations"],
+      "assertions": [
+        {"source": "daemon", "claim": "Preview generation is bounded, returns valid UTF-8, and cannot panic at a multibyte boundary", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["shared Unicode-safe preview helper", "boundary and property tests"],
+      "not_proven": ["grapheme-aware host truncation"]
     },
     {
       "id": "mobile.messaging.history-order-and-pagination",
@@ -571,6 +647,25 @@
       "not_proven": ["notes", "trust", "block state"]
     },
     {
+      "id": "mobile.people.contact-conversation-creation",
+      "area": "people",
+      "priority": "p0",
+      "title": "A canonical discovered or saved destination can create one durable empty conversation",
+      "maturity": "blocked",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["people.person", "messages.inbox", "messages.thread"],
+      "actions": ["seed-canonical-peer", "start-conversation", "start-conversation", "restart", "query-conversations"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Exactly one conversation shell survives restart without a fabricated message, preview, unread count, route, or online state", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
+      ],
+      "existing_tests": [],
+      "missing_capabilities": ["durable conversation shell", "typed start-conversation operation", "empty conversation projection"],
+      "not_proven": ["route availability", "remote reception"]
+    },
+    {
       "id": "mobile.network.tcp-profile-validation",
       "area": "network",
       "priority": "p0",
@@ -684,6 +779,25 @@
       "existing_tests": [],
       "missing_capabilities": ["Dioxus propagation configuration", "Dioxus projection of per-message poll results"],
       "not_proven": ["standard LXMF propagation parity"]
+    },
+    {
+      "id": "mobile.propagation.persist-before-ack",
+      "area": "propagation",
+      "priority": "p0",
+      "title": "Hub acknowledgement includes only durable accepted messages and verified durable duplicates",
+      "maturity": "blocked",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "propagation-hub",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.propagation", "messages.inbox"],
+      "actions": ["queue-mixed-results", "poll-hub", "inspect-acknowledgements", "repeat-poll"],
+      "assertions": [
+        {"source": "daemon", "claim": "Rejected and storage-failed transient identifiers are not acknowledged, while accepted and verified duplicate results are explicit", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
+      ],
+      "existing_tests": ["crates/apps/styrened/src/mobile.rs#mobile_sync_does_not_acknowledge_a_rejected_message"],
+      "missing_capabilities": ["legacy poll per-item outcome", "legacy poll acknowledgement eligibility", "acknowledgement failure projection"],
+      "not_proven": ["packaged background execution"]
     },
     {
       "id": "mobile.propagation.queue-sync-state",

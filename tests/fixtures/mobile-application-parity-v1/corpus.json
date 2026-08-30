@@ -1,0 +1,443 @@
+{
+  "schema_version": 1,
+  "corpus": "styrene-mobile-application-parity-v1",
+  "description": "Provenance-locked application evidence and explicit Styrene P0 mobile workflow decisions",
+  "collected_on": "2026-08-29",
+  "references": [
+    {
+      "id": "sideband-2.1.0-build-20251128",
+      "classification": "candidate_rns_lxmf_application",
+      "name": "Sideband",
+      "version": "2.1.0",
+      "build": "20251128",
+      "platforms": ["android"],
+      "protocol_versions": {"rns": "1.5.2", "lxmf": "1.1.1"},
+      "provenance": {
+        "status": "unresolved",
+        "kind": "binary",
+        "locator": "https://github.com/markqvist/Sideband/releases/download/2.1.0/Sideband_2.1.0.apk",
+        "revision": null,
+        "artifact_sha256": "988dfe348039978a0ec19f9191c3c2ae0c2858744382cb847967f51b3272f746",
+        "notes": [
+          "The APK manifest identifies io.unsigned.sideband version 2.1.0 build 20251128, minimum API 24, target API 33, and arm64-v8a native libraries.",
+          "The APK contains RNS 1.5.2 and LXMF 1.1.1 version constants, but not their exact revisions.",
+          "The public 2.1.0 tag points to 1402bb6a492e87dc5224139a300cbb547487f7b6 and contains stale 1.9.2 application metadata.",
+          "A signed release manifest names private origin c98a6eb43e8946d8283c3d05865064542e95787e, which is not publicly resolvable.",
+          "The release APK was re-uploaded; the SHA-256, not the release name alone, identifies the inspected artifact."
+        ]
+      },
+      "limitations": [
+        "No retained executed Android workflow exists.",
+        "No current iOS artifact exists.",
+        "Source-to-APK reproducibility and exact bundled RNS and LXMF revisions are unresolved.",
+        "Sideband is not protocol authority or interoperability evidence."
+      ]
+    },
+    {
+      "id": "reticulum-meshchat-2.4.0",
+      "classification": "candidate_rns_lxmf_application",
+      "name": "Reticulum MeshChat",
+      "version": "2.4.0",
+      "build": null,
+      "platforms": ["android_termux_browser"],
+      "protocol_versions": {"rns": null, "lxmf": null},
+      "provenance": {
+        "status": "current",
+        "kind": "source_repository",
+        "locator": "https://github.com/liamcottle/reticulum-meshchat",
+        "revision": "45f89a8fca79f63501659d192577e880380e6cc0",
+        "artifact_sha256": null,
+        "notes": [
+          "Annotated tag v2.4.0 has tag object 303f3dbd8163f3bfa31ab3a30844d3aceae7678b and peels to the recorded revision.",
+          "Android support is an official Termux-hosted Python backend and browser UI procedure, not a native APK.",
+          "Requirements declare rns>=1.3.7 and lxmf>=1.0.1; exact Android runtime versions require an executed app-info capture.",
+          "The v2.4.0 release contains desktop assets only and provides no iOS installation path."
+        ]
+      },
+      "limitations": [
+        "No retained executed Android workflow exists.",
+        "Android OS, Termux, Python, RNS, LXMF, browser, and built frontend versions are unknown.",
+        "The PWA manifest is not iOS RNS or LXMF execution evidence.",
+        "Reticulum MeshChat is not protocol authority or interoperability evidence."
+      ]
+    },
+    {
+      "id": "skywave-1.0-build-5",
+      "classification": "observed_rns_lxmf_application",
+      "name": "Skywave",
+      "version": "1.0",
+      "build": "5",
+      "platforms": [],
+      "protocol_versions": {"rns": "0.9.4", "lxmf": null},
+      "provenance": {
+        "status": "unresolved",
+        "kind": "binary",
+        "locator": null,
+        "revision": null,
+        "artifact_sha256": null,
+        "notes": ["The retained summary lacks exact platform, OS, binary provenance, and primary observation artifacts."]
+      },
+      "limitations": ["Recorded scope is public TCP connectivity and canonical lxmf.delivery announces only."]
+    },
+    {
+      "id": "python-rns-1.4.2",
+      "classification": "protocol_authority",
+      "name": "Python Reticulum",
+      "version": "1.4.2",
+      "build": null,
+      "platforms": ["python"],
+      "protocol_versions": {"rns": "1.4.2", "lxmf": null},
+      "provenance": {
+        "status": "current",
+        "kind": "source_repository",
+        "locator": "https://github.com/markqvist/Reticulum",
+        "revision": "b48b96e61676504e0a4e527b33b9a0b4495c6872",
+        "artifact_sha256": null,
+        "notes": ["Pinned by tests/interop/fixtures/provenance-v1.toml."]
+      },
+      "limitations": ["Protocol authority cannot establish an application workflow floor."]
+    },
+    {
+      "id": "python-lxmf-795fdaa2",
+      "classification": "protocol_authority",
+      "name": "Python LXMF",
+      "version": null,
+      "build": null,
+      "platforms": ["python"],
+      "protocol_versions": {"rns": null, "lxmf": null},
+      "provenance": {
+        "status": "conflicted",
+        "kind": "source_repository",
+        "locator": "https://github.com/markqvist/LXMF",
+        "revision": "795fdaa2b0777c13033787d933d1afc94a2377cb",
+        "artifact_sha256": null,
+        "notes": [
+          "tests/interop/fixtures/provenance-v1.toml labels this revision 1.1.1.",
+          "tests/interop/fixtures/lxmf-propagation-v1/index.json labels this revision 1.1.0."
+        ]
+      },
+      "limitations": ["The version conflict must be resolved before dependent evidence is admitted."]
+    },
+    {
+      "id": "nomadnet-1.2.8",
+      "classification": "candidate_rns_lxmf_application",
+      "name": "NomadNet",
+      "version": "1.2.8",
+      "build": null,
+      "platforms": ["python"],
+      "protocol_versions": {"rns": null, "lxmf": null},
+      "provenance": {
+        "status": "current",
+        "kind": "source_repository",
+        "locator": "https://github.com/markqvist/NomadNet",
+        "revision": "ad10301569a39d4f43b3d21ae9fc392602c937ca",
+        "artifact_sha256": null,
+        "notes": ["Pinned by tests/interop/fixtures/provenance-v1.toml."]
+      },
+      "limitations": ["Bidirectional application gates are incomplete and NomadNet workflows are outside the mobile minimum."]
+    },
+    {
+      "id": "columba-candidate",
+      "classification": "candidate_rns_lxmf_application",
+      "name": "Columba",
+      "version": null,
+      "build": null,
+      "platforms": [],
+      "protocol_versions": {"rns": null, "lxmf": null},
+      "provenance": {"status": "unresolved", "kind": "binary", "locator": null, "revision": null, "artifact_sha256": null, "notes": ["Exact version, provenance, and executed observation remain unrecovered."]},
+      "limitations": ["Cannot establish a workflow floor."]
+    },
+    {
+      "id": "meshtastic-interaction",
+      "classification": "interaction_only_reference",
+      "name": "Meshtastic",
+      "version": null,
+      "build": null,
+      "platforms": [],
+      "protocol_versions": {"rns": null, "lxmf": null},
+      "provenance": {"status": "unresolved", "kind": "binary", "locator": null, "revision": null, "artifact_sha256": null, "notes": ["Retained only as an interaction reference."]},
+      "limitations": ["Cannot establish RNS, LXMF, propagation, receipt, or bearer behavior."]
+    },
+    {
+      "id": "meshcore-interaction",
+      "classification": "interaction_only_reference",
+      "name": "MeshCore",
+      "version": null,
+      "build": null,
+      "platforms": [],
+      "protocol_versions": {"rns": null, "lxmf": null},
+      "provenance": {"status": "unresolved", "kind": "binary", "locator": null, "revision": null, "artifact_sha256": null, "notes": ["Retained only as an interaction reference."]},
+      "limitations": ["Cannot establish RNS, LXMF, propagation, receipt, or bearer behavior."]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "sideband-2.1.0-static-artifact-inspection",
+      "reference_id": "sideband-2.1.0-build-20251128",
+      "method": "static_artifact_inspection",
+      "status": "unevidenced",
+      "collected_on": "2026-08-29",
+      "platform": "android",
+      "os": null,
+      "citations": [
+        "https://api.github.com/repos/markqvist/Sideband/releases/378589731",
+        "https://api.github.com/repos/markqvist/Sideband/releases/assets/534626153",
+        "https://api.github.com/repos/markqvist/Sideband/releases/assets/534641284",
+        "https://github.com/markqvist/Sideband/commit/1402bb6a492e87dc5224139a300cbb547487f7b6",
+        "https://raw.githubusercontent.com/markqvist/Sideband/1402bb6a492e87dc5224139a300cbb547487f7b6/README.md",
+        "https://raw.githubusercontent.com/markqvist/Sideband/1402bb6a492e87dc5224139a300cbb547487f7b6/MIRROR.md",
+        "https://raw.githubusercontent.com/markqvist/Sideband/1402bb6a492e87dc5224139a300cbb547487f7b6/sbapp/main.py",
+        "https://raw.githubusercontent.com/markqvist/Sideband/1402bb6a492e87dc5224139a300cbb547487f7b6/sbapp/buildozer.spec",
+        "https://raw.githubusercontent.com/markqvist/Sideband/1402bb6a492e87dc5224139a300cbb547487f7b6/Makefile",
+        "sha256:5985e233651368360a1ae3c727e41bac9b66abf6abfe3aa43f6db41972a82df4!/sbapp-2.1.0.dist-info/METADATA",
+        "sha256:5985e233651368360a1ae3c727e41bac9b66abf6abfe3aa43f6db41972a82df4!/sbapp/sideband/core.py",
+        "sha256:5985e233651368360a1ae3c727e41bac9b66abf6abfe3aa43f6db41972a82df4!/sbapp/ui/announces.py",
+        "sha256:5985e233651368360a1ae3c727e41bac9b66abf6abfe3aa43f6db41972a82df4!/sbapp/ui/conversations.py",
+        "sha256:5985e233651368360a1ae3c727e41bac9b66abf6abfe3aa43f6db41972a82df4!/sbapp/ui/messages.py",
+        "sha256:988dfe348039978a0ec19f9191c3c2ae0c2858744382cb847967f51b3272f746!/AndroidManifest.xml",
+        "sha256:988dfe348039978a0ec19f9191c3c2ae0c2858744382cb847967f51b3272f746!/assets/private.tar!/RNS/_version.pyc",
+        "sha256:988dfe348039978a0ec19f9191c3c2ae0c2858744382cb847967f51b3272f746!/assets/private.tar!/LXMF/_version.pyc"
+      ],
+      "artifacts": [
+        {"kind": "binary_manifest", "locator": "https://api.github.com/repos/markqvist/Sideband/releases/assets/534626153", "sha256": "988dfe348039978a0ec19f9191c3c2ae0c2858744382cb847967f51b3272f746"},
+        {"kind": "source_manifest", "locator": "https://api.github.com/repos/markqvist/Sideband/releases/assets/534641284", "sha256": "5985e233651368360a1ae3c727e41bac9b66abf6abfe3aa43f6db41972a82df4"},
+        {"kind": "source_manifest", "locator": "https://github.com/markqvist/Sideband/commit/1402bb6a492e87dc5224139a300cbb547487f7b6", "sha256": null}
+      ],
+      "supported_journeys": [
+        "mobile.journey.identity", "mobile.journey.tcp-setup", "mobile.journey.discovery",
+        "mobile.journey.conversations", "mobile.journey.drafts", "mobile.journey.direct-send",
+        "mobile.journey.receipts", "mobile.journey.retry", "mobile.journey.restart",
+        "mobile.journey.propagation", "mobile.journey.degraded-state"
+      ],
+      "facts": [
+        "The application persists one primary identity and exposes identity display, export, and import controls.",
+        "Android connectivity settings persist outbound TCP host, port, IFAC name, and passphrase and require a service or application restart to apply.",
+        "Canonical delivery and propagation announces populate actionable peer and propagation-node lists.",
+        "SQLite persists conversations and terminal messages; no durable draft store was found and startup removes outbound and sending rows.",
+        "The composer clears after local router handoff and database ingestion, not proven recipient delivery.",
+        "Message presentation distinguishes preparing, waiting for path, establishing link, sending, delivered, propagated, failed, cancelled, and rejected.",
+        "Manual retry deletes the failed record and creates a new message.",
+        "Propagation-node selection is independent and persisted; manual sync exposes progress, cancellation, completion, duplicates, and typed terminal failures.",
+        "Loss of the Reticulum and LXMF service is disclosed as lost connectivity requiring restart."
+      ],
+      "limitations": [
+        "Static inspection is not an executed UI or network observation.",
+        "No Android device, OS, correlation, accessibility tree, screenshot, recording, or runtime log was retained.",
+        "Displayed delivery states cannot independently establish authenticated receipt semantics.",
+        "No Sideband evidence can satisfy protocol interoperability or packaged Styrene gates."
+      ]
+    },
+    {
+      "id": "reticulum-meshchat-2.4.0-static-source-inspection",
+      "reference_id": "reticulum-meshchat-2.4.0",
+      "method": "static_source_inspection",
+      "status": "unevidenced",
+      "collected_on": "2026-08-29",
+      "platform": "android_termux_browser",
+      "os": null,
+      "citations": [
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/package.json#L1-L4",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/docs/meshchat_on_android_with_termux.md",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/requirements.txt",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/meshchat.py#L68-L111",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/meshchat.py#L202-L260",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/meshchat.py#L1963-L2028",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/meshchat.py#L2526-L2589",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/meshchat.py#L2895-L3038",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/meshchat.py#L3061-L3167",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/database.py#L113-L137",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/src/frontend/components/App.vue#L146-L182",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/src/frontend/components/App.vue#L447-L511",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/src/frontend/components/interfaces/AddInterfacePage.vue#L75-L111",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/src/frontend/components/messages/ConversationViewer.vue#L165-L200",
+        "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/src/frontend/components/messages/ConversationViewer.vue#L1090-L1201",
+        "https://github.com/liamcottle/reticulum-meshchat/commit/df5aea94eab7f4be1cdfef494446e9d6979aed77"
+      ],
+      "artifacts": [
+        {"kind": "source_manifest", "locator": "https://github.com/liamcottle/reticulum-meshchat/commit/45f89a8fca79f63501659d192577e880380e6cc0", "sha256": null},
+        {"kind": "observation_summary", "locator": "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/docs/meshchat_on_android_with_termux.md", "sha256": null},
+        {"kind": "source_manifest", "locator": "https://github.com/liamcottle/reticulum-meshchat/blob/45f89a8fca79f63501659d192577e880380e6cc0/requirements.txt", "sha256": null}
+      ],
+      "supported_journeys": [
+        "mobile.journey.identity", "mobile.journey.tcp-setup", "mobile.journey.discovery",
+        "mobile.journey.conversations", "mobile.journey.drafts", "mobile.journey.direct-send",
+        "mobile.journey.receipts", "mobile.journey.retry", "mobile.journey.restart",
+        "mobile.journey.propagation", "mobile.journey.degraded-state"
+      ],
+      "facts": [
+        "The Android procedure runs the Python backend in Termux and opens the Vue frontend in a separate browser.",
+        "Identity, configuration, announces, messages, read state, and propagation selection are file or SQLite backed.",
+        "TCP client host and port are configurable, but interface changes require a full MeshChat restart and status is only connected or disconnected.",
+        "Canonical delivery announces are persisted by destination hash and projected into the peer list.",
+        "Composer text is component-local and clears after HTTP send acceptance; no durable draft or draft revision guard was found.",
+        "Message presentation distinguishes generating, outbound, sending, sent, delivered, rejected, cancelled, and failed.",
+        "Manual retry deletes the old message before creating a replacement; failed messages may also retry automatically after an announce.",
+        "Startup converts outbound, sending, and opportunistic-sent messages to failed rather than resuming them.",
+        "Propagation selection, manual synchronization, cancellation, completion count, periodic synchronization, and detailed terminal errors are exposed.",
+        "The v2.4.0 rejected state is omitted from one terminal progress loop; post-release commit df5aea94eab7f4be1cdfef494446e9d6979aed77 fixes it."
+      ],
+      "limitations": [
+        "Static inspection is not an executed UI or network observation.",
+        "No Android device, OS, Termux, Python, browser, app-info response, correlation, or runtime artifact was retained.",
+        "Dependency lower bounds do not identify exact installed RNS or LXMF versions.",
+        "No Reticulum MeshChat evidence can satisfy protocol interoperability or packaged Styrene gates."
+      ]
+    }
+  ],
+  "parity_rows": [
+    {
+      "id": "mobile.journey.identity",
+      "integration_cases": ["mobile.identity.offline-create", "mobile.identity.normalized-display-name", "mobile.identity.device-custody", "mobile.identity.custody-fail-closed", "mobile.identity.durable-edit"],
+      "spec_references": ["openspec/changes/deliver-mobile-messaging-minimum/specs/mobile-network-session.md"],
+      "platforms": ["ios", "android"],
+      "floor_evidence_id": null,
+      "candidate_evidence_ids": ["sideband-2.1.0-static-artifact-inspection", "reticulum-meshchat-2.4.0-static-source-inspection"],
+      "observed_facts": [],
+      "styrene_requirement": "Cold launch creates or restores one stable identity and exposes its public delivery identity without implying a route.",
+      "observable_styrene_outcome": "Both packaged targets show the same restored public identity and explicit custody status from backend state.",
+      "proposed_differences": ["Styrene requires explicit custody state and fail-closed production storage rather than inferring safety from persistence."],
+      "exclusions": ["Private key export is not required by the mobile minimum."],
+      "status": "unevidenced"
+    },
+    {
+      "id": "mobile.journey.tcp-setup",
+      "integration_cases": ["mobile.network.tcp-profile-validation", "mobile.network.ephemeral-listener", "mobile.lifecycle.offline-ready"],
+      "spec_references": ["openspec/changes/deliver-mobile-messaging-minimum/specs/mobile-network-session.md"],
+      "platforms": ["ios", "android"],
+      "floor_evidence_id": null,
+      "candidate_evidence_ids": ["sideband-2.1.0-static-artifact-inspection", "reticulum-meshchat-2.4.0-static-source-inspection"],
+      "observed_facts": [],
+      "styrene_requirement": "The operator configures and persists one validated TCP client endpoint independently of RNode and propagation settings.",
+      "observable_styrene_outcome": "The current backend generation reports connecting, connected, reconnecting, degraded, or failed with a typed reason.",
+      "proposed_differences": ["Styrene applies validated configuration through a typed session instead of requiring an unexplained process restart."],
+      "exclusions": ["TCP server administration is not part of the mobile minimum."],
+      "status": "unevidenced"
+    },
+    {
+      "id": "mobile.journey.discovery",
+      "integration_cases": ["mobile.people.discovery-not-connectivity", "mobile.identity.normalized-display-name"],
+      "spec_references": ["openspec/changes/deliver-mobile-messaging-minimum/specs/mobile-network-session.md"],
+      "platforms": ["ios", "android"],
+      "floor_evidence_id": null,
+      "candidate_evidence_ids": ["sideband-2.1.0-static-artifact-inspection", "reticulum-meshchat-2.4.0-static-source-inspection"],
+      "observed_facts": [],
+      "styrene_requirement": "Canonical lxmf.delivery announces upsert peers by destination hash with name, aspect, source, and freshness.",
+      "observable_styrene_outcome": "People lists each destination once and distinguishes discovery from route, link, or online state.",
+      "proposed_differences": ["Styrene preserves typed announce provenance and never labels discovery as connectivity."],
+      "exclusions": ["Noncanonical announce aspects cannot establish a messaging peer."],
+      "status": "unevidenced"
+    },
+    {
+      "id": "mobile.journey.conversations",
+      "integration_cases": ["mobile.messaging.unread-and-mark-read", "mobile.messaging.unicode-preview", "mobile.people.contact-conversation-creation", "mobile.persistence.identity-messages-contacts"],
+      "spec_references": ["openspec/changes/deliver-mobile-messaging-minimum/specs/mobile-messaging.md"],
+      "platforms": ["ios", "android"],
+      "floor_evidence_id": null,
+      "candidate_evidence_ids": ["sideband-2.1.0-static-artifact-inspection", "reticulum-meshchat-2.4.0-static-source-inspection"],
+      "observed_facts": [],
+      "styrene_requirement": "Durable canonical messages form conversations with stable ordering, unread state, and contact identity.",
+      "observable_styrene_outcome": "Inbound content appears once, unread changes are durable, and empty live state contains no preview records.",
+      "proposed_differences": ["Styrene requires a typed start-conversation path from canonical discovery."],
+      "exclusions": ["Attachments and group conversations are outside the mobile minimum."],
+      "status": "unevidenced"
+    },
+    {
+      "id": "mobile.journey.drafts",
+      "integration_cases": ["mobile.messaging.draft-preserved-on-failure", "mobile.messaging.concurrent-send-serialization"],
+      "spec_references": ["openspec/changes/deliver-mobile-messaging-minimum/specs/mobile-messaging.md"],
+      "platforms": ["ios", "android"],
+      "floor_evidence_id": null,
+      "candidate_evidence_ids": ["sideband-2.1.0-static-artifact-inspection", "reticulum-meshchat-2.4.0-static-source-inspection"],
+      "observed_facts": [],
+      "styrene_requirement": "Each conversation draft is durable and revisioned, and send completion clears only the accepted revision.",
+      "observable_styrene_outcome": "Failure preserves editable text and a late result cannot erase a newer edit.",
+      "proposed_differences": ["Styrene intentionally requires stronger draft persistence and revision safety than either static candidate implementation shows."],
+      "exclusions": ["Cloud draft synchronization is not required."],
+      "status": "unevidenced"
+    },
+    {
+      "id": "mobile.journey.direct-send",
+      "integration_cases": ["mobile.messaging.direct-bidirectional", "mobile.messaging.cross-platform-roundtrip"],
+      "spec_references": ["openspec/changes/deliver-mobile-messaging-minimum/specs/mobile-messaging.md"],
+      "platforms": ["ios", "android"],
+      "floor_evidence_id": null,
+      "candidate_evidence_ids": ["sideband-2.1.0-static-artifact-inspection", "reticulum-meshchat-2.4.0-static-source-inspection"],
+      "observed_facts": [],
+      "styrene_requirement": "An explicit Direct request persists one canonical outbound message before dispatch and returns its identity.",
+      "observable_styrene_outcome": "Two packaged peers exchange one message and reply with exact source, destination, content, and correlation.",
+      "proposed_differences": ["Styrene clears the draft only after backend acceptance rather than frontend HTTP or router handoff alone."],
+      "exclusions": ["Local acceptance is not recipient delivery."],
+      "status": "unevidenced"
+    },
+    {
+      "id": "mobile.journey.receipts",
+      "integration_cases": ["mobile.delivery.queued-is-not-delivered", "mobile.delivery.lifecycle-and-receipt"],
+      "spec_references": ["openspec/changes/deliver-mobile-messaging-minimum/specs/mobile-messaging.md"],
+      "platforms": ["ios", "android"],
+      "floor_evidence_id": null,
+      "candidate_evidence_ids": ["sideband-2.1.0-static-artifact-inspection", "reticulum-meshchat-2.4.0-static-source-inspection"],
+      "observed_facts": [],
+      "styrene_requirement": "Persistence, transport acceptance, propagation upload, and authenticated recipient delivery remain separate evidence.",
+      "observable_styrene_outcome": "Message details expose the exact terminal backend evidence and never promote queued, sent, or propagated to delivered.",
+      "proposed_differences": ["Candidate Delivered labels remain comparison inputs until executed LXMF evidence establishes their semantics."],
+      "exclusions": ["A screenshot or displayed label cannot prove a receipt."],
+      "status": "unevidenced"
+    },
+    {
+      "id": "mobile.journey.retry",
+      "integration_cases": ["mobile.messaging.retry-canonical-attempt"],
+      "spec_references": ["openspec/changes/deliver-mobile-messaging-minimum/specs/mobile-messaging.md"],
+      "platforms": ["ios", "android"],
+      "floor_evidence_id": null,
+      "candidate_evidence_ids": ["sideband-2.1.0-static-artifact-inspection", "reticulum-meshchat-2.4.0-static-source-inspection"],
+      "observed_facts": [],
+      "styrene_requirement": "Retry retains the canonical message identity and creates or resumes a correlated backend attempt without duplicate delivery.",
+      "observable_styrene_outcome": "The same message shows another attempt and an authoritative retryable or terminal outcome.",
+      "proposed_differences": ["Styrene intentionally does not copy Sideband and MeshChat behavior that deletes the failed record and creates a replacement."],
+      "exclusions": ["Automatic retry policy is a separate product decision."],
+      "status": "unevidenced"
+    },
+    {
+      "id": "mobile.journey.restart",
+      "integration_cases": ["mobile.persistence.identity-messages-contacts", "mobile.persistence.forced-termination"],
+      "spec_references": ["openspec/changes/deliver-mobile-messaging-minimum/specs/mobile-messaging.md"],
+      "platforms": ["ios", "android"],
+      "floor_evidence_id": null,
+      "candidate_evidence_ids": ["sideband-2.1.0-static-artifact-inspection", "reticulum-meshchat-2.4.0-static-source-inspection"],
+      "observed_facts": [],
+      "styrene_requirement": "Identity, endpoint, conversations, messages, unread state, contacts, drafts, propagation selection, and attempt truth survive restart.",
+      "observable_styrene_outcome": "Graceful restart and forced process death restore committed state once and disclose incomplete work explicitly.",
+      "proposed_differences": ["Styrene preserves canonical attempt history instead of deleting or silently replacing in-flight records during startup."],
+      "exclusions": ["Background execution is not guaranteed."],
+      "status": "unevidenced"
+    },
+    {
+      "id": "mobile.journey.propagation",
+      "integration_cases": ["mobile.propagation.explicit-hub-poll", "mobile.propagation.persist-before-ack", "mobile.propagation.queue-sync-state", "mobile.propagation.no-implicit-fallback-claim"],
+      "spec_references": ["openspec/changes/deliver-mobile-messaging-minimum/specs/mobile-propagation-client.md"],
+      "platforms": ["ios", "android"],
+      "floor_evidence_id": null,
+      "candidate_evidence_ids": ["sideband-2.1.0-static-artifact-inspection", "reticulum-meshchat-2.4.0-static-source-inspection"],
+      "observed_facts": [],
+      "styrene_requirement": "A separately persisted, currently compatible propagation selection gates upload and bounded manual or automatic synchronization.",
+      "observable_styrene_outcome": "The application distinguishes selection readiness, upload, retrieval progress, durable-before-ack storage, duplicates, and terminal failure.",
+      "proposed_differences": ["Styrene validates current announce and policy metadata before enabling propagated composition.", "Styrene automatic synchronization is tied to bounded connection and foreground opportunities rather than an unqualified interval."],
+      "exclusions": ["Propagation hosting, peering, capacity, and expiry administration are outside the mobile product."],
+      "status": "unevidenced"
+    },
+    {
+      "id": "mobile.journey.degraded-state",
+      "integration_cases": ["mobile.lifecycle.partial-boot-retry", "mobile.network.tcp-profile-validation", "mobile.lifecycle.generation-isolation"],
+      "spec_references": ["openspec/changes/deliver-mobile-messaging-minimum/specs/mobile-network-session.md"],
+      "platforms": ["ios", "android"],
+      "floor_evidence_id": null,
+      "candidate_evidence_ids": ["sideband-2.1.0-static-artifact-inspection", "reticulum-meshchat-2.4.0-static-source-inspection"],
+      "observed_facts": [],
+      "styrene_requirement": "Stopped, starting, connecting, connected, reconnecting, degraded, and failed states are generation-scoped and include typed recovery reasons.",
+      "observable_styrene_outcome": "Endpoint refusal, path loss, unavailable propagation, partial boot failure, and stale completion remain distinct and recoverable where applicable.",
+      "proposed_differences": ["Styrene intentionally exposes a finer typed session model than connected or disconnected labels and restart instructions."],
+      "exclusions": ["Animated activity cannot substitute for backend state."],
+      "status": "unevidenced"
+    }
+  ]
+}
