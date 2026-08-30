@@ -1,3 +1,5 @@
+#![cfg(feature = "transport")]
+
 mod common;
 
 use rns_core::transport::core_transport::deadlines::{link_proof_extra_grace, medium_path_grace};
