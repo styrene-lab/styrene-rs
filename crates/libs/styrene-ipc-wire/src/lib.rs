@@ -1,4 +1,4 @@
-//! IPC wire protocol for Styrene daemon clients.
+//! Shared IPC wire protocol for Styrene daemon clients and servers.
 //!
 //! Wire format:
 //! ```text

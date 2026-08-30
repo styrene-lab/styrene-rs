@@ -21,6 +21,7 @@ rmpv.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 styrene-ipc.workspace = true
+styrene-ipc-wire.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "macros", "time"] }
 tokio-util.workspace = true
