@@ -255,21 +255,35 @@ impl ResourceManager {
     }
 
     pub(crate) fn remove_orphaned(&mut self, live_links: &[AddressHash]) {
-        let mut orphaned = Vec::new();
-        for (hash, sender) in self.pending_outgoing.iter().chain(self.outgoing.iter()) {
-            if !live_links.contains(&sender.link_id) {
-                orphaned.push((*hash, sender.link_id));
-            }
-        }
-        for (hash, receiver) in &self.incoming {
-            if !live_links.contains(&receiver.link_id) {
-                orphaned.push((*hash, receiver.link_id));
-            }
-        }
-        for (hash, link_id) in orphaned {
-            self.pending_outgoing.remove(&hash);
-            self.outgoing.remove(&hash);
-            self.incoming.remove(&hash);
+        let pending = self
+            .pending_outgoing
+            .iter()
+            .filter_map(|(hash, sender)| (!live_links.contains(&sender.link_id)).then_some(*hash))
+            .collect::<Vec<_>>();
+        let outgoing = self
+            .outgoing
+            .iter()
+            .filter_map(|(hash, sender)| (!live_links.contains(&sender.link_id)).then_some(*hash))
+            .collect::<Vec<_>>();
+        let incoming = self
+            .incoming
+            .iter()
+            .filter_map(|(hash, receiver)| (!live_links.contains(&receiver.link_id)).then_some(*hash))
+            .collect::<Vec<_>>();
+        for (hash, link_id) in pending
+            .into_iter()
+            .filter_map(|hash| self.pending_outgoing.remove(&hash).map(|sender| (hash, sender.link_id)))
+            .chain(
+                outgoing
+                    .into_iter()
+                    .filter_map(|hash| self.outgoing.remove(&hash).map(|sender| (hash, sender.link_id))),
+            )
+            .chain(
+                incoming
+                    .into_iter()
+                    .filter_map(|hash| self.incoming.remove(&hash).map(|receiver| (hash, receiver.link_id))),
+            )
+        {
             self.events.push(ResourceEvent {
                 hash,
                 link_id,
@@ -279,26 +293,47 @@ impl ResourceManager {
     }
 
     pub(crate) fn cancel_link(&mut self, link_id: AddressHash) {
-        let hashes = self
+        let pending = self
             .pending_outgoing
             .iter()
-            .chain(self.outgoing.iter())
             .filter_map(|(hash, sender)| (sender.link_id == link_id).then_some(*hash))
-            .chain(
-                self.incoming
-                    .iter()
-                    .filter_map(|(hash, receiver)| (receiver.link_id == link_id).then_some(*hash)),
-            )
             .collect::<Vec<_>>();
-        for hash in hashes {
-            self.pending_outgoing.remove(&hash);
-            self.outgoing.remove(&hash);
-            self.incoming.remove(&hash);
-            self.events.push(ResourceEvent {
-                hash,
-                link_id,
-                kind: ResourceEventKind::Failed(ResourceFailure::LinkClosed),
-            });
+        let outgoing = self
+            .outgoing
+            .iter()
+            .filter_map(|(hash, sender)| (sender.link_id == link_id).then_some(*hash))
+            .collect::<Vec<_>>();
+        let incoming = self
+            .incoming
+            .iter()
+            .filter_map(|(hash, receiver)| (receiver.link_id == link_id).then_some(*hash))
+            .collect::<Vec<_>>();
+        for hash in pending {
+            if self.pending_outgoing.remove(&hash).is_some() {
+                self.events.push(ResourceEvent {
+                    hash,
+                    link_id,
+                    kind: ResourceEventKind::Failed(ResourceFailure::LinkClosed),
+                });
+            }
+        }
+        for hash in outgoing {
+            if self.outgoing.remove(&hash).is_some() {
+                self.events.push(ResourceEvent {
+                    hash,
+                    link_id,
+                    kind: ResourceEventKind::Failed(ResourceFailure::LinkClosed),
+                });
+            }
+        }
+        for hash in incoming {
+            if self.incoming.remove(&hash).is_some() {
+                self.events.push(ResourceEvent {
+                    hash,
+                    link_id,
+                    kind: ResourceEventKind::Failed(ResourceFailure::LinkClosed),
+                });
+            }
         }
     }
 
