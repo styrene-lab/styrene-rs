@@ -211,6 +211,7 @@ impl WizardState {
                 host: Some("127.0.0.1".into()),
                 port: Some(0), // OS-assigned
                 name: Some("local-auto".into()),
+                rnode: Default::default(),
             });
         }
 
@@ -226,6 +227,7 @@ impl WizardState {
                     host: iface.host.clone(),
                     port: iface.port,
                     name: Some(iface.name.clone()),
+                    rnode: Default::default(),
                 });
             }
         }
@@ -239,6 +241,7 @@ impl WizardState {
                 host: Some(host),
                 port: Some(port),
                 name: Some("hub".into()),
+                rnode: Default::default(),
             });
         }
 

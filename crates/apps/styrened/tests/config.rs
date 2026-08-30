@@ -23,6 +23,7 @@ interfaces = [
 fn filters_enabled_tcp_clients() {
     let cfg = DaemonConfig {
         role: Default::default(),
+        transport_retransmit: None,
         rbac: None,
         interfaces: vec![
             InterfaceConfig {
@@ -31,6 +32,7 @@ fn filters_enabled_tcp_clients() {
                 host: Some("rmap.world".into()),
                 port: Some(4242),
                 name: None,
+                rnode: Default::default(),
             },
             InterfaceConfig {
                 kind: "tcp_client".into(),
@@ -38,6 +40,7 @@ fn filters_enabled_tcp_clients() {
                 host: Some("example.com".into()),
                 port: Some(1),
                 name: None,
+                rnode: Default::default(),
             },
         ],
     };
@@ -45,6 +48,63 @@ fn filters_enabled_tcp_clients() {
     assert_eq!(endpoints.len(), 1);
     assert_eq!(endpoints[0].0, "rmap.world");
     assert_eq!(endpoints[0].1, 4242);
+}
+
+#[test]
+fn transit_retransmit_defaults_on_and_can_be_disabled() {
+    let default = DaemonConfig::from_toml("").expect("parse default config");
+    assert!(default.transport_retransmit());
+
+    let endpoint =
+        DaemonConfig::from_toml("transport_retransmit = false").expect("parse endpoint config");
+    assert!(!endpoint.transport_retransmit());
+}
+
+#[test]
+fn parses_and_validates_only_enabled_rnode_interfaces() {
+    let cfg = DaemonConfig::from_toml(
+        r#"
+[[interfaces]]
+type = "rnode"
+enabled = true
+device = "/dev/test-rnode"
+frequency_hz = 915000000
+bandwidth_hz = 125000
+tx_power_dbm = 17
+spreading_factor = 7
+coding_rate = 5
+
+[[interfaces]]
+type = "rnode"
+enabled = false
+"#,
+    )
+    .expect("parse RNode interface");
+
+    let interfaces = cfg.rnode_interfaces().expect("validate RNode interface");
+    assert_eq!(interfaces.len(), 1);
+    assert_eq!(interfaces[0].baud_rate, 115_200);
+    assert_eq!(interfaces[0].profile.frequency_hz, 915_000_000);
+}
+
+#[test]
+fn invalid_rnode_profile_fails_validation() {
+    let cfg = DaemonConfig::from_toml(
+        r#"
+[[interfaces]]
+type = "rnode"
+enabled = true
+device = "/dev/test-rnode"
+frequency_hz = 915000000
+bandwidth_hz = 125000
+tx_power_dbm = 38
+spreading_factor = 7
+coding_rate = 5
+"#,
+    )
+    .expect("parse RNode interface");
+
+    assert_eq!(cfg.rnode_interfaces().unwrap_err(), "invalid RNode tx power: 38");
 }
 
 #[test]

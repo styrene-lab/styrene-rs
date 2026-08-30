@@ -5,6 +5,8 @@ use super::receipt_worker::spawn_receipt_worker;
 use rns_core::destination::{DestinationName, RequestAccess, SingleInputDestination};
 use rns_core::hash::AddressHash;
 use rns_core::transport::core_transport::{Transport, TransportConfig};
+#[cfg(feature = "native-serial")]
+use rns_core::transport::iface::rnode::RNodeInterface;
 use rns_core::transport::iface::tcp_client::TcpClient;
 use rns_core::transport::iface::tcp_server::TcpServer;
 use std::collections::{BTreeSet, HashMap};
@@ -273,7 +275,7 @@ pub(super) fn propagation_stats_response(
     response
 }
 
-pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
+pub(super) async fn bootstrap(args: Args) -> anyhow::Result<BootstrapContext> {
     bootstrap_with_transport_override(args, None).await
 }
 
@@ -281,14 +283,14 @@ pub(super) async fn bootstrap(args: Args) -> BootstrapContext {
 pub(super) async fn bootstrap_with_mesh_transport(
     args: Args,
     transport: Arc<dyn MeshTransport>,
-) -> BootstrapContext {
+) -> anyhow::Result<BootstrapContext> {
     bootstrap_with_transport_override(args, Some(transport)).await
 }
 
 async fn bootstrap_with_transport_override(
     args: Args,
     mesh_transport_override: Option<Arc<dyn MeshTransport>>,
-) -> BootstrapContext {
+) -> anyhow::Result<BootstrapContext> {
     let mut startup = StartupContractBuilder::production(RuntimeKind::Standalone);
     let mut legacy_workers = Vec::new();
     let rpc_addr: SocketAddr = args.rpc.parse().expect("invalid rpc address");
@@ -333,6 +335,16 @@ async fn bootstrap_with_transport_override(
             None
         }
     });
+    let rnode_interfaces = daemon_config
+        .as_ref()
+        .map(DaemonConfig::rnode_interfaces)
+        .transpose()
+        .map_err(anyhow::Error::msg)?
+        .unwrap_or_default();
+    #[cfg(not(feature = "native-serial"))]
+    if !rnode_interfaces.is_empty() {
+        anyhow::bail!("RNode interfaces require the styrened native-serial feature");
+    }
     let mut configured_interfaces = daemon_config
         .as_ref()
         .map(|config| {
@@ -371,7 +383,8 @@ async fn bootstrap_with_transport_override(
         let transport_identity =
             rns_core::transport::identity_bridge::to_transport_private_identity(&identity);
         let mut config = TransportConfig::new("daemon", &transport_identity, true);
-        config.set_retransmit(true);
+        config
+            .set_retransmit(daemon_config.as_ref().is_none_or(DaemonConfig::transport_retransmit));
         let mut transport_instance = Transport::new(config);
         startup.record(startup_component::NATIVE_RESOURCE_RETRY_SCHEDULER);
         let service_target = Arc::new(std::sync::OnceLock::new());
@@ -392,6 +405,16 @@ async fn bootstrap_with_transport_override(
         startup.record(startup_component::LEGACY_RECEIPT_BRIDGE);
         startup.record(startup_component::SERVICE_RECEIPT_BRIDGE);
         let iface_manager = transport_instance.iface_manager();
+        #[cfg(feature = "native-serial")]
+        for interface in rnode_interfaces {
+            let rnode = RNodeInterface::new(interface.device, interface.profile)
+                .expect("validated RNode interface")
+                .with_baud_rate(interface.baud_rate)
+                .with_reconnect_delay(std::time::Duration::from_millis(
+                    interface.reconnect_delay_ms,
+                ));
+            iface_manager.lock().await.spawn(rnode, RNodeInterface::spawn);
+        }
         let (tcp_server, _bound_addr_rx) = TcpServer::new(addr.clone(), iface_manager.clone());
         let server_iface = iface_manager.lock().await.spawn(tcp_server, TcpServer::spawn);
         eprintln!("[daemon] tcp_server enabled iface={} bind={}", server_iface, addr);
@@ -999,7 +1022,7 @@ async fn bootstrap_with_transport_override(
     let startup_contract = startup.finish();
     app_context.publish_startup_contract(startup_contract.clone());
 
-    BootstrapContext {
+    Ok(BootstrapContext {
         rpc_addr,
         daemon,
         rpc_tls,
@@ -1019,5 +1042,5 @@ async fn bootstrap_with_transport_override(
         },
         #[cfg(feature = "ipc-server")]
         ipc_server,
-    }
+    })
 }

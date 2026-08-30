@@ -40,9 +40,10 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let context = bootstrap::bootstrap(args).await;
+    let context = bootstrap::bootstrap(args).await?;
     rpc_loop::run_rpc_loop(context.rpc_addr, context.daemon.clone(), context.rpc_tls.clone()).await;
     context.shutdown().await;
+    Ok(())
 }
