@@ -745,7 +745,7 @@ impl InterfaceManager {
         tx_cap: usize,
         descriptor: InterfaceDescriptor,
     ) -> (InterfaceChannel, HostInterfaceControl) {
-        let channel = self.new_channel_with_runtime(tx_cap, descriptor, None, None);
+        let channel = self.new_channel_with_runtime(tx_cap, descriptor, None, None, false, None);
         let runtime = self.ifaces.last().expect("newly registered host interface").runtime.clone();
         let control = HostInterfaceControl { runtime, stop: channel.stop.clone() };
         (channel, control)
