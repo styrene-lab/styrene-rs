@@ -3,8 +3,10 @@
 use std::path::Path;
 
 use console::style;
+use styrene_ipc::types::{SendChatDisposition, SendChatRequest};
+use styrene_ipc_client::TunnelStatus;
 
-use crate::ipc_client::DaemonClient;
+use crate::ipc_client::connect;
 
 /// Safely truncate a string to at most `n` characters (not bytes).
 fn truncate(s: &str, n: usize) -> &str {
@@ -15,7 +17,7 @@ fn truncate(s: &str, n: usize) -> &str {
 }
 
 pub(crate) async fn status(socket: Option<&Path>) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
     let status = client.status().await.map_err(anyhow::Error::msg)?;
     let identity = client.identity().await.map_err(anyhow::Error::msg)?;
 
@@ -51,7 +53,7 @@ pub(crate) async fn peers(
     query: Option<&str>,
     styrene_only: bool,
 ) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
     let devices = client.devices(styrene_only).await.map_err(anyhow::Error::msg)?;
 
     let filtered: Vec<_> = if let Some(q) = query {
@@ -98,21 +100,29 @@ pub(crate) async fn send(
     title: Option<&str>,
     delivery_method: &str,
 ) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
-    let outcome = client
-        .send_chat_outcome(destination, content, title, delivery_method)
-        .await
-        .map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
+    let mut request = SendChatRequest::default();
+    request.peer_hash = destination.into();
+    request.content = content.into();
+    request.title = title.map(str::to_owned);
+    request.delivery_method = Some(delivery_method.into());
+    let outcome = client.send_chat_outcome(&request).await.map_err(anyhow::Error::msg)?;
     let msg_id = outcome.message_id;
+    let disposition = match outcome.disposition {
+        SendChatDisposition::Accepted => "accepted",
+        SendChatDisposition::Failed => "failed",
+        SendChatDisposition::PaperExported => "paper_exported",
+        _ => "unknown",
+    };
 
     eprintln!(
         "  {} {} to {}  (id: {})",
-        if outcome.disposition == "failed" {
+        if disposition == "failed" {
             style("✗").red().bold()
         } else {
             style("✓").green().bold()
         },
-        outcome.disposition,
+        disposition,
         truncate(destination, 12),
         truncate(&msg_id, 8)
     );
@@ -124,7 +134,7 @@ pub(crate) async fn send(
 }
 
 pub(crate) async fn messages(socket: Option<&Path>, peer: &str, limit: u32) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
     let msgs = client.messages(peer, limit).await.map_err(anyhow::Error::msg)?;
 
     let peer_short = truncate(peer, 12);
@@ -151,7 +161,7 @@ pub(crate) async fn messages(socket: Option<&Path>, peer: &str, limit: u32) -> a
 }
 
 pub(crate) async fn identity(socket: Option<&Path>) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
     let info = client.identity().await.map_err(anyhow::Error::msg)?;
 
     eprintln!();
@@ -170,7 +180,7 @@ pub(crate) async fn identity(socket: Option<&Path>) -> anyhow::Result<()> {
 }
 
 pub(crate) async fn announce(socket: Option<&Path>) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
     let ok = client.announce().await.map_err(anyhow::Error::msg)?;
 
     if ok {
@@ -183,17 +193,17 @@ pub(crate) async fn announce(socket: Option<&Path>) -> anyhow::Result<()> {
 }
 
 pub(crate) async fn config(socket: Option<&Path>) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
     let cfg = client.config().await.map_err(anyhow::Error::msg)?;
 
     eprintln!();
     eprintln!("  {}", style("styrene config").cyan().bold());
     eprintln!();
 
-    let mut keys: Vec<_> = cfg.keys().collect();
+    let mut keys: Vec<_> = cfg.values.keys().collect();
     keys.sort();
     for key in keys {
-        let val = &cfg[key];
+        let val = &cfg.values[key];
         eprintln!("  {key} = {val}");
     }
     eprintln!();
@@ -204,15 +214,15 @@ pub(crate) async fn config(socket: Option<&Path>) -> anyhow::Result<()> {
 // ── Transport paths ─────────────────────────────────────────────────────────
 
 pub(crate) async fn path_info(socket: Option<&Path>, destination: &str) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
     let info = client.path_info(destination).await.map_err(anyhow::Error::msg)?;
-    let found = info.get("found").and_then(|value| value.as_bool()).unwrap_or(false);
+    let found = info.is_some();
     println!("destination={destination}");
     println!("found={found}");
-    if let Some(hops) = info.get("hops").and_then(|value| value.as_i64()) {
+    if let Some(hops) = info.as_ref().and_then(|info| info.hops) {
         println!("hops={hops}");
     }
-    if let Some(interface) = info.get("interface").and_then(|value| value.as_str()) {
+    if let Some(interface) = info.as_ref().and_then(|info| info.interface.as_deref()) {
         println!("interface={interface}");
     }
     Ok(())
@@ -221,7 +231,7 @@ pub(crate) async fn path_info(socket: Option<&Path>, destination: &str) -> anyho
 // ── Tunnel operations ───────────────────────────────────────────────────────
 
 pub(crate) async fn tunnel_list(socket: Option<&Path>) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
 
     match client.list_tunnels().await {
         Ok(tunnels) => {
@@ -238,9 +248,9 @@ pub(crate) async fn tunnel_list(socket: Option<&Path>) -> anyhow::Result<()> {
             }
 
             for t in &tunnels {
-                let peer = t.get("peer_hash").and_then(|v| v.as_str()).unwrap_or("?");
-                let state = t.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
-                let endpoint = t.get("remote_endpoint").and_then(|v| v.as_str()).unwrap_or("");
+                let peer = &t.peer_hash;
+                let state = &t.state;
+                let endpoint = t.remote_endpoint.as_deref().unwrap_or("");
                 let marker = if state == "established" {
                     style("⬡").green().to_string()
                 } else {
@@ -275,32 +285,34 @@ pub(crate) async fn tunnel_list(socket: Option<&Path>) -> anyhow::Result<()> {
 }
 
 pub(crate) async fn tunnel_status(socket: Option<&Path>, peer: &str) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
-    let status = client.tunnel_status_rpc(peer).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
+    let status = client.tunnel_status(peer).await.map_err(anyhow::Error::msg)?;
 
     let peer_short = truncate(peer, 12);
-    let state = status.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
     eprintln!();
     eprintln!("  {} ({peer_short}…)", style("styrene tunnel status").cyan().bold(),);
     eprintln!();
-    eprintln!("  peer       {}", status.get("peer_hash").and_then(|v| v.as_str()).unwrap_or(peer));
-    if let Some(operation_id) = status.get("operation_id").and_then(|v| v.as_str()) {
-        eprintln!("  operation  {operation_id}");
-    }
-    if let Some(kind) = status.get("kind").and_then(|v| v.as_str()) {
-        eprintln!("  kind       {kind}");
-    }
-    eprintln!("  state      {state}");
-    if let Some(backend) = status.get("backend").and_then(|v| v.as_str()) {
-        eprintln!("  backend    {backend}");
-    }
-    if let Some(endpoint) = status.get("remote_endpoint").and_then(|v| v.as_str())
-        && !endpoint.is_empty()
-    {
-        eprintln!("  endpoint   {endpoint}");
-    }
-    if let Some(message) = status.get("error_message").and_then(|v| v.as_str()) {
-        eprintln!("  error      {message}");
+    match status {
+        TunnelStatus::Operation(operation) => {
+            eprintln!("  peer       {}", operation.peer_hash);
+            eprintln!("  operation  {}", operation.operation_id);
+            eprintln!("  kind       {}", operation.kind);
+            eprintln!("  state      {}", operation.state);
+            if let Some(message) = operation.error_message {
+                eprintln!("  error      {message}");
+            }
+        }
+        TunnelStatus::Tunnel(tunnel) => {
+            eprintln!("  peer       {}", tunnel.peer_hash);
+            eprintln!("  state      {}", tunnel.state);
+            if !tunnel.backend.is_empty() {
+                eprintln!("  backend    {}", tunnel.backend);
+            }
+            if let Some(endpoint) = tunnel.remote_endpoint {
+                eprintln!("  endpoint   {endpoint}");
+            }
+        }
+        _ => eprintln!("  state      unknown"),
     }
     eprintln!();
 
@@ -312,38 +324,30 @@ pub(crate) async fn tunnel_establish(socket: Option<&Path>, peer: &str) -> anyho
 }
 
 pub(crate) async fn tunnel_offer(socket: Option<&Path>, peer: &str) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
 
     let peer_short = truncate(peer, 12);
     eprintln!("  {} sending tunnel offer to {peer_short}…", style("→").cyan());
 
     let result = client.tunnel_establish(peer).await.map_err(anyhow::Error::msg)?;
 
-    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-    if success {
-        let nonce = result.get("nonce").and_then(|v| v.as_str()).unwrap_or("?");
-        let state = result.get("state").and_then(|v| v.as_str()).unwrap_or("queued");
-        eprintln!(
-            "  {} tunnel operation accepted (id: {}, state: {state})",
-            style("✓").green().bold(),
-            truncate(nonce, 8)
-        );
-    } else {
-        eprintln!("  {} tunnel offer failed", style("✗").red().bold());
-    }
+    eprintln!(
+        "  {} tunnel operation accepted (id: {}, state: {})",
+        style("✓").green().bold(),
+        truncate(&result.operation_id, 8),
+        result.state
+    );
 
     Ok(())
 }
 
 pub(crate) async fn tunnel_teardown(socket: Option<&Path>, peer: &str) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
 
     let peer_short = truncate(peer, 12);
     eprintln!("  {} tearing down tunnel to {peer_short}…", style("→").cyan());
 
-    let result = client.tunnel_teardown_rpc(peer).await.map_err(anyhow::Error::msg)?;
-
-    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = client.tunnel_teardown(peer).await.map_err(anyhow::Error::msg)?;
     if success {
         eprintln!("  {} tunnel torn down", style("✓").green().bold());
     } else {
@@ -360,7 +364,7 @@ pub(crate) async fn fleet_status(
     node: Option<&str>,
     timeout: u64,
 ) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
 
     if let Some(dest) = node {
         let node_short = truncate(dest, 12);
@@ -370,8 +374,15 @@ pub(crate) async fn fleet_status(
         let result = client.device_status(dest, timeout).await.map_err(anyhow::Error::msg)?;
 
         eprintln!();
-        for (key, val) in &result {
-            eprintln!("  {key}: {val}");
+        eprintln!("  destination_hash: {}", result.destination_hash);
+        if let Some(uptime) = result.uptime {
+            eprintln!("  uptime: {uptime}");
+        }
+        if let Some(version) = result.daemon_version {
+            eprintln!("  version: {version}");
+        }
+        for (key, value) in result.extra {
+            eprintln!("  {key}: {value}");
         }
         eprintln!();
     } else {
@@ -404,16 +415,16 @@ pub(crate) async fn fleet_exec(
     args: &[String],
     timeout: u64,
 ) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
 
     let node_short = truncate(node, 12);
     eprintln!("  {} exec on {node_short}…: {cmd} {}", style("→").cyan(), args.join(" "));
 
     let result = client.exec(node, cmd, args, timeout).await.map_err(anyhow::Error::msg)?;
 
-    let exit_code = result.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(-1);
-    let stdout = result.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
-    let stderr = result.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+    let exit_code = result.exit_code;
+    let stdout = result.stdout;
+    let stderr = result.stderr;
 
     if !stdout.is_empty() {
         print!("{stdout}");
@@ -443,7 +454,7 @@ pub(crate) async fn fleet_reboot(
     node: &str,
     delay: u64,
 ) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
 
     let node_short = truncate(node, 12);
     if delay > 0 {
@@ -454,9 +465,7 @@ pub(crate) async fn fleet_reboot(
 
     let result = client.reboot_device(node, delay).await.map_err(anyhow::Error::msg)?;
 
-    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-
-    if success {
+    if result.accepted {
         eprintln!("  {} reboot initiated", style("✓").green().bold());
     } else {
         eprintln!("  {} reboot failed", style("✗").red().bold());
@@ -497,7 +506,7 @@ pub(crate) async fn fleet_apply(
         }
     }
 
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
 
     let node_short = truncate(node, 12);
     eprintln!("  {} applying profile to {node_short}…", style("→").cyan());
@@ -510,11 +519,11 @@ pub(crate) async fn fleet_apply(
         .await
         .map_err(anyhow::Error::msg)?;
 
-    let verified = result.get("verified").and_then(|v| v.as_bool()).unwrap_or(false);
-    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
-    let exit_code = result.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(-1);
-    let stdout = result.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
-    let stderr = result.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+    let verified = result.verified;
+    let success = result.success;
+    let exit_code = result.exit_code;
+    let stdout = result.stdout;
+    let stderr = result.stderr;
 
     if verified {
         eprintln!("  {} signature verified", style("✓").green().bold());
@@ -549,17 +558,15 @@ pub(crate) async fn fleet_grant(
     label: Option<&str>,
     grants: &[String],
 ) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
 
     let node_short = truncate(node, 12);
     eprintln!("  {} granting {role} to {node_short}…", style("→").cyan());
 
-    let result = client
+    let success = client
         .fleet_grant(node, role, label.unwrap_or(""), grants)
         .await
         .map_err(anyhow::Error::msg)?;
-
-    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if success {
         eprintln!("  {} role granted: {role}", style("✓").green().bold());
@@ -571,14 +578,12 @@ pub(crate) async fn fleet_grant(
 }
 
 pub(crate) async fn fleet_revoke(socket: Option<&Path>, node: &str) -> anyhow::Result<()> {
-    let mut client = DaemonClient::connect(socket).await.map_err(anyhow::Error::msg)?;
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
 
     let node_short = truncate(node, 12);
     eprintln!("  {} revoking role from {node_short}…", style("→").cyan());
 
-    let result = client.fleet_revoke(node).await.map_err(anyhow::Error::msg)?;
-
-    let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = client.fleet_revoke(node).await.map_err(anyhow::Error::msg)?;
 
     if success {
         eprintln!("  {} role revoked", style("✓").green().bold());

@@ -22,10 +22,6 @@ anyhow.workspace = true
 # IPC client
 styrene-ipc = { path = "../../libs/styrene-ipc", version = "0.1.0" }
 styrene-ipc-client = { path = "../../libs/styrene-ipc-client", version = "0.1.0" }
-styrene-ipc-wire = { path = "../../libs/styrene-ipc-wire", version = "0.1.0" }
-styrene-ipc-server = { path = "../../libs/styrene-ipc-server", version = "0.1.0" }
-rmpv = { workspace = true, features = ["with-serde"] }
-base64 = { workspace = true }
 toml = { workspace = true }
 
 # Async runtime

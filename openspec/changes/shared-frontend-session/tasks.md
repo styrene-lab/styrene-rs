@@ -37,8 +37,8 @@
 ## 5. CLI Migration
 <!-- specs: frontend-session/spec -->
 
-- [ ] 5.1 Replace CLI socket framing and payload-map parsing with the shared client
-- [ ] 5.2 Preserve one-shot endpoint selection, operation deadlines, typed outcomes, and exit behavior
+- [x] 5.1 Replace CLI socket framing and payload-map parsing with the shared client
+- [x] 5.2 Preserve one-shot endpoint selection, operation deadlines, typed outcomes, and exit behavior
 - [ ] 5.3 Remove the obsolete CLI client after command and failure tests pass
 
 ## 6. Cross-Repository Dioxus Migration

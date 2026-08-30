@@ -150,15 +150,5 @@ async fn accept_loop(
 ///
 /// Respects `STYRENED_SOCKET` env var, then defaults to `~/.styrene/styrened.sock`.
 pub fn default_socket_path() -> PathBuf {
-    if let Ok(path) = std::env::var("STYRENED_SOCKET") {
-        return PathBuf::from(path);
-    }
-    // Match Python's styrened.paths.control_socket():
-    //   XDG_RUNTIME_DIR/styrened/control.sock
-    //   or ~/.local/run/styrened/control.sock
-    if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(runtime).join("styrened").join("control.sock");
-    }
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".local").join("run").join("styrened").join("control.sock")
+    styrene_ipc_wire::default_socket_path()
 }

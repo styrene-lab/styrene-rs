@@ -11,6 +11,7 @@
 //! ```
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use thiserror::Error;
 
@@ -24,6 +25,19 @@ pub const HEADER_SIZE: usize = TYPE_SIZE + REQUEST_ID_SIZE; // 17
 /// A single maximum-size LXMF record can project its wire, canonical component
 /// bytes, and lossy UTF-8 display content into one local IPC frame.
 pub const MAX_PAYLOAD_SIZE: usize = 12 * 1024 * 1024;
+
+/// Resolve the conventional local daemon socket path.
+#[must_use]
+pub fn default_socket_path() -> PathBuf {
+    if let Ok(path) = std::env::var("STYRENED_SOCKET") {
+        return PathBuf::from(path);
+    }
+    if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
+        return PathBuf::from(runtime).join("styrened").join("control.sock");
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join(".local").join("run").join("styrened").join("control.sock")
+}
 
 /// Wire protocol errors.
 #[derive(Debug, Error)]
