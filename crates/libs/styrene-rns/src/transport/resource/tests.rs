@@ -10,6 +10,45 @@ mod tests {
         Arc,
     };
 
+    fn plain_resource_packets(
+        link: &Link,
+        data: &[u8],
+        marker: u8,
+    ) -> (Hash, Packet, Packet) {
+        let random_hash = [marker; RANDOM_HASH_SIZE];
+        let mut wire_data = vec![marker.wrapping_add(1); RANDOM_HASH_SIZE];
+        wire_data.extend_from_slice(data);
+        let hash = Hash::new(
+            sha2::Sha256::new()
+                .chain_update(data)
+                .chain_update(random_hash)
+                .finalize()
+                .into(),
+        );
+        let advertisement = ResourceAdvertisement {
+            transfer_size: wire_data.len() as u64,
+            data_size: data.len() as u64,
+            parts: 1,
+            hash,
+            random_hash,
+            original_hash: hash,
+            segment_index: 1,
+            total_segments: 1,
+            request_id: None,
+            flags: 0,
+            hashmap: map_hash(&wire_data, &random_hash).to_vec(),
+        };
+        (
+            hash,
+            resource_packet(
+                PacketContext::ResourceAdvrtisement,
+                &advertisement.pack().expect("advertisement"),
+                *link.id(),
+            ),
+            resource_packet(PacketContext::Resource, &wire_data, *link.id()),
+        )
+    }
+
     fn completed_resource(
         flags: u8,
         request_id: Option<[u8; ADDRESS_HASH_SIZE]>,
@@ -107,6 +146,108 @@ mod tests {
             assert!(!responses.iter().any(|packet| packet.context == PacketContext::ResourceProof));
             assert!(matches!(events.as_slice(), [ResourceEvent { kind: ResourceEventKind::Failed(ResourceFailure::Cancelled), .. }]));
         }
+    }
+
+    #[test]
+    fn receive_handler_panic_releases_receiver_and_allows_followup_completion() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", "resource-handler-recovery"),
+        };
+        let (tx, _) = tokio::sync::broadcast::channel(1);
+        let mut link = Link::new(destination, tx);
+        let _ = link.prove();
+        let context = crate::destination::IngressContext {
+            destination: destination.address_hash,
+            link_id: *link.id(),
+            kind: crate::destination::IngressKind::UnsolicitedResource,
+        };
+        let panicking: crate::destination::IngressHandler = Arc::new(|_, _| panic!("ingress panic"));
+        let accepting: crate::destination::IngressHandler = Arc::new(|data, _| data == b"second");
+        let mut manager = ResourceManager::new();
+
+        let (failed_hash, advertisement, part) = plain_resource_packets(&link, b"first", 0x61);
+        assert_eq!(
+            manager
+                .handle_packet_with_ingress(
+                    &advertisement,
+                    &mut link,
+                    Some((&panicking, &context)),
+                    None,
+                )
+                .len(),
+            1
+        );
+        assert_eq!(
+            manager
+                .handle_packet_with_ingress(
+                    &part,
+                    &mut link,
+                    Some((&panicking, &context)),
+                    None,
+                )
+                .iter()
+                .filter(|packet| packet.context == PacketContext::ResourceReceiverCancel)
+                .count(),
+            1
+        );
+        assert!(manager.incoming.is_empty());
+        assert!(matches!(
+            manager.drain_events().as_slice(),
+            [ResourceEvent {
+                hash,
+                kind: ResourceEventKind::Failed(ResourceFailure::Cancelled),
+                ..
+            }] if *hash == failed_hash
+        ));
+
+        let (completed_hash, advertisement, part) =
+            plain_resource_packets(&link, b"second", 0x71);
+        assert_eq!(
+            manager
+                .handle_packet_with_ingress(
+                    &advertisement,
+                    &mut link,
+                    Some((&accepting, &context)),
+                    None,
+                )
+                .len(),
+            1
+        );
+        assert_eq!(
+            manager
+                .handle_packet_with_ingress(
+                    &part,
+                    &mut link,
+                    Some((&accepting, &context)),
+                    None,
+                )
+                .iter()
+                .filter(|packet| packet.context == PacketContext::ResourceProof)
+                .count(),
+            1
+        );
+        assert!(manager.incoming.is_empty());
+        assert!(matches!(
+            manager.drain_events().as_slice(),
+            [ResourceEvent {
+                hash,
+                kind: ResourceEventKind::Complete(_),
+                ..
+            }] if *hash == completed_hash
+        ));
+        assert!(manager
+            .handle_packet_with_ingress(
+                &part,
+                &mut link,
+                Some((&accepting, &context)),
+                None,
+            )
+            .is_empty());
+        assert!(manager.drain_events().is_empty());
     }
 
     #[test]
@@ -843,6 +984,195 @@ mod tests {
             )),
             "receiver events: {receiver_events:?}"
         );
+    }
+
+    #[test]
+    fn link_close_cancels_every_direction_once_even_when_hashes_match() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", "resource-link-close"),
+        };
+        let (tx, _) = tokio::sync::broadcast::channel(1);
+        let mut link = Link::new(destination, tx);
+        link.request();
+        let other_signer = PrivateIdentity::new_from_rand(OsRng);
+        let other_identity = *other_signer.as_identity();
+        let mut other_link = Link::new(
+            DestinationDesc {
+                identity: other_identity,
+                address_hash: other_identity.address_hash,
+                name: DestinationName::new("lxmf", "resource-other-link"),
+            },
+            tokio::sync::broadcast::channel(1).0,
+        );
+        other_link.request();
+        assert_ne!(link.id(), other_link.id());
+        let mut manager = ResourceManager::new();
+
+        let (pending_hash, _) =
+            manager.start_send(&link, b"pending".to_vec(), None).expect("pending sender");
+        let (outgoing_hash, _) =
+            manager.start_send(&link, b"outgoing".to_vec(), None).expect("outgoing sender");
+        assert!(manager.confirm_outbound_dispatch(outgoing_hash, true));
+        let (preserved_hash, _) = manager
+            .start_send(&other_link, b"preserved".to_vec(), None)
+            .expect("other-link sender");
+
+        let mut same_hash_advertisement = bounded_advertisement(1, 1, link.resource_sdu());
+        same_hash_advertisement.hash = outgoing_hash;
+        same_hash_advertisement.original_hash = outgoing_hash;
+        manager.incoming.insert(
+            outgoing_hash,
+            ResourceReceiver::new(
+                &same_hash_advertisement,
+                *link.id(),
+                link.resource_sdu(),
+                MAX_UNSOLICITED_RESOURCE_SIZE,
+                Duration::ZERO,
+            )
+            .expect("same-hash receiver"),
+        );
+        let incoming_hash = Hash::new([0xa5; HASH_SIZE]);
+        let mut incoming_advertisement = same_hash_advertisement;
+        incoming_advertisement.hash = incoming_hash;
+        incoming_advertisement.original_hash = incoming_hash;
+        manager.incoming.insert(
+            incoming_hash,
+            ResourceReceiver::new(
+                &incoming_advertisement,
+                *link.id(),
+                link.resource_sdu(),
+                MAX_UNSOLICITED_RESOURCE_SIZE,
+                Duration::ZERO,
+            )
+            .expect("incoming receiver"),
+        );
+
+        manager.cancel_link(*link.id());
+        let events = manager.drain_events();
+        assert_eq!(events.len(), 4);
+        assert!(events.iter().all(|event| {
+            event.link_id == *link.id()
+                && matches!(event.kind, ResourceEventKind::Failed(ResourceFailure::LinkClosed))
+        }));
+        assert_eq!(events.iter().filter(|event| event.hash == pending_hash).count(), 1);
+        assert_eq!(events.iter().filter(|event| event.hash == outgoing_hash).count(), 2);
+        assert_eq!(events.iter().filter(|event| event.hash == incoming_hash).count(), 1);
+        assert_eq!(manager.state_counts().total(), 1);
+        assert!(manager.pending_outgoing.contains_key(&preserved_hash));
+
+        manager.cancel_link(*link.id());
+        manager.remove_orphaned(&[*other_link.id()]);
+        assert!(manager.drain_events().is_empty());
+        let actions = manager.poll();
+        assert!(actions.requests.is_empty());
+        assert!(actions.packets.is_empty());
+        assert!(actions.cancellations.is_empty());
+        assert!(actions.proof_requests.is_empty());
+        assert_eq!(manager.state_counts().total(), 1);
+    }
+
+    #[test]
+    fn local_cancellation_wins_watchdog_and_duplicate_remote_cancel_race() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", "resource-cancel-race"),
+        };
+        let (tx, _) = tokio::sync::broadcast::channel(1);
+        let mut link = Link::new(destination, tx);
+        let clock = Arc::new(ManualMonotonicClock::default());
+        let mut manager = ResourceManager::new_with_config_and_clock(
+            Duration::from_secs(1),
+            0,
+            clock.clone(),
+        );
+        let (resource_hash, _) =
+            manager.start_send(&link, b"cancel race".to_vec(), None).expect("sender");
+        assert!(manager.confirm_outbound_dispatch(resource_hash, true));
+
+        let cancellation = manager.cancel_local(resource_hash).expect("local cancellation");
+        let packet = resource_packet(
+            PacketContext::ResourceReceiverCancel,
+            resource_hash.as_slice(),
+            *link.id(),
+        );
+        manager.handle_packet(&packet, &mut link);
+        manager.handle_packet(&packet, &mut link);
+        clock.advance(Duration::from_secs(2));
+        let actions = manager.poll();
+
+        assert_eq!(cancellation.hash, resource_hash);
+        assert!(actions.requests.is_empty());
+        assert!(actions.packets.is_empty());
+        assert!(actions.cancellations.is_empty());
+        assert!(actions.proof_requests.is_empty());
+        assert_eq!(manager.state_counts().total(), 0);
+        assert!(matches!(
+            manager.drain_events().as_slice(),
+            [ResourceEvent {
+                hash,
+                kind: ResourceEventKind::Failed(ResourceFailure::Cancelled),
+                ..
+            }] if *hash == resource_hash
+        ));
+    }
+
+    #[test]
+    fn receiver_matches_only_the_canonical_requested_window() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", "resource-window"),
+        };
+        let (tx, _) = tokio::sync::broadcast::channel(1);
+        let link = Link::new(destination, tx);
+        let random_hash = [0x91; RANDOM_HASH_SIZE];
+        let parts = (0_u8..6).map(|index| vec![index; 4]).collect::<Vec<_>>();
+        let hashes = parts.iter().map(|part| map_hash(part, &random_hash)).collect::<Vec<_>>();
+        let advertisement = ResourceAdvertisement {
+            transfer_size: 24,
+            data_size: 20,
+            parts: 6,
+            hash: Hash::new([0x92; HASH_SIZE]),
+            random_hash,
+            original_hash: Hash::new([0x92; HASH_SIZE]),
+            segment_index: 1,
+            total_segments: 1,
+            request_id: None,
+            flags: 0,
+            hashmap: hashes.iter().flatten().copied().collect(),
+        };
+        let mut receiver =
+            ResourceReceiver::new(&advertisement, *link.id(), 4, 1024, Duration::ZERO)
+                .expect("bounded receiver");
+
+        assert_eq!(receiver.build_request().requested_hashes, hashes[..4]);
+        assert!(matches!(
+            receiver.handle_part(&parts[4], &link, Duration::from_secs(1)),
+            PartOutcome::NoMatch
+        ));
+        assert!(matches!(
+            receiver.handle_part(&parts[3], &link, Duration::from_secs(2)),
+            PartOutcome::Incomplete
+        ));
+        assert_eq!(receiver.build_request().requested_hashes, hashes[..3]);
+
+        for (offset, part) in parts[..3].iter().enumerate() {
+            assert!(matches!(
+                receiver.handle_part(part, &link, Duration::from_secs(3 + offset as u64)),
+                PartOutcome::Incomplete
+            ));
+        }
+        assert_eq!(receiver.consecutive_completed, 4);
+        assert_eq!(receiver.build_request().requested_hashes, hashes[4..]);
     }
 
     fn resource_packet(context: PacketContext, payload: &[u8], destination: AddressHash) -> Packet {

@@ -52,9 +52,9 @@
 ## 8. Link And Resource Regressions
 <!-- specs: link-resource-security -->
 
-- [ ] 8.1 Add failing adversarial tests for closing a link with multiple inbound/outbound resources, out-of-order parts at a requested-window boundary, cancellation races, receive-handler failure, and terminal-state idempotence
-- [ ] 8.2 Minimally snapshot correlated transfers before cancellation, align part lookup to `consecutive_completed_height + 1`, and guarantee receive failure releases guards while preserving one terminal outcome
-- [ ] 8.3 Verify every transfer terminates exactly once, no part is skipped or misindexed, no watchdog/scheduler remains blocked, and existing broad resource tests still pass
+- [x] 8.1 Add failing adversarial tests for closing a link with multiple inbound/outbound resources, out-of-order parts at a requested-window boundary, cancellation races, receive-handler failure, and terminal-state idempotence
+- [x] 8.2 Minimally snapshot correlated transfers before cancellation, align part lookup to `consecutive_completed_height + 1`, and guarantee receive failure releases guards while preserving one terminal outcome
+- [x] 8.3 Verify every transfer terminates exactly once, no part is skipped or misindexed, no watchdog/scheduler remains blocked, and existing broad resource tests still pass
 
 ## 9. Receipt Callback Reentrancy
 <!-- specs: link-resource-security -->
