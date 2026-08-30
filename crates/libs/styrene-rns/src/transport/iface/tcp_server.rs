@@ -142,6 +142,14 @@ impl Interface for TcpServer {
         2048
     }
 
+    fn hardware_mtu(&self) -> Option<usize> {
+        Some(Self::mtu())
+    }
+
+    fn supports_link_mtu_discovery(&self) -> bool {
+        true
+    }
+
     fn descriptor(&self) -> InterfaceDescriptor {
         InterfaceDescriptor {
             kind: InterfaceKind::TcpServer,

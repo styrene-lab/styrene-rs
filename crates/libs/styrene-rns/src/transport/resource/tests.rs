@@ -242,6 +242,33 @@ mod tests {
     }
 
     #[test]
+    fn resource_sender_chunks_at_negotiated_resource_sdu() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", "resource-mtu"),
+        };
+        let (tx, _) = tokio::sync::broadcast::channel(1);
+        let mut link = Link::new(destination, tx);
+        link.set_request_mtu(Some(1024));
+
+        let sender = ResourceSender::new(
+            &link,
+            vec![0x5a; 3000],
+            None,
+            None,
+            false,
+            Duration::ZERO,
+        )
+        .expect("negotiated-MTU resource");
+
+        assert!(sender.parts.iter().all(|part| part.len() <= 988));
+        assert!(sender.parts.iter().any(|part| part.len() > PACKET_MDU));
+    }
+
+    #[test]
     fn resource_response_advertisement_matches_python_flags_and_request_id() {
         let signer = PrivateIdentity::new_from_rand(OsRng);
         let identity = *signer.as_identity();

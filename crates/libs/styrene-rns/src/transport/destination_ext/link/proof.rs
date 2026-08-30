@@ -12,12 +12,12 @@ pub(crate) fn validate_link_request_proof_packet(
     destination: &DestinationDesc,
     id: &LinkId,
     packet: &Packet,
-) -> Result<Identity, RnsError> {
+) -> Result<(Identity, Option<LinkSignalling>), RnsError> {
     const MIN_PROOF_LEN: usize = SIGNATURE_LENGTH + PUBLIC_KEY_LENGTH;
     const MTU_PROOF_LEN: usize = SIGNATURE_LENGTH + PUBLIC_KEY_LENGTH + LINK_MTU_SIZE;
     const SIGN_DATA_LEN: usize = ADDRESS_HASH_SIZE + PUBLIC_KEY_LENGTH * 2 + LINK_MTU_SIZE;
 
-    if packet.data.len() < MIN_PROOF_LEN {
+    if !matches!(packet.data.len(), MIN_PROOF_LEN | MTU_PROOF_LEN) {
         return Err(RnsError::PacketError);
     }
 
@@ -33,9 +33,10 @@ pub(crate) fn validate_link_request_proof_packet(
         )?;
         output.write(verifying_key)?;
 
-        if packet.data.len() >= MTU_PROOF_LEN {
-            let mtu_bytes = &packet.data.as_slice()[SIGNATURE_LENGTH + PUBLIC_KEY_LENGTH..];
-            output.write(mtu_bytes)?;
+        if packet.data.len() == MTU_PROOF_LEN {
+            output.write(
+                &packet.data.as_slice()[SIGNATURE_LENGTH + PUBLIC_KEY_LENGTH..MTU_PROOF_LEN],
+            )?;
         }
 
         output.offset()
@@ -53,7 +54,15 @@ pub(crate) fn validate_link_request_proof_packet(
         .verify(&proof_data[..sign_data_len], &signature)
         .map_err(|_| RnsError::IncorrectSignature)?;
 
-    Ok(identity)
+    let signalling = if packet.data.len() == MTU_PROOF_LEN {
+        let mut bytes = [0_u8; LINK_MTU_SIZE];
+        bytes.copy_from_slice(&packet.data.as_slice()[MIN_PROOF_LEN..MTU_PROOF_LEN]);
+        Some(LinkSignalling::decode(bytes)?)
+    } else {
+        None
+    };
+
+    Ok((identity, signalling))
 }
 
 pub(crate) fn validate_link_packet_proof(

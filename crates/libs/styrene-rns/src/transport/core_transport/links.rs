@@ -106,7 +106,7 @@ impl Transport {
                 return Err(RnsError::InvalidArgument);
             }
             let iface = link.ingress_iface().ok_or(RnsError::InvalidArgument)?;
-            let packet = if envelope.len() <= crate::transport::resource::LINK_PACKET_MDU {
+            let packet = if envelope.len() <= link.packet_mdu() {
                 let mut packet = link.data_packet(&envelope)?;
                 packet.context = PacketContext::Request;
                 Some(packet)
@@ -251,6 +251,23 @@ impl Transport {
         }
 
         let mut raw_link = Link::new(destination, self.link_out_event_tx.clone());
+        let route_iface =
+            handler.path_table.next_hop_full(&destination.address_hash).map(|(_, iface)| iface);
+        let request_mtu = if handler.config.link_mtu_discovery {
+            if let Some(iface) = route_iface {
+                handler
+                    .iface_manager
+                    .lock()
+                    .await
+                    .online_link_mtu(&iface)
+                    .unwrap_or(crate::packet::MTU)
+            } else {
+                crate::packet::MTU
+            }
+        } else {
+            crate::packet::MTU
+        };
+        raw_link.set_request_mtu(Some(request_mtu));
         let request = raw_link.request();
         let (packet, direct_iface) = handler.path_table.handle_packet(&request);
         let tx_type = if let Some(iface) = direct_iface {
@@ -991,6 +1008,11 @@ impl TransportChannel {
 
     pub fn link_id(&self) -> AddressHash {
         self.link_id
+    }
+
+    pub async fn mdu(&self) -> Result<usize, ChannelError> {
+        let link = self.find_link().await.ok_or(ChannelError::LinkNotReady)?;
+        Ok(link.lock().await.channel_mdu())
     }
 
     pub async fn send(&self, msg_type: u16, payload: Vec<u8>) -> Result<u16, ChannelError> {
