@@ -345,12 +345,16 @@ fn error_payload(message: String) -> HashMap<String, rmpv::Value> {
     if let Ok(error) = serde_json::from_str::<styrene_ipc::IpcError>(&message) {
         let (kind, code) = classify_ipc_error(&error);
         let display = error.to_string();
-        return HashMap::from([
+        let mut payload = HashMap::from([
             ("error".into(), rmpv::Value::from(display.as_str())),
             ("message".into(), rmpv::Value::from(display)),
             ("kind".into(), rmpv::Value::from(kind)),
             ("code".into(), rmpv::Value::from(code)),
         ]);
+        if let Ok(value) = rmpv::ext::to_value(error) {
+            payload.insert("typed_error".into(), value);
+        }
+        return payload;
     }
     let (kind, code) = classify_error(&message);
     HashMap::from([
@@ -369,6 +373,7 @@ fn classify_ipc_error(error: &styrene_ipc::IpcError) -> (&'static str, &'static 
         IpcError::Timeout { .. } => ("timeout", "timeout"),
         IpcError::InvalidRequest { .. } => ("invalid_request", "invalid_request"),
         IpcError::NotFound { .. } => ("not_found", "not_found"),
+        IpcError::Conflict { message } if message == "cursor_stale" => ("conflict", "cursor_stale"),
         IpcError::Conflict { .. } => ("conflict", "conflict"),
         IpcError::Denied { .. } => ("denied", "denied"),
         IpcError::Internal { .. } => ("internal", "internal"),
