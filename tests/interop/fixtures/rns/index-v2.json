@@ -203,6 +203,21 @@
         "mode": "AES_256_CBC",
         "rejection": "truncated_tag"
       }
+    },
+    {
+      "id": "rns-1.5.1-interface-discovery-vectors",
+      "authority_id": "rns-1.5.1",
+      "kind": "interface-discovery-matrix",
+      "artifact": "tests/interop/fixtures/rns/rns-1.5.1/interface-discovery-vectors.json",
+      "sha256": "cc556a69c475e80f8c17e3bc2dc8cd79abcf6f64ec3459d13735aeb4a03b2c6c",
+      "generator": "tests/interop/python/generate_rns_1_5_fixtures.py",
+      "source_symbols": ["RNS.Discovery.InterfaceAnnouncer.get_interface_announce_data", "RNS.Discovery.InterfaceAnnounceHandler.received_announce"],
+      "expected": {
+        "type": "interface-discovery-matrix",
+        "implementation": "RNS",
+        "version": "1.5.1",
+        "operator_address_length": 16
+      }
     }
   ]
 }
