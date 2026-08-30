@@ -62,6 +62,6 @@
 <!-- specs: mobile-backend-corpus, mobile-backend-runtime, mobile-backend-identity, mobile-backend-messaging, mobile-backend-observability -->
 
 - [x] 8.1 Run OpenSpec validation, corpus validators, focused `styrened` and `styrene-ipc` tests, migration and restart tests, formatting, and warning-denied Clippy
-- [ ] 8.2 Update backend corpus rows only from retained test evidence and record exact backend revision, test boundary, and unresolved blockers
+- [x] 8.2 Update backend corpus rows only from retained test evidence and record exact backend revision, test boundary, and unresolved blockers
 - [x] 8.3 Publish an additive frontend handoff for newly verified fields and operations without changing packaged or application-parity status
 - [x] 8.4 Reconcile stale missing-capability text in the integration corpus while preserving host, device, protocol, and packaged evidence gaps
