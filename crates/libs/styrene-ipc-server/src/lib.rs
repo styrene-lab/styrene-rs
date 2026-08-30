@@ -22,6 +22,6 @@
 pub mod connection;
 pub mod dispatch;
 pub mod server;
-pub mod wire;
 
 pub use server::{IpcServer, IpcServerConfig, default_socket_path};
+pub use styrene_ipc_wire as wire;

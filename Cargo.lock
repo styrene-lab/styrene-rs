@@ -4364,10 +4364,21 @@ dependencies = [
  "serde",
  "serde_json",
  "styrene-ipc",
+ "styrene-ipc-wire",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "styrene-ipc-wire"
+version = "0.1.0"
+dependencies = [
+ "rmp-serde",
+ "rmpv",
+ "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]

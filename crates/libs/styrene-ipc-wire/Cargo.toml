@@ -1,0 +1,22 @@
+[package]
+name = "styrene-ipc-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared framed MessagePack wire protocol for Styrene local IPC"
+keywords = ["styrene", "ipc", "protocol", "msgpack"]
+categories = ["network-programming", "encoding"]
+
+[dependencies]
+rmp-serde.workspace = true
+rmpv.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "rt"] }
+
+[lints]
+workspace = true

@@ -15,7 +15,7 @@ REQUEST_ID: 16 bytes correlation token
 PAYLOAD:    msgpack-encoded dict (HashMap<String, rmpv::Value>)
 ```
 
-Max payload: 4 MB.
+Max payload: 12 MiB.
 
 ## Module Map
 
@@ -23,7 +23,7 @@ Max payload: 4 MB.
 |------|---------|
 | `src/lib.rs` | Crate root, re-exports IpcServer, IpcServerConfig, default_socket_path |
 | `src/server.rs` | `IpcServer` lifecycle (new, start, stop), Unix socket bind, accept loop, `default_socket_path()` |
-| `src/wire.rs` | Frame encode/decode, `MessageType` enum (~70 variants), async read/write helpers |
+| `styrene-ipc-wire` | Shared frame encode/decode, `MessageType` enum, payload bounds, and async read/write helpers |
 | `src/connection.rs` | Per-client connection handler, subscription state (SubTopic), reader/writer task split |
 | `src/dispatch.rs` | Maps `MessageType` to `Daemon` trait method calls, payload extraction/construction |
 
