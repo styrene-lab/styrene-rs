@@ -1,5 +1,6 @@
 use crate::storage::messages::{
-    MessageRecord, MessagesStore, OutboundAttemptRecord, OutboundRouteRecord,
+    AttemptRouteObservationRecord, MessageRecord, MessagesStore, OutboundAttemptRecord,
+    OutboundRouteRecord,
 };
 use rns_core::packet::LXMF_MAX_PAYLOAD;
 use rns_core::transport::resource::LINK_PACKET_MDU;
@@ -731,6 +732,14 @@ impl RouterCoordinator {
     }
 
     pub fn begin_retry(&self, message_id: &str) -> Result<RetryStartResult, std::io::Error> {
+        self.begin_retry_with_route(message_id, None)
+    }
+
+    pub fn begin_retry_with_route(
+        &self,
+        message_id: &str,
+        route_observation: Option<&AttemptRouteObservationRecord>,
+    ) -> Result<RetryStartResult, std::io::Error> {
         self.ensure_ready()?;
         let mut state = self.lock_state()?;
         let route = self
@@ -769,9 +778,12 @@ impl RouterCoordinator {
             started_unix_ms: self.clock.unix_time_ms(),
             deadline_unix_ms,
             state: OutboundState::Sending.as_str().into(),
+            route_observation: route_observation.cloned(),
         };
-        let started =
-            self.lock_store()?.begin_outbound_retry(&attempt).map_err(std::io::Error::other)?;
+        let started = self
+            .lock_store()?
+            .begin_outbound_retry_with_route(&attempt, route_observation)
+            .map_err(std::io::Error::other)?;
         self.reload_state_locked(&mut state)?;
         if !started {
             let winner = self
@@ -901,6 +913,14 @@ impl RouterCoordinator {
     }
 
     pub fn begin_attempt(&self, message_id: &str) -> Result<OutboundAttempt, std::io::Error> {
+        self.begin_attempt_with_route(message_id, None)
+    }
+
+    pub fn begin_attempt_with_route(
+        &self,
+        message_id: &str,
+        route: Option<&AttemptRouteObservationRecord>,
+    ) -> Result<OutboundAttempt, std::io::Error> {
         self.ensure_ready()?;
         let mut state = self.lock_state()?;
         let message = state
@@ -925,8 +945,13 @@ impl RouterCoordinator {
             started_unix_ms: self.clock.unix_time_ms(),
             deadline_unix_ms: message.deadline_unix_ms,
             state: OutboundState::Sending.as_str().into(),
+            route_observation: route.cloned(),
         };
-        if !self.lock_store()?.begin_outbound_attempt(&persisted).map_err(std::io::Error::other)? {
+        if !self
+            .lock_store()?
+            .begin_outbound_attempt_with_route(&persisted, route)
+            .map_err(std::io::Error::other)?
+        {
             return Err(std::io::Error::other("outbound LXMF message is already terminal"));
         }
         self.reload_state_locked(&mut state)?;

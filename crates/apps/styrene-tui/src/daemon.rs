@@ -2173,7 +2173,7 @@ pub fn spawn_poll_task(
 // ─── App-side event application ───────────────────────────────────────────────
 
 fn observation_generation_valid(app: &crate::app::App, observation: &ObservationMetadata) -> bool {
-    observation.connection_generation.is_some_and(|generation| {
+    observation.ipc_generation().is_some_and(|generation| {
         app.connection_generation == Some(generation)
             || app.event_connection_generation == Some(generation)
     })
@@ -2656,7 +2656,7 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
                 .active
                 .iter()
                 .chain(&snapshot.history)
-                .any(|link| link.observation.connection_generation != Some(generation))
+                .any(|link| link.observation.ipc_generation() != Some(generation))
             {
                 return;
             }
@@ -2683,7 +2683,7 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
             };
             if operations
                 .iter()
-                .any(|operation| operation.observation.connection_generation != Some(generation))
+                .any(|operation| operation.observation.ipc_generation() != Some(generation))
             {
                 return;
             }
@@ -2709,7 +2709,7 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
             };
             if requests
                 .iter()
-                .any(|request| request.observation.connection_generation != Some(generation))
+                .any(|request| request.observation.ipc_generation() != Some(generation))
             {
                 return;
             }
@@ -2737,7 +2737,7 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
             };
             if resources
                 .iter()
-                .any(|resource| resource.observation.connection_generation != Some(generation))
+                .any(|resource| resource.observation.ipc_generation() != Some(generation))
             {
                 return;
             }
@@ -2787,10 +2787,7 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
             let Some(generation) = app.connection_generation else {
                 return;
             };
-            if routes
-                .iter()
-                .any(|route| route.observation.connection_generation != Some(generation))
-            {
+            if routes.iter().any(|route| route.observation.ipc_generation() != Some(generation)) {
                 return;
             }
             app.conversation.push_system(&format!("⬡ {} authoritative routes", routes.len()));
@@ -2816,7 +2813,7 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
             };
             if interfaces
                 .iter()
-                .any(|interface| interface.observation.connection_generation != Some(generation))
+                .any(|interface| interface.observation.ipc_generation() != Some(generation))
             {
                 return;
             }
@@ -3225,6 +3222,10 @@ fn parse_observation_payload(payload: &HashMap<String, MpValue>) -> ObservationM
     observation.observed_at = payload.get("observed_at").and_then(MpValue::as_i64);
     observation.connection_generation =
         payload.get("connection_generation").and_then(MpValue::as_u64);
+    observation.ipc_connection_generation =
+        payload.get("ipc_connection_generation").and_then(MpValue::as_u64);
+    observation.interface_generation =
+        payload.get("interface_generation").and_then(MpValue::as_u64);
     observation.age_secs = payload.get("age_secs").and_then(MpValue::as_u64);
     observation.freshness_threshold_secs =
         payload.get("freshness_threshold_secs").and_then(MpValue::as_u64);
@@ -3348,6 +3349,12 @@ fn parse_identity(p: &HashMap<String, MpValue>) -> Result<IdentityInfo, String> 
     info.display_name = mp_str(p, "display_name");
     info.icon = p.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string());
     info.short_name = p.get("short_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+    info.custody = p
+        .get("custody")
+        .cloned()
+        .map(rmpv::ext::from_value)
+        .transpose()
+        .map_err(|error| format!("invalid identity custody: {error}"))?;
     Ok(info)
 }
 

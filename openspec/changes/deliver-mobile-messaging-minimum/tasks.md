@@ -8,13 +8,13 @@
 - [x] 1.3 Add failing Dioxus component tests for both mobile target classes using the same fixture identifiers and required accessibility identifiers
 - [x] 1.4 Remove live-path preview substitution and retain preview records only in explicitly marked fixture sessions
 - [ ] 1.5 Recover and admit the versioned RNS-compatible application corpus with exact application, build, platform, protocol-version, provenance, observation-date, and artifact records
-- [ ] 1.6 Classify each corpus entry as protocol authority, observed RNS/LXMF application, or interaction-only reference and reject evidence-scope promotion
-- [ ] 1.7 Build the P0 workflow parity matrix for identity, TCP setup, discovery, conversations, drafts, direct send, receipts, retry, restart, propagation, and degraded states
-- [ ] 1.8 Record the designated floor, observable Styrene outcome, intentional differences, exclusions, and status for every parity row
-- [ ] 1.9 Add validation that rejects missing P0 rows, unresolved differences, invalid status, stale provenance, and application observations used as protocol evidence
+- [x] 1.6 Classify each corpus entry as protocol authority, observed RNS/LXMF application, or interaction-only reference and reject evidence-scope promotion
+- [x] 1.7 Build the P0 workflow parity matrix for identity, TCP setup, discovery, conversations, drafts, direct send, receipts, retry, restart, propagation, and degraded states
+- [x] 1.8 Record the designated floor, observable Styrene outcome, intentional differences, exclusions, and status for every parity row
+- [x] 1.9 Add validation that rejects missing P0 rows, unresolved differences, invalid status, stale provenance, and application observations used as protocol evidence
 - [ ] 1.10 Copy the versioned application corpus into `styrene-ui` with exact backend revision provenance and add journey fixtures before implementing unmatched UI workflows
-- [ ] 1.11 Seed the recovered inventory with Skywave `1.0` build `5` and the pinned Python RNS, LXMF, and NomadNet references
-- [ ] 1.12 Record Sideband, Columba, and MeshChat as unevidenced candidates and Meshtastic and MeshCore as interaction-only references
+- [x] 1.11 Seed the recovered inventory with Skywave `1.0` build `5` and the pinned Python RNS, LXMF, and NomadNet references
+- [x] 1.12 Record Sideband, Columba, and MeshChat as unevidenced candidates and Meshtastic and MeshCore as interaction-only references
 - [ ] 1.13 Resolve the `795fdaa2b0777c13033787d933d1afc94a2377cb` LXMF `1.1.0` versus `1.1.1` provenance conflict before admitting dependent rows
 - [ ] 1.14 Reject deleted Styrene native hosts and RNode firmware evidence as substitutes for external application-parity rows
 
@@ -26,6 +26,7 @@
 - [x] 2.3 Add failing Rust store and Dioxus component tests for cold restoration, reconnect, stale completion rejection, and TCP operation without an RNode
 - [x] 2.4 Implement persisted endpoint editing, automatic boot, reconnect presentation, and recoverable failure in shared Rust and Dioxus code
 - [x] 2.5 Add deterministic local TCP integration tests proving connection, interruption, reconnect, identity continuity, and clean shutdown
+- [x] 2.6 Expose bounded current-generation mobile state invalidations with explicit lag recovery
 
 ## 3. Canonical Discovery
 <!-- specs: mobile-network-session -->
@@ -83,3 +84,43 @@
 - [ ] 8.3 Verify existing identity, messages, contacts, drafts, endpoint, and new propagation selection survive upgrade
 - [ ] 8.4 Publish capability claims from passing evidence and list RNode, attachment, Paper, NomadNet, propagation-host, capacity, and expiry exclusions explicitly
 - [ ] 8.5 Publish the complete application-parity ledger with corpus version, row status, intentional-difference rationale, and evidence references
+
+## 9. BLE Backend Ownership
+<!-- specs: mobile-ble-rnode -->
+
+- [x] 9.1 Add a failing `MobileNode` test proving a Bluetooth byte attempt requires approval and changes only the Bluetooth RNode bearer
+- [x] 9.2 Add explicit BLE and Android USB attempt identity to the mobile byte-session API without changing KISS protocol behavior
+- [x] 9.3 Add failing tests for one active bearer, stale attempt rejection, exact readback gating, and idempotent stop attribution
+- [x] 9.4 Integrate the shared `RNodeEngine` attempt metadata so backend-owned fragmentation respects the safe platform write size
+- [x] 9.5 Add failing retained-handoff tests proving a failed or cancelled platform write does not silently lose an outbound RNS packet
+
+## 10. BLE Platform Contract
+<!-- specs: mobile-ble-rnode -->
+
+- [x] 10.1 Add failing pure Rust tests for permission, adapter availability, bounded discovery, explicit selection, approval, forget, and generation rejection
+- [x] 10.2 Define plain Rust BLE candidate, approved-peripheral, NUS property, write-limit, event, and ordered-byte attempt contracts
+- [x] 10.3 Add fake-attempt tests for arbitrary notification fragmentation, multiple KISS frames per notification, serialized writes, cancellation, disconnect, and reconnect
+- [x] 10.4 Implement one cancellable session owner that pumps the platform attempt through the backend byte session without owning RNode protocol truth
+- [x] 10.5 Add Rust-owned Network controls for Scan, explicit peripheral selection, retry, and Forget with typed disabled and failure states
+
+## 11. Native BLE Adapters
+<!-- specs: mobile-ble-rnode -->
+
+- [x] 11.1 Add failing safe-boundary tests for CoreBluetooth state, NUS discovery, characteristic properties, notification delivery, response writes, write limits, and disconnect
+- [x] 11.2 Implement the iOS adapter inside the existing Rust Apple bridge without exposing Objective-C objects or adding maintained Swift
+- [ ] 11.3 Add failing Android bridge tests for API-level permission, adapter state, scan identity, NUS discovery, response writes, MTU conversion, callback generation, and close
+- [ ] 11.4 Implement the Android GATT adapter through tracked Rust and approved generated-host extension seams without adding maintained Kotlin product logic
+- [ ] 11.5 Build warning-denied iOS and Android targets and verify generated native output remains untracked
+
+## 12. BLE Physical Acceptance
+<!-- specs: mobile-ble-rnode, mobile-release-evidence -->
+
+**Deferred 2026-08-29:** The operator deferred physical BLE acceptance for the
+moment. Physical RNodes are available when testing resumes. Keep tasks 12.1-12.5
+incomplete and do not publish a BLE support claim before their evidence passes.
+
+- [ ] 12.1 Record board, firmware, NUS UUIDs and properties, mobile model, OS, application and backend revisions, radio profile, and test jurisdiction
+- [ ] 12.2 Verify explicit first approval, stored-identifier reconnect, pairing-window expiry, Forget, denial, powered-off, interruption, and foreground recovery on each claimed platform
+- [ ] 12.3 Verify observed safe write size, fragmented inbound traffic, serialized response writes, exact RNode configuration readback, and bounded queue behavior
+- [ ] 12.4 Verify bidirectional packet and message correlation, packet counters, retained replay after interruption, and no duplicate delivery
+- [ ] 12.5 Publish BLE support only for the exercised platform, board, firmware class, and scenarios. Retain every missing evidence item as an explicit exclusion

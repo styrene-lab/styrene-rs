@@ -22,8 +22,8 @@ use crate::services::router::{
     RouterCoordinator, WireRepresentation,
 };
 use crate::storage::messages::{
-    AttachmentBlobInput, MessageAttachmentRecord, MessageRecord, MessagesStore,
-    OutboundAttemptRecord, OutboundRouteRecord,
+    AttachmentBlobInput, AttemptRouteObservationRecord, MessageAttachmentRecord, MessageRecord,
+    MessagesStore, OutboundAttemptRecord, OutboundRouteRecord,
 };
 use crate::transport::mesh_transport::{
     DispatchGate, LinkRepresentation, MeshTransport, TransportError,
@@ -50,6 +50,38 @@ fn current_unix_time_secs() -> i64 {
         .unwrap_or(0)
 }
 const MAX_RECEIPT_CORRELATIONS: usize = 4096;
+
+pub(crate) fn attempt_record_to_info(
+    attempt: OutboundAttemptRecord,
+) -> styrene_ipc::types::MessageAttemptInfo {
+    let mut info = styrene_ipc::types::MessageAttemptInfo::default();
+    info.message_id = attempt.message_id;
+    info.number = attempt.attempt_number;
+    info.started_unix_ms = attempt.started_unix_ms;
+    info.deadline_unix_ms = attempt.deadline_unix_ms;
+    info.state = attempt.state;
+    if let Some(observation) = attempt.route_observation {
+        info.bearer = observation.bearer;
+        info.route.outcome = if observation.outcome == "observed" {
+            styrene_ipc::types::MessageAttemptRouteOutcome::Observed
+        } else {
+            styrene_ipc::types::MessageAttemptRouteOutcome::Unknown
+        };
+        info.route.connection_generation = observation.connection_generation;
+        info.route.observed_at = observation.observed_at;
+        info.route.next_hop = observation.next_hop;
+        info.route.hops = observation.hops;
+        info.route.stale = observation.stale;
+        info.route.interface = observation.interface_id.map(|id| {
+            let mut interface = styrene_ipc::types::MessageAttemptInterfaceObservation::default();
+            interface.id = id;
+            interface.kind = observation.interface_kind.unwrap_or_else(|| "unknown".into());
+            interface.generation = observation.interface_generation.unwrap_or_default();
+            interface
+        });
+    }
+    info
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendCommitDisposition {
@@ -420,6 +452,55 @@ pub struct MessagingService {
 }
 
 impl MessagingService {
+    async fn observed_route(
+        &self,
+        message_id: &str,
+        attempt_number: u32,
+        destination: &AddressHash,
+    ) -> Option<AttemptRouteObservationRecord> {
+        let transport = self.transport.get()?;
+        let snapshot = transport.query_path_snapshot(destination).await?;
+        let interface = transport
+            .interface_snapshots()
+            .await
+            .into_iter()
+            .find(|interface| interface.hash == snapshot.iface && interface.generation > 0)?;
+        let observed_at = snapshot
+            .observed_at
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64);
+        Some(AttemptRouteObservationRecord {
+            message_id: message_id.into(),
+            attempt_number,
+            outcome: "observed".into(),
+            connection_generation: Some(interface.generation),
+            observed_at,
+            next_hop: Some(hex::encode(snapshot.received_from.as_slice())),
+            hops: Some(snapshot.hops.into()),
+            stale: std::time::SystemTime::now() > snapshot.expires_at,
+            interface_id: Some(hex::encode(interface.hash.as_slice())),
+            interface_kind: Some(interface.kind.as_str().into()),
+            interface_generation: Some(interface.generation),
+            bearer: None,
+        })
+    }
+
+    async fn begin_attempt(
+        &self,
+        message_id: &str,
+        destination: &AddressHash,
+    ) -> Result<crate::services::router::OutboundAttempt, std::io::Error> {
+        let number = self
+            .router
+            .message(message_id)
+            .map(|message| message.total_attempts.saturating_add(1))
+            .and_then(|number| u32::try_from(number).ok())
+            .ok_or_else(|| std::io::Error::other("outbound LXMF attempt is unavailable"))?;
+        let route = self.observed_route(message_id, number, destination).await;
+        self.router.begin_attempt_with_route(message_id, route.as_ref())
+    }
+
     fn lock_store(&self) -> Result<std::sync::MutexGuard<'_, MessagesStore>, std::io::Error> {
         self.store.lock().map_err(|_| std::io::Error::other("messages store lock poisoned"))
     }
@@ -460,18 +541,7 @@ impl MessagingService {
         info.actual_delivery_method = Some(route.actual_method);
         info.fallback_reason = route.fallback_reason;
         info.correlation_id = Some(route.correlation_id);
-        info.attempts = attempts
-            .into_iter()
-            .map(|attempt| {
-                let mut info = styrene_ipc::types::MessageAttemptInfo::default();
-                info.message_id = attempt.message_id;
-                info.number = attempt.attempt_number;
-                info.started_unix_ms = attempt.started_unix_ms;
-                info.deadline_unix_ms = attempt.deadline_unix_ms;
-                info.state = attempt.state;
-                info
-            })
-            .collect();
+        info.attempts = attempts.into_iter().map(attempt_record_to_info).collect();
         info.read = record.read;
         info.attachments = attachments.into_iter().map(attachment_record_to_info).collect();
         info.attachment_info = (info.attachments.len() == 1).then(|| info.attachments[0].clone());
@@ -865,7 +935,7 @@ impl MessagingService {
         let dest_hash = AddressHash::new(dest_bytes);
 
         // Build LXMF wire message
-        let source_hash = transport.identity_hash();
+        let source_hash = transport.destination_hash();
         let mut source_bytes = [0u8; 16];
         source_bytes.copy_from_slice(source_hash.as_slice());
         let now = std::time::SystemTime::now()
@@ -1165,7 +1235,7 @@ impl MessagingService {
             }
         match plan.actual_method {
             DeliveryMethod::Propagated => {
-                self.router.begin_attempt(&msg_id)?;
+                self.begin_attempt(&msg_id, &dest_hash).await?;
                 let operation = operation
                     .as_ref()
                     .ok_or_else(|| std::io::Error::other("propagated delivery ownership missing"))?;
@@ -1289,7 +1359,7 @@ impl MessagingService {
                 return Ok(committed);
             }
             DeliveryMethod::Paper => {
-                self.router.begin_attempt(&msg_id)?;
+                self.begin_attempt(&msg_id, &dest_hash).await?;
                 transport.request_path(&dest_hash).await;
                 let recipient = transport.resolve_identity(&dest_hash).await;
                 let Some(recipient) = recipient else {
@@ -1360,7 +1430,7 @@ impl MessagingService {
             DeliveryMethod::Direct | DeliveryMethod::Opportunistic => {}
         }
 
-        self.router.begin_attempt(&msg_id)?;
+        self.begin_attempt(&msg_id, &dest_hash).await?;
         if !transport.is_connected() {
             let operation = operation
                 .as_ref()
@@ -1956,10 +2026,22 @@ impl MessagingService {
                 }
                 InboundAcceptOutcome::Accepted(record)
             }
-            Ok(false) => {
-                crate::daemon_diagnostic!("[messaging] duplicate inbound dropped: {}", record.id);
-                InboundAcceptOutcome::Duplicate { message_id: record.id }
-            }
+            Ok(false) => match self.canonical_inbound(&record.id) {
+                Ok(Some(stored)) if canonical_immutable_matches(&stored, &canonical) => {
+                    crate::daemon_diagnostic!(
+                        "[messaging] duplicate inbound dropped: {}",
+                        record.id
+                    );
+                    InboundAcceptOutcome::Duplicate { message_id: record.id }
+                }
+                Ok(_) => InboundAcceptOutcome::StorageError {
+                    message_id: record.id,
+                    error: std::io::Error::other(
+                        "duplicate lacks a matching durable canonical record",
+                    ),
+                },
+                Err(error) => InboundAcceptOutcome::StorageError { message_id: record.id, error },
+            },
             Err(error) => InboundAcceptOutcome::StorageError {
                 message_id: record.id,
                 error: std::io::Error::other(error),
@@ -2371,21 +2453,29 @@ impl MessagingService {
                 "persisted canonical outbound wire does not match message ID",
             ));
         }
-        let plan = match self.router.begin_retry(message_id)? {
-            RetryStartResult::Started(plan) => plan,
-            RetryStartResult::Existing(route) => {
-                return Ok(if route.state == "sending" {
-                    RetryMessageOutcome::Existing(message_id.into())
-                } else {
-                    RetryMessageOutcome::TerminalConflict(route.state)
-                });
-            }
-            RetryStartResult::MissingCanonicalWire => {
-                return Ok(RetryMessageOutcome::TerminalConflict(
-                    "canonical_wire_unavailable".into(),
-                ));
-            }
-        };
+        let destination_bytes: [u8; 16] = hex::decode(&message.destination)
+            .map_err(std::io::Error::other)?
+            .try_into()
+            .map_err(|_| std::io::Error::other("persisted destination has the wrong length"))?;
+        let destination = AddressHash::new(destination_bytes);
+        let attempt_number = route.attempt_count.saturating_add(1);
+        let route_observation = self.observed_route(message_id, attempt_number, &destination).await;
+        let plan =
+            match self.router.begin_retry_with_route(message_id, route_observation.as_ref())? {
+                RetryStartResult::Started(plan) => plan,
+                RetryStartResult::Existing(route) => {
+                    return Ok(if route.state == "sending" {
+                        RetryMessageOutcome::Existing(message_id.into())
+                    } else {
+                        RetryMessageOutcome::TerminalConflict(route.state)
+                    });
+                }
+                RetryStartResult::MissingCanonicalWire => {
+                    return Ok(RetryMessageOutcome::TerminalConflict(
+                        "canonical_wire_unavailable".into(),
+                    ));
+                }
+            };
         let outcome = self.dispatch_persisted_retry(&message, payload, plan).await?;
         Ok(RetryMessageOutcome::Created(outcome.message_id))
     }
@@ -2748,6 +2838,15 @@ impl MessagingService {
     }
 
     /// List conversation summaries.
+    pub fn start_conversation(
+        &self,
+        peer_hash: &str,
+    ) -> Result<crate::storage::messages::ConversationMutationOutcome, std::io::Error> {
+        let peer_hash = canonical_peer_hash(peer_hash)?;
+        self.lock_store()?.start_conversation(&peer_hash).map_err(std::io::Error::other)
+    }
+
+    /// List conversation summaries.
     pub fn list_conversations(
         &self,
         unread_only: bool,
@@ -2807,6 +2906,15 @@ impl MessagingService {
     ) -> Result<crate::storage::messages::ContactMutationOutcome, std::io::Error> {
         let peer_hash = canonical_peer_hash(peer_hash)?;
         self.lock_store()?.remove_contact_outcome(&peer_hash).map_err(std::io::Error::other)
+    }
+
+    /// List all contacts.
+    pub fn contact(
+        &self,
+        peer_hash: &str,
+    ) -> Result<Option<crate::storage::messages::ContactRecord>, std::io::Error> {
+        let peer_hash = canonical_peer_hash(peer_hash)?;
+        self.lock_store()?.contact(&peer_hash).map_err(std::io::Error::other)
     }
 
     /// List all contacts.
@@ -3256,6 +3364,59 @@ impl Default for MessagingService {
 mod tests {
     use super::*;
 
+    fn tcp_interface(
+        hash: AddressHash,
+        generation: u64,
+    ) -> rns_core::transport::iface::InterfaceSnapshot {
+        rns_core::transport::iface::InterfaceSnapshot {
+            hash,
+            kind: rns_core::transport::iface::InterfaceKind::TcpClient,
+            mode: rns_core::transport::iface::InterfaceMode::PointToPoint,
+            state: rns_core::transport::iface::InterfaceState::Connected,
+            local_endpoint: None,
+            remote_endpoint: None,
+            parent: None,
+            tx_bytes: 0,
+            rx_bytes: 0,
+            violations: Default::default(),
+            filters: Default::default(),
+            connected_peers: 1,
+            generation,
+        }
+    }
+
+    fn path_snapshot(
+        destination: AddressHash,
+        interface: AddressHash,
+        next_hop: AddressHash,
+        age: Duration,
+        lifetime: Duration,
+    ) -> rns_core::transport::core_transport::path_table::PathSnapshot {
+        let observed_at = std::time::SystemTime::now().checked_sub(age).unwrap();
+        rns_core::transport::core_transport::path_table::PathSnapshot {
+            destination,
+            hops: 2,
+            received_from: next_hop,
+            iface: interface,
+            age,
+            observed_at,
+            lifetime,
+            expires_at: observed_at + lifetime,
+        }
+    }
+
+    fn route_test_service(
+        store: Arc<Mutex<MessagesStore>>,
+    ) -> (MessagingService, Arc<crate::transport::mock_transport::MockTransport>) {
+        let service = MessagingService::with_store(store);
+        let transport = Arc::new(crate::transport::mock_transport::MockTransport::new_default());
+        service.set_signer(
+            transport.clone(),
+            Arc::new(rns_core::identity::PrivateIdentity::new_from_name("route-observation-local")),
+        );
+        (service, transport)
+    }
+
     fn make_test_record(id: &str, source: &str, dest: &str) -> MessageRecord {
         MessageRecord {
             id: id.into(),
@@ -3269,6 +3430,150 @@ mod tests {
             receipt_status: None,
             read: false,
         }
+    }
+
+    #[tokio::test]
+    async fn attempt_capture_is_immutable_across_tcp_reconnect_and_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("messages.db");
+        let store = Arc::new(Mutex::new(MessagesStore::open(&path).unwrap()));
+        let (service, transport) = route_test_service(store.clone());
+        let destination = AddressHash::new([0x41; 16]);
+        let first_interface = AddressHash::new([0x51; 16]);
+        transport.set_interface_snapshots(vec![tcp_interface(first_interface, 3)]);
+        transport.set_path_snapshot(path_snapshot(
+            destination,
+            first_interface,
+            AddressHash::new([0x61; 16]),
+            Duration::from_secs(1),
+            Duration::from_secs(60),
+        ));
+
+        let message_id = service
+            .send_chat_with_method(
+                &hex::encode(destination.as_slice()),
+                "observed route",
+                None,
+                Some("opportunistic"),
+            )
+            .await
+            .unwrap();
+        let projection = service.outbound_projection(&message_id).unwrap();
+        let captured = &projection.attempts[0];
+        assert_eq!(
+            captured.route.outcome,
+            styrene_ipc::types::MessageAttemptRouteOutcome::Observed
+        );
+        assert_eq!(captured.route.connection_generation, Some(3));
+        assert_eq!(captured.route.interface.as_ref().unwrap().kind, "tcp_client");
+        assert_eq!(captured.bearer, None);
+
+        let replacement_interface = AddressHash::new([0x52; 16]);
+        transport.inject_lifecycle(
+            crate::transport::mesh_transport::TransportLifecycleEvent::Reconnected,
+        );
+        transport.set_interface_snapshots(vec![tcp_interface(replacement_interface, 9)]);
+        transport.set_path_snapshot(path_snapshot(
+            destination,
+            replacement_interface,
+            AddressHash::new([0x62; 16]),
+            Duration::from_secs(1),
+            Duration::from_secs(60),
+        ));
+        let unchanged = service.outbound_projection(&message_id).unwrap();
+        assert_eq!(unchanged.attempts[0], *captured);
+        drop(service);
+        drop(store);
+
+        let reopened = Arc::new(Mutex::new(MessagesStore::open(&path).unwrap()));
+        let restored =
+            MessagingService::with_store(reopened).outbound_projection(&message_id).unwrap();
+        assert_eq!(restored.attempts[0], *captured);
+    }
+
+    #[tokio::test]
+    async fn attempt_capture_persists_unknown_without_attributable_interface_snapshot() {
+        let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
+        let (service, transport) = route_test_service(store);
+        let destination = AddressHash::new([0x42; 16]);
+        transport.set_path_snapshot(path_snapshot(
+            destination,
+            AddressHash::new([0x55; 16]),
+            AddressHash::new([0x65; 16]),
+            Duration::from_secs(1),
+            Duration::from_secs(60),
+        ));
+        transport.set_interface_snapshots(vec![tcp_interface(AddressHash::new([0x56; 16]), 4)]);
+
+        let message_id = service
+            .send_chat_with_method(
+                &hex::encode(destination.as_slice()),
+                "unknown route",
+                None,
+                Some("opportunistic"),
+            )
+            .await
+            .unwrap();
+        let attempt = service.outbound_projection(&message_id).unwrap().attempts.remove(0);
+        assert_eq!(attempt.route.outcome, styrene_ipc::types::MessageAttemptRouteOutcome::Unknown);
+        assert_eq!(attempt.route.interface, None);
+        assert_eq!(attempt.route.connection_generation, None);
+        assert_eq!(attempt.bearer, None);
+    }
+
+    #[tokio::test]
+    async fn retry_captures_new_route_without_rewriting_stale_first_attempt() {
+        let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
+        let (service, transport) = route_test_service(store);
+        let destination = AddressHash::new([0x43; 16]);
+        let first_interface = AddressHash::new([0x53; 16]);
+        transport.set_interface_snapshots(vec![tcp_interface(first_interface, 1)]);
+        transport.set_path_snapshot(path_snapshot(
+            destination,
+            first_interface,
+            AddressHash::new([0x63; 16]),
+            Duration::from_secs(120),
+            Duration::from_secs(30),
+        ));
+        transport.queue_send_raw(Err(TransportError::Unavailable));
+
+        let message_id = service
+            .send_chat_with_method(
+                &hex::encode(destination.as_slice()),
+                "retry route",
+                None,
+                Some("opportunistic"),
+            )
+            .await
+            .unwrap();
+        let first = service.outbound_projection(&message_id).unwrap().attempts.remove(0);
+        assert!(first.route.stale);
+        assert_eq!(first.route.connection_generation, Some(1));
+
+        let second_interface = AddressHash::new([0x54; 16]);
+        transport.set_interface_snapshots(vec![tcp_interface(second_interface, 2)]);
+        transport.set_path_snapshot(path_snapshot(
+            destination,
+            second_interface,
+            AddressHash::new([0x64; 16]),
+            Duration::from_secs(1),
+            Duration::from_secs(60),
+        ));
+        assert!(matches!(
+            service.retry_message_outcome(&message_id).await.unwrap(),
+            RetryMessageOutcome::Created(_)
+        ));
+
+        let attempts = service.outbound_projection(&message_id).unwrap().attempts;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0], first);
+        assert_eq!(attempts[1].route.connection_generation, Some(2));
+        assert!(!attempts[1].route.stale);
+        assert_ne!(
+            attempts[0].route.interface.as_ref().unwrap().id,
+            attempts[1].route.interface.as_ref().unwrap().id
+        );
+        assert!(attempts.iter().all(|attempt| attempt.bearer.is_none()));
     }
 
     #[test]
@@ -3420,6 +3725,29 @@ mod tests {
         assert!(matches!(
             svc.accept_inbound(destination, &wire, InboundPayloadMode::FullWire),
             InboundAcceptOutcome::Duplicate { message_id } if message_id == accepted_id
+        ));
+    }
+
+    #[test]
+    fn duplicate_wire_without_matching_canonical_record_is_storage_failure() {
+        let source = [0x31; 16];
+        let destination = [0x32; 16];
+        let signer =
+            rns_core::identity::PrivateIdentity::new_from_name("unverified-duplicate-test");
+        let wire = lxmf_bridge::build_wire_message(source, destination, "", "hello", None, &signer)
+            .unwrap();
+        let decoder = MessagingService::new();
+        let record = match decoder.accept_inbound(destination, &wire, InboundPayloadMode::FullWire)
+        {
+            InboundAcceptOutcome::Accepted(record) => record,
+            outcome => panic!("expected accepted outcome, got {outcome:?}"),
+        };
+        let service = MessagingService::new();
+        assert!(service.accept_inbound_record(&record).unwrap());
+
+        assert!(matches!(
+            service.accept_inbound(destination, &wire, InboundPayloadMode::FullWire),
+            InboundAcceptOutcome::StorageError { message_id, .. } if message_id == record.id
         ));
     }
 
@@ -3649,6 +3977,7 @@ mod tests {
                     started_unix_ms: 1,
                     deadline_unix_ms: i64::MAX,
                     state: "sent".into(),
+                    route_observation: None,
                 })
                 .unwrap();
         }
@@ -3832,6 +4161,45 @@ mod tests {
             result.unwrap_err().to_string().contains("transport not available"),
             "should fail when no transport"
         );
+    }
+
+    #[tokio::test]
+    async fn outbound_lxmf_uses_delivery_destination_as_source() {
+        use crate::transport::mock_transport::{MockCall, MockTransport};
+
+        let svc = MessagingService::new();
+        let transport = Arc::new(MockTransport::new(
+            AddressHash::new([0x11; 16]),
+            AddressHash::new([0x22; 16]),
+        ));
+        let signer = Arc::new(rns_core::identity::PrivateIdentity::new_from_name(
+            "outbound-delivery-source",
+        ));
+        svc.set_signer(transport.clone(), signer);
+
+        let message_id = svc
+            .send_chat_with_method(&"33".repeat(16), "body", None, Some("opportunistic"))
+            .await
+            .expect("send opportunistic message");
+        let stripped = transport
+            .calls()
+            .into_iter()
+            .find_map(|call| match call {
+                MockCall::SendRaw { data, .. } => Some(data),
+                _ => None,
+            })
+            .expect("opportunistic wire send");
+        let mut wire = vec![0x33; 16];
+        wire.extend_from_slice(&stripped);
+        let decoded = lxmf::inbound_decode::decode_inbound_message(
+            [0x33; 16],
+            &wire,
+            InboundPayloadMode::FullWire,
+        )
+        .expect("decode outbound wire");
+
+        assert_eq!(decoded.source, [0x22; 16]);
+        assert_eq!(svc.get_message(&message_id).unwrap().unwrap().source, "22".repeat(16));
     }
 
     #[tokio::test]

@@ -59,6 +59,37 @@ async fn wait_for_interface_status(
     .unwrap_or_else(|_| panic!("TCP client did not enter {status}"))
 }
 
+async fn wait_for_interface_generation(
+    node: &MobileNode,
+    remote_endpoint: &str,
+    minimum: u64,
+    deadline: Duration,
+) -> InterfaceDetail {
+    tokio::time::timeout(deadline, async {
+        loop {
+            if let Some(interface) = node
+                .facade
+                .list_interfaces()
+                .await
+                .expect("interface observations")
+                .into_iter()
+                .find(|interface| {
+                    interface.remote_endpoint.as_deref() == Some(remote_endpoint)
+                        && interface
+                            .observation
+                            .interface_generation
+                            .is_some_and(|value| value >= minimum)
+                })
+            {
+                return interface;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("interface did not reach generation {minimum}"))
+}
+
 async fn wait_for_generation(node: &MobileNode, minimum: u64, deadline: Duration) -> u64 {
     tokio::time::timeout(deadline, async {
         loop {
@@ -71,6 +102,26 @@ async fn wait_for_generation(node: &MobileNode, minimum: u64, deadline: Duration
     })
     .await
     .unwrap_or_else(|_| panic!("mobile session did not reach generation {minimum}"))
+}
+
+async fn wait_for_transport_generation(node: &MobileNode, minimum: u64, deadline: Duration) {
+    tokio::time::timeout(deadline, async {
+        loop {
+            if node
+                .app_context
+                .transport()
+                .interface_snapshots()
+                .await
+                .iter()
+                .any(|interface| interface.generation >= minimum)
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("transport did not reach interface generation {minimum}"));
 }
 
 #[tokio::test]
@@ -536,6 +587,120 @@ async fn established_tcp_interruption_reconnects_without_replacing_node() {
     );
 }
 
+#[tokio::test]
+async fn reconnect_updates_capabilities_without_session_snapshot() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (first_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("initial TCP connection timed out")
+        .unwrap();
+    wait_for_transport_generation(&node, 1, Duration::from_secs(2)).await;
+    let first = node
+        .active_capabilities(node.app_context.identity().identity_hash())
+        .generation()
+        .expect("initial capability generation");
+
+    drop(first_stream);
+    let (second_stream, _) = tokio::time::timeout(Duration::from_secs(6), listener.accept())
+        .await
+        .expect("TCP client did not reconnect")
+        .unwrap();
+    wait_for_transport_generation(&node, 2, Duration::from_secs(2)).await;
+    let active = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let active = node.active_capabilities(node.app_context.identity().identity_hash());
+            if active.generation() == Some(first + 1) {
+                break active;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("lifecycle tracker did not publish reconnect generation");
+    let status = node.facade.query_status().await.unwrap();
+    assert_eq!(active.generation(), Some(first + 1));
+    assert_eq!(status.active_capabilities.unwrap().generation, Some(first + 1));
+
+    drop(second_stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn interface_list_uses_common_session_generation_and_local_generations() {
+    let root = tempfile::tempdir().unwrap();
+    let first_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let second_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let first_address = first_listener.local_addr().unwrap();
+    let second_address = second_listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    for address in [first_address, second_address] {
+        mobile_config
+            .interfaces
+            .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+    }
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (first_stream, _) = tokio::time::timeout(Duration::from_secs(2), first_listener.accept())
+        .await
+        .expect("first TCP connection timed out")
+        .unwrap();
+    let (second_stream, _) = tokio::time::timeout(Duration::from_secs(2), second_listener.accept())
+        .await
+        .expect("second TCP connection timed out")
+        .unwrap();
+    wait_for_interface_generation(&node, &second_address.to_string(), 1, Duration::from_secs(2))
+        .await;
+
+    drop(first_stream);
+    let (reconnected_stream, _) =
+        tokio::time::timeout(Duration::from_secs(6), first_listener.accept())
+            .await
+            .expect("first TCP client did not reconnect")
+            .unwrap();
+    wait_for_interface_generation(&node, &first_address.to_string(), 2, Duration::from_secs(2))
+        .await;
+    let interfaces = node.facade.list_interfaces().await.unwrap();
+    let session_generation =
+        interfaces[0].observation.connection_generation.expect("session generation");
+
+    assert_eq!(interfaces.len(), 2);
+    assert!(interfaces.iter().all(|interface| {
+        interface.observation.connection_generation == Some(session_generation)
+            && !interface.observation.stale
+    }));
+    assert_eq!(session_generation, 2);
+    assert_eq!(
+        interfaces
+            .iter()
+            .find(|interface| interface.remote_endpoint.as_deref()
+                == Some(&first_address.to_string()))
+            .unwrap()
+            .observation
+            .interface_generation,
+        Some(2)
+    );
+    assert_eq!(
+        interfaces
+            .iter()
+            .find(|interface| interface.remote_endpoint.as_deref()
+                == Some(&second_address.to_string()))
+            .unwrap()
+            .observation
+            .interface_generation,
+        Some(1)
+    );
+
+    drop(second_stream);
+    drop(reconnected_stream);
+    shutdown(node).await;
+}
+
 #[test]
 fn malformed_endpoint_edit_is_typed_and_preserves_the_durable_endpoint() {
     let root = tempfile::tempdir().unwrap();
@@ -836,6 +1001,52 @@ async fn message_events_are_generation_scoped_complete_canonical_projections() {
 }
 
 #[tokio::test]
+async fn state_events_invalidate_authoritative_message_projection() {
+    let root = tempfile::tempdir().unwrap();
+    let node = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let mut subscription = node.subscribe_state_events();
+    let generation = node.session_snapshot().await.generation;
+    let inbound = MessageRecord {
+        id: "state-event-inbound".into(),
+        source: "abababababababababababababababab".into(),
+        destination: "00".repeat(16),
+        title: String::new(),
+        content: "state invalidation".into(),
+        timestamp: 201,
+        direction: "in".into(),
+        fields: None,
+        receipt_status: None,
+        read: false,
+    };
+    assert!(node.app_context.messaging().accept_inbound_record(&inbound).unwrap());
+    node.app_context.events().emit_message_new(&inbound, None);
+
+    let event = tokio::time::timeout(Duration::from_secs(1), subscription.recv())
+        .await
+        .expect("state event timeout")
+        .expect("state event");
+
+    assert_eq!(event.generation, generation);
+    assert_eq!(event.kind, styrened::mobile::MobileStateEventKind::Message);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn state_event_lag_requires_authoritative_resnapshot() {
+    let root = tempfile::tempdir().unwrap();
+    let node = MobileNode::boot(config(root.path(), None)).await.unwrap();
+    let mut subscription = node.subscribe_state_events();
+    for observed_at in 0..300 {
+        node.app_context.events().emit_standard_propagation_changed(observed_at);
+    }
+
+    let error = subscription.recv().await.expect_err("bounded stream must report lag");
+
+    assert!(matches!(error, styrened::mobile::MobileStateSubscriptionError::Lagged(_)));
+    shutdown(node).await;
+}
+
+#[tokio::test]
 async fn peer_event_retains_subscription_generation_across_reconnect() {
     let root = tempfile::tempdir().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -878,6 +1089,42 @@ async fn peer_event_retains_subscription_generation_across_reconnect() {
     assert_eq!(event.generation, subscription_generation);
     assert_ne!(event.generation, current_generation);
     assert_eq!(event.peer.destination_hash, destination);
+    drop(second_stream);
+    shutdown(node).await;
+}
+
+#[tokio::test]
+async fn state_event_uses_current_generation_after_reconnect() {
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mut mobile_config = config(root.path(), None);
+    mobile_config
+        .interfaces
+        .push(MobileInterfaceConfig::TcpClient { remote_address: address.to_string() });
+    let node = MobileNode::boot(mobile_config).await.unwrap();
+    let (first_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("initial state-event connection timed out")
+        .unwrap();
+    wait_for_interface_status(&node, "connected", Duration::from_secs(2)).await;
+    let mut subscription = node.subscribe_state_events();
+    let first_generation = node.session_snapshot().await.generation;
+
+    drop(first_stream);
+    let (second_stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("state-event reconnect timed out")
+        .unwrap();
+    let current_generation =
+        wait_for_generation(&node, first_generation + 1, Duration::from_secs(1)).await;
+    let event = tokio::time::timeout(Duration::from_secs(1), subscription.recv())
+        .await
+        .expect("state reconnect event timeout")
+        .expect("state reconnect event");
+
+    assert_eq!(event.kind, styrened::mobile::MobileStateEventKind::Session);
+    assert_eq!(event.generation, current_generation);
     drop(second_stream);
     shutdown(node).await;
 }
@@ -1084,8 +1331,6 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
     wait_for_peer_event(&server, &mut client_peers, &server_delivery).await;
     wait_for_peer_event(&client, &mut server_peers, &client_delivery).await;
 
-    let server_identity = server.app_context.identity().identity_hash().to_string();
-    let client_identity = client.app_context.identity().identity_hash().to_string();
     let mut client_messages = client.subscribe_message_events().await;
     let red_outcome = server
         .send_text(MobileSendRequest {
@@ -1108,7 +1353,7 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
         wait_for_new_message_event(&mut client_messages, &red_outcome.message_id).await;
     assert_eq!(red_inbound.kind, MobileMessageEventKind::New);
     assert_eq!(red_inbound.message.id, red_outcome.message_id);
-    assert_eq!(red_inbound.message.source_hash, server_identity);
+    assert_eq!(red_inbound.message.source_hash, server_delivery);
     assert_eq!(red_inbound.message.destination_hash, client_delivery);
     assert_eq!(red_inbound.message.content, "red to yellow");
 
@@ -1126,40 +1371,46 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
     let yellow_inbound =
         wait_for_new_message_event(&mut server_messages, &yellow_outcome.message_id).await;
     assert_eq!(yellow_inbound.message.id, yellow_outcome.message_id);
-    assert_eq!(yellow_inbound.message.source_hash, client_identity);
+    assert_eq!(yellow_inbound.message.source_hash, client_delivery);
     assert_eq!(yellow_inbound.message.destination_hash, server_delivery);
     assert_eq!(yellow_inbound.message.content, "yellow to red");
 
-    let server_outbound = server.get_messages(&client_delivery, 20).await.unwrap();
-    assert_eq!(server_outbound.len(), 1);
-    assert_eq!(server_outbound[0].id, red_outcome.message_id);
-    assert!(server_outbound[0].is_outgoing);
-    let client_outbound = client.get_messages(&server_delivery, 20).await.unwrap();
-    assert_eq!(client_outbound.len(), 1);
-    assert_eq!(client_outbound[0].id, yellow_outcome.message_id);
-    assert!(client_outbound[0].is_outgoing);
+    let server_messages = server.get_messages(&client_delivery, 20).await.unwrap();
+    assert_eq!(server_messages.len(), 2);
+    assert!(
+        server_messages
+            .iter()
+            .any(|message| message.id == red_outcome.message_id && message.is_outgoing)
+    );
+    let client_messages = client.get_messages(&server_delivery, 20).await.unwrap();
+    assert_eq!(client_messages.len(), 2);
+    assert!(
+        client_messages
+            .iter()
+            .any(|message| message.id == yellow_outcome.message_id && message.is_outgoing)
+    );
 
     let client_inbound = client
-        .get_messages(&server_identity, 20)
+        .get_messages(&server_delivery, 20)
         .await
         .unwrap()
         .into_iter()
         .filter(|message| {
             !message.is_outgoing
-                && message.source_hash == server_identity
+                && message.source_hash == server_delivery
                 && message.content == "red to yellow"
         })
         .count();
     assert_eq!(client_inbound, 1);
 
     let server_inbound = server
-        .get_messages(&client_identity, 20)
+        .get_messages(&client_delivery, 20)
         .await
         .unwrap()
         .into_iter()
         .filter(|message| {
             !message.is_outgoing
-                && message.source_hash == client_identity
+                && message.source_hash == client_delivery
                 && message.content == "yellow to red"
         })
         .count();
@@ -1170,17 +1421,17 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
         .await
         .unwrap()
         .into_iter()
-        .find(|conversation| conversation.peer_hash == client_identity)
+        .find(|conversation| conversation.peer_hash == client_delivery)
         .expect("unread conversation is visible");
     assert_eq!(unread_conversation.unread_count, 1);
 
-    server.mark_read(&client_identity).await.unwrap();
+    server.mark_read(&client_delivery).await.unwrap();
     let conversation = server
         .list_conversations()
         .await
         .unwrap()
         .into_iter()
-        .find(|conversation| conversation.peer_hash == client_identity)
+        .find(|conversation| conversation.peer_hash == client_delivery)
         .expect("read conversation remains visible");
     assert_eq!(conversation.unread_count, 0);
 

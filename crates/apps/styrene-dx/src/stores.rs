@@ -449,7 +449,7 @@ impl DomainStores {
         let Some(expected) = self.runtime.server_generation else {
             return;
         };
-        if paths.iter().any(|path| path.observation.connection_generation != Some(expected)) {
+        if paths.iter().any(|path| path.observation.ipc_generation() != Some(expected)) {
             return;
         }
         self.network.paths = paths
@@ -479,7 +479,7 @@ impl DomainStores {
         };
         if interfaces
             .iter()
-            .any(|interface| interface.observation.connection_generation != Some(expected))
+            .any(|interface| interface.observation.ipc_generation() != Some(expected))
         {
             return;
         }
@@ -499,9 +499,9 @@ impl DomainStores {
     ) {
         if self.accepts(generation)
             && self.runtime.server_generation.is_some()
-            && operations.iter().all(|value| {
-                value.observation.connection_generation == self.runtime.server_generation
-            })
+            && operations
+                .iter()
+                .all(|value| value.observation.ipc_generation() == self.runtime.server_generation)
         {
             for operation in &mut operations {
                 if operation.detail.is_some() {
@@ -527,7 +527,7 @@ impl DomainStores {
             .active
             .iter()
             .chain(&snapshot.history)
-            .any(|value| value.observation.connection_generation != self.runtime.server_generation)
+            .any(|value| value.observation.ipc_generation() != self.runtime.server_generation)
         {
             return;
         }
@@ -543,9 +543,9 @@ impl DomainStores {
     ) {
         if self.accepts(generation)
             && self.runtime.server_generation.is_some()
-            && requests.iter().all(|value| {
-                value.observation.connection_generation == self.runtime.server_generation
-            })
+            && requests
+                .iter()
+                .all(|value| value.observation.ipc_generation() == self.runtime.server_generation)
         {
             for request in &mut requests {
                 request.response = None;
@@ -561,9 +561,9 @@ impl DomainStores {
     ) {
         if self.accepts(generation)
             && self.runtime.server_generation.is_some()
-            && resources.iter().all(|value| {
-                value.observation.connection_generation == self.runtime.server_generation
-            })
+            && resources
+                .iter()
+                .all(|value| value.observation.ipc_generation() == self.runtime.server_generation)
         {
             self.network.resources = resources;
         }
@@ -1274,7 +1274,7 @@ impl DomainStores {
         &self,
         observation: &styrene_ipc::types::ObservationMetadata,
     ) -> bool {
-        observation.connection_generation.is_some_and(|actual| {
+        observation.ipc_generation().is_some_and(|actual| {
             self.runtime.server_generation == Some(actual)
                 || self.runtime.event_server_generation == Some(actual)
         })

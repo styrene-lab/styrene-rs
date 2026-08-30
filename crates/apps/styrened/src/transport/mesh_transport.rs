@@ -112,6 +112,10 @@ pub enum TransportLifecycleEvent {
     Connected,
     Disconnected,
     Reconnected,
+    /// An interface changed state; consumers must query authoritative interface snapshots.
+    InterfaceChanged,
+    /// The bounded interface-state stream lagged; consumers must query authoritative state.
+    InterfaceReconcileRequired,
     /// A lower-level lifecycle receiver lagged; consumers must query authoritative state.
     LinkReconcileRequired,
     /// An outbound link became active (proof received, RTT measured).

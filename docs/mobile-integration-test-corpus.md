@@ -12,6 +12,14 @@ under `target/mobile-integration/` and are never committed.
 `styrene-ui` owns Dioxus rendering, mobile packaging, platform-service tests, and
 copies of versioned fixtures with backend revision provenance.
 
+The independent application workflow corpus lives at
+`tests/fixtures/mobile-application-parity-v1/corpus.json`. It records reference
+provenance, retained execution evidence, static candidate evidence, and the 11
+required P0 parity decisions. Static Sideband or Reticulum MeshChat inspection
+cannot become a workflow floor until a provenance-locked application run retains
+platform, OS, and non-summary artifacts. Application evidence does not replace
+state fixtures, Python protocol interoperability, or packaged Styrene runs.
+
 ## Evidence Rules
 
 A passing component fixture proves rendering and interaction behavior only. It
@@ -32,10 +40,13 @@ The corpus uses three maturity values:
 
 ## Offline Validation
 
-`just test-mobile-corpus` validates schema, repository references, area and case
-coverage, evidence scope, launch-profile IDs, bounded deadlines, cleanup
-ownership, and artifact policy. It does not launch apps, open sockets, or prove
-that referenced tests ran.
+`just test-mobile-corpus` validates the integration, minimum-state,
+application-parity, and backend P0 corpora, then runs the focused backend and
+forced-termination evidence tests. It checks schema, repository references,
+area and case coverage, evidence scope, launch-profile IDs, bounded deadlines,
+cleanup ownership, artifact policy, reference classification, provenance shape,
+and closed P0 parity accounting. It does not launch packaged apps or promote
+static source and binary inspection into executed application evidence.
 
 ## Rust Mobile Runtime
 

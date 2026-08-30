@@ -50,6 +50,43 @@ fn make_messaging_daemon() -> (Arc<dyn Daemon>, Arc<MockTransport>) {
     (daemon, transport)
 }
 
+fn tcp_route_fixture(
+    destination: rns_core::hash::AddressHash,
+) -> (
+    rns_core::transport::core_transport::path_table::PathSnapshot,
+    rns_core::transport::iface::InterfaceSnapshot,
+) {
+    let interface_hash = rns_core::hash::AddressHash::new([0x71; 16]);
+    let observed_at = std::time::SystemTime::now();
+    (
+        rns_core::transport::core_transport::path_table::PathSnapshot {
+            destination,
+            hops: 1,
+            received_from: rns_core::hash::AddressHash::new([0x72; 16]),
+            iface: interface_hash,
+            age: std::time::Duration::ZERO,
+            observed_at,
+            lifetime: std::time::Duration::from_secs(60),
+            expires_at: observed_at + std::time::Duration::from_secs(60),
+        },
+        rns_core::transport::iface::InterfaceSnapshot {
+            hash: interface_hash,
+            kind: rns_core::transport::iface::InterfaceKind::TcpClient,
+            mode: rns_core::transport::iface::InterfaceMode::PointToPoint,
+            state: rns_core::transport::iface::InterfaceState::Connected,
+            local_endpoint: None,
+            remote_endpoint: None,
+            parent: None,
+            tx_bytes: 0,
+            rx_bytes: 0,
+            violations: Default::default(),
+            filters: Default::default(),
+            connected_peers: 1,
+            generation: 6,
+        },
+    )
+}
+
 fn make_role_daemon(
     role: styrene_rbac::Role,
     transport: Arc<dyn MeshTransport>,
@@ -128,6 +165,29 @@ fn facade_usable_as_arc_dyn_daemon() {
     let daemon: Arc<dyn Daemon> = Arc::new(facade);
     // The IPC handler would hold this Arc<dyn Daemon>
     let _ = daemon;
+}
+
+#[tokio::test]
+async fn facade_projects_service_captured_route_without_inferred_bearer() {
+    let (daemon, transport) = make_messaging_daemon();
+    let destination = rns_core::hash::AddressHash::new([0x73; 16]);
+    let (path, interface) = tcp_route_fixture(destination);
+    transport.set_path_snapshot(path);
+    transport.set_interface_snapshots(vec![interface]);
+    let mut request = SendChatRequest::default();
+    request.peer_hash = hex::encode(destination.as_slice());
+    request.content = "facade route projection".into();
+    request.delivery_method = Some("opportunistic".into());
+
+    let sent = daemon.send_chat_outcome(request).await.unwrap();
+    let projected = daemon.query_message(&sent.message_id).await.unwrap().unwrap();
+    let attempt = projected.attempts.first().unwrap();
+    assert_eq!(attempt.route.outcome, styrene_ipc::types::MessageAttemptRouteOutcome::Observed);
+    assert_eq!(attempt.route.connection_generation, Some(6));
+    assert_eq!(attempt.route.interface.as_ref().unwrap().kind, "tcp_client");
+    assert_eq!(attempt.bearer, None);
+    assert_eq!(projected.actual_delivery_method.as_deref(), Some("opportunistic"));
+    assert!(projected.delivery_evidence.is_empty());
 }
 
 #[tokio::test]
