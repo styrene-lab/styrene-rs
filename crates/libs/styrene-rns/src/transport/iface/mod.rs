@@ -195,6 +195,14 @@ pub trait Interface {
         None
     }
 
+    fn hardware_mtu(&self) -> Option<usize> {
+        None
+    }
+
+    fn supports_link_mtu_discovery(&self) -> bool {
+        false
+    }
+
     fn descriptor(&self) -> InterfaceDescriptor {
         InterfaceDescriptor::default()
     }
@@ -328,6 +336,8 @@ pub struct InterfaceSnapshot {
 struct InterfaceRuntimeMetadata {
     descriptor: InterfaceDescriptor,
     bitrate: Option<u64>,
+    hardware_mtu: Option<usize>,
+    link_mtu_capable: bool,
     state: InterfaceState,
     parent: Option<AddressHash>,
     generation: u64,
@@ -348,6 +358,8 @@ impl InterfaceRuntime {
     fn new(
         descriptor: InterfaceDescriptor,
         bitrate: Option<u64>,
+        hardware_mtu: Option<usize>,
+        link_mtu_capable: bool,
         parent: Option<AddressHash>,
         state_tx: broadcast::Sender<InterfaceStateEvent>,
     ) -> Self {
@@ -355,6 +367,8 @@ impl InterfaceRuntime {
             metadata: Mutex::new(InterfaceRuntimeMetadata {
                 descriptor,
                 bitrate,
+                hardware_mtu,
+                link_mtu_capable,
                 state: InterfaceState::Starting,
                 parent,
                 generation: 0,
@@ -684,6 +698,8 @@ impl InterfaceManager {
         tx_cap: usize,
         descriptor: InterfaceDescriptor,
         bitrate: Option<u64>,
+        hardware_mtu: Option<usize>,
+        link_mtu_capable: bool,
         parent: Option<AddressHash>,
     ) -> InterfaceChannel {
         self.counter += 1;
@@ -697,8 +713,14 @@ impl InterfaceManager {
 
         let stop = CancellationToken::new();
         let stats = Arc::new(InterfaceStats::new());
-        let runtime =
-            Arc::new(InterfaceRuntime::new(descriptor, bitrate, parent, self.state_tx.clone()));
+        let runtime = Arc::new(InterfaceRuntime::new(
+            descriptor,
+            bitrate,
+            hardware_mtu,
+            link_mtu_capable,
+            parent,
+            self.state_tx.clone(),
+        ));
 
         self.stats_map.lock().expect("interface stats lock").insert(address, stats.clone());
         self.ifaces.push(LocalInterface { address, tx_send, stop: stop.clone(), stats, runtime });
@@ -707,7 +729,14 @@ impl InterfaceManager {
     }
 
     pub fn new_channel(&mut self, tx_cap: usize) -> InterfaceChannel {
-        self.new_channel_with_runtime(tx_cap, InterfaceDescriptor::default(), None, None)
+        self.new_channel_with_runtime(
+            tx_cap,
+            InterfaceDescriptor::default(),
+            None,
+            None,
+            false,
+            None,
+        )
     }
 
     /// Register a channel whose byte transport and lifecycle are driven by an embedding host.
@@ -716,7 +745,7 @@ impl InterfaceManager {
         tx_cap: usize,
         descriptor: InterfaceDescriptor,
     ) -> (InterfaceChannel, HostInterfaceControl) {
-        let channel = self.new_channel_with_runtime(tx_cap, descriptor, None, None);
+        let channel = self.new_channel_with_runtime(tx_cap, descriptor, None, None, false, None);
         let runtime = self.ifaces.last().expect("newly registered host interface").runtime.clone();
         let control = HostInterfaceControl { runtime, stop: channel.stop.clone() };
         (channel, control)
@@ -733,10 +762,14 @@ impl InterfaceManager {
     ) -> InterfaceContext<T> {
         let descriptor = inner.descriptor();
         let bitrate = inner.bitrate();
+        let hardware_mtu = inner.hardware_mtu();
+        let link_mtu_capable = inner.supports_link_mtu_discovery();
         let channel = self.new_channel_with_runtime(
             DEFAULT_IFACE_TX_QUEUE_CAPACITY,
             descriptor,
             bitrate,
+            hardware_mtu,
+            link_mtu_capable,
             parent,
         );
         let runtime = self.ifaces.last().expect("newly registered interface").runtime.clone();
@@ -910,6 +943,36 @@ impl InterfaceManager {
             return false;
         };
         interface.runtime.metadata.lock().expect("interface runtime lock").bitrate = bitrate;
+        true
+    }
+
+    pub fn online_link_mtu(&self, address: &AddressHash) -> Option<usize> {
+        self.ifaces
+            .iter()
+            .find(|interface| interface.address == *address && !interface.stop.is_cancelled())
+            .and_then(|interface| {
+                let metadata = interface.runtime.metadata.lock().expect("interface runtime lock");
+                (metadata.state.is_online() && metadata.link_mtu_capable)
+                    .then_some(metadata.hardware_mtu)
+                    .flatten()
+                    .filter(|mtu| *mtu >= crate::packet::MTU)
+                    .map(|mtu| mtu.min(crate::packet::MAX_LINK_MTU))
+            })
+    }
+
+    pub fn set_interface_link_mtu(
+        &self,
+        address: &AddressHash,
+        hardware_mtu: Option<usize>,
+        capable: bool,
+    ) -> bool {
+        let Some(interface) = self.ifaces.iter().find(|interface| interface.address == *address)
+        else {
+            return false;
+        };
+        let mut metadata = interface.runtime.metadata.lock().expect("interface runtime lock");
+        metadata.hardware_mtu = hardware_mtu;
+        metadata.link_mtu_capable = capable;
         true
     }
 
@@ -1220,7 +1283,14 @@ mod tests {
     #[test]
     fn path_request_rate_controls_are_disabled_by_default() {
         let (state_tx, _state_rx) = broadcast::channel(1);
-        let runtime = InterfaceRuntime::new(InterfaceDescriptor::default(), None, None, state_tx);
+        let runtime = InterfaceRuntime::new(
+            InterfaceDescriptor::default(),
+            None,
+            None,
+            false,
+            None,
+            state_tx,
+        );
         let now = Instant::now();
         for offset in 0..20 {
             assert!(
@@ -1239,6 +1309,8 @@ mod tests {
         let runtime = InterfaceRuntime::new(
             InterfaceDescriptor { ingress_control: true, ..Default::default() },
             None,
+            None,
+            false,
             None,
             state_tx,
         );
@@ -1292,6 +1364,36 @@ mod tests {
         assert_eq!(manager.lowest_online_positive_bitrate(), Some(1_000));
         assert!(manager.set_interface_bitrate(&online_fast, None));
         assert_eq!(manager.lowest_online_positive_bitrate(), None);
+    }
+
+    #[test]
+    fn link_mtu_queries_require_online_capable_bounded_metadata() {
+        let mut manager = InterfaceManager::new(1);
+        let supported = manager.new_channel(1).address;
+        let unsupported = manager.new_channel(1).address;
+        let offline = manager.new_channel(1).address;
+
+        assert!(manager.set_interface_link_mtu(&supported, Some(1280), true));
+        assert!(manager.set_interface_link_mtu(&unsupported, Some(2048), false));
+        assert!(manager.set_interface_link_mtu(&offline, Some(1024), true));
+        for address in [supported, unsupported] {
+            manager
+                .ifaces
+                .iter()
+                .find(|interface| interface.address == address)
+                .expect("registered interface")
+                .runtime
+                .set_state(InterfaceState::Active);
+        }
+
+        assert_eq!(manager.online_link_mtu(&supported), Some(1280));
+        assert_eq!(manager.online_link_mtu(&unsupported), None);
+        assert_eq!(manager.online_link_mtu(&offline), None);
+
+        assert!(manager.set_interface_link_mtu(&supported, Some(0), true));
+        assert_eq!(manager.online_link_mtu(&supported), None);
+        assert!(manager.set_interface_link_mtu(&supported, Some(4096), true));
+        assert_eq!(manager.online_link_mtu(&supported), Some(crate::packet::MAX_LINK_MTU));
     }
 
     #[test]

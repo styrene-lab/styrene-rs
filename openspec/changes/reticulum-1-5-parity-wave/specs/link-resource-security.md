@@ -15,7 +15,7 @@ And packet, channel, and resource payload limits use the confirmed MTU
 #### Scenario: Discovery is disabled
 Given link MTU discovery is disabled by configuration
 When a link request is created
-Then it omits MTU upgrade signaling
+Then it signals the canonical base MTU and default mode without requesting an upgrade
 And the link uses the canonical base MTU
 
 ### Requirement: Link teardown terminates all resources

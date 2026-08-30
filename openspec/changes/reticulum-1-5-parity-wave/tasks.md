@@ -45,9 +45,9 @@
 ## 7. Link MTU Signaling, Proofs, And Payloads
 <!-- specs: link-resource-security -->
 
-- [ ] 7.1 After Task 6, add failing canonical link request/proof fixtures for discovery enabled/disabled, unsupported hops, mixed hardware MTUs, route-minimum clamping, authenticated mode/MTU proofs, and negotiated packet/channel/resource payload limits
-- [ ] 7.2 Minimally consume Task 6 bitrate metadata while adding optional positive hardware MTU metadata, MTU policy, request signaling, route clamping, proof construction/validation, and confirmed-MTU payload derivation; do not redefine bitrate metadata or deadline formulas
-- [ ] 7.3 Verify packet/proof bytes against 1.5.1 fixtures and run focused link, channel, resource, and mixed-interface route tests at threshold MTUs while proving Task 6 bitrate/deadline tests remain unchanged
+- [x] 7.1 After Task 6, add failing canonical link request/proof fixtures for discovery enabled/disabled, unsupported hops, mixed hardware MTUs, route-minimum clamping, authenticated mode/MTU proofs, and negotiated packet/channel/resource payload limits
+- [x] 7.2 Minimally consume Task 6 bitrate metadata while adding optional positive hardware MTU metadata, MTU policy, request signaling, route clamping, proof construction/validation, and confirmed-MTU payload derivation; do not redefine bitrate metadata or deadline formulas
+- [x] 7.3 Verify packet/proof bytes against 1.5.1 fixtures and run focused link, channel, resource, and mixed-interface route tests at threshold MTUs while proving Task 6 bitrate/deadline tests remain unchanged
 
 ## 8. Link And Resource Regressions
 <!-- specs: link-resource-security -->

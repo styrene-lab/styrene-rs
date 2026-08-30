@@ -1,0 +1,80 @@
+{
+  "disabled_discovery": {
+    "request_length": 67,
+    "signalling_hex": "2001f4"
+  },
+  "unsupported_forwarding": {
+    "confirmed_mtu": 500,
+    "request_length_after_stripping": 64
+  },
+  "vectors": [
+    {
+      "channel_mdu": 425,
+      "decoded_proof_mtu": 500,
+      "decoded_request_mtu": 500,
+      "destination_public_key_hex": "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7",
+      "link_id_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+      "mode": 1,
+      "mtu": 500,
+      "packet_mdu": 431,
+      "proof_length": 99,
+      "proof_payload_hex": "862b6c10ea40c24fadb9b35c392887065527516d4989b0506d1251e974a3a66c3d26f69c710e5c9a4cd02cc240bcf1decd5150466ed2b04cc7bdbfac905469028f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f2001f4",
+      "proof_signed_data_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd72001f4",
+      "request_length": 67,
+      "request_payload_hex": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a174553b456dddfc6908ecab1c101fe6ab21e2baa0617795b7d43a63482993fd52001f4",
+      "resource_sdu": 464,
+      "signalling_hex": "2001f4"
+    },
+    {
+      "channel_mdu": 937,
+      "decoded_proof_mtu": 1024,
+      "decoded_request_mtu": 1024,
+      "destination_public_key_hex": "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7",
+      "link_id_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+      "mode": 1,
+      "mtu": 1024,
+      "packet_mdu": 943,
+      "proof_length": 99,
+      "proof_payload_hex": "e5489f9a833d85cd08dca6716f93428b50123edb05736e74bd4a2c5c473acb8a356831aca6fdc1e773b2269005f9a8324dc08f8d1a9f602974f0cb2a30abd4008f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f200400",
+      "proof_signed_data_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7200400",
+      "request_length": 67,
+      "request_payload_hex": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a174553b456dddfc6908ecab1c101fe6ab21e2baa0617795b7d43a63482993fd5200400",
+      "resource_sdu": 988,
+      "signalling_hex": "200400"
+    },
+    {
+      "channel_mdu": 1193,
+      "decoded_proof_mtu": 1280,
+      "decoded_request_mtu": 1280,
+      "destination_public_key_hex": "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7",
+      "link_id_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+      "mode": 1,
+      "mtu": 1280,
+      "packet_mdu": 1199,
+      "proof_length": 99,
+      "proof_payload_hex": "786b7370e1599973cb6c0c880df3b64ced66d18a31a87d2d732f105520aaab51f30fa18ab5df8602122eef4e40941fb5bcfc2bfea195303c9c2b18ed0ffb110b8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f200500",
+      "proof_signed_data_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7200500",
+      "request_length": 67,
+      "request_payload_hex": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a174553b456dddfc6908ecab1c101fe6ab21e2baa0617795b7d43a63482993fd5200500",
+      "resource_sdu": 1244,
+      "signalling_hex": "200500"
+    },
+    {
+      "channel_mdu": 1961,
+      "decoded_proof_mtu": 2048,
+      "decoded_request_mtu": 2048,
+      "destination_public_key_hex": "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7",
+      "link_id_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+      "mode": 1,
+      "mtu": 2048,
+      "packet_mdu": 1967,
+      "proof_length": 99,
+      "proof_payload_hex": "be4ddd868f33eb8c9678194608db3147f1f942b43e68e30f52125ab4c5b487e9f61ef7396fc9b59594ad9147b573c18c6e824a569f9a929893fee7250c7988018f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f200800",
+      "proof_signed_data_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7200800",
+      "request_length": 67,
+      "request_payload_hex": "79a631eede1bf9c98f12032cdeadd0e7a079398fc786b88cc846ec89af85a51a174553b456dddfc6908ecab1c101fe6ab21e2baa0617795b7d43a63482993fd5200800",
+      "resource_sdu": 2012,
+      "signalling_hex": "200800"
+    }
+  ]
+}
