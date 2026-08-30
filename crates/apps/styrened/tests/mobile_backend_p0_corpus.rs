@@ -30,6 +30,7 @@ struct Corpus {
     description: String,
     created_on: String,
     authority: Authority,
+    verification: Verification,
     evidence_boundary: String,
     rows: Vec<Row>,
 }
@@ -41,6 +42,16 @@ struct Authority {
     integration_corpus: String,
     application_parity_corpus: String,
     openspec_change: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Verification {
+    backend_revision: String,
+    verified_on: String,
+    boundary: String,
+    commands: Vec<String>,
+    unresolved_blockers: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,6 +243,16 @@ fn validate(corpus: &Corpus) -> Result<(), String> {
     }
     if !is_full_revision(&corpus.authority.backend_base_revision) {
         return Err("backend authority requires a full commit revision".into());
+    }
+    if !is_full_revision(&corpus.verification.backend_revision)
+        || !is_date(&corpus.verification.verified_on)
+        || corpus.verification.boundary != corpus.evidence_boundary
+        || corpus.verification.commands.is_empty()
+        || corpus.verification.commands.iter().any(|value| !nonblank(value))
+        || corpus.verification.unresolved_blockers.is_empty()
+        || corpus.verification.unresolved_blockers.iter().any(|value| !nonblank(value))
+    {
+        return Err("invalid backend verification record".into());
     }
 
     let root = workspace_root();
@@ -448,5 +469,28 @@ mod mutation_tests {
             value["rows"][0]["frontend_handoff"]["ready"] = Value::Bool(false);
         });
         assert!(evidence.contains("unverified row"));
+    }
+
+    #[test]
+    fn verification_requires_exact_revision_boundary_commands_and_blockers() {
+        for mutation in [
+            ("backend_revision", Value::String("short".into())),
+            ("boundary", Value::String("packaged".into())),
+        ] {
+            let error = validation_error(|value| {
+                value["verification"][mutation.0] = mutation.1;
+            });
+            assert!(error.contains("invalid backend verification record"));
+        }
+
+        let commands = validation_error(|value| {
+            value["verification"]["commands"] = Value::Array(Vec::new());
+        });
+        assert!(commands.contains("invalid backend verification record"));
+
+        let blockers = validation_error(|value| {
+            value["verification"]["unresolved_blockers"] = Value::Array(Vec::new());
+        });
+        assert!(blockers.contains("invalid backend verification record"));
     }
 }

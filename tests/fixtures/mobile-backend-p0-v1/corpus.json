@@ -9,6 +9,25 @@
     "application_parity_corpus": "tests/fixtures/mobile-application-parity-v1/corpus.json",
     "openspec_change": "openspec/changes/complete-mobile-p0-backend-contracts"
   },
+  "verification": {
+    "backend_revision": "176bbd80cff62acb5d7c4c4235f1b3bdd571e20b",
+    "verified_on": "2026-08-30",
+    "boundary": "internal_runtime",
+    "commands": [
+      "cargo test -p styrene-rns --features transport",
+      "just test-mobile-corpus",
+      "just check-mobile-all",
+      "cargo clippy -p styrene-rns --features transport --all-targets --no-deps -- -D warnings",
+      "cargo clippy -p styrened --all-targets --no-deps -- -D warnings",
+      "cargo fmt --all -- --check",
+      "python3 ~/.agents/skills/openspec/scripts/openspec.py validate complete-mobile-p0-backend-contracts"
+    ],
+    "unresolved_blockers": [
+      "physical iOS and Android custody evidence",
+      "packaged Android and external-application journeys",
+      "RF transmission, peer reception, and protocol parity evidence"
+    ]
+  },
   "evidence_boundary": "internal_runtime",
   "rows": [
     {
