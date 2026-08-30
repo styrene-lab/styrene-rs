@@ -50,6 +50,7 @@ impl Transport {
         let announce_cap = config.announce_cap;
         let path_request_timeout_secs = config.path_request_timeout_secs;
         let link_proof_timeout_secs = config.link_proof_timeout_secs;
+        let link_proof_timeout_per_hop_secs = config.link_proof_timeout_per_hop_secs;
         let link_idle_timeout_secs = config.link_idle_timeout_secs;
         let resource_retry_interval_secs = config.resource_retry_interval_secs;
         let resource_retry_limit = config.resource_retry_limit;
@@ -76,7 +77,8 @@ impl Transport {
             iface_manager: iface_manager.clone(),
             announce_table: AnnounceTable::new(announce_cache_capacity, announce_retry_limit),
             link_table: LinkTable::new(
-                Duration::from_secs(link_proof_timeout_secs),
+                link_proof_timeout_secs.map(Duration::from_secs),
+                Duration::from_secs(link_proof_timeout_per_hop_secs),
                 Duration::from_secs(link_idle_timeout_secs),
             ),
             path_table: PathTable::new(),

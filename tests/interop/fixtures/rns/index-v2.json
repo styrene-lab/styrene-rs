@@ -127,6 +127,21 @@
       }
     },
     {
+      "id": "rns-1.5.1-bitrate-deadlines",
+      "authority_id": "rns-1.5.1",
+      "kind": "bitrate-deadline-matrix",
+      "artifact": "tests/interop/fixtures/rns/rns-1.5.1/bitrate-deadlines.json",
+      "sha256": "262cb54af46cce2f0c4f4ce7e0855c6065cf4ffecf16f028cdcc09e8d8a24621",
+      "generator": "tests/interop/python/generate_rns_1_5_fixtures.py",
+      "source_symbols": ["RNS.Transport.Transport.prioritize_interfaces", "RNS.Transport.Transport.medium_path_timeout", "RNS.Transport.Transport.extra_link_proof_timeout"],
+      "expected": {
+        "type": "deadline-matrix",
+        "mtu": 500,
+        "minimum_bitrate": 5,
+        "per_hop_grace_seconds": 6
+      }
+    },
+    {
       "id": "rns-1.5.1-token-valid",
       "authority_id": "rns-1.5.1",
       "kind": "token",
