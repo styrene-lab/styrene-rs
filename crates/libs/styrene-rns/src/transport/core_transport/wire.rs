@@ -182,14 +182,13 @@ pub(super) async fn handle_proof(
         validated_receipt_hash(&packet, &handler).await
     };
     if let Some(receipt_hash) = receipt_hash {
-        let receipt = DeliveryReceipt::new(receipt_hash);
-        let receipt_handler = {
-            let handler = handler.lock().await;
+        let conclusion = {
+            let mut handler = handler.lock().await;
             log::trace!("tp({}): handle proof for {}", handler.config.name, packet.destination);
-            handler.receipt_handler.clone()
+            handler.conclude_receipt(receipt_hash)
         };
 
-        if let Some(receipt_handler) = receipt_handler {
+        if let Some((receipt, receipt_handler)) = conclusion {
             receipt_handler.on_receipt(&receipt);
         }
     }
