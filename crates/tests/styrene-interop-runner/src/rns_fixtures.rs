@@ -36,12 +36,24 @@ fn is_repository_relative(path: &Path) -> bool {
     !path.is_absolute() && path.components().all(|part| matches!(part, Component::Normal(_)))
 }
 
+fn repository_file(root: &Path, path: &Path) -> Result<PathBuf, String> {
+    let resolved = std::fs::canonicalize(path)
+        .map_err(|error| format!("{} cannot be resolved: {error}", path.display()))?;
+    if !resolved.starts_with(root) || !resolved.is_file() {
+        return Err(format!("{} is not a file within the repository root", path.display()));
+    }
+    Ok(resolved)
+}
+
 pub fn load_rns_index(root: &Path) -> Result<RnsFixtureIndex, Vec<String>> {
     load_rns_index_from(root, &root.join("tests/interop/fixtures/rns/index-v2.json"))
 }
 
 pub fn load_rns_index_from(root: &Path, path: &Path) -> Result<RnsFixtureIndex, Vec<String>> {
-    let data = std::fs::read_to_string(path)
+    let root = std::fs::canonicalize(root)
+        .map_err(|error| vec![format!("failed to resolve {}: {error}", root.display())])?;
+    let path = repository_file(&root, path).map_err(|error| vec![error])?;
+    let data = std::fs::read_to_string(&path)
         .map_err(|error| vec![format!("failed to read {}: {error}", path.display())])?;
     let mut index: RnsFixtureIndex = serde_json::from_str(&data)
         .map_err(|error| vec![format!("failed to parse {}: {error}", path.display())])?;
@@ -80,7 +92,9 @@ pub fn load_rns_index_from(root: &Path, path: &Path) -> Result<RnsFixtureIndex, 
         if !is_repository_relative(artifact) {
             errors.push(format!("{}: artifact must be repository-relative", vector.id));
         } else {
-            match std::fs::read(root.join(artifact)) {
+            match repository_file(&root, &root.join(artifact))
+                .and_then(|path| std::fs::read(path).map_err(|error| error.to_string()))
+            {
                 Ok(bytes) => {
                     if hex::encode(Sha256::digest(bytes)) != vector.sha256 {
                         errors.push(format!("{}: artifact digest mismatch", vector.id));
@@ -93,9 +107,10 @@ pub fn load_rns_index_from(root: &Path, path: &Path) -> Result<RnsFixtureIndex, 
         }
         let generator = Path::new(&vector.generator);
         if vector.generator != "manual-copy"
-            && (!is_repository_relative(generator) || !root.join(generator).is_file())
+            && (!is_repository_relative(generator)
+                || repository_file(&root, &root.join(generator)).is_err())
         {
-            errors.push(format!("{}: generator does not exist", vector.id));
+            errors.push(format!("{}: generator does not exist within the repository", vector.id));
         }
         if vector.source_symbols.is_empty()
             || vector.source_symbols.iter().any(|symbol| symbol.is_empty())
@@ -116,7 +131,7 @@ pub fn load_rns_index_from(root: &Path, path: &Path) -> Result<RnsFixtureIndex, 
         errors.push(format!("{}: vectors must not be empty", path.display()));
     }
     if errors.is_empty() {
-        index.root = root.to_path_buf();
+        index.root = root;
         Ok(index)
     } else {
         Err(errors)
@@ -133,8 +148,10 @@ pub fn rns_vector<'a>(index: &'a RnsFixtureIndex, id: &str) -> Result<&'a RnsVec
 
 pub fn load_rns_vector_bytes(index: &RnsFixtureIndex, id: &str) -> Result<Vec<u8>, String> {
     let vector = rns_vector(index, id)?;
-    let bytes = std::fs::read(index.root.join(&vector.artifact))
-        .map_err(|error| format!("failed to read vector {id}: {error}"))?;
+    let path = repository_file(&index.root, &index.root.join(&vector.artifact))
+        .map_err(|error| format!("failed to resolve vector {id}: {error}"))?;
+    let bytes =
+        std::fs::read(path).map_err(|error| format!("failed to read vector {id}: {error}"))?;
     let digest = hex::encode(Sha256::digest(&bytes));
     if digest != vector.sha256 {
         return Err(format!("fixture digest mismatch for {id}"));
