@@ -6,6 +6,9 @@ pub const MAX_CHAT_CONTENT_BYTES: usize = 64 * 1024;
 pub const MAX_CHAT_ATTACHMENTS: usize = 8;
 pub const MAX_CHAT_ATTACHMENT_NAME_BYTES: usize = 255;
 pub const MAX_CHAT_ATTACHMENT_BYTES: usize = 768 * 1024;
+pub const MOBILE_DIAGNOSTIC_SCHEMA_VERSION: u32 = 1;
+pub const MOBILE_DIAGNOSTIC_MAX_EVENTS: u32 = 4096;
+pub const MOBILE_DIAGNOSTIC_MAX_BYTES: u64 = 1024 * 1024;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -19,6 +22,81 @@ pub type PeerHash = String;
 
 /// Terminal session identifier.
 pub type SessionId = String;
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileDiagnosticSource {
+    Runtime,
+    Transport,
+    Messaging,
+    Storage,
+    Platform,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileDiagnosticStage {
+    Boot,
+    Lifecycle,
+    Inbound,
+    Outbound,
+    Synchronization,
+    Persistence,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileDiagnosticSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+/// Payload-free diagnostic event projected from the mobile runtime's private ring.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MobileDiagnosticEvent {
+    pub sequence: u64,
+    pub unix_time_ms: Option<u64>,
+    pub source: MobileDiagnosticSource,
+    pub stage: MobileDiagnosticStage,
+    pub severity: MobileDiagnosticSeverity,
+    pub generation: u64,
+    /// Runtime-keyed correlation, never a caller-provided identifier or unkeyed digest.
+    pub safe_correlation: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MobileDiagnosticSnapshot {
+    pub schema_version: u32,
+    pub backend_revision: String,
+    pub first_sequence: Option<u64>,
+    pub last_sequence: Option<u64>,
+    pub event_count: u32,
+    pub retained_bytes: u64,
+    pub max_events: u32,
+    pub max_bytes: u64,
+    pub truncated: bool,
+    pub dropped_events: u64,
+    pub events: Vec<MobileDiagnosticEvent>,
+}
+
+/// Canonical export bytes and the metadata needed by a frontend share adapter.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MobileDiagnosticExport {
+    pub schema_version: u32,
+    pub backend_revision: String,
+    pub content_type: String,
+    pub digest_sha256: String,
+    pub first_sequence: Option<u64>,
+    pub last_sequence: Option<u64>,
+    pub event_count: u32,
+    pub byte_count: u64,
+    pub max_events: u32,
+    pub max_bytes: u64,
+    pub truncated: bool,
+    pub dropped_events: u64,
+    pub bytes: Vec<u8>,
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -63,7 +141,76 @@ pub struct DeviceInfo {
 
 // ── Identity ──────────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityCustodyBackend {
+    Keychain,
+    AndroidKeystore,
+    EncryptedFile,
+    PlaintextFile,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityCustodyProtection {
+    PlatformProtected,
+    EncryptedAtRest,
+    DevelopmentPlaintext,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityCustodyAuthentication {
+    DeviceAuthentication,
+    HostKeyMaterial,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityCustodyAvailability {
+    Available,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityCustodyDowngrade {
+    None,
+    ActiveBackendMismatch,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityCustodyFailureCode {
+    UnsupportedTarget,
+    FeatureDisabled,
+    AuthenticationRequired,
+    KeyMaterialRequired,
+    BackendFailure,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct IdentityCustodyFailure {
+    pub code: IdentityCustodyFailureCode,
+    pub retryable: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct IdentityCustodyInfo {
+    pub requested_backend: IdentityCustodyBackend,
+    pub active_backend: Option<IdentityCustodyBackend>,
+    pub protection: Option<IdentityCustodyProtection>,
+    pub authentication: IdentityCustodyAuthentication,
+    pub availability: IdentityCustodyAvailability,
+    pub downgrade: IdentityCustodyDowngrade,
+    pub failure: Option<IdentityCustodyFailure>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 #[non_exhaustive]
 pub struct IdentityInfo {
     pub identity_hash: String,
@@ -72,25 +219,53 @@ pub struct IdentityInfo {
     pub display_name: String,
     pub icon: Option<String>,
     pub short_name: Option<String>,
+    pub custody: Option<IdentityCustodyInfo>,
 }
 
 // ── Daemon status ─────────────────────────────────────────────────────────────
 
 pub const ACTIVE_CAPABILITIES_VERSION: u16 = 1;
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CapabilityFailureCode {
+    Unavailable,
+    Unauthorized,
+    Degraded,
+    Unverified,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 #[non_exhaustive]
 pub struct DegradedCapabilityInfo {
     pub id: String,
     pub reason: String,
+    pub reason_code: CapabilityFailureCode,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct CapabilityFailureInfo {
+    pub id: String,
+    pub code: CapabilityFailureCode,
+    pub retryable: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 #[non_exhaustive]
 pub struct ActiveCapabilitiesInfo {
     pub version: u16,
+    pub generation: Option<u64>,
     pub runtime: Vec<String>,
     pub degraded: Vec<DegradedCapabilityInfo>,
+    pub failures: Vec<CapabilityFailureInfo>,
     pub authorized_operations: Vec<String>,
 }
 
@@ -548,12 +723,50 @@ impl std::fmt::Debug for MessageInfo {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[non_exhaustive]
+#[serde(default)]
 pub struct MessageAttemptInfo {
     pub message_id: String,
     pub number: u32,
     pub started_unix_ms: i64,
     pub deadline_unix_ms: i64,
     pub state: String,
+    /// Bearer observed for this attempt, independent of the requested delivery method.
+    pub bearer: Option<String>,
+    /// Immutable path-table evidence captured for this attempt.
+    pub route: MessageAttemptRouteObservation,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum MessageAttemptRouteOutcome {
+    Observed,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct MessageAttemptInterfaceObservation {
+    /// Public interface identity hash. Endpoints and device paths are intentionally excluded.
+    pub id: String,
+    pub kind: String,
+    pub generation: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct MessageAttemptRouteObservation {
+    pub outcome: MessageAttemptRouteOutcome,
+    pub connection_generation: Option<u64>,
+    pub observed_at: Option<i64>,
+    pub next_hop: Option<String>,
+    pub hops: Option<u32>,
+    pub stale: bool,
+    pub interface: Option<MessageAttemptInterfaceObservation>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -659,6 +872,25 @@ pub struct ConversationInfo {
     pub message_count: u32,
     pub pinned: bool,
     pub muted: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ConversationInvalidationReason {
+    ContactAliasChanged,
+    ContactAliasRemoved,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ConversationInvalidation {
+    pub peer_hash: String,
+    pub reason: ConversationInvalidationReason,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -881,6 +1113,10 @@ pub struct ObservationMetadata {
     pub source: ObservationSource,
     pub observed_at: Option<i64>,
     pub connection_generation: Option<u64>,
+    /// Generation of the local IPC socket carrying this observation.
+    pub ipc_connection_generation: Option<u64>,
+    /// Generation of the individual interface, when the observation is interface-scoped.
+    pub interface_generation: Option<u64>,
     pub age_secs: Option<u64>,
     pub freshness_threshold_secs: Option<u64>,
     pub stale: bool,
@@ -888,6 +1124,11 @@ pub struct ObservationMetadata {
 }
 
 impl ObservationMetadata {
+    /// Physical IPC generation, falling back to the legacy overloaded field.
+    pub fn ipc_generation(&self) -> Option<u64> {
+        self.ipc_connection_generation.or(self.connection_generation)
+    }
+
     pub fn at(
         source: ObservationSource,
         observed_at: Option<i64>,
@@ -899,6 +1140,8 @@ impl ObservationMetadata {
             source,
             observed_at,
             connection_generation: None,
+            ipc_connection_generation: None,
+            interface_generation: None,
             age_secs,
             freshness_threshold_secs: Some(threshold_secs),
             stale: age_secs.is_some_and(|age| age > threshold_secs),
@@ -1679,8 +1922,29 @@ pub struct InterfaceDetail {
     pub tx_bytes: u64,
     #[serde(rename = "connected_peers", alias = "peers_connected")]
     pub peers_connected: u32,
+    pub failure: Option<InterfaceFailureInfo>,
     #[serde(flatten, default)]
     pub observation: ObservationMetadata,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum InterfaceFailureCode {
+    Retrying,
+    Closed,
+    UnknownState,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct InterfaceFailureInfo {
+    pub code: InterfaceFailureCode,
+    pub retryable: bool,
 }
 
 // ── Events ────────────────────────────────────────────────────────────────────
@@ -1732,6 +1996,9 @@ pub enum DaemonEvent {
     },
     MessagingOperation {
         outcome: Box<MessagingOperationOutcome>,
+    },
+    ConversationInvalidated {
+        invalidation: ConversationInvalidation,
     },
     /// Durable standard propagation state changed; clients must requery the snapshot.
     StandardPropagationChanged {
@@ -2019,6 +2286,8 @@ mod capability_tests {
                 source: ObservationSource::TransportPathTable,
                 observed_at: Some(100),
                 connection_generation: Some(7),
+                ipc_connection_generation: Some(11),
+                interface_generation: Some(3),
                 age_secs: Some(2),
                 freshness_threshold_secs: Some(300),
                 stale: false,
@@ -2028,7 +2297,9 @@ mod capability_tests {
         };
 
         let encoded = serde_json::to_string(&path).unwrap();
-        assert_eq!(serde_json::from_str::<PathInfo>(&encoded).unwrap(), path);
+        let decoded = serde_json::from_str::<PathInfo>(&encoded).unwrap();
+        assert_eq!(decoded.observation.ipc_generation(), Some(11));
+        assert_eq!(decoded, path);
 
         let future: PathInfo =
             serde_json::from_str(r#"{"destination_hash":"peer","source":"future_runtime_source"}"#)
@@ -2061,11 +2332,14 @@ mod capability_tests {
         let degraded = DegradedCapabilityInfo {
             id: "runtime.native-nomadnet.host".into(),
             reason: "request handler unavailable".into(),
+            reason_code: CapabilityFailureCode::Degraded,
         };
         let capabilities = ActiveCapabilitiesInfo {
             version: ACTIVE_CAPABILITIES_VERSION,
+            generation: Some(7),
             runtime: vec!["runtime.lxmf.direct".into()],
             degraded: vec![degraded],
+            failures: Vec::new(),
             authorized_operations: vec!["chat.send".into()],
         };
         let status = DaemonStatusInfo {

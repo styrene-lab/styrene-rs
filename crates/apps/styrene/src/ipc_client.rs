@@ -424,6 +424,12 @@ fn parse_identity(p: &HashMap<String, MpValue>) -> Result<IdentityInfo, String> 
     info.display_name = mp_str(p, "display_name");
     info.icon = p.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string());
     info.short_name = p.get("short_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+    info.custody = p
+        .get("custody")
+        .cloned()
+        .map(rmpv::ext::from_value)
+        .transpose()
+        .map_err(|error| format!("invalid identity custody: {error}"))?;
     Ok(info)
 }
 

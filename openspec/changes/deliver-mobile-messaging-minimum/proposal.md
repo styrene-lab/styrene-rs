@@ -23,6 +23,13 @@ application-parity corpus complements the shared cross-platform state corpus.
 One Dioxus application and its Rust-owned embedded runtime deliver the behavior
 on iOS and Android.
 
+This change also adds Bluetooth Low Energy as the preferred mobile RNode bearer.
+The host targets the Nordic UART Service, reconnects only to an explicitly
+approved peripheral, and passes ordered bytes to the shared backend RNode engine.
+Bluetooth Classic SPP, automatic connection to unknown advertisements,
+guaranteed background BLE operation, and a universal transmit profile remain
+excluded.
+
 No Swift or Kotlin mobile host is retained. This change excludes mobile
 propagation hosting, automatic propagation-node selection, attachments, Paper
 delivery, NomadNet parity, advanced route or link administration, fleet, tunnel,
@@ -44,6 +51,8 @@ the applicable physical-device gates.
   message once.
 - The same deterministic state and behavior corpus passes against the Dioxus iOS
   and Android targets, followed by public-Brutus and applicable physical-device gates.
+- The BLE RNode path remains disabled as a support claim until backend, packaged
+  host, and physical bidirectional acceptance scenarios pass for that platform.
 - Every required mobile journey has a provenance-backed application-parity row.
   The row is matched or records an accepted intentional difference. Deferred,
   unsupported, and unevidenced rows remain explicit and block the affected claim.

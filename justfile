@@ -38,7 +38,9 @@ test:
     cargo test -p styrened --lib \
         --test announce_names --test config --test identity_store \
         --test lxmf_bridge_tests --test lxmf_fidelity_storage \
-        --test mobile_corpus \
+        --test mobile_application_parity_corpus --test mobile_backend_p0_corpus \
+        --test mobile_corpus --test mobile_forced_termination \
+        --test mobile_minimum_corpus --test mobile_p0_backend \
         --test nomadnet_pages_offline --test receipt_bridge --test receipt_mapping \
         --test rns_crypto --test transport_contract --test transport_null \
         --test worker_announce --test worker_inbound
@@ -232,9 +234,15 @@ upstream-sync-report:
 
 # ─── Mobile ────────────────────────────────────────────────────────────────
 
-# Validate the committed mobile integration corpus and its repository references
+# Validate all committed mobile corpora, backend contracts, and recovery evidence
 test-mobile-corpus:
-    cargo test -p styrened --test mobile_corpus
+    cargo test -p styrened \
+        --test mobile_application_parity_corpus \
+        --test mobile_backend_p0_corpus \
+        --test mobile_corpus \
+        --test mobile_forced_termination \
+        --test mobile_minimum_corpus \
+        --test mobile_p0_backend -- --test-threads=1
 
 # Check mobile library compiles (no desktop deps)
 check-mobile:

@@ -280,8 +280,32 @@ impl TokioTransportAdapter {
         let (our_route_tx, _) = broadcast::channel(64);
         let (our_request_tx, _) = broadcast::channel(64);
         let forwarder_cancel = CancellationToken::new();
-        let interface_cancel = transport.iface_manager().lock().await.shutdown_token();
-        let mut forwarders = Vec::with_capacity(5);
+        let interface_manager = transport.iface_manager();
+        let (interface_cancel, mut interface_state_rx) = {
+            let manager = interface_manager.lock().await;
+            (manager.shutdown_token(), manager.subscribe_state_changes())
+        };
+        let mut forwarders = Vec::with_capacity(6);
+        let interface_fwd = lifecycle_tx.clone();
+        let cancel = forwarder_cancel.clone();
+        forwarders.push(tokio::spawn(async move {
+            loop {
+                let result = tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    result = interface_state_rx.recv() => result,
+                };
+                match result {
+                    Ok(_) => {
+                        let _ = interface_fwd.send(TransportLifecycleEvent::InterfaceChanged);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let _ =
+                            interface_fwd.send(TransportLifecycleEvent::InterfaceReconcileRequired);
+                    }
+                }
+            }
+        }));
         let fwd_tx = our_announce_tx.clone();
         let mut rx = transport.recv_announces().await;
         let cancel = forwarder_cancel.clone();

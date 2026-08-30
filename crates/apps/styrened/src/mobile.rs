@@ -36,13 +36,14 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::announce_names::{encode_delivery_display_name_app_data, normalize_display_name};
 use crate::app_context::AppContext;
 use crate::config::{PlatformPaths, atomic_write_private};
-use crate::daemon_facade::DaemonFacade;
+use crate::daemon_facade::{DaemonFacade, SessionGeneration};
 use crate::services::discovery::{
     LXMF_DELIVERY_DEVICE_TYPE, NATIVE_NOMADNET_HOST_DEVICE_TYPE,
     STANDARD_LXMF_PROPAGATION_ACTIVE_DEVICE_TYPE, STANDARD_LXMF_PROPAGATION_INACTIVE_DEVICE_TYPE,
@@ -53,26 +54,30 @@ use crate::startup_contract::{
     capabilities as startup_capability, components as startup_component,
 };
 use crate::storage::messages::MessagesStore;
-use crate::transport::mesh_transport::MeshTransport;
+use crate::transport::mesh_transport::{MeshTransport, TransportLifecycleEvent};
 
 use rns_core::buffer::InputBuffer;
 use rns_core::hash::AddressHash;
 use rns_core::identity::PrivateIdentity;
 use rns_core::packet::Packet;
+pub use rns_core::transport::iface::rnode::{RNodeBearerInfo, RNodeBearerKind};
+use rns_core::transport::iface::rnode::{
+    RNodeProtocol, RNodeProtocolPhase, RNodeRadioProfile, rnode_write_chunks,
+};
 use rns_core::transport::iface::{
-    IngressEnqueueOutcome, InterfaceChannel, InterfaceKind, InterfaceRxSender, InterfaceState,
-    InterfaceTxReceiver, RxMessage,
+    HostInterfaceControl, IngressEnqueueOutcome, InterfaceChannel, InterfaceDescriptor,
+    InterfaceKind, InterfaceRxSender, InterfaceState, InterfaceTxReceiver, RxMessage,
 };
 use serde::{Deserialize, Serialize};
 use styrene_ipc::traits::{Daemon, DaemonIdentity, DaemonMessaging, DaemonStatus};
 use styrene_services::node_store::NodeStore;
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 /// Mobile node configuration — provided by the host app.
 /// How to store the identity private keys.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub enum IdentityBackend {
     /// Platform keychain with biometric protection (iOS Keychain / macOS Keychain).
     /// Root secret stored in Secure Enclave, RNS keys derived via HKDF.
@@ -105,8 +110,16 @@ pub struct MobileConfig {
     pub identity_backend: IdentityBackend,
     /// Direct Reticulum TCP interfaces.
     pub interfaces: Vec<MobileInterfaceConfig>,
-    /// Create a host-driven channel for an Android-owned RNode interface.
+    /// Create a host-driven channel for one mobile RNode bearer.
     pub enable_rnode_channel: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum MobileCustodyError {
+    #[error("{backend} identity backend is unavailable in this build")]
+    BackendUnavailable { backend: &'static str },
+    #[error("encrypted-file identity backend requires nonempty host key material")]
+    KeyMaterialRequired,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +132,7 @@ pub enum MobileInterfaceConfig {
 #[serde(rename_all = "snake_case")]
 pub enum MobileConnectionPhase {
     Stopped,
+    Offline,
     Starting,
     Connecting,
     Connected,
@@ -127,12 +141,210 @@ pub enum MobileConnectionPhase {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum MobileRuntimeState {
+    #[default]
+    Ready,
+    Failed,
+    Stopped,
+}
+
+impl MobileRuntimeState {
+    fn from_atomic(value: u8) -> Self {
+        match value {
+            value if value == Self::Failed as u8 => Self::Failed,
+            value if value == Self::Stopped as u8 => Self::Stopped,
+            _ => Self::Ready,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileBootStage {
+    Configuration,
+    Identity,
+    Storage,
+    Transport,
+    Composition,
+    Cleanup,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobileBootFailureCode {
+    InvalidConfiguration,
+    IdentityUnavailable,
+    StorageUnavailable,
+    TransportUnavailable,
+    CompositionFailed,
+    CleanupFailed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, thiserror::Error)]
+#[error("mobile boot failed during {stage:?}: {message}")]
+#[serde(deny_unknown_fields)]
+pub struct MobileBootError {
+    pub stage: MobileBootStage,
+    pub code: MobileBootFailureCode,
+    pub retryable: bool,
+    pub message: String,
+}
+
+impl MobileBootError {
+    fn from_internal(error: &anyhow::Error) -> Self {
+        let detail = error.to_string();
+        let lower = detail.to_ascii_lowercase();
+        let (stage, code, retryable, message) = if lower.contains("cleanup failed") {
+            (MobileBootStage::Cleanup, MobileBootFailureCode::CleanupFailed, true, "cleanup failed")
+        } else if lower.contains("key material") {
+            (
+                MobileBootStage::Identity,
+                MobileBootFailureCode::IdentityUnavailable,
+                true,
+                "encrypted-file identity backend requires nonempty host key material",
+            )
+        } else if lower.contains("identity")
+            || lower.contains("keychain")
+            || lower.contains("keystore")
+        {
+            (
+                MobileBootStage::Identity,
+                MobileBootFailureCode::IdentityUnavailable,
+                true,
+                "identity initialization failed",
+            )
+        } else if lower.contains("database")
+            || lower.contains("store")
+            || lower.contains("metadata")
+        {
+            (
+                MobileBootStage::Storage,
+                MobileBootFailureCode::StorageUnavailable,
+                true,
+                "storage initialization failed",
+            )
+        } else if lower.contains("duplicate mobile interface profile") {
+            (
+                MobileBootStage::Configuration,
+                MobileBootFailureCode::InvalidConfiguration,
+                false,
+                "mobile configuration contains a duplicate interface profile",
+            )
+        } else if lower.contains("address is empty") {
+            (
+                MobileBootStage::Configuration,
+                MobileBootFailureCode::InvalidConfiguration,
+                false,
+                "mobile configuration contains an empty address",
+            )
+        } else if lower.contains("invalid tcp server") {
+            (
+                MobileBootStage::Configuration,
+                MobileBootFailureCode::InvalidConfiguration,
+                false,
+                "mobile configuration contains an invalid TCP server address",
+            )
+        } else if lower.contains("tcp server")
+            || lower.contains("transport")
+            || lower.contains("bind")
+        {
+            (
+                MobileBootStage::Transport,
+                MobileBootFailureCode::TransportUnavailable,
+                true,
+                "transport initialization failed",
+            )
+        } else if lower.contains("address")
+            || lower.contains("interface profile")
+            || lower.contains("mobile config")
+        {
+            (
+                MobileBootStage::Configuration,
+                MobileBootFailureCode::InvalidConfiguration,
+                false,
+                "mobile configuration is invalid",
+            )
+        } else {
+            (
+                MobileBootStage::Composition,
+                MobileBootFailureCode::CompositionFailed,
+                true,
+                "runtime composition failed",
+            )
+        };
+        Self { stage, code, retryable, message: message.into() }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MobileBearerKind {
     Tcp,
     BluetoothRnode,
     AndroidUsb,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MobileRNodeBearer {
+    BluetoothLe,
+    AndroidUsb,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MobileRNodeAttempt {
+    generation: u64,
+    bearer: MobileRNodeBearer,
+    info: RNodeBearerInfo,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct MobileRNodeByteStart {
+    pub attempt: MobileRNodeAttempt,
+    /// Ordered platform writes, each bounded by the attempt metadata.
+    pub writes: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MobileRNodeWriteHandoff {
+    generation: u64,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct MobileRNodeWriteBatch {
+    pub handoff: MobileRNodeWriteHandoff,
+    /// One complete KISS frame split into ordered platform writes.
+    pub writes: Vec<Vec<u8>>,
+}
+
+impl MobileRNodeBearer {
+    const fn observation_kind(self) -> MobileBearerKind {
+        match self {
+            Self::BluetoothLe => MobileBearerKind::BluetoothRnode,
+            Self::AndroidUsb => MobileBearerKind::AndroidUsb,
+        }
+    }
+
+    const fn accepts(self, kind: RNodeBearerKind) -> bool {
+        matches!(
+            (self, kind),
+            (Self::BluetoothLe, RNodeBearerKind::Ble)
+                | (Self::AndroidUsb, RNodeBearerKind::AndroidUsb)
+        )
+    }
+}
+
+fn fragment_rnode_writes(
+    info: RNodeBearerInfo,
+    frames: impl IntoIterator<Item = Vec<u8>>,
+) -> Vec<Vec<u8>> {
+    let mut writes = Vec::new();
+    for frame in frames {
+        writes.extend(rnode_write_chunks(Some(info), &frame).map(<[u8]>::to_vec));
+    }
+    writes
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -161,6 +373,7 @@ pub enum MobileFailureCode {
     InvalidTcpEndpoint,
     TcpRetrying,
     TransportUnavailable,
+    CleanupFailed,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -204,6 +417,7 @@ pub struct MobileBearerObservation {
 #[derive(Clone)]
 pub struct MobilePlatformService {
     state: Arc<tokio::sync::RwLock<MobilePlatformState>>,
+    changes: broadcast::Sender<()>,
 }
 
 struct MobilePlatformState {
@@ -220,6 +434,7 @@ pub enum MobileUsbFallbackDisposition {
 
 impl MobilePlatformService {
     fn new(rnode_channel_enabled: bool) -> Self {
+        let (changes, _) = broadcast::channel(16);
         let bluetooth = if rnode_channel_enabled {
             MobileBearerObservation {
                 kind: MobileBearerKind::BluetoothRnode,
@@ -246,6 +461,7 @@ impl MobilePlatformService {
                 bluetooth_approved: false,
                 usb_fallback_requested: false,
             })),
+            changes,
         }
     }
 
@@ -282,11 +498,17 @@ impl MobilePlatformService {
             .find(|bearer| bearer.kind == observation.kind)
             .ok_or("unsupported mobile platform bearer")?;
         *bearer = observation;
+        drop(state);
+        let _ = self.changes.send(());
         Ok(())
     }
 
     pub async fn set_bluetooth_approved(&self, approved: bool) {
         self.state.write().await.bluetooth_approved = approved;
+    }
+
+    async fn bluetooth_approved(&self) -> bool {
+        self.state.read().await.bluetooth_approved
     }
 
     pub async fn request_android_usb_fallback(&self) -> MobileUsbFallbackDisposition {
@@ -319,11 +541,115 @@ fn approved_bluetooth_active(state: &MobilePlatformState) -> bool {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MobileSessionSnapshot {
+    #[serde(default)]
+    pub runtime: MobileRuntimeState,
     pub phase: MobileConnectionPhase,
     pub endpoint: Option<String>,
     pub generation: u64,
     pub failure: Option<MobileFailure>,
     pub bearers: Vec<MobileBearerObservation>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MobileStorageStatus {
+    pub generation: u64,
+    pub schema_version: u32,
+    pub open: crate::storage::messages::StorageOpenOutcome,
+    pub recovery: crate::storage::messages::StorageRecoveryOutcome,
+    pub last_commit: Option<crate::storage::messages::StorageCommitEvidence>,
+    pub degraded: Option<crate::storage::messages::StorageDegradedReason>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MobileStateEventKind {
+    Session,
+    Peer,
+    Message,
+    Propagation,
+    Conversation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MobileStateEvent {
+    pub generation: u64,
+    pub kind: MobileStateEventKind,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum MobileStateSubscriptionError {
+    #[error("mobile state event stream lagged by {0} events")]
+    Lagged(u64),
+    #[error("mobile state event stream closed")]
+    Closed,
+}
+
+pub struct MobileStateSubscription {
+    generation: Arc<SessionGeneration>,
+    transport: Arc<dyn MeshTransport>,
+    lifecycle: broadcast::Receiver<TransportLifecycleEvent>,
+    events: broadcast::Receiver<styrene_ipc::types::DaemonEvent>,
+    platform: broadcast::Receiver<()>,
+}
+
+impl MobileStateSubscription {
+    pub async fn recv(&mut self) -> Result<MobileStateEvent, MobileStateSubscriptionError> {
+        loop {
+            let kind = tokio::select! {
+                event = self.lifecycle.recv() => match event {
+                    Ok(
+                        TransportLifecycleEvent::Connected
+                        | TransportLifecycleEvent::Disconnected
+                        | TransportLifecycleEvent::Reconnected
+                        | TransportLifecycleEvent::InterfaceChanged
+                        | TransportLifecycleEvent::InterfaceReconcileRequired
+                        | TransportLifecycleEvent::LinkReconcileRequired,
+                    ) => MobileStateEventKind::Session,
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                        return Err(MobileStateSubscriptionError::Lagged(dropped));
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        return Err(MobileStateSubscriptionError::Closed);
+                    }
+                },
+                event = self.events.recv() => match event {
+                    Ok(styrene_ipc::types::DaemonEvent::Device { .. }) => {
+                        MobileStateEventKind::Peer
+                    }
+                    Ok(styrene_ipc::types::DaemonEvent::Message { .. }) => {
+                        MobileStateEventKind::Message
+                    }
+                    Ok(styrene_ipc::types::DaemonEvent::StandardPropagationChanged { .. }) => {
+                        MobileStateEventKind::Propagation
+                    }
+                    Ok(styrene_ipc::types::DaemonEvent::ConversationInvalidated { .. }) => {
+                        MobileStateEventKind::Conversation
+                    }
+                    Ok(styrene_ipc::types::DaemonEvent::ReconcileRequired { dropped }) => {
+                        return Err(MobileStateSubscriptionError::Lagged(dropped));
+                    }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                        return Err(MobileStateSubscriptionError::Lagged(dropped));
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        return Err(MobileStateSubscriptionError::Closed);
+                    }
+                },
+                event = self.platform.recv() => match event {
+                    Ok(()) => MobileStateEventKind::Session,
+                    Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                        return Err(MobileStateSubscriptionError::Lagged(dropped));
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        return Err(MobileStateSubscriptionError::Closed);
+                    }
+                },
+            };
+            let interfaces = self.transport.interface_snapshots().await;
+            return Ok(MobileStateEvent { generation: self.generation.observe(&interfaces), kind });
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -800,9 +1126,14 @@ pub struct MobileNode {
     startup_contract: StartupContract,
     rnode: Option<RNodeBridge>,
     tcp_endpoint: Option<String>,
-    generation: u64,
+    generation: Arc<SessionGeneration>,
+    runtime_state: AtomicU8,
+    transport_shutdown_complete: AtomicBool,
+    #[cfg(test)]
+    storage_shutdown_faults: AtomicU8,
     platform_service: MobilePlatformService,
     active_conversation: Arc<tokio::sync::RwLock<Option<String>>>,
+    diagnostics: Arc<crate::mobile_diagnostics::MobileDiagnostics>,
 }
 
 struct MobileWorkers {
@@ -812,6 +1143,7 @@ struct MobileWorkers {
     route: JoinHandle<()>,
     router_deadlines: JoinHandle<()>,
     active_conversation: JoinHandle<()>,
+    session_generation: JoinHandle<()>,
     standard_propagation_sync:
         Option<crate::workers::standard_propagation::StandardPropagationSyncWorker>,
     aborted: bool,
@@ -823,14 +1155,29 @@ struct MobileTransportRuntime {
     tcp_listen_addresses: Vec<SocketAddr>,
     service_receipt_target:
         Option<Arc<std::sync::OnceLock<std::sync::Weak<crate::services::MessagingService>>>>,
-    rnode_channel: Option<InterfaceChannel>,
+    rnode_channel: Option<(InterfaceChannel, HostInterfaceControl)>,
 }
 
 struct RNodeBridge {
     address: AddressHash,
     rx: InterfaceRxSender,
     tx: AsyncMutex<InterfaceTxReceiver>,
-    _stop: CancellationToken,
+    control: HostInterfaceControl,
+    protocol: AsyncMutex<RNodeProtocol>,
+    attempts: AsyncMutex<MobileRNodeAttemptState>,
+}
+
+struct MobileRNodeAttemptState {
+    next_generation: u64,
+    active: Option<MobileRNodeAttempt>,
+    next_handoff_generation: u64,
+    pending_packet: Option<MobileRNodePendingPacket>,
+}
+
+struct MobileRNodePendingPacket {
+    handoff: MobileRNodeWriteHandoff,
+    packet: Vec<u8>,
+    offered_to: Option<MobileRNodeAttempt>,
 }
 
 impl MobileWorkers {
@@ -844,6 +1191,7 @@ impl MobileWorkers {
         self.route.abort();
         self.router_deadlines.abort();
         self.active_conversation.abort();
+        self.session_generation.abort();
         if let Some(worker) = &self.standard_propagation_sync {
             worker.abort();
         }
@@ -860,6 +1208,7 @@ impl MobileWorkers {
         self.route.abort();
         self.router_deadlines.abort();
         self.active_conversation.abort();
+        self.session_generation.abort();
         self.aborted = true;
         self.inbound.wait().await;
         let _ = (&mut self.announce).await;
@@ -867,6 +1216,7 @@ impl MobileWorkers {
         let _ = (&mut self.route).await;
         let _ = (&mut self.router_deadlines).await;
         let _ = (&mut self.active_conversation).await;
+        let _ = (&mut self.session_generation).await;
     }
 
     #[cfg(test)]
@@ -877,6 +1227,7 @@ impl MobileWorkers {
             && self.route.is_finished()
             && self.router_deadlines.is_finished()
             && self.active_conversation.is_finished()
+            && self.session_generation.is_finished()
             && self.standard_propagation_sync.as_ref().is_none_or(|worker| worker.is_finished())
     }
 
@@ -888,6 +1239,7 @@ impl MobileWorkers {
         handles.push(self.route.abort_handle());
         handles.push(self.router_deadlines.abort_handle());
         handles.push(self.active_conversation.abort_handle());
+        handles.push(self.session_generation.abort_handle());
         if let Some(worker) = &self.standard_propagation_sync {
             handles.push(worker.abort_handle());
         }
@@ -906,20 +1258,110 @@ impl Drop for MobileNode {
 }
 
 /// Result of a hub poll operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PollResult {
     /// Number of new messages fetched.
     pub message_count: usize,
     /// The fetched messages (for local notification display).
     pub messages: Vec<PollMessage>,
+    /// Durable local and remote acknowledgement outcome for every fetched item.
+    pub items: Vec<PollItemOutcome>,
+    /// Whole-batch rejection when input exceeds the legacy poll contract.
+    pub batch_failure: Option<PollBatchFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PollBatchFailure {
+    ItemLimitExceeded { limit: usize, observed: usize },
+    ByteLimitExceeded { limit: usize, observed: usize },
 }
 
 /// A message fetched during hub poll (simplified for notification display).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PollMessage {
     pub source_hash: String,
     pub content_preview: String,
     pub timestamp: i64,
+}
+
+/// Local acceptance outcome for one item returned by the legacy hub API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PollLocalOutcome {
+    Accepted { message_id: String },
+    DurableDuplicate { message_id: String },
+    DecodeRejected { reason: String },
+    StorageFailed { message_id: Option<String>, error: String },
+}
+
+/// Remote acknowledgement outcome for one item returned by the legacy hub API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PollAcknowledgementOutcome {
+    Acknowledged,
+    NotEligible,
+    Failed { error: String },
+}
+
+/// Complete processing outcome for one fetched hub item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PollItemOutcome {
+    pub hub_id: String,
+    pub local: PollLocalOutcome,
+    pub acknowledgement: PollAcknowledgementOutcome,
+}
+
+/// Poll previews are bounded by both Unicode scalar count and UTF-8 byte length.
+pub const POLL_PREVIEW_MAX_CHARS: usize = 100;
+pub const POLL_PREVIEW_MAX_BYTES: usize = 100;
+pub const LEGACY_HUB_POLL_MAX_ITEMS: usize = 256;
+pub const LEGACY_HUB_POLL_MAX_BYTES: usize =
+    crate::services::fleet::PROPAGATION_FETCH_MAX_RESPONSE_BYTES;
+pub const LEGACY_HUB_POLL_DEADLINE: Duration = Duration::from_secs(30);
+
+/// Return the longest Unicode-scalar prefix within the legacy notification limits.
+pub fn legacy_poll_preview(content: &str) -> String {
+    let mut end = 0;
+    for (count, (index, character)) in content.char_indices().enumerate() {
+        if count == POLL_PREVIEW_MAX_CHARS
+            || index.saturating_add(character.len_utf8()) > POLL_PREVIEW_MAX_BYTES
+        {
+            break;
+        }
+        end = index + character.len_utf8();
+    }
+    content[..end].to_string()
+}
+
+fn bounded_poll_error(error: impl std::fmt::Display) -> String {
+    error.to_string().chars().take(256).collect()
+}
+
+/// A locally processed legacy hub batch awaiting a remote acknowledgement attempt.
+///
+/// Hosts with their own background transport can use this to preserve the same
+/// durable-before-ACK behavior as [`MobileNode::poll_hub`].
+pub struct LegacyHubPollBatch {
+    result: PollResult,
+    eligible: Vec<(usize, String)>,
+}
+
+impl LegacyHubPollBatch {
+    /// Hub item identifiers whose messages are durably accepted locally.
+    pub fn acknowledgement_ids(&self) -> Vec<&str> {
+        self.eligible.iter().map(|(_, id)| id.as_str()).collect()
+    }
+
+    /// Apply the result of one remote acknowledgement attempt to every eligible item.
+    pub fn complete(mut self, acknowledgement: Result<(), String>) -> PollResult {
+        for (index, _) in self.eligible {
+            self.result.items[index].acknowledgement = match &acknowledgement {
+                Ok(()) => PollAcknowledgementOutcome::Acknowledged,
+                Err(error) => {
+                    PollAcknowledgementOutcome::Failed { error: bounded_poll_error(error) }
+                }
+            };
+        }
+        self.result
+    }
 }
 
 struct MobileStores {
@@ -927,12 +1369,47 @@ struct MobileStores {
     nodes: Arc<NodeStore>,
 }
 
+struct MobileIdentityRuntime {
+    metadata: crate::services::identity::PublicIdentityMetadata,
+    metadata_path: PathBuf,
+    custody: styrene_ipc::types::IdentityCustodyInfo,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct MobileBootFault {
+    evidence: Arc<MobileBootFaultEvidence>,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct MobileBootFaultEvidence {
+    worker_handles: Mutex<Vec<tokio::task::AbortHandle>>,
+}
+
+#[cfg(test)]
+static MOBILE_BOOT_FAULTS: std::sync::LazyLock<
+    Mutex<std::collections::HashMap<PathBuf, MobileBootFault>>,
+> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+#[cfg(test)]
+fn inject_mobile_boot_fault(data_dir: PathBuf, evidence: Arc<MobileBootFaultEvidence>) {
+    let previous =
+        MOBILE_BOOT_FAULTS.lock().unwrap().insert(data_dir, MobileBootFault { evidence });
+    assert!(previous.is_none(), "mobile boot fault already installed for test path");
+}
+
+#[cfg(test)]
+fn take_mobile_boot_fault(data_dir: &std::path::Path) -> Option<MobileBootFault> {
+    MOBILE_BOOT_FAULTS.lock().unwrap().remove(data_dir)
+}
+
 async fn compose_mobile_node(
     paths: PlatformPaths,
     identity: PrivateIdentity,
     stores: MobileStores,
     transport_runtime: MobileTransportRuntime,
-    display_name: Option<String>,
+    identity_runtime: MobileIdentityRuntime,
     hub_delivery_hash: Option<String>,
     tcp_endpoint: Option<String>,
 ) -> anyhow::Result<MobileNode> {
@@ -943,6 +1420,9 @@ async fn compose_mobile_node(
         service_receipt_target,
         rnode_channel,
     } = transport_runtime;
+    let generation = Arc::new(SessionGeneration::new(1));
+    let mut generation_events = transport.subscribe_lifecycle();
+    generation.observe(&transport.interface_snapshots().await);
     let transport_active = delivery_hash.is_some();
     let direct_capability_active = service_receipt_target.is_some();
     let mut startup = StartupContractBuilder::production(RuntimeKind::Mobile);
@@ -956,11 +1436,14 @@ async fn compose_mobile_node(
         startup.record(startup_component::NATIVE_RESOURCE_RETRY_SCHEDULER);
     }
     let identity_hash = hex::encode(identity.address_hash().as_slice());
-    let app_context = Arc::new(AppContext::with_node_store(
+    let pages_dir = paths.pages_dir();
+    let files_dir = paths.data_dir.join("files");
+    let app_context = Arc::new(AppContext::with_node_store_and_pages(
         transport.clone(),
         identity_hash.clone(),
         stores.messages,
         stores.nodes,
+        crate::services::PageService::with_storage_dirs(pages_dir, files_dir),
     ));
     startup.record_local_execution_services();
     let initialization = (|| -> anyhow::Result<()> {
@@ -996,9 +1479,11 @@ async fn compose_mobile_node(
         );
     }
     app_context.identity().set_delivery_destination_hash(delivery_hash.clone());
-    if let Some(display_name) = display_name.as_deref() {
-        app_context.identity().set_identity(Some(display_name), None, None);
-    }
+    app_context.identity().configure_mobile_identity(
+        identity_runtime.metadata_path,
+        identity_runtime.metadata,
+        identity_runtime.custody,
+    );
     if let Some(hub_hash) = &hub_delivery_hash {
         app_context.messaging().set_propagation_hub(hub_hash.clone(), app_context.fleet_arc());
     }
@@ -1027,6 +1512,28 @@ async fn compose_mobile_node(
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
+    };
+    let session_generation_worker = {
+        let generation = Arc::clone(&generation);
+        let transport = Arc::clone(&transport);
+        tokio::spawn(async move {
+            loop {
+                match generation_events.recv().await {
+                    Ok(
+                        TransportLifecycleEvent::Connected
+                        | TransportLifecycleEvent::Disconnected
+                        | TransportLifecycleEvent::Reconnected
+                        | TransportLifecycleEvent::InterfaceChanged
+                        | TransportLifecycleEvent::InterfaceReconcileRequired,
+                    )
+                    | Err(broadcast::error::RecvError::Lagged(_)) => {
+                        generation.observe(&transport.interface_snapshots().await);
+                    }
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
         })
@@ -1079,10 +1586,32 @@ async fn compose_mobile_node(
         route,
         router_deadlines,
         active_conversation: active_conversation_worker,
+        session_generation: session_generation_worker,
         standard_propagation_sync,
         aborted: false,
     };
-    let facade = Arc::new(DaemonFacade::new(app_context.clone(), identity_hash));
+    let diagnostics =
+        Arc::new(crate::mobile_diagnostics::MobileDiagnostics::new().map_err(|error| {
+            anyhow::anyhow!("initialize mobile diagnostic correlation: {error}")
+        })?);
+    let facade = Arc::new(DaemonFacade::new_mobile(
+        app_context.clone(),
+        identity_hash,
+        Arc::clone(&diagnostics),
+        Arc::clone(&generation),
+    ));
+
+    #[cfg(test)]
+    if let Some(fault) = take_mobile_boot_fault(&paths.data_dir) {
+        let handles = workers.abort_handles();
+        workers.shutdown().await;
+        let transport_result = transport.shutdown().await;
+        *fault.evidence.worker_handles.lock().unwrap() = handles;
+        transport_result.map_err(|error| {
+            anyhow::anyhow!("injected mobile composition cleanup failed: {error}")
+        })?;
+        anyhow::bail!("injected mobile failure after services and workers were composed");
+    }
 
     let startup_contract = (|| -> anyhow::Result<StartupContract> {
         startup.advertise(startup_capability::LOCAL_CONFIG).map_err(|error| {
@@ -1123,14 +1652,21 @@ async fn compose_mobile_node(
     };
     app_context.publish_startup_contract(startup_contract.clone());
     let rnode_channel_enabled = rnode_channel.is_some();
-    let rnode = rnode_channel.map(|channel| RNodeBridge {
+    let rnode = rnode_channel.map(|(channel, control)| RNodeBridge {
         address: channel.address,
         rx: channel.rx_channel,
         tx: AsyncMutex::new(channel.tx_channel),
-        _stop: channel.stop,
+        control,
+        protocol: AsyncMutex::new(RNodeProtocol::new(RNodeRadioProfile::US_915_DEVELOPMENT)),
+        attempts: AsyncMutex::new(MobileRNodeAttemptState {
+            next_generation: 1,
+            active: None,
+            next_handoff_generation: 1,
+            pending_packet: None,
+        }),
     });
 
-    Ok(MobileNode {
+    let node = MobileNode {
         app_context,
         facade,
         paths,
@@ -1140,10 +1676,22 @@ async fn compose_mobile_node(
         startup_contract,
         rnode,
         tcp_endpoint,
-        generation: 1,
+        generation,
+        runtime_state: AtomicU8::new(MobileRuntimeState::Ready as u8),
+        transport_shutdown_complete: AtomicBool::new(false),
+        #[cfg(test)]
+        storage_shutdown_faults: AtomicU8::new(0),
         platform_service: MobilePlatformService::new(rnode_channel_enabled),
         active_conversation,
-    })
+        diagnostics,
+    };
+    node.record_diagnostic(
+        styrene_ipc::types::MobileDiagnosticSource::Runtime,
+        styrene_ipc::types::MobileDiagnosticStage::Boot,
+        styrene_ipc::types::MobileDiagnosticSeverity::Info,
+        None,
+    );
+    Ok(node)
 }
 
 fn validate_interfaces(config: &MobileConfig) -> anyhow::Result<Vec<ValidatedMobileInterface>> {
@@ -1312,6 +1860,28 @@ async fn await_tcp_binding(
 }
 
 impl MobileNode {
+    /// Record an allowlisted event. Correlation bytes are retained only as a one-way digest.
+    pub fn record_diagnostic(
+        &self,
+        source: styrene_ipc::types::MobileDiagnosticSource,
+        stage: styrene_ipc::types::MobileDiagnosticStage,
+        severity: styrene_ipc::types::MobileDiagnosticSeverity,
+        correlation: Option<&[u8]>,
+    ) {
+        self.diagnostics.record(source, stage, severity, self.generation.current(), correlation);
+    }
+
+    #[must_use]
+    pub fn diagnostic_snapshot(&self) -> styrene_ipc::types::MobileDiagnosticSnapshot {
+        self.diagnostics.snapshot()
+    }
+
+    pub fn diagnostic_export(
+        &self,
+    ) -> Result<styrene_ipc::types::MobileDiagnosticExport, serde_json::Error> {
+        self.diagnostics.export()
+    }
+
     pub fn startup_contract(&self) -> &StartupContract {
         &self.startup_contract
     }
@@ -1319,13 +1889,48 @@ impl MobileNode {
     pub fn active_capabilities(&self, caller_identity: &str) -> ActiveCapabilities {
         self.startup_contract
             .active_capabilities(self.app_context.policy().authorized_capabilities(caller_identity))
+            .with_generation(self.generation.current())
+    }
+
+    pub fn storage_status(&self) -> Result<MobileStorageStatus, &'static str> {
+        let status = self
+            .app_context
+            .store()
+            .lock()
+            .map_err(|_| "mobile storage status unavailable")?
+            .storage_status();
+        Ok(MobileStorageStatus {
+            generation: self.generation.current(),
+            schema_version: status.schema_version,
+            open: status.open,
+            recovery: status.recovery,
+            last_commit: status.last_commit,
+            degraded: status.degraded,
+        })
     }
 
     /// Boot the daemon in-process for mobile use.
     ///
     /// Creates identity if needed, opens SQLite, starts transport.
     /// Does NOT start an IPC server or PTY terminal.
-    pub async fn boot(config: MobileConfig) -> anyhow::Result<Self> {
+    pub async fn boot(config: MobileConfig) -> Result<Self, MobileBootError> {
+        Self::boot_inner(config, None).await.map_err(|error| MobileBootError::from_internal(&error))
+    }
+
+    /// Boot with host-owned key material for `EncryptedFile` custody.
+    pub async fn boot_with_encrypted_file_key(
+        config: MobileConfig,
+        key_material: &[u8],
+    ) -> Result<Self, MobileBootError> {
+        Self::boot_inner(config, Some(key_material))
+            .await
+            .map_err(|error| MobileBootError::from_internal(&error))
+    }
+
+    async fn boot_inner(
+        config: MobileConfig,
+        encrypted_file_key_material: Option<&[u8]>,
+    ) -> anyhow::Result<Self> {
         let mut interfaces = validate_interfaces(&config)?;
         let paths = PlatformPaths::new(config.config_dir.clone(), config.data_dir.clone());
         paths.ensure_dirs()?;
@@ -1348,133 +1953,164 @@ impl MobileNode {
         }
 
         // Load or create identity via the configured backend.
-        let identity = load_or_create_identity(&config.identity_backend, &paths).await?;
+        let identity =
+            load_or_create_identity(&config.identity_backend, &paths, encrypted_file_key_material)
+                .await?;
+        let custody = active_custody(config.identity_backend);
 
         // Open database
         let db_path = paths.db_path();
         let store = Arc::new(Mutex::new(
             MessagesStore::open(&db_path).map_err(|e| anyhow::anyhow!("database: {e}"))?,
         ));
-        let node_store_path = db_path.with_file_name("nodes.db");
-        let node_store_path = node_store_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("mobile node store path is not valid UTF-8"))?;
-        let node_store = Arc::new(NodeStore::open(node_store_path)?);
+        let boot_result = async {
+            let node_store_path = db_path.with_file_name("nodes.db");
+            let node_store_path = node_store_path
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("mobile node store path is not valid UTF-8"))?;
+            let node_store = Arc::new(NodeStore::open(node_store_path)?);
 
-        let display_name = config.display_name.as_deref().and_then(normalize_display_name);
-        let announce_app_data =
-            display_name.as_deref().and_then(encode_delivery_display_name_app_data);
-
-        // Host-driven RNode and TCP profiles share one transport identity and destination.
-        let transport_runtime = if config.enable_rnode_channel || !interfaces.is_empty() {
-            use rns_core::destination::DestinationName;
-            use rns_core::transport::core_transport::{Transport, TransportConfig};
-            use rns_core::transport::iface::tcp_client::TcpClient;
-            use rns_core::transport::iface::tcp_server::TcpServer;
-
-            let transport_id =
-                rns_core::transport::identity_bridge::to_transport_private_identity(&identity);
-            let config_t = TransportConfig::new("styrene-mobile", &transport_id, true);
-            let mut transport_instance = Transport::new(config_t);
-            let receipt_target = Arc::new(std::sync::OnceLock::new());
-            let packet_receipts = crate::receipt_bridge::PacketReceiptBridge::new();
-            transport_instance
-                .set_receipt_handler(Box::new(crate::receipt_bridge::CompositeReceiptHandler::new(
-                    vec![
-                        Box::new(crate::receipt_bridge::ServiceReceiptBridge::new(
-                            receipt_target.clone(),
-                        )),
-                        Box::new(packet_receipts.clone()),
-                    ],
-                )))
-                .await;
-
-            let iface_mgr = transport_instance.iface_manager();
-            let rnode_channel = if config.enable_rnode_channel {
-                Some(iface_mgr.lock().await.new_channel(128))
-            } else {
-                None
-            };
-            let mut server_bindings = Vec::new();
-            for interface in &interfaces {
-                if let ValidatedMobileInterface::TcpServer(bind_address) = interface {
-                    let (server, binding) =
-                        TcpServer::new(bind_address.to_string(), iface_mgr.clone());
-                    iface_mgr.lock().await.spawn(server, TcpServer::spawn);
-                    server_bindings.push(binding);
-                }
+            let metadata_path = paths.config_dir.join("identity-public.json");
+            let mut metadata = load_public_identity_metadata(&metadata_path)?;
+            if metadata.display_name.is_none()
+                && let Some(display_name) =
+                    config.display_name.as_deref().and_then(normalize_display_name)
+            {
+                metadata.display_name = Some(display_name);
+                persist_public_identity_metadata(&metadata_path, &metadata)?;
             }
-            for interface in &interfaces {
-                if let ValidatedMobileInterface::TcpClient(remote_address) = interface {
-                    iface_mgr
-                        .lock()
-                        .await
-                        .spawn(TcpClient::new(remote_address.clone()), TcpClient::spawn);
-                }
-            }
+            let display_name = metadata.display_name.clone();
+            let announce_app_data =
+                display_name.as_deref().and_then(encode_delivery_display_name_app_data);
 
-            // Add LXMF delivery destination
-            let _destination = transport_instance
-                .add_destination(transport_id, DestinationName::new("lxmf", "delivery"))
-                .await;
+            // Host-driven RNode and TCP profiles share one transport identity and destination.
+            let transport_runtime = if config.enable_rnode_channel || !interfaces.is_empty() {
+                use rns_core::destination::DestinationName;
+                use rns_core::transport::core_transport::{Transport, TransportConfig};
+                use rns_core::transport::iface::tcp_client::TcpClient;
+                use rns_core::transport::iface::tcp_server::TcpServer;
 
-            let transport = Arc::new(transport_instance);
-            let mut id_bytes = [0u8; 16];
-            id_bytes.copy_from_slice(identity.address_hash().as_slice());
+                let transport_id =
+                    rns_core::transport::identity_bridge::to_transport_private_identity(&identity);
+                let config_t = TransportConfig::new("styrene-mobile", &transport_id, true);
+                let mut transport_instance = Transport::new(config_t);
+                let receipt_target = Arc::new(std::sync::OnceLock::new());
+                let packet_receipts = crate::receipt_bridge::PacketReceiptBridge::new();
+                transport_instance
+                    .set_receipt_handler(Box::new(
+                        crate::receipt_bridge::CompositeReceiptHandler::new(vec![
+                            Box::new(crate::receipt_bridge::ServiceReceiptBridge::new(
+                                receipt_target.clone(),
+                            )),
+                            Box::new(packet_receipts.clone()),
+                        ]),
+                    ))
+                    .await;
 
-            let delivery_addr = {
-                let dest = _destination.lock().await;
-                dest.desc.address_hash
-            };
-
-            let adapter =
-                crate::transport::adapter::TokioTransportAdapter::new_with_packet_receipts(
-                    transport.clone(),
-                    rns_core::hash::AddressHash::new(id_bytes),
-                    delivery_addr,
-                    _destination,
-                    announce_app_data,
-                    packet_receipts.sender(),
-                )
-                .await;
-
-            let mut bound = Vec::with_capacity(server_bindings.len());
-            for receiver in server_bindings {
-                match await_tcp_binding(receiver).await {
-                    Ok(address) => bound.push(address),
-                    Err(error) => {
-                        iface_mgr.lock().await.shutdown();
-                        return Err(error);
+                let iface_mgr = transport_instance.iface_manager();
+                let rnode_channel = if config.enable_rnode_channel {
+                    Some(iface_mgr.lock().await.new_host_channel(
+                        128,
+                        InterfaceDescriptor { kind: InterfaceKind::Kiss, ..Default::default() },
+                    ))
+                } else {
+                    None
+                };
+                let mut server_bindings = Vec::new();
+                for interface in &interfaces {
+                    if let ValidatedMobileInterface::TcpServer(bind_address) = interface {
+                        let (server, binding) =
+                            TcpServer::new(bind_address.to_string(), iface_mgr.clone());
+                        iface_mgr.lock().await.spawn(server, TcpServer::spawn);
+                        server_bindings.push(binding);
                     }
                 }
-            }
-            MobileTransportRuntime {
-                transport: Arc::new(adapter),
-                delivery_hash: Some(hex::encode(delivery_addr.as_slice())),
-                tcp_listen_addresses: bound,
-                service_receipt_target: Some(receipt_target),
-                rnode_channel,
-            }
-        } else {
-            MobileTransportRuntime {
-                transport: Arc::new(crate::transport::null_transport::NullTransport::new()),
-                delivery_hash: None,
-                tcp_listen_addresses: Vec::new(),
-                service_receipt_target: None,
-                rnode_channel: None,
-            }
-        };
+                for interface in &interfaces {
+                    if let ValidatedMobileInterface::TcpClient(remote_address) = interface {
+                        iface_mgr
+                            .lock()
+                            .await
+                            .spawn(TcpClient::new(remote_address.clone()), TcpClient::spawn);
+                    }
+                }
 
-        compose_mobile_node(
-            paths,
-            identity,
-            MobileStores { messages: store, nodes: node_store },
-            transport_runtime,
-            display_name,
-            config.hub_delivery_hash,
-            tcp_endpoint,
-        )
-        .await
+                // Add LXMF delivery destination
+                let _destination = transport_instance
+                    .add_destination(transport_id, DestinationName::new("lxmf", "delivery"))
+                    .await;
+
+                let transport = Arc::new(transport_instance);
+                let mut id_bytes = [0u8; 16];
+                id_bytes.copy_from_slice(identity.address_hash().as_slice());
+
+                let delivery_addr = {
+                    let dest = _destination.lock().await;
+                    dest.desc.address_hash
+                };
+
+                let adapter =
+                    crate::transport::adapter::TokioTransportAdapter::new_with_packet_receipts(
+                        transport.clone(),
+                        rns_core::hash::AddressHash::new(id_bytes),
+                        delivery_addr,
+                        _destination,
+                        announce_app_data,
+                        packet_receipts.sender(),
+                    )
+                    .await;
+
+                let mut bound = Vec::with_capacity(server_bindings.len());
+                for receiver in server_bindings {
+                    match await_tcp_binding(receiver).await {
+                        Ok(address) => bound.push(address),
+                        Err(error) => {
+                            iface_mgr.lock().await.shutdown();
+                            return Err(error);
+                        }
+                    }
+                }
+                MobileTransportRuntime {
+                    transport: Arc::new(adapter),
+                    delivery_hash: Some(hex::encode(delivery_addr.as_slice())),
+                    tcp_listen_addresses: bound,
+                    service_receipt_target: Some(receipt_target),
+                    rnode_channel,
+                }
+            } else {
+                MobileTransportRuntime {
+                    transport: Arc::new(crate::transport::null_transport::NullTransport::new()),
+                    delivery_hash: None,
+                    tcp_listen_addresses: Vec::new(),
+                    service_receipt_target: None,
+                    rnode_channel: None,
+                }
+            };
+
+            compose_mobile_node(
+                paths,
+                identity,
+                MobileStores { messages: store.clone(), nodes: node_store },
+                transport_runtime,
+                MobileIdentityRuntime { metadata, metadata_path, custody },
+                config.hub_delivery_hash,
+                tcp_endpoint,
+            )
+            .await
+        }
+        .await;
+
+        if boot_result.is_err() {
+            let cleanup_result = store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("failed-boot storage cleanup failed: lock poisoned"))
+                .and_then(|mut store| {
+                    store.mark_clean_shutdown().map_err(|error| {
+                        anyhow::anyhow!("failed-boot storage cleanup failed: {error}")
+                    })
+                });
+            cleanup_result?;
+        }
+        boot_result
     }
 
     /// The local LXMF delivery destination, if a transport was configured.
@@ -1488,13 +2124,9 @@ impl MobileNode {
     }
 
     pub async fn session_snapshot(&self) -> MobileSessionSnapshot {
+        let runtime = MobileRuntimeState::from_atomic(self.runtime_state.load(Ordering::Acquire));
         let interfaces = self.app_context.transport().interface_snapshots().await;
-        let generation = interfaces
-            .iter()
-            .map(|interface| interface.generation)
-            .max()
-            .unwrap_or(self.generation)
-            .max(1);
+        let generation = self.generation.observe(&interfaces);
         let tcp_states = interfaces
             .iter()
             .filter(|interface| {
@@ -1520,17 +2152,35 @@ impl MobileNode {
             MobileBearerState::Unavailable
         };
         let platform_bearers = self.platform_service.snapshot().await;
-        let failure = (tcp == MobileBearerState::Reconnecting)
-            .then_some(MobileFailure { code: MobileFailureCode::TcpRetrying, retryable: true });
-        let phase = match tcp {
-            MobileBearerState::Connected => MobileConnectionPhase::Connected,
-            MobileBearerState::Connecting => MobileConnectionPhase::Connecting,
-            MobileBearerState::Reconnecting => MobileConnectionPhase::Reconnecting,
-            MobileBearerState::Unavailable
-            | MobileBearerState::Unverified
-            | MobileBearerState::Disconnected => MobileConnectionPhase::Stopped,
+        let failure = if runtime == MobileRuntimeState::Failed {
+            Some(MobileFailure { code: MobileFailureCode::CleanupFailed, retryable: true })
+        } else {
+            (tcp == MobileBearerState::Reconnecting)
+                .then_some(MobileFailure { code: MobileFailureCode::TcpRetrying, retryable: true })
+        };
+        let operational = interfaces.iter().any(|interface| {
+            matches!(
+                interface.state,
+                InterfaceState::Listening | InterfaceState::Connected | InterfaceState::Active
+            )
+        });
+        let phase = if runtime == MobileRuntimeState::Stopped {
+            MobileConnectionPhase::Stopped
+        } else if runtime == MobileRuntimeState::Failed {
+            MobileConnectionPhase::Failed
+        } else if operational {
+            MobileConnectionPhase::Connected
+        } else if interfaces.iter().any(|interface| interface.state == InterfaceState::Retrying) {
+            MobileConnectionPhase::Reconnecting
+        } else if interfaces.iter().any(|interface| {
+            matches!(interface.state, InterfaceState::Starting | InterfaceState::Connecting)
+        }) {
+            MobileConnectionPhase::Connecting
+        } else {
+            MobileConnectionPhase::Offline
         };
         MobileSessionSnapshot {
+            runtime,
             phase,
             endpoint: self.tcp_endpoint.clone(),
             generation,
@@ -1574,6 +2224,17 @@ impl MobileNode {
         }
     }
 
+    pub fn subscribe_state_events(&self) -> MobileStateSubscription {
+        let transport = self.app_context.transport_arc();
+        MobileStateSubscription {
+            generation: Arc::clone(&self.generation),
+            lifecycle: transport.subscribe_lifecycle(),
+            events: self.app_context.events().subscribe_daemon_events(),
+            platform: self.platform_service.changes.subscribe(),
+            transport,
+        }
+    }
+
     pub async fn announce_outcome(&self) -> Result<MobileAnnounceOutcome, MobileAnnounceError> {
         if !self.is_connected() {
             return Err(MobileAnnounceError::TransportUnavailable);
@@ -1592,6 +2253,36 @@ impl MobileNode {
     }
 
     pub async fn send_text(
+        &self,
+        request: MobileSendRequest,
+    ) -> Result<MobileSendOutcome, MobileMessagingFailure> {
+        let result = self.send_text_inner(request).await;
+        let (severity, correlation) = match &result {
+            Ok(outcome)
+                if outcome.disposition == MobileSendDisposition::Accepted
+                    && outcome.terminal_failure.is_none() =>
+            {
+                (
+                    styrene_ipc::types::MobileDiagnosticSeverity::Info,
+                    Some(outcome.message_id.as_bytes()),
+                )
+            }
+            Ok(outcome) => (
+                styrene_ipc::types::MobileDiagnosticSeverity::Warning,
+                Some(outcome.message_id.as_bytes()),
+            ),
+            Err(_) => (styrene_ipc::types::MobileDiagnosticSeverity::Error, None),
+        };
+        self.record_diagnostic(
+            styrene_ipc::types::MobileDiagnosticSource::Messaging,
+            styrene_ipc::types::MobileDiagnosticStage::Outbound,
+            severity,
+            correlation,
+        );
+        result
+    }
+
+    async fn send_text_inner(
         &self,
         request: MobileSendRequest,
     ) -> Result<MobileSendOutcome, MobileMessagingFailure> {
@@ -1933,6 +2624,24 @@ impl MobileNode {
         &self,
         deadline: Duration,
     ) -> Result<MobilePropagationSyncOutcome, MobilePropagationFailure> {
+        let result = self.sync_propagation_once_inner(deadline).await;
+        self.record_diagnostic(
+            styrene_ipc::types::MobileDiagnosticSource::Messaging,
+            styrene_ipc::types::MobileDiagnosticStage::Synchronization,
+            if result.is_ok() {
+                styrene_ipc::types::MobileDiagnosticSeverity::Info
+            } else {
+                styrene_ipc::types::MobileDiagnosticSeverity::Error
+            },
+            None,
+        );
+        result
+    }
+
+    async fn sync_propagation_once_inner(
+        &self,
+        deadline: Duration,
+    ) -> Result<MobilePropagationSyncOutcome, MobilePropagationFailure> {
         let snapshot = self.propagation_snapshot().await?;
         if !snapshot.ready {
             return Err(MobilePropagationFailure {
@@ -2060,11 +2769,99 @@ impl MobileNode {
 
     /// Stop retained workers and dispatch transport shutdown.
     pub async fn shutdown(&self) -> Result<(), crate::transport::mesh_transport::TransportError> {
-        let mut workers = self.workers.lock().ok().and_then(|mut workers| workers.take());
+        use crate::transport::mesh_transport::TransportError;
+
+        if MobileRuntimeState::from_atomic(self.runtime_state.load(Ordering::Acquire))
+            == MobileRuntimeState::Stopped
+        {
+            self.record_diagnostic(
+                styrene_ipc::types::MobileDiagnosticSource::Runtime,
+                styrene_ipc::types::MobileDiagnosticStage::Lifecycle,
+                styrene_ipc::types::MobileDiagnosticSeverity::Info,
+                None,
+            );
+            return Ok(());
+        }
+        let mut workers = match self.workers.lock() {
+            Ok(mut workers) => workers.take(),
+            Err(_) => {
+                self.runtime_state.store(MobileRuntimeState::Failed as u8, Ordering::Release);
+                self.record_diagnostic(
+                    styrene_ipc::types::MobileDiagnosticSource::Runtime,
+                    styrene_ipc::types::MobileDiagnosticStage::Lifecycle,
+                    styrene_ipc::types::MobileDiagnosticSeverity::Error,
+                    None,
+                );
+                return Err(TransportError::ShutdownFailed(
+                    "mobile worker state unavailable".into(),
+                ));
+            }
+        };
         if let Some(workers) = workers.as_mut() {
             workers.shutdown().await;
         }
-        self.app_context.transport().shutdown().await
+        if !self.transport_shutdown_complete.load(Ordering::Acquire) {
+            if let Err(error) = self.app_context.transport().shutdown().await {
+                self.runtime_state.store(MobileRuntimeState::Failed as u8, Ordering::Release);
+                self.record_diagnostic(
+                    styrene_ipc::types::MobileDiagnosticSource::Transport,
+                    styrene_ipc::types::MobileDiagnosticStage::Lifecycle,
+                    styrene_ipc::types::MobileDiagnosticSeverity::Error,
+                    None,
+                );
+                return Err(error);
+            }
+            self.transport_shutdown_complete.store(true, Ordering::Release);
+        }
+
+        #[cfg(test)]
+        if self
+            .storage_shutdown_faults
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| remaining.checked_sub(1))
+            .is_ok()
+        {
+            self.runtime_state.store(MobileRuntimeState::Failed as u8, Ordering::Release);
+            self.record_diagnostic(
+                styrene_ipc::types::MobileDiagnosticSource::Storage,
+                styrene_ipc::types::MobileDiagnosticStage::Lifecycle,
+                styrene_ipc::types::MobileDiagnosticSeverity::Error,
+                None,
+            );
+            return Err(TransportError::ShutdownFailed(
+                "injected mobile storage clean-shutdown marker failure".into(),
+            ));
+        }
+
+        let storage_result = self
+            .app_context
+            .store()
+            .lock()
+            .map_err(|_| TransportError::ShutdownFailed("mobile storage state unavailable".into()))
+            .and_then(|mut store| {
+                store.mark_clean_shutdown().map_err(|error| {
+                    TransportError::ShutdownFailed(format!(
+                        "mobile storage clean-shutdown marker failed: {error}"
+                    ))
+                })
+            });
+        if let Err(error) = storage_result {
+            self.runtime_state.store(MobileRuntimeState::Failed as u8, Ordering::Release);
+            self.record_diagnostic(
+                styrene_ipc::types::MobileDiagnosticSource::Storage,
+                styrene_ipc::types::MobileDiagnosticStage::Lifecycle,
+                styrene_ipc::types::MobileDiagnosticSeverity::Error,
+                None,
+            );
+            return Err(error);
+        }
+        self.runtime_state.store(MobileRuntimeState::Stopped as u8, Ordering::Release);
+        self.record_diagnostic(
+            styrene_ipc::types::MobileDiagnosticSource::Runtime,
+            styrene_ipc::types::MobileDiagnosticStage::Lifecycle,
+            styrene_ipc::types::MobileDiagnosticSeverity::Info,
+            None,
+        );
+        Ok(())
     }
 
     /// Submit unframed RNS bytes received from an Android-owned RNode.
@@ -2091,7 +2888,7 @@ impl MobileNode {
         }
     }
 
-    /// Poll the next unframed RNS packet destined for the Android-owned RNode.
+    /// Poll the next unframed RNS packet destined for the active mobile RNode.
     pub async fn poll_rnode_packet(&self) -> Result<Option<Vec<u8>>, String> {
         let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
         match rnode.tx.lock().await.try_recv() {
@@ -2107,6 +2904,202 @@ impl MobileNode {
         }
     }
 
+    /// Begin one explicitly approved host-owned RNode byte attempt.
+    pub async fn start_rnode_bytes(
+        &self,
+        bearer: MobileRNodeBearer,
+        info: RNodeBearerInfo,
+    ) -> Result<MobileRNodeByteStart, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        if !bearer.accepts(info.kind) {
+            return Err("RNode bearer metadata does not match the mobile bearer".into());
+        }
+        if bearer == MobileRNodeBearer::BluetoothLe
+            && !self.platform_service.bluetooth_approved().await
+        {
+            return Err("Bluetooth RNode requires an approved peripheral".into());
+        }
+        let mut attempts = rnode.attempts.lock().await;
+        if attempts.active.is_some() {
+            return Err("RNode byte attempt is already active".into());
+        }
+        let attempt = MobileRNodeAttempt { generation: attempts.next_generation, bearer, info };
+        let next_generation = attempts
+            .next_generation
+            .checked_add(1)
+            .ok_or("RNode byte attempt generation exhausted")?;
+        rnode.control.set_state(InterfaceState::Connecting);
+        if let Err(error) = self
+            .platform_service
+            .report(MobileBearerObservation {
+                kind: bearer.observation_kind(),
+                state: MobileBearerState::Connecting,
+                reason: None,
+            })
+            .await
+        {
+            rnode.control.set_state(InterfaceState::Closed);
+            return Err(error.into());
+        }
+        let mut protocol = rnode.protocol.lock().await;
+        *protocol = RNodeProtocol::new(RNodeRadioProfile::US_915_DEVELOPMENT);
+        let writes =
+            fragment_rnode_writes(info, protocol.start().map_err(|error| error.to_string())?);
+        attempts.next_generation = next_generation;
+        attempts.active = Some(attempt);
+        Ok(MobileRNodeByteStart { attempt, writes })
+    }
+
+    /// Accept arbitrary ordered RNode bytes and return bounded protocol response writes.
+    pub async fn submit_rnode_bytes(
+        &self,
+        attempt: MobileRNodeAttempt,
+        bytes: &[u8],
+    ) -> Result<Vec<Vec<u8>>, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let attempts = rnode.attempts.lock().await;
+        if attempts.active != Some(attempt) {
+            return Ok(Vec::new());
+        }
+        let output = rnode.protocol.lock().await.feed(bytes).map_err(|error| error.to_string())?;
+        for packet in output.packets {
+            self.submit_rnode_packet(&packet).await?;
+        }
+        if output.became_ready {
+            rnode.control.set_state(InterfaceState::Active);
+            self.platform_service
+                .report(MobileBearerObservation {
+                    kind: attempt.bearer.observation_kind(),
+                    state: MobileBearerState::Connected,
+                    reason: None,
+                })
+                .await?;
+        }
+        Ok(fragment_rnode_writes(attempt.info, output.writes))
+    }
+
+    /// Poll and KISS-frame one outbound RNS packet as ordered bounded writes.
+    pub async fn poll_rnode_bytes(
+        &self,
+        attempt: MobileRNodeAttempt,
+    ) -> Result<Option<MobileRNodeWriteBatch>, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let mut attempts = rnode.attempts.lock().await;
+        if attempts.active != Some(attempt) {
+            return Ok(None);
+        }
+        if rnode.protocol.lock().await.phase() != RNodeProtocolPhase::Ready {
+            return Ok(None);
+        }
+        let (handoff, packet) = if let Some(pending) = &attempts.pending_packet {
+            if pending.offered_to.is_some() {
+                return Ok(None);
+            }
+            (pending.handoff, pending.packet.clone())
+        } else {
+            let next_handoff_generation = attempts
+                .next_handoff_generation
+                .checked_add(1)
+                .ok_or("RNode write handoff generation exhausted")?;
+            let Some(packet) = self.poll_rnode_packet().await? else {
+                return Ok(None);
+            };
+            let handoff = MobileRNodeWriteHandoff { generation: attempts.next_handoff_generation };
+            attempts.next_handoff_generation = next_handoff_generation;
+            attempts.pending_packet = Some(MobileRNodePendingPacket {
+                handoff,
+                packet: packet.clone(),
+                offered_to: None,
+            });
+            (handoff, packet)
+        };
+        let frame = rnode
+            .protocol
+            .lock()
+            .await
+            .encode_packet(&packet)
+            .map_err(|error| error.to_string())?;
+        let pending = attempts.pending_packet.as_mut().ok_or("RNode write handoff was lost")?;
+        if pending.handoff != handoff {
+            return Err("RNode write handoff changed unexpectedly".into());
+        }
+        pending.offered_to = Some(attempt);
+        Ok(Some(MobileRNodeWriteBatch {
+            handoff,
+            writes: fragment_rnode_writes(attempt.info, [frame]),
+        }))
+    }
+
+    /// Remove one packet only after every platform write completed successfully.
+    pub async fn complete_rnode_write(
+        &self,
+        attempt: MobileRNodeAttempt,
+        handoff: MobileRNodeWriteHandoff,
+    ) -> Result<bool, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let mut attempts = rnode.attempts.lock().await;
+        if attempts.active != Some(attempt) {
+            return Ok(false);
+        }
+        let completed = attempts.pending_packet.as_ref().is_some_and(|pending| {
+            pending.handoff == handoff && pending.offered_to == Some(attempt)
+        });
+        if completed {
+            attempts.pending_packet = None;
+        }
+        Ok(completed)
+    }
+
+    /// Release a failed platform write for bounded replay without removing its packet.
+    pub async fn fail_rnode_write(
+        &self,
+        attempt: MobileRNodeAttempt,
+        handoff: MobileRNodeWriteHandoff,
+    ) -> Result<bool, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let mut attempts = rnode.attempts.lock().await;
+        if attempts.active != Some(attempt) {
+            return Ok(false);
+        }
+        let Some(pending) = attempts.pending_packet.as_mut() else {
+            return Ok(false);
+        };
+        if pending.handoff != handoff || pending.offered_to != Some(attempt) {
+            return Ok(false);
+        }
+        pending.offered_to = None;
+        Ok(true)
+    }
+
+    /// End the current attempt and return bounded best-effort radio-off writes.
+    pub async fn stop_rnode_bytes(
+        &self,
+        attempt: MobileRNodeAttempt,
+        reason: MobileBearerReason,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let mut attempts = rnode.attempts.lock().await;
+        if attempts.active != Some(attempt) {
+            return Ok(Vec::new());
+        }
+        let shutdown = rnode.protocol.lock().await.close();
+        if let Some(pending) = attempts.pending_packet.as_mut()
+            && pending.offered_to == Some(attempt)
+        {
+            pending.offered_to = None;
+        }
+        attempts.active = None;
+        rnode.control.set_state(InterfaceState::Closed);
+        self.platform_service
+            .report(MobileBearerObservation {
+                kind: attempt.bearer.observation_kind(),
+                state: MobileBearerState::Disconnected,
+                reason: Some(reason),
+            })
+            .await?;
+        Ok(fragment_rnode_writes(attempt.info, [shutdown]))
+    }
+
     /// Poll the propagation hub for queued messages.
     ///
     /// This is the core background task for iOS `BGAppRefreshTask`.
@@ -2115,6 +3108,31 @@ impl MobileNode {
     ///
     /// Safe to call from a 30-second background window.
     pub async fn poll_hub(&self) -> Result<PollResult, String> {
+        let result = self.poll_hub_inner().await;
+        let severity = match &result {
+            Ok(outcome)
+                if outcome.batch_failure.is_none()
+                    && outcome.items.iter().all(|item| {
+                        !matches!(item.acknowledgement, PollAcknowledgementOutcome::Failed { .. })
+                            && !matches!(item.local, PollLocalOutcome::StorageFailed { .. })
+                    }) =>
+            {
+                styrene_ipc::types::MobileDiagnosticSeverity::Info
+            }
+            Ok(_) => styrene_ipc::types::MobileDiagnosticSeverity::Warning,
+            Err(_) => styrene_ipc::types::MobileDiagnosticSeverity::Error,
+        };
+        self.record_diagnostic(
+            styrene_ipc::types::MobileDiagnosticSource::Messaging,
+            styrene_ipc::types::MobileDiagnosticStage::Inbound,
+            severity,
+            None,
+        );
+        result
+    }
+
+    async fn poll_hub_inner(&self) -> Result<PollResult, String> {
+        let deadline = tokio::time::Instant::now() + LEGACY_HUB_POLL_DEADLINE;
         let hub_hash = self.hub_delivery_hash.as_deref().ok_or("no propagation hub configured")?;
 
         let my_delivery_hash = self
@@ -2124,33 +3142,96 @@ impl MobileNode {
             .ok_or("identity not configured — no delivery hash")?;
 
         // Fetch queued messages from hub
-        let messages = self
-            .app_context
-            .fleet()
-            .propagation_fetch(hub_hash, &my_delivery_hash, Some(15))
-            .await
-            .map_err(|e| format!("fetch failed: {e}"))?;
+        let messages = tokio::time::timeout_at(
+            deadline,
+            self.app_context.fleet().propagation_fetch(hub_hash, &my_delivery_hash, Some(30)),
+        )
+        .await
+        .map_err(|_| "fetch failed: poll deadline exceeded".to_string())?
+        .map_err(|e| format!("fetch failed: {e}"))?;
 
         if messages.is_empty() {
-            return Ok(PollResult { message_count: 0, messages: Vec::new() });
+            return Ok(PollResult {
+                message_count: 0,
+                messages: Vec::new(),
+                items: Vec::new(),
+                batch_failure: None,
+            });
         }
 
-        let mut poll_messages = Vec::new();
+        let pending = self.process_legacy_hub_batch(messages);
+        let acknowledgement = if pending.eligible.is_empty() {
+            Ok(())
+        } else {
+            let ids = pending.eligible.iter().map(|(_, id)| id.clone()).collect::<Vec<_>>();
+            match tokio::time::timeout_at(
+                deadline,
+                self.app_context.fleet().propagation_delete(hub_hash, &ids, Some(30)),
+            )
+            .await
+            {
+                Ok(result) => result.map_err(bounded_poll_error),
+                Err(_) => Err("poll deadline exceeded during acknowledgement".into()),
+            }
+        };
+        Ok(pending.complete(acknowledgement))
+    }
 
-        // Decode and persist each message. Duplicate imports are ACKed at the
-        // hub but do not produce another notification.
-        for (_id, lxmf_bytes) in &messages {
+    /// Decode and durably persist a fetched legacy hub batch before acknowledgement.
+    ///
+    /// Call [`LegacyHubPollBatch::acknowledgement_ids`] to perform the remote
+    /// acknowledgement, then [`LegacyHubPollBatch::complete`] to obtain the
+    /// typed per-item result.
+    pub fn process_legacy_hub_batch(&self, messages: Vec<(String, Vec<u8>)>) -> LegacyHubPollBatch {
+        let aggregate_bytes = messages.iter().fold(0usize, |total, (id, bytes)| {
+            total.saturating_add(id.len()).saturating_add(bytes.len())
+        });
+        let batch_failure = if messages.len() > LEGACY_HUB_POLL_MAX_ITEMS {
+            Some(PollBatchFailure::ItemLimitExceeded {
+                limit: LEGACY_HUB_POLL_MAX_ITEMS,
+                observed: messages.len(),
+            })
+        } else if aggregate_bytes > LEGACY_HUB_POLL_MAX_BYTES {
+            Some(PollBatchFailure::ByteLimitExceeded {
+                limit: LEGACY_HUB_POLL_MAX_BYTES,
+                observed: aggregate_bytes,
+            })
+        } else {
+            None
+        };
+        if let Some(batch_failure) = batch_failure {
+            return LegacyHubPollBatch {
+                result: PollResult {
+                    message_count: 0,
+                    messages: Vec::new(),
+                    items: Vec::new(),
+                    batch_failure: Some(batch_failure),
+                },
+                eligible: Vec::new(),
+            };
+        }
+        let mut poll_messages = Vec::new();
+        let mut items = Vec::with_capacity(messages.len());
+        let mut eligible = Vec::new();
+
+        for (hub_id, lxmf_bytes) in messages {
+            let item_index = items.len();
             match self.app_context.messaging().accept_inbound(
                 [0u8; 16], // destination filled by decoder from wire
-                lxmf_bytes,
+                &lxmf_bytes,
                 lxmf::inbound_decode::InboundPayloadMode::FullWire,
             ) {
                 InboundAcceptOutcome::Accepted(record) => {
                     poll_messages.push(PollMessage {
                         source_hash: record.source.clone(),
-                        content_preview: record.content[..record.content.len().min(100)]
-                            .to_string(),
+                        content_preview: legacy_poll_preview(&record.content),
                         timestamp: record.timestamp,
+                    });
+                    eligible.push((item_index, hub_id.clone()));
+                    items.push(PollItemOutcome {
+                        hub_id,
+                        local: PollLocalOutcome::Accepted { message_id: record.id },
+                        acknowledgement: PollAcknowledgementOutcome::NotEligible,
                     });
                 }
                 InboundAcceptOutcome::Duplicate { message_id } => {
@@ -2161,34 +3242,59 @@ impl MobileNode {
                         None,
                         None,
                     );
+                    eligible.push((item_index, hub_id.clone()));
+                    items.push(PollItemOutcome {
+                        hub_id,
+                        local: PollLocalOutcome::DurableDuplicate { message_id },
+                        acknowledgement: PollAcknowledgementOutcome::NotEligible,
+                    });
                 }
                 InboundAcceptOutcome::Rejected { diagnostics } => {
+                    let reason = bounded_poll_error(diagnostics.summary());
                     self.app_context.events().emit_inbound_drop(
                         "mobile_poll",
                         "malformed",
                         None,
                         None,
-                        Some(&diagnostics.summary()),
+                        Some(&reason),
                     );
+                    items.push(PollItemOutcome {
+                        hub_id,
+                        local: PollLocalOutcome::DecodeRejected { reason },
+                        acknowledgement: PollAcknowledgementOutcome::NotEligible,
+                    });
                 }
                 InboundAcceptOutcome::StorageError { message_id, error } => {
+                    let error = bounded_poll_error(error);
                     self.app_context.events().emit_inbound_drop(
                         "mobile_poll",
                         "storage_error",
                         Some(&message_id),
                         None,
-                        Some(&error.to_string()),
+                        Some(&error),
                     );
+                    items.push(PollItemOutcome {
+                        hub_id,
+                        local: PollLocalOutcome::StorageFailed {
+                            message_id: (!message_id.is_empty()).then_some(message_id),
+                            error,
+                        },
+                        acknowledgement: PollAcknowledgementOutcome::NotEligible,
+                    });
                 }
             }
         }
 
-        // ACK all fetched messages so hub deletes them
-        let ids: Vec<String> = messages.into_iter().map(|(id, _)| id).collect();
-        let _ = self.app_context.fleet().propagation_delete(hub_hash, &ids, Some(15)).await;
-
         let count = poll_messages.len();
-        Ok(PollResult { message_count: count, messages: poll_messages })
+        LegacyHubPollBatch {
+            result: PollResult {
+                message_count: count,
+                messages: poll_messages,
+                items,
+                batch_failure: None,
+            },
+            eligible,
+        }
     }
 
     /// Send a chat message to a peer.
@@ -2220,6 +3326,25 @@ impl MobileNode {
     }
 
     // ── Conversation & Contact Management ───────────────────────────
+
+    pub async fn start_conversation(
+        &self,
+        peer_hash: &str,
+    ) -> Result<styrene_ipc::types::MessagingOperationOutcome, String> {
+        DaemonMessaging::start_conversation(self.facade.as_ref(), peer_hash)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    pub async fn conversation_page(
+        &self,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<styrene_ipc::types::ConversationPage, String> {
+        DaemonMessaging::query_conversation_page(self.facade.as_ref(), false, limit, cursor)
+            .await
+            .map_err(|error| error.to_string())
+    }
 
     /// List conversations with unread counts.
     pub async fn list_conversations(&self) -> Result<Vec<ConversationSummary>, String> {
@@ -2335,11 +3460,14 @@ pub struct ConversationSummary {
 async fn load_or_create_identity(
     backend: &IdentityBackend,
     paths: &PlatformPaths,
+    encrypted_file_key_material: Option<&[u8]>,
 ) -> anyhow::Result<PrivateIdentity> {
     match backend {
         IdentityBackend::Keychain => load_or_create_keychain(paths).await,
         IdentityBackend::AndroidKeystore => load_or_create_android_keystore().await,
-        IdentityBackend::EncryptedFile => load_or_create_encrypted_file(paths).await,
+        IdentityBackend::EncryptedFile => {
+            load_or_create_encrypted_file(paths, encrypted_file_key_material).await
+        }
         IdentityBackend::PlaintextFile => load_or_create_plaintext_file(paths),
     }
 }
@@ -2358,10 +3486,13 @@ async fn load_or_create_android_keystore() -> anyhow::Result<PrivateIdentity> {
     }
 
     #[cfg(not(all(feature = "mobile-android-keystore", target_os = "android")))]
-    anyhow::bail!("Android Keystore identity backend is unavailable in this build")
+    Err(MobileCustodyError::BackendUnavailable { backend: "Android Keystore" }.into())
 }
 
-#[cfg(any(feature = "mobile-keychain", feature = "mobile-android-keystore"))]
+#[cfg(any(
+    all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")),
+    all(feature = "mobile-android-keystore", target_os = "android")
+))]
 fn private_identity_from_root(
     root: &styrene_identity::signer::RootSecret,
 ) -> anyhow::Result<PrivateIdentity> {
@@ -2381,7 +3512,6 @@ fn private_identity_from_root(
 ///
 /// On iOS: Face ID / Touch ID protects access. Zero-interaction on create.
 /// On macOS: Keychain Access with biometric. Same behavior.
-/// Fallback: if keychain feature not compiled, falls back to plaintext file.
 async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
     #[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
     {
@@ -2405,19 +3535,22 @@ async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<Priva
     }
 
     #[cfg(not(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios"))))]
-    {
-        crate::daemon_diagnostic!(
-            "[mobile] keychain feature not enabled, falling back to plaintext file"
-        );
-        load_or_create_plaintext_file(_paths)
-    }
+    Err(MobileCustodyError::BackendUnavailable { backend: "Keychain" }.into())
 }
 
 /// Encrypted file backend: argon2id + ChaCha20Poly1305 encrypted root secret.
 ///
 /// Requires a passphrase — the host app must provide it via a prompt.
 /// Less seamless than keychain but works on any platform.
-async fn load_or_create_encrypted_file(paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
+async fn load_or_create_encrypted_file(
+    paths: &PlatformPaths,
+    key_material: Option<&[u8]>,
+) -> anyhow::Result<PrivateIdentity> {
+    let key_material = key_material
+        .filter(|material| !material.is_empty())
+        .ok_or(MobileCustodyError::KeyMaterialRequired)?;
+    #[cfg(not(feature = "mobile-identity"))]
+    let _ = (paths, key_material);
     #[cfg(feature = "mobile-identity")]
     {
         use styrene_identity::{IdentitySigner, KeyDeriver, KeyPurpose};
@@ -2426,16 +3559,21 @@ async fn load_or_create_encrypted_file(paths: &PlatformPaths) -> anyhow::Result<
 
         let signer = styrene_identity::file_signer::FileSigner::new(
             identity_path.clone(),
-            Box::new(styrene_identity::file_signer::StaticPassphraseProvider::new(b"")),
+            Box::new(styrene_identity::file_signer::StaticPassphraseProvider::new(key_material)),
         );
 
-        // FileSigner auto-creates on first root_secret() if file doesn't exist
+        let created = !identity_path.exists();
+        if created {
+            signer
+                .generate(key_material)
+                .map_err(|e| anyhow::anyhow!("encrypted file create: {e}"))?;
+        }
         let root = signer
             .root_secret()
             .await
             .map_err(|e| anyhow::anyhow!("encrypted file access: {e}"))?;
 
-        if !identity_path.exists() {
+        if created {
             crate::daemon_diagnostic!(
                 "[mobile] created new encrypted identity at {}",
                 identity_path.display()
@@ -2455,12 +3593,73 @@ async fn load_or_create_encrypted_file(paths: &PlatformPaths) -> anyhow::Result<
     }
 
     #[cfg(not(feature = "mobile-identity"))]
-    {
-        crate::daemon_diagnostic!(
-            "[mobile] file-signer feature not enabled, falling back to plaintext"
-        );
-        load_or_create_plaintext_file(paths)
+    Err(MobileCustodyError::BackendUnavailable { backend: "encrypted-file" }.into())
+}
+
+fn active_custody(backend: IdentityBackend) -> styrene_ipc::types::IdentityCustodyInfo {
+    use styrene_ipc::types::{
+        IdentityCustodyAuthentication as Authentication,
+        IdentityCustodyAvailability as Availability, IdentityCustodyBackend as Backend,
+        IdentityCustodyDowngrade as Downgrade, IdentityCustodyInfo,
+        IdentityCustodyProtection as Protection,
+    };
+
+    let (backend, protection, authentication) = match backend {
+        IdentityBackend::Keychain => {
+            (Backend::Keychain, Protection::PlatformProtected, Authentication::DeviceAuthentication)
+        }
+        IdentityBackend::AndroidKeystore => {
+            (Backend::AndroidKeystore, Protection::PlatformProtected, Authentication::None)
+        }
+        IdentityBackend::EncryptedFile => {
+            (Backend::EncryptedFile, Protection::EncryptedAtRest, Authentication::HostKeyMaterial)
+        }
+        IdentityBackend::PlaintextFile => {
+            (Backend::PlaintextFile, Protection::DevelopmentPlaintext, Authentication::None)
+        }
+    };
+    IdentityCustodyInfo {
+        requested_backend: backend,
+        active_backend: Some(backend),
+        protection: Some(protection),
+        authentication,
+        availability: Availability::Available,
+        downgrade: Downgrade::None,
+        failure: None,
     }
+}
+
+fn load_public_identity_metadata(
+    path: &std::path::Path,
+) -> anyhow::Result<crate::services::identity::PublicIdentityMetadata> {
+    if !path.exists() {
+        return Ok(crate::services::identity::PublicIdentityMetadata::default());
+    }
+    let bytes = std::fs::read(path)
+        .map_err(|error| anyhow::anyhow!("read public identity metadata: {error}"))?;
+    let metadata: crate::services::identity::PublicIdentityMetadata =
+        serde_json::from_slice(&bytes)
+            .map_err(|error| anyhow::anyhow!("invalid public identity metadata: {error}"))?;
+    for (kind, value) in [
+        ("display name", metadata.display_name.as_deref()),
+        ("icon", metadata.icon.as_deref()),
+        ("short name", metadata.short_name.as_deref()),
+    ] {
+        if let Some(value) = value {
+            crate::services::identity::validate_public_field(kind, value)
+                .map_err(anyhow::Error::msg)?;
+        }
+    }
+    Ok(metadata)
+}
+
+fn persist_public_identity_metadata(
+    path: &std::path::Path,
+    metadata: &crate::services::identity::PublicIdentityMetadata,
+) -> anyhow::Result<()> {
+    let bytes = serde_json::to_vec(metadata)?;
+    atomic_write_private(path, &bytes)
+        .map_err(|error| anyhow::anyhow!("persist public identity metadata: {error}"))
 }
 
 /// Plaintext file backend: 64-byte raw identity on disk.
@@ -2468,27 +3667,80 @@ async fn load_or_create_encrypted_file(paths: &PlatformPaths) -> anyhow::Result<
 /// For development and testing only. NOT secure for production mobile.
 fn load_or_create_plaintext_file(paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
     let identity_path = paths.identity_path();
-
-    if identity_path.exists() {
-        let bytes = std::fs::read(&identity_path)?;
-        PrivateIdentity::from_private_key_bytes(&bytes)
-            .map_err(|e| anyhow::anyhow!("invalid identity: {e:?}"))
-    } else {
-        // Generate deterministic-ish identity for new installs
-        let id = PrivateIdentity::new_from_name(&format!(
-            "styrene-mobile-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
-        std::fs::write(&identity_path, id.to_private_key_bytes())?;
-        crate::daemon_diagnostic!(
-            "[mobile] created new plaintext identity at {}",
-            identity_path.display()
-        );
-        Ok(id)
+    match load_plaintext_identity(&identity_path) {
+        Ok(identity) => return Ok(identity),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
+
+    let identity = PrivateIdentity::new_from_rand(rand_core::OsRng);
+    let parent = identity_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("plaintext identity path has no parent"))?;
+    std::fs::create_dir_all(parent)?;
+    let file_name = identity_path.file_name().and_then(|name| name.to_str()).unwrap_or("identity");
+    let (temporary_path, mut file) = loop {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = parent.join(format!(".{file_name}.create-{}-{sequence}", std::process::id()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(file) => break (path, file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    };
+
+    use std::io::Write;
+    let staged = file.write_all(&identity.to_private_key_bytes()).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = staged {
+        let _ = std::fs::remove_file(&temporary_path);
+        return Err(error.into());
+    }
+
+    match std::fs::hard_link(&temporary_path, &identity_path) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&temporary_path);
+            sync_plaintext_identity_directory(parent)?;
+            crate::daemon_diagnostic!(
+                "[mobile] created new plaintext identity at {}",
+                identity_path.display()
+            );
+            Ok(identity)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = std::fs::remove_file(&temporary_path);
+            load_plaintext_identity(&identity_path).map_err(Into::into)
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&temporary_path);
+            Err(error.into())
+        }
+    }
+}
+
+fn load_plaintext_identity(path: &std::path::Path) -> std::io::Result<PrivateIdentity> {
+    let bytes = std::fs::read(path)?;
+    PrivateIdentity::from_private_key_bytes(&bytes).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("invalid identity: {error:?}"))
+    })
+}
+
+#[cfg(unix)]
+fn sync_plaintext_identity_directory(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_plaintext_identity_directory(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2500,6 +3752,53 @@ mod tests {
     use rns_core::hash::AddressHash;
     use rns_core::transport::core_transport::{ReceivedData, ReceivedPayloadMode};
 
+    #[test]
+    fn android_keystore_custody_reports_wrapping_without_device_authentication() {
+        use styrene_ipc::types::{
+            IdentityCustodyAuthentication, IdentityCustodyBackend, IdentityCustodyProtection,
+        };
+
+        let custody = active_custody(IdentityBackend::AndroidKeystore);
+
+        assert_eq!(custody.active_backend, Some(IdentityCustodyBackend::AndroidKeystore));
+        assert_eq!(custody.protection, Some(IdentityCustodyProtection::PlatformProtected));
+        assert_eq!(custody.authentication, IdentityCustodyAuthentication::None);
+    }
+
+    #[test]
+    fn concurrent_plaintext_creators_converge_on_one_durable_private_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = PlatformPaths::new(temp.path().join("config"), temp.path().join("data"));
+        paths.ensure_dirs().unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(17));
+        let creators = (0..16)
+            .map(|_| {
+                let paths = paths.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    load_or_create_plaintext_file(&paths).unwrap().to_private_key_bytes()
+                })
+            })
+            .collect::<Vec<_>>();
+
+        barrier.wait();
+        let identities =
+            creators.into_iter().map(|creator| creator.join().unwrap()).collect::<Vec<_>>();
+        let durable = std::fs::read(paths.identity_path()).unwrap();
+
+        assert_eq!(durable.len(), 64);
+        assert!(identities.iter().all(|identity| identity.as_slice() == durable));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(paths.identity_path()).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
     #[cfg(not(target_os = "android"))]
     #[tokio::test]
     async fn android_keystore_backend_never_falls_back_to_plaintext() {
@@ -2507,7 +3806,8 @@ mod tests {
         let paths = PlatformPaths::new(temp.path().join("config"), temp.path().join("data"));
         paths.ensure_dirs().unwrap();
 
-        let Err(error) = load_or_create_identity(&IdentityBackend::AndroidKeystore, &paths).await
+        let Err(error) =
+            load_or_create_identity(&IdentityBackend::AndroidKeystore, &paths, None).await
         else {
             panic!("unsupported Android Keystore backend created an identity");
         };
@@ -2515,8 +3815,141 @@ mod tests {
         assert!(error.to_string().contains("unavailable in this build"));
         assert!(!paths.identity_path().exists());
     }
+
+    #[cfg(not(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios"))))]
+    #[tokio::test]
+    async fn keychain_backend_never_falls_back_to_plaintext() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = PlatformPaths::new(temp.path().join("config"), temp.path().join("data"));
+        paths.ensure_dirs().unwrap();
+
+        let result = load_or_create_identity(&IdentityBackend::Keychain, &paths, None).await;
+
+        assert!(result.is_err());
+        assert!(!paths.identity_path().exists());
+    }
+
+    #[tokio::test]
+    async fn encrypted_file_backend_rejects_missing_key_material_before_writing() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = PlatformPaths::new(temp.path().join("config"), temp.path().join("data"));
+        paths.ensure_dirs().unwrap();
+
+        for key_material in [None, Some([].as_slice())] {
+            let result =
+                load_or_create_identity(&IdentityBackend::EncryptedFile, &paths, key_material)
+                    .await;
+            assert!(result.is_err());
+        }
+        assert!(!paths.identity_path().exists());
+    }
+
+    #[cfg(not(feature = "mobile-identity"))]
+    #[tokio::test]
+    async fn unavailable_encrypted_file_backend_never_falls_back_to_plaintext() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = PlatformPaths::new(temp.path().join("config"), temp.path().join("data"));
+        paths.ensure_dirs().unwrap();
+
+        let result =
+            load_or_create_identity(&IdentityBackend::EncryptedFile, &paths, Some(b"host-key"))
+                .await;
+
+        assert!(result.is_err());
+        assert!(!paths.identity_path().exists());
+    }
+
+    #[cfg(feature = "mobile-identity")]
+    #[tokio::test]
+    async fn encrypted_file_backend_uses_host_key_and_restores_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = PlatformPaths::new(temp.path().join("config"), temp.path().join("data"));
+        paths.ensure_dirs().unwrap();
+
+        let first = load_or_create_identity(
+            &IdentityBackend::EncryptedFile,
+            &paths,
+            Some(b"host-owned-test-key"),
+        )
+        .await
+        .unwrap();
+        let second = load_or_create_identity(
+            &IdentityBackend::EncryptedFile,
+            &paths,
+            Some(b"host-owned-test-key"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first.address_hash(), second.address_hash());
+        assert_ne!(std::fs::read(paths.identity_path()).unwrap().len(), 64);
+    }
     use styrene_ipc::types::DaemonEvent;
     use tokio::time::{Duration, timeout};
+
+    fn test_rnode_info(bearer: MobileRNodeBearer, max_write_size: usize) -> RNodeBearerInfo {
+        RNodeBearerInfo {
+            kind: match bearer {
+                MobileRNodeBearer::BluetoothLe => RNodeBearerKind::Ble,
+                MobileRNodeBearer::AndroidUsb => RNodeBearerKind::AndroidUsb,
+            },
+            negotiated_mtu: None,
+            max_write_size: Some(max_write_size),
+        }
+    }
+
+    async fn ready_test_rnode(
+        node: &MobileNode,
+        bearer: MobileRNodeBearer,
+    ) -> MobileRNodeByteStart {
+        use rns_core::transport::iface::kiss::kiss_encode_command;
+        use rns_core::transport::iface::rnode::{
+            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FREQUENCY, CMD_RADIO_STATE,
+            CMD_SPREADING_FACTOR, CMD_TX_POWER, RNodeRadioProfile,
+        };
+
+        match bearer {
+            MobileRNodeBearer::BluetoothLe => {
+                node.platform_service().set_bluetooth_approved(true).await;
+            }
+            MobileRNodeBearer::AndroidUsb => {
+                assert_eq!(
+                    node.platform_service().request_android_usb_fallback().await,
+                    MobileUsbFallbackDisposition::Accepted
+                );
+            }
+        }
+        let start = node.start_rnode_bytes(bearer, test_rnode_info(bearer, 512)).await.unwrap();
+        let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
+        let configured = [
+            kiss_encode_command(CMD_DETECT, &[0x46]),
+            kiss_encode_command(CMD_FREQUENCY, &profile.frequency_hz.to_be_bytes()),
+            kiss_encode_command(CMD_BANDWIDTH, &profile.bandwidth_hz.to_be_bytes()),
+            kiss_encode_command(CMD_TX_POWER, &[profile.tx_power_dbm]),
+            kiss_encode_command(CMD_SPREADING_FACTOR, &[profile.spreading_factor]),
+            kiss_encode_command(CMD_CODING_RATE, &[profile.coding_rate]),
+            kiss_encode_command(CMD_RADIO_STATE, &[1]),
+        ]
+        .concat();
+        node.submit_rnode_bytes(start.attempt, &configured).await.unwrap();
+        start
+    }
+
+    async fn poll_test_handoff(
+        node: &MobileNode,
+        attempt: MobileRNodeAttempt,
+    ) -> MobileRNodeWriteBatch {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(batch) = node.poll_rnode_bytes(attempt).await.unwrap() {
+                    break batch;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap()
+    }
 
     async fn compose_with_mock(
         mock: Arc<MockTransport>,
@@ -2536,12 +3969,219 @@ mod tests {
                 service_receipt_target: None,
                 rnode_channel: None,
             },
-            display_name,
+            MobileIdentityRuntime {
+                metadata: crate::services::identity::PublicIdentityMetadata {
+                    display_name,
+                    ..Default::default()
+                },
+                metadata_path: PathBuf::from("test-config/identity-public.json"),
+                custody: active_custody(IdentityBackend::PlaintextFile),
+            },
             None,
             None,
         )
         .await
         .unwrap()
+    }
+
+    async fn compose_with_mock_identity_state(
+        mock: Arc<MockTransport>,
+        paths: PlatformPaths,
+        identity: PrivateIdentity,
+        metadata: crate::services::identity::PublicIdentityMetadata,
+    ) -> MobileNode {
+        let delivery_hash = hex::encode(mock.destination_hash().as_slice());
+        compose_mobile_node(
+            paths.clone(),
+            identity,
+            MobileStores {
+                messages: Arc::new(Mutex::new(MessagesStore::in_memory().unwrap())),
+                nodes: Arc::new(NodeStore::in_memory().unwrap()),
+            },
+            MobileTransportRuntime {
+                transport: mock,
+                delivery_hash: Some(delivery_hash),
+                tcp_listen_addresses: Vec::new(),
+                service_receipt_target: None,
+                rnode_channel: None,
+            },
+            MobileIdentityRuntime {
+                metadata,
+                metadata_path: paths.config_dir.join("identity-public.json"),
+                custody: active_custody(IdentityBackend::PlaintextFile),
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn restarted_node_announces_restored_metadata_and_invalid_edit_is_silent() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = PlatformPaths::new(temp.path().join("config"), temp.path().join("data"));
+        paths.ensure_dirs().unwrap();
+        let metadata_path = paths.config_dir.join("identity-public.json");
+        let first_identity = load_or_create_plaintext_file(&paths).unwrap();
+        let identity_hash = first_identity.address_hash().to_owned();
+        let first_mock = Arc::new(MockTransport::new_default());
+        let first = compose_with_mock_identity_state(
+            first_mock.clone(),
+            paths.clone(),
+            first_identity,
+            crate::services::identity::PublicIdentityMetadata::default(),
+        )
+        .await;
+
+        assert!(
+            first
+                .facade
+                .set_identity(Some("  Field Node  "), Some("radio"), Some("FN"))
+                .await
+                .unwrap()
+        );
+        let expected = encode_delivery_display_name_app_data("Field Node");
+        assert!(matches!(
+            first_mock.calls().as_slice(),
+            [MockCall::Announce { app_data }] if app_data == &expected
+        ));
+        first.shutdown().await.unwrap();
+
+        let restored_identity = load_or_create_plaintext_file(&paths).unwrap();
+        assert_eq!(*restored_identity.address_hash(), identity_hash);
+        let restored_metadata = load_public_identity_metadata(&metadata_path).unwrap();
+        let second_mock = Arc::new(MockTransport::new_default());
+        let second = compose_with_mock_identity_state(
+            second_mock.clone(),
+            paths,
+            restored_identity,
+            restored_metadata,
+        )
+        .await;
+        let projected = second.facade.query_identity().await.unwrap();
+        assert_eq!(projected.display_name, "Field Node");
+        assert_eq!(projected.icon.as_deref(), Some("radio"));
+        assert_eq!(projected.short_name.as_deref(), Some("FN"));
+        assert!(second_mock.calls().is_empty());
+
+        second.app_context.identity().announce(None).await;
+        assert!(matches!(
+            second_mock.calls().as_slice(),
+            [MockCall::Announce { app_data }] if app_data == &expected
+        ));
+        let persisted_before_invalid = std::fs::read(&metadata_path).unwrap();
+        let calls_before_invalid = second_mock.call_count();
+        assert!(
+            second.facade.set_identity(Some("bad\nname"), Some("changed"), None).await.is_err()
+        );
+        assert_eq!(second_mock.call_count(), calls_before_invalid);
+        assert_eq!(std::fs::read(metadata_path).unwrap(), persisted_before_invalid);
+        second.shutdown().await.unwrap();
+    }
+
+    fn poll_wire(content: &str) -> Vec<u8> {
+        let sender = PrivateIdentity::new_from_name("legacy mobile poll sender");
+        let sender_destination = SingleOutputDestination::new(
+            *sender.as_identity(),
+            DestinationName::new("lxmf", "delivery"),
+        )
+        .desc
+        .address_hash;
+        let mut source = [0; 16];
+        source.copy_from_slice(sender_destination.as_slice());
+        crate::lxmf_bridge::build_wire_message(source, [0; 16], "", content, None, &sender).unwrap()
+    }
+
+    #[test]
+    fn poll_preview_is_unicode_safe_and_bounded() {
+        let ascii_boundary = "a".repeat(POLL_PREVIEW_MAX_CHARS);
+        assert_eq!(legacy_poll_preview(&ascii_boundary), ascii_boundary);
+        assert_eq!(
+            legacy_poll_preview(&"a".repeat(POLL_PREVIEW_MAX_CHARS + 1)),
+            "a".repeat(POLL_PREVIEW_MAX_CHARS)
+        );
+        assert_eq!(legacy_poll_preview(""), "");
+
+        let multibyte = "界".repeat(40);
+        let preview = legacy_poll_preview(&multibyte);
+        assert!(preview.is_char_boundary(preview.len()));
+        assert!(preview.len() <= POLL_PREVIEW_MAX_BYTES);
+        assert!(preview.chars().count() <= POLL_PREVIEW_MAX_CHARS);
+
+        let combining = "e\u{301}".repeat(80);
+        let preview = legacy_poll_preview(&combining);
+        assert!(preview.is_char_boundary(preview.len()));
+        assert!(preview.len() <= POLL_PREVIEW_MAX_BYTES);
+        assert!(preview.chars().count() <= POLL_PREVIEW_MAX_CHARS);
+
+        let over_limit = format!("{}界", "a".repeat(POLL_PREVIEW_MAX_BYTES - 1));
+        assert_eq!(legacy_poll_preview(&over_limit), "a".repeat(POLL_PREVIEW_MAX_BYTES - 1));
+    }
+
+    #[tokio::test]
+    async fn poll_hub_reports_accepted_duplicate_rejected_and_mixed_acknowledgement() {
+        let node = compose_with_mock(Arc::new(MockTransport::new_default()), None).await;
+        let wire = poll_wire("notification text");
+        let pending = node.process_legacy_hub_batch(vec![
+            ("accepted".into(), wire.clone()),
+            ("duplicate".into(), wire),
+            ("rejected".into(), b"not lxmf".to_vec()),
+        ]);
+
+        assert_eq!(
+            pending.eligible.iter().map(|(_, id)| id.as_str()).collect::<Vec<_>>(),
+            ["accepted", "duplicate",]
+        );
+        let result = pending.complete(Ok(()));
+        assert_eq!(result.message_count, 1);
+        assert_eq!(result.messages.len(), 1);
+        assert!(matches!(result.items[0].local, PollLocalOutcome::Accepted { .. }));
+        assert!(matches!(result.items[1].local, PollLocalOutcome::DurableDuplicate { .. }));
+        assert!(matches!(result.items[2].local, PollLocalOutcome::DecodeRejected { .. }));
+        assert_eq!(
+            result.items.iter().map(|item| &item.acknowledgement).collect::<Vec<_>>(),
+            [
+                &PollAcknowledgementOutcome::Acknowledged,
+                &PollAcknowledgementOutcome::Acknowledged,
+                &PollAcknowledgementOutcome::NotEligible,
+            ]
+        );
+        node.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn poll_hub_storage_failure_is_not_acknowledgeable() {
+        let node = compose_with_mock(Arc::new(MockTransport::new_default()), None).await;
+        let store = node.app_context.store().clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = store.lock().unwrap();
+            panic!("poison poll store");
+        })
+        .join();
+
+        let pending =
+            node.process_legacy_hub_batch(vec![("storage-failure".into(), poll_wire("lost"))]);
+        assert!(pending.eligible.is_empty());
+        let result = pending.complete(Ok(()));
+        assert_eq!(result.message_count, 0);
+        assert!(matches!(result.items[0].local, PollLocalOutcome::StorageFailed { .. }));
+        assert_eq!(result.items[0].acknowledgement, PollAcknowledgementOutcome::NotEligible);
+    }
+
+    #[tokio::test]
+    async fn poll_hub_surfaces_remote_acknowledgement_failure_per_eligible_item() {
+        let node = compose_with_mock(Arc::new(MockTransport::new_default()), None).await;
+        let pending =
+            node.process_legacy_hub_batch(vec![("accepted".into(), poll_wire("keep me"))]);
+        let result = pending.complete(Err("hub refused deletion".into()));
+
+        assert_eq!(result.message_count, 1);
+        assert_eq!(
+            result.items[0].acknowledgement,
+            PollAcknowledgementOutcome::Failed { error: "hub refused deletion".into() }
+        );
+        node.shutdown().await.unwrap();
     }
 
     fn propagation_candidate(
@@ -2848,7 +4488,11 @@ mod tests {
                 service_receipt_target: Some(receipt_target),
                 rnode_channel: None,
             },
-            None,
+            MobileIdentityRuntime {
+                metadata: crate::services::identity::PublicIdentityMetadata::default(),
+                metadata_path: PathBuf::from("test-config/identity-public.json"),
+                custody: active_custody(IdentityBackend::PlaintextFile),
+            },
             None,
             None,
         )
@@ -2943,6 +4587,162 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_transport_shutdown_is_typed_and_retryable_without_workers() {
+        let mock = Arc::new(MockTransport::new_default());
+        mock.queue_shutdown(Err(crate::transport::mesh_transport::TransportError::ShutdownFailed(
+            "injected transport failure".into(),
+        )));
+        let node = compose_with_mock(mock.clone(), None).await;
+
+        let error = node.shutdown().await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::transport::mesh_transport::TransportError::ShutdownFailed(ref message)
+                if message == "injected transport failure"
+        ));
+        let failed = node.session_snapshot().await;
+        assert_eq!(failed.runtime, MobileRuntimeState::Failed);
+        assert_eq!(failed.phase, MobileConnectionPhase::Failed);
+        assert_eq!(
+            failed.failure,
+            Some(MobileFailure { code: MobileFailureCode::CleanupFailed, retryable: true })
+        );
+        assert_eq!(
+            node.storage_status().unwrap().last_commit.unwrap().kind,
+            crate::storage::messages::StorageCommitKind::SessionOpened
+        );
+
+        node.shutdown().await.unwrap();
+        let stopped = node.session_snapshot().await;
+        assert_eq!(stopped.runtime, MobileRuntimeState::Stopped);
+        assert_eq!(stopped.phase, MobileConnectionPhase::Stopped);
+        assert_eq!(stopped.failure, None);
+        assert_eq!(
+            node.storage_status().unwrap().last_commit.unwrap().kind,
+            crate::storage::messages::StorageCommitKind::CleanShutdown
+        );
+        assert_eq!(
+            mock.calls().into_iter().filter(|call| matches!(call, MockCall::Shutdown)).count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_storage_marker_is_retryable_without_repeating_transport_shutdown() {
+        let mock = Arc::new(MockTransport::new_default());
+        let node = compose_with_mock(mock.clone(), None).await;
+        node.storage_shutdown_faults.store(1, Ordering::Release);
+
+        let error = node.shutdown().await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::transport::mesh_transport::TransportError::ShutdownFailed(ref message)
+                if message == "injected mobile storage clean-shutdown marker failure"
+        ));
+        let failed = node.session_snapshot().await;
+        assert_eq!(failed.runtime, MobileRuntimeState::Failed);
+        assert_eq!(failed.phase, MobileConnectionPhase::Failed);
+        assert_eq!(
+            node.storage_status().unwrap().last_commit.unwrap().kind,
+            crate::storage::messages::StorageCommitKind::SessionOpened
+        );
+
+        node.shutdown().await.unwrap();
+
+        assert_eq!(node.session_snapshot().await.runtime, MobileRuntimeState::Stopped);
+        assert_eq!(
+            node.storage_status().unwrap().last_commit.unwrap().kind,
+            crate::storage::messages::StorageCommitKind::CleanShutdown
+        );
+        assert_eq!(
+            mock.calls().into_iter().filter(|call| matches!(call, MockCall::Shutdown)).count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn post_composition_boot_failure_releases_workers_listener_and_store_before_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let mobile_config = MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: None,
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: vec![MobileInterfaceConfig::TcpServer {
+                bind_address: address.to_string(),
+            }],
+            enable_rnode_channel: false,
+        };
+        let evidence = Arc::new(MobileBootFaultEvidence::default());
+        inject_mobile_boot_fault(mobile_config.data_dir.clone(), Arc::clone(&evidence));
+
+        let error = match MobileNode::boot(mobile_config.clone()).await {
+            Ok(node) => {
+                node.shutdown().await.unwrap();
+                panic!("injected post-composition boot unexpectedly succeeded");
+            }
+            Err(error) => error,
+        };
+
+        assert_eq!(error.stage, MobileBootStage::Composition);
+        assert_eq!(error.code, MobileBootFailureCode::CompositionFailed);
+        assert!(error.retryable);
+        assert_eq!(error.message, "runtime composition failed");
+        assert!(!error.to_string().contains(root.path().to_string_lossy().as_ref()));
+        {
+            let handles = evidence.worker_handles.lock().unwrap();
+            assert_eq!(handles.len(), 9);
+            assert!(handles.iter().all(tokio::task::AbortHandle::is_finished));
+        }
+
+        let rebound =
+            std::net::TcpListener::bind(address).expect("failed boot released TCP listener");
+        drop(rebound);
+        let node =
+            MobileNode::boot(mobile_config).await.expect("boot retry after composed failure");
+        assert_eq!(node.tcp_listen_addresses(), [address]);
+        assert_eq!(
+            node.storage_status().unwrap().recovery,
+            crate::storage::messages::StorageRecoveryOutcome::CleanShutdown
+        );
+        node.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn storage_shutdown_failure_is_typed_and_does_not_mark_runtime_stopped() {
+        let mock = Arc::new(MockTransport::new_default());
+        let node = compose_with_mock(mock.clone(), None).await;
+        let store = node.app_context.store().clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = store.lock().unwrap();
+            panic!("poison mobile storage lock");
+        })
+        .join();
+
+        let error = node.shutdown().await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::transport::mesh_transport::TransportError::ShutdownFailed(ref message)
+                if message == "mobile storage state unavailable"
+        ));
+        let failed = node.session_snapshot().await;
+        assert_eq!(failed.runtime, MobileRuntimeState::Failed);
+        assert_eq!(failed.phase, MobileConnectionPhase::Failed);
+        assert_eq!(
+            mock.calls().into_iter().filter(|call| matches!(call, MockCall::Shutdown)).count(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn dropping_node_aborts_every_retained_worker() {
         let node = compose_with_mock(Arc::new(MockTransport::new_default()), None).await;
         let handles = node.workers.lock().unwrap().as_ref().unwrap().abort_handles();
@@ -2989,6 +4789,488 @@ mod tests {
         .await
         .unwrap();
         assert!(!packet.is_empty());
+    }
+
+    #[tokio::test]
+    async fn configured_rnode_bytes_attribute_bluetooth_without_usb_fallback() {
+        use rns_core::transport::iface::kiss::kiss_encode_command;
+        use rns_core::transport::iface::rnode::{
+            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FREQUENCY, CMD_RADIO_STATE,
+            CMD_SPREADING_FACTOR, CMD_TX_POWER, RNodeRadioProfile,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("test mobile".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: true,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            node.start_rnode_bytes(
+                MobileRNodeBearer::BluetoothLe,
+                test_rnode_info(MobileRNodeBearer::BluetoothLe, 512),
+            )
+            .await
+            .unwrap_err(),
+            "Bluetooth RNode requires an approved peripheral"
+        );
+        node.platform_service().set_bluetooth_approved(true).await;
+        let start = node
+            .start_rnode_bytes(
+                MobileRNodeBearer::BluetoothLe,
+                test_rnode_info(MobileRNodeBearer::BluetoothLe, 512),
+            )
+            .await
+            .unwrap();
+        assert_eq!(start.writes.len(), 4);
+        let connecting = node.session_snapshot().await;
+        assert_eq!(
+            connecting.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
+            MobileBearerState::Connecting
+        );
+        assert_eq!(
+            connecting.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Unavailable
+        );
+
+        let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
+        let detect = kiss_encode_command(CMD_DETECT, &[0x46]);
+        assert_eq!(node.submit_rnode_bytes(start.attempt, &detect).await.unwrap().len(), 6);
+        let readback = [
+            kiss_encode_command(CMD_FREQUENCY, &profile.frequency_hz.to_be_bytes()),
+            kiss_encode_command(CMD_BANDWIDTH, &profile.bandwidth_hz.to_be_bytes()),
+            kiss_encode_command(CMD_TX_POWER, &[profile.tx_power_dbm]),
+            kiss_encode_command(CMD_SPREADING_FACTOR, &[profile.spreading_factor]),
+            kiss_encode_command(CMD_CODING_RATE, &[profile.coding_rate]),
+            kiss_encode_command(CMD_RADIO_STATE, &[1]),
+        ]
+        .concat();
+        node.submit_rnode_bytes(start.attempt, &readback[..readback.len() / 2]).await.unwrap();
+        node.submit_rnode_bytes(start.attempt, &readback[readback.len() / 2..]).await.unwrap();
+
+        let connected = node.session_snapshot().await;
+        assert_eq!(
+            connected.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
+            MobileBearerState::Connected
+        );
+        assert_eq!(
+            connected.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Unavailable
+        );
+        assert_eq!(
+            node.platform_service().request_android_usb_fallback().await,
+            MobileUsbFallbackDisposition::BluetoothActive
+        );
+
+        let shutdown = node
+            .stop_rnode_bytes(start.attempt, MobileBearerReason::ConnectionInterrupted)
+            .await
+            .unwrap();
+        assert!(!shutdown.is_empty());
+        let stopped = node.session_snapshot().await;
+        assert_eq!(
+            stopped.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
+            MobileBearerState::Disconnected
+        );
+        assert_eq!(
+            stopped.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Unavailable
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_rnode_bytes_activate_usb_and_frame_outbound_packets() {
+        use rns_core::transport::iface::kiss::{KissDecoder, kiss_encode_command};
+        use rns_core::transport::iface::rnode::{
+            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FREQUENCY, CMD_RADIO_STATE,
+            CMD_SPREADING_FACTOR, CMD_TX_POWER, RNodeRadioProfile,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("test mobile".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: true,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            node.start_rnode_bytes(
+                MobileRNodeBearer::AndroidUsb,
+                test_rnode_info(MobileRNodeBearer::AndroidUsb, 512),
+            )
+            .await
+            .unwrap_err(),
+            "Android USB requires an explicit fallback request"
+        );
+        assert_eq!(
+            node.platform_service().request_android_usb_fallback().await,
+            MobileUsbFallbackDisposition::Accepted
+        );
+        let start = node
+            .start_rnode_bytes(
+                MobileRNodeBearer::AndroidUsb,
+                test_rnode_info(MobileRNodeBearer::AndroidUsb, 512),
+            )
+            .await
+            .unwrap();
+        assert_eq!(start.writes.len(), 4);
+
+        let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
+        let detect = kiss_encode_command(CMD_DETECT, &[0x46]);
+        let config_writes = node.submit_rnode_bytes(start.attempt, &detect).await.unwrap();
+        assert_eq!(config_writes.len(), 6);
+        let readback = [
+            kiss_encode_command(CMD_FREQUENCY, &profile.frequency_hz.to_be_bytes()),
+            kiss_encode_command(CMD_BANDWIDTH, &profile.bandwidth_hz.to_be_bytes()),
+            kiss_encode_command(CMD_TX_POWER, &[profile.tx_power_dbm]),
+            kiss_encode_command(CMD_SPREADING_FACTOR, &[profile.spreading_factor]),
+            kiss_encode_command(CMD_CODING_RATE, &[profile.coding_rate]),
+            kiss_encode_command(CMD_RADIO_STATE, &[1]),
+        ]
+        .concat();
+        node.submit_rnode_bytes(start.attempt, &readback).await.unwrap();
+
+        let snapshot = node.session_snapshot().await;
+        assert_eq!(snapshot.phase, MobileConnectionPhase::Connected);
+        assert_eq!(
+            snapshot.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Connected
+        );
+        node.announce().await.unwrap();
+        let framed = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(writes) = node.poll_rnode_bytes(start.attempt).await.unwrap() {
+                    break writes;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut decoder = KissDecoder::new();
+        decoder.feed(&framed.writes.concat());
+        assert!(!decoder.take_frame().expect("outbound RNS packet").is_empty());
+
+        let shutdown = node
+            .stop_rnode_bytes(start.attempt, MobileBearerReason::ConnectionInterrupted)
+            .await
+            .unwrap();
+        assert!(!shutdown.is_empty());
+        assert_eq!(
+            node.session_snapshot().await.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Disconnected
+        );
+
+        let mut state_events = node.subscribe_state_events();
+        node.platform_service()
+            .report(MobileBearerObservation {
+                kind: MobileBearerKind::AndroidUsb,
+                state: MobileBearerState::Disconnected,
+                reason: Some(MobileBearerReason::PermissionDenied),
+            })
+            .await
+            .unwrap();
+        let event = tokio::time::timeout(Duration::from_secs(1), state_events.recv())
+            .await
+            .expect("platform report invalidation timed out")
+            .expect("platform report invalidation failed");
+        assert_eq!(event.kind, MobileStateEventKind::Session);
+        assert_eq!(
+            node.session_snapshot().await.bearer(MobileBearerKind::AndroidUsb).unwrap().reason,
+            Some(MobileBearerReason::PermissionDenied)
+        );
+    }
+
+    #[tokio::test]
+    async fn rnode_attempt_generation_rejects_conflicts_and_stale_callbacks() {
+        use rns_core::transport::iface::kiss::kiss_encode_command;
+        use rns_core::transport::iface::rnode::CMD_DETECT;
+
+        let root = tempfile::tempdir().unwrap();
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("test mobile".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: true,
+        })
+        .await
+        .unwrap();
+        node.platform_service().set_bluetooth_approved(true).await;
+
+        let bluetooth = node
+            .start_rnode_bytes(
+                MobileRNodeBearer::BluetoothLe,
+                test_rnode_info(MobileRNodeBearer::BluetoothLe, 512),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            node.start_rnode_bytes(
+                MobileRNodeBearer::AndroidUsb,
+                test_rnode_info(MobileRNodeBearer::AndroidUsb, 512),
+            )
+            .await
+            .unwrap_err(),
+            "RNode byte attempt is already active"
+        );
+        assert!(
+            !node
+                .stop_rnode_bytes(bluetooth.attempt, MobileBearerReason::ConnectionInterrupted,)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            node.platform_service().request_android_usb_fallback().await,
+            MobileUsbFallbackDisposition::Accepted
+        );
+        let usb = node
+            .start_rnode_bytes(
+                MobileRNodeBearer::AndroidUsb,
+                test_rnode_info(MobileRNodeBearer::AndroidUsb, 512),
+            )
+            .await
+            .unwrap();
+        assert_ne!(bluetooth.attempt, usb.attempt);
+
+        let detect = kiss_encode_command(CMD_DETECT, &[0x46]);
+        assert!(node.submit_rnode_bytes(bluetooth.attempt, &detect).await.unwrap().is_empty());
+        assert!(node.poll_rnode_bytes(bluetooth.attempt).await.unwrap().is_none());
+        assert!(
+            node.stop_rnode_bytes(bluetooth.attempt, MobileBearerReason::ConnectionInterrupted)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            node.session_snapshot().await.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Connecting
+        );
+
+        assert!(
+            !node
+                .stop_rnode_bytes(usb.attempt, MobileBearerReason::ConnectionInterrupted)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            node.stop_rnode_bytes(usb.attempt, MobileBearerReason::ConnectionInterrupted)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            node.session_snapshot().await.bearer(MobileBearerKind::AndroidUsb).unwrap().state,
+            MobileBearerState::Disconnected
+        );
+    }
+
+    #[tokio::test]
+    async fn mismatched_rnode_readback_keeps_backend_bearer_connecting() {
+        use rns_core::transport::iface::kiss::kiss_encode_command;
+        use rns_core::transport::iface::rnode::{
+            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FREQUENCY, CMD_RADIO_STATE,
+            CMD_SPREADING_FACTOR, CMD_TX_POWER, RNodeRadioProfile,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("test mobile".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: true,
+        })
+        .await
+        .unwrap();
+        node.platform_service().set_bluetooth_approved(true).await;
+        let start = node
+            .start_rnode_bytes(
+                MobileRNodeBearer::BluetoothLe,
+                test_rnode_info(MobileRNodeBearer::BluetoothLe, 512),
+            )
+            .await
+            .unwrap();
+        let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
+        let mismatched = [
+            kiss_encode_command(CMD_DETECT, &[0x46]),
+            kiss_encode_command(CMD_FREQUENCY, &profile.frequency_hz.to_be_bytes()),
+            kiss_encode_command(CMD_BANDWIDTH, &profile.bandwidth_hz.to_be_bytes()),
+            kiss_encode_command(CMD_TX_POWER, &[profile.tx_power_dbm - 1]),
+            kiss_encode_command(CMD_SPREADING_FACTOR, &[profile.spreading_factor]),
+            kiss_encode_command(CMD_CODING_RATE, &[profile.coding_rate]),
+            kiss_encode_command(CMD_RADIO_STATE, &[1]),
+        ]
+        .concat();
+        node.submit_rnode_bytes(start.attempt, &mismatched).await.unwrap();
+        assert_eq!(
+            node.session_snapshot().await.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
+            MobileBearerState::Connecting
+        );
+        assert!(node.poll_rnode_bytes(start.attempt).await.unwrap().is_none());
+
+        let corrected = kiss_encode_command(CMD_TX_POWER, &[profile.tx_power_dbm]);
+        node.submit_rnode_bytes(start.attempt, &corrected).await.unwrap();
+        assert_eq!(
+            node.session_snapshot().await.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
+            MobileBearerState::Connected
+        );
+    }
+
+    #[tokio::test]
+    async fn rnode_attempt_metadata_bounds_every_host_write_path() {
+        use rns_core::transport::iface::kiss::kiss_encode_command;
+        use rns_core::transport::iface::rnode::{
+            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FREQUENCY, CMD_RADIO_STATE,
+            CMD_SPREADING_FACTOR, CMD_TX_POWER, RNodeRadioProfile,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("test mobile".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: true,
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            node.start_rnode_bytes(
+                MobileRNodeBearer::BluetoothLe,
+                test_rnode_info(MobileRNodeBearer::AndroidUsb, 3),
+            )
+            .await
+            .unwrap_err(),
+            "RNode bearer metadata does not match the mobile bearer"
+        );
+        assert_eq!(
+            node.session_snapshot().await.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
+            MobileBearerState::Unverified
+        );
+
+        node.platform_service().set_bluetooth_approved(true).await;
+        let start = node
+            .start_rnode_bytes(
+                MobileRNodeBearer::BluetoothLe,
+                test_rnode_info(MobileRNodeBearer::BluetoothLe, 3),
+            )
+            .await
+            .unwrap();
+        assert!(start.writes.iter().all(|write| write.len() <= 3));
+
+        let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
+        let detect = kiss_encode_command(CMD_DETECT, &[0x46]);
+        let configuration = node.submit_rnode_bytes(start.attempt, &detect).await.unwrap();
+        assert!(configuration.iter().all(|write| write.len() <= 3));
+        let readback = [
+            kiss_encode_command(CMD_FREQUENCY, &profile.frequency_hz.to_be_bytes()),
+            kiss_encode_command(CMD_BANDWIDTH, &profile.bandwidth_hz.to_be_bytes()),
+            kiss_encode_command(CMD_TX_POWER, &[profile.tx_power_dbm]),
+            kiss_encode_command(CMD_SPREADING_FACTOR, &[profile.spreading_factor]),
+            kiss_encode_command(CMD_CODING_RATE, &[profile.coding_rate]),
+            kiss_encode_command(CMD_RADIO_STATE, &[1]),
+        ]
+        .concat();
+        node.submit_rnode_bytes(start.attempt, &readback).await.unwrap();
+
+        node.announce().await.unwrap();
+        let packet_writes = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(writes) = node.poll_rnode_bytes(start.attempt).await.unwrap() {
+                    break writes;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(packet_writes.writes.iter().all(|write| write.len() <= 3));
+
+        let shutdown = node
+            .stop_rnode_bytes(start.attempt, MobileBearerReason::ConnectionInterrupted)
+            .await
+            .unwrap();
+        assert!(!shutdown.is_empty());
+        assert!(shutdown.iter().all(|write| write.len() <= 3));
+    }
+
+    #[tokio::test]
+    async fn outbound_rnode_handoff_replays_after_failure_and_cancellation_until_completed() {
+        let root = tempfile::tempdir().unwrap();
+        let node = MobileNode::boot(MobileConfig {
+            config_dir: root.path().join("config"),
+            data_dir: root.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("test mobile".into()),
+            identity_backend: IdentityBackend::PlaintextFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: true,
+        })
+        .await
+        .unwrap();
+
+        let first = ready_test_rnode(&node, MobileRNodeBearer::BluetoothLe).await;
+        node.announce().await.unwrap();
+        let failed = poll_test_handoff(&node, first.attempt).await;
+        assert!(node.poll_rnode_bytes(first.attempt).await.unwrap().is_none());
+        assert!(node.fail_rnode_write(first.attempt, failed.handoff).await.unwrap());
+        node.stop_rnode_bytes(first.attempt, MobileBearerReason::ConnectionInterrupted)
+            .await
+            .unwrap();
+
+        let second = ready_test_rnode(&node, MobileRNodeBearer::BluetoothLe).await;
+        let replayed_after_failure = poll_test_handoff(&node, second.attempt).await;
+        assert_eq!(replayed_after_failure.handoff, failed.handoff);
+        assert_eq!(replayed_after_failure.writes.concat(), failed.writes.concat());
+        assert!(!node.complete_rnode_write(first.attempt, failed.handoff).await.unwrap());
+        assert!(node.poll_rnode_bytes(second.attempt).await.unwrap().is_none());
+        node.stop_rnode_bytes(second.attempt, MobileBearerReason::ConnectionInterrupted)
+            .await
+            .unwrap();
+
+        let third = ready_test_rnode(&node, MobileRNodeBearer::BluetoothLe).await;
+        let replayed_after_cancellation = poll_test_handoff(&node, third.attempt).await;
+        assert_eq!(replayed_after_cancellation.handoff, failed.handoff);
+        assert!(
+            node.complete_rnode_write(third.attempt, replayed_after_cancellation.handoff)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !node
+                .complete_rnode_write(third.attempt, replayed_after_cancellation.handoff)
+                .await
+                .unwrap()
+        );
+        assert!(node.poll_rnode_bytes(third.attempt).await.unwrap().is_none());
     }
 
     #[tokio::test]

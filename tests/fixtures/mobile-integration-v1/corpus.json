@@ -69,7 +69,7 @@
         {"source": "daemon", "claim": "Identity hash is stable and delivery hash is absent without a delivery-capable interface", "oracle": "crates/apps/styrened/tests/mobile_node.rs#offline_boot_reports_no_routable_destination"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#offline_boot_reports_no_routable_destination"],
-      "missing_capabilities": ["Rust restart identity stability assertion", "typed mobile identity custody status", "Dioxus package restart automation"],
+      "missing_capabilities": ["Dioxus package restart automation"],
       "not_proven": ["device key custody"]
     },
     {
@@ -77,7 +77,7 @@
       "area": "identity",
       "priority": "p0",
       "title": "Display names are normalized before they become announce identity data",
-      "maturity": "partial",
+      "maturity": "executable",
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
@@ -88,7 +88,7 @@
         {"source": "daemon", "claim": "The announced display name equals the normalized configured value", "oracle": "crates/apps/styrened/tests/mobile_node.rs#hub_boot_publishes_destination_and_normalized_display_name"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#hub_boot_publishes_destination_and_normalized_display_name"],
-      "missing_capabilities": ["typed mobile identity query and edit operation"],
+      "missing_capabilities": [],
       "not_proven": []
     },
     {
@@ -126,15 +126,53 @@
         {"source": "platform", "claim": "The same identity is loaded from the declared secure backend after restart", "oracle": "docs/mobile-integration-test-corpus.md#cross-platform-and-device-integration"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["Android secure identity backend", "device custody status projection", "device test lane"],
+      "missing_capabilities": ["Android secure identity backend", "device test lane"],
       "not_proven": ["backup and recovery", "biometric access policy"]
+    },
+    {
+      "id": "mobile.identity.custody-fail-closed",
+      "area": "identity",
+      "priority": "p0",
+      "title": "Unavailable production custody fails before plaintext identity material is created",
+      "maturity": "executable",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.identity", "messages.status"],
+      "actions": ["select-unavailable-secure-backend", "boot", "inspect-storage", "query-custody"],
+      "assertions": [
+        {"source": "daemon", "claim": "Boot returns a typed custody failure before writing plaintext identity material", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-identity.md"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#production_custody_backends_fail_closed", "crates/apps/styrened/tests/mobile_p0_backend.rs#plaintext_backend_requires_explicit_selection", "crates/apps/styrened/tests/mobile_p0_backend.rs#custody_projection_is_authoritative_and_secret_free"],
+      "missing_capabilities": [],
+      "not_proven": ["physical secure storage"]
+    },
+    {
+      "id": "mobile.identity.durable-edit",
+      "area": "identity",
+      "priority": "p0",
+      "title": "Normalized public identity metadata survives process restart without changing identity keys",
+      "maturity": "partial",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.identity"],
+      "actions": ["boot", "edit-public-identity", "shutdown", "restart", "query-identity"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Normalized display metadata is restored while identity and delivery hashes remain unchanged", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-identity.md"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#public_identity_edits_survive_restart", "crates/apps/styrened/tests/mobile_p0_backend.rs#invalid_identity_edit_is_atomic"],
+      "missing_capabilities": ["Dioxus identity edit and restart acceptance test"],
+      "not_proven": ["private key export", "profile synchronization"]
     },
     {
       "id": "mobile.lifecycle.offline-ready",
       "area": "lifecycle",
       "priority": "p0",
       "title": "A booted node without a routable interface reports ready rather than connected",
-      "maturity": "partial",
+      "maturity": "executable",
       "kind": "offline",
       "evidence_scope": "internal_runtime",
       "topology": "offline-single",
@@ -145,7 +183,7 @@
         {"source": "daemon", "claim": "The local runtime exists while transport activity and connectivity remain false", "oracle": "crates/apps/styrened/tests/mobile_node.rs#offline_boot_reports_no_routable_destination"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#offline_boot_reports_no_routable_destination"],
-      "missing_capabilities": ["shared typed host lifecycle projection"],
+      "missing_capabilities": [],
       "not_proven": []
     },
     {
@@ -202,8 +240,8 @@
         {"source": "daemon", "claim": "Failed composition leaves no retained workers or listeners", "oracle": "crates/apps/styrened/src/mobile.rs"},
         {"source": "host_state", "claim": "Retry enters starting and reaches ready or connected", "oracle": "docs/mobile-ui-contract.md#shared-states"}
       ],
-      "existing_tests": ["crates/apps/styrened/src/mobile.rs"],
-      "missing_capabilities": ["Dioxus hydration-failure cleanup and retry assertion", "boot-stage fault injection", "typed boot failure stage"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#partial_boot_failure_is_typed_and_retryable", "crates/apps/styrened/tests/mobile_p0_backend.rs#retry_after_boot_failure_uses_clean_state"],
+      "missing_capabilities": ["Dioxus hydration-failure cleanup and retry assertion"],
       "not_proven": []
     },
     {
@@ -322,6 +360,44 @@
       "not_proven": ["network deduplication"]
     },
     {
+      "id": "mobile.messaging.retry-canonical-attempt",
+      "area": "messaging",
+      "priority": "p0",
+      "title": "Retry retains one canonical message and appends a correlated attempt",
+      "maturity": "partial",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.thread", "messages.delivery-details"],
+      "actions": ["send-message", "observe-retryable-failure", "restart", "retry-message", "query-message"],
+      "assertions": [
+        {"source": "daemon", "claim": "Retry preserves the canonical message identifier and records another correlated attempt without duplicate content", "oracle": "crates/apps/styrened/tests/mobile_node.rs#typed_direct_send_returns_and_restores_the_authoritative_failed_projection"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#typed_direct_send_returns_and_restores_the_authoritative_failed_projection", "crates/apps/styrened/tests/daemon_facade_contract.rs#retry_retains_original_requested_method"],
+      "missing_capabilities": ["packaged Dioxus retry journey"],
+      "not_proven": ["remote duplicate suppression"]
+    },
+    {
+      "id": "mobile.messaging.unicode-preview",
+      "area": "messaging",
+      "priority": "p0",
+      "title": "Bounded notification and conversation previews preserve valid Unicode",
+      "maturity": "partial",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["messages.inbox"],
+      "actions": ["persist-unicode-message", "build-bounded-preview", "query-conversations"],
+      "assertions": [
+        {"source": "daemon", "claim": "Preview generation is bounded, returns valid UTF-8, and cannot panic at a multibyte boundary", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#unicode_previews_are_bounded_and_panic_free"],
+      "missing_capabilities": ["Dioxus preview rendering acceptance test"],
+      "not_proven": ["grapheme-aware host truncation"]
+    },
+    {
       "id": "mobile.messaging.history-order-and-pagination",
       "area": "messaging",
       "priority": "p1",
@@ -403,7 +479,7 @@
       "area": "delivery",
       "priority": "p0",
       "title": "LXMF method, network bearer, and receipt evidence are independent labels",
-      "maturity": "blocked",
+      "maturity": "partial",
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
@@ -413,8 +489,8 @@
       "assertions": [
         {"source": "daemon", "claim": "Method comes from message routing while bearer and hops come from path and interface evidence", "oracle": "docs/mobile-ui-contract.md#message-composition"}
       ],
-      "existing_tests": [],
-      "missing_capabilities": ["mobile path projection", "mobile interface projection", "message-to-route correlation"],
+      "existing_tests": ["crates/apps/styrened/src/services/messaging.rs#attempt_capture_is_immutable_across_tcp_reconnect_and_restart", "crates/apps/styrened/src/services/messaging.rs#attempt_capture_persists_unknown_without_attributable_interface_snapshot", "crates/apps/styrened/src/services/messaging.rs#retry_captures_new_route_without_rewriting_stale_first_attempt", "crates/libs/styrene-ipc/tests/message_attempt_route_contract.rs#legacy_attempt_defaults_route_to_explicit_unknown"],
+      "missing_capabilities": ["Dioxus route-evidence acceptance test"],
       "not_proven": []
     },
     {
@@ -433,7 +509,7 @@
         {"source": "daemon", "claim": "The correlated interface is the configured TCP client and not an inferred delivery method", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
       ],
       "existing_tests": [],
-      "missing_capabilities": ["typed mobile interface evidence", "message-to-interface correlation", "device network lane"],
+      "missing_capabilities": ["device network lane"],
       "not_proven": []
     },
     {
@@ -571,6 +647,25 @@
       "not_proven": ["notes", "trust", "block state"]
     },
     {
+      "id": "mobile.people.contact-conversation-creation",
+      "area": "people",
+      "priority": "p0",
+      "title": "A canonical discovered or saved destination can create one durable empty conversation",
+      "maturity": "partial",
+      "kind": "offline",
+      "evidence_scope": "internal_runtime",
+      "topology": "offline-single",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["people.person", "messages.inbox", "messages.thread"],
+      "actions": ["seed-canonical-peer", "start-conversation", "start-conversation", "restart", "query-conversations"],
+      "assertions": [
+        {"source": "durable_store", "claim": "Exactly one conversation shell survives restart without a fabricated message, preview, unread count, route, or online state", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#canonical_peer_starts_one_durable_empty_conversation", "crates/apps/styrened/tests/mobile_p0_backend.rs#empty_conversation_survives_restart_without_preview"],
+      "missing_capabilities": ["Dioxus conversation creation acceptance test"],
+      "not_proven": ["route availability", "remote reception"]
+    },
+    {
       "id": "mobile.network.tcp-profile-validation",
       "area": "network",
       "priority": "p0",
@@ -613,7 +708,7 @@
       "area": "network",
       "priority": "p0",
       "title": "Interface cards show typed status, endpoints, traffic, freshness, and failures",
-      "maturity": "blocked",
+      "maturity": "partial",
       "kind": "loopback",
       "evidence_scope": "internal_runtime",
       "topology": "loopback-pair",
@@ -623,8 +718,8 @@
       "assertions": [
         {"source": "daemon", "claim": "Every displayed interface field matches the typed observation and generation", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
       ],
-      "existing_tests": [],
-      "missing_capabilities": ["mobile interface detail projection", "interface observation generation", "failure reason projection"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#interface_observations_are_generation_scoped", "crates/apps/styrened/tests/mobile_p0_backend.rs#interface_failures_are_typed"],
+      "missing_capabilities": ["Dioxus interface card acceptance test"],
       "not_proven": []
     },
     {
@@ -684,6 +779,25 @@
       "existing_tests": [],
       "missing_capabilities": ["Dioxus propagation configuration", "Dioxus projection of per-message poll results"],
       "not_proven": ["standard LXMF propagation parity"]
+    },
+    {
+      "id": "mobile.propagation.persist-before-ack",
+      "area": "propagation",
+      "priority": "p0",
+      "title": "Hub acknowledgement includes only durable accepted messages and verified durable duplicates",
+      "maturity": "executable",
+      "kind": "loopback",
+      "evidence_scope": "internal_runtime",
+      "topology": "propagation-hub",
+      "platforms": ["rust", "ios_simulator", "android_instrumentation"],
+      "ui_surfaces": ["more.propagation", "messages.inbox"],
+      "actions": ["queue-mixed-results", "poll-hub", "inspect-acknowledgements", "repeat-poll"],
+      "assertions": [
+        {"source": "daemon", "claim": "Rejected and storage-failed transient identifiers are not acknowledged, while accepted and verified duplicate results are explicit", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
+      ],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#legacy_poll_acknowledges_only_durable_results", "crates/apps/styrened/tests/mobile_p0_backend.rs#legacy_poll_reports_partial_acknowledgement_failure"],
+      "missing_capabilities": [],
+      "not_proven": ["packaged background execution"]
     },
     {
       "id": "mobile.propagation.queue-sync-state",
@@ -824,7 +938,7 @@
       "area": "settings",
       "priority": "p0",
       "title": "Enabled actions and disabled reasons follow typed active capabilities",
-      "maturity": "blocked",
+      "maturity": "partial",
       "kind": "simulator",
       "evidence_scope": "host_simulator",
       "topology": "host-fixture",
@@ -834,8 +948,8 @@
       "assertions": [
         {"source": "daemon", "claim": "Availability, degradation, authorization, and reason match the active capability generation", "oracle": "crates/libs/styrene-ipc/src/types.rs"}
       ],
-      "existing_tests": [],
-      "missing_capabilities": ["mobile active capability projection", "typed disabled reasons", "capability generation"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#capability_snapshot_uses_current_generation", "crates/apps/styrened/tests/mobile_p0_backend.rs#capability_disabled_reasons_are_typed"],
+      "missing_capabilities": ["Dioxus capability settings acceptance test"],
       "not_proven": []
     },
     {
@@ -862,7 +976,7 @@
       "area": "diagnostics",
       "priority": "p0",
       "title": "Diagnostic evidence is bounded, chronological, correlated, and redacted",
-      "maturity": "blocked",
+      "maturity": "partial",
       "kind": "simulator",
       "evidence_scope": "host_simulator",
       "topology": "host-fixture",
@@ -873,8 +987,8 @@
         {"source": "daemon", "claim": "Events are bounded and preserve source, time, generation, stage, and correlation", "oracle": "docs/mobile-ui-contract.md#required-backend-projections"},
         {"source": "platform", "claim": "Export contains no keys, credentials, canonical wire, or message payloads", "oracle": "docs/mobile-integration-test-corpus.md#evidence-rules"}
       ],
-      "existing_tests": [],
-      "missing_capabilities": ["bounded mobile diagnostic projection", "redacted export operation", "host share adapter"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#mobile_diagnostics_are_bounded_and_chronological", "crates/apps/styrened/tests/mobile_p0_backend.rs#diagnostic_export_is_deterministic_and_payload_free"],
+      "missing_capabilities": ["host share adapter"],
       "not_proven": []
     },
     {
@@ -893,7 +1007,7 @@
         {"source": "durable_store", "claim": "All durable records and the identity reappear once with unchanged keys", "oracle": "docs/mobile-integration-test-corpus.md#cross-platform-and-device-integration"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs"],
-      "missing_capabilities": ["Rust complete-state restart test", "Dioxus restart acceptance test", "mobile storage health projection"],
+      "missing_capabilities": ["Dioxus restart acceptance test"],
       "not_proven": ["schema migration"]
     },
     {
@@ -911,8 +1025,8 @@
       "assertions": [
         {"source": "durable_store", "claim": "Committed records survive exactly once and incomplete work has an explicit outcome", "oracle": "docs/mobile-integration-test-corpus.md#cross-platform-and-device-integration"}
       ],
-      "existing_tests": [],
-      "missing_capabilities": ["device process-control lane", "storage commit evidence", "migration and recovery status"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_forced_termination.rs#committed_mobile_state_survives_process_termination", "crates/apps/styrened/tests/mobile_forced_termination.rs#interrupted_work_has_explicit_recovery_outcome"],
+      "missing_capabilities": ["device process-control lane"],
       "not_proven": []
     },
     {

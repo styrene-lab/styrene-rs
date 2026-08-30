@@ -3,6 +3,7 @@ pub mod hdlc;
 pub mod ifac;
 mod ingress;
 pub mod kiss;
+pub mod rnode;
 pub mod serial;
 pub mod stream_iface;
 pub mod tcp_client;
@@ -17,7 +18,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task;
 use tokio_util::sync::CancellationToken;
 
@@ -136,6 +137,23 @@ pub struct InterfaceChannel {
     pub stop: CancellationToken,
 }
 
+#[derive(Clone)]
+pub struct HostInterfaceControl {
+    runtime: Arc<InterfaceRuntime>,
+    stop: CancellationToken,
+}
+
+impl HostInterfaceControl {
+    pub fn set_state(&self, state: InterfaceState) {
+        self.runtime.set_state(state);
+    }
+
+    pub fn close(&self) {
+        self.runtime.set_state(InterfaceState::Closed);
+        self.stop.cancel();
+    }
+}
+
 impl InterfaceChannel {
     pub fn make_rx_channel(cap: usize) -> (InterfaceRxSender, InterfaceRxReceiver) {
         InterfaceRxSender::channel(IngressQueueCapacities::uniform(cap), AddressHash::new([0; 16]))
@@ -247,6 +265,12 @@ pub enum InterfaceState {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceStateEvent {
+    pub state: InterfaceState,
+    pub generation: u64,
+}
+
 impl InterfaceState {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -317,6 +341,7 @@ struct InterfaceRuntimeMetadata {
 #[derive(Debug)]
 pub(crate) struct InterfaceRuntime {
     metadata: Mutex<InterfaceRuntimeMetadata>,
+    state_tx: broadcast::Sender<InterfaceStateEvent>,
 }
 
 impl InterfaceRuntime {
@@ -324,6 +349,7 @@ impl InterfaceRuntime {
         descriptor: InterfaceDescriptor,
         bitrate: Option<u64>,
         parent: Option<AddressHash>,
+        state_tx: broadcast::Sender<InterfaceStateEvent>,
     ) -> Self {
         Self {
             metadata: Mutex::new(InterfaceRuntimeMetadata {
@@ -338,15 +364,22 @@ impl InterfaceRuntime {
                 created_at: Instant::now(),
                 force_path_request_egress_limit: false,
             }),
+            state_tx,
         }
     }
 
     pub(crate) fn set_state(&self, state: InterfaceState) {
         let mut metadata = self.metadata.lock().expect("interface runtime lock");
+        if metadata.state == state {
+            return;
+        }
         if state.is_online() && !metadata.state.is_online() {
             metadata.generation = metadata.generation.saturating_add(1);
         }
         metadata.state = state;
+        let event = InterfaceStateEvent { state, generation: metadata.generation };
+        drop(metadata);
+        let _ = self.state_tx.send(event);
     }
 
     pub(crate) fn set_local_endpoint(&self, endpoint: InterfaceEndpoint) {
@@ -586,9 +619,11 @@ pub struct InterfaceManager {
     /// Shared stats map so callers can look up per-interface counters without
     /// holding the `InterfaceManager` tokio mutex.
     stats_map: Arc<Mutex<HashMap<AddressHash, Arc<InterfaceStats>>>>,
+    state_tx: broadcast::Sender<InterfaceStateEvent>,
 }
 
 const DEFAULT_IFACE_TX_QUEUE_CAPACITY: usize = 128;
+const DEFAULT_IFACE_STATE_CAPACITY: usize = 64;
 const IFACE_TX_ENQUEUE_TIMEOUT_MS: u64 = 200;
 
 fn tx_diag_enabled() -> bool {
@@ -629,6 +664,7 @@ impl InterfaceManager {
         path_request_destination: AddressHash,
     ) -> Self {
         let rx_recv = Arc::new(tokio::sync::Mutex::new(rx_recv));
+        let (state_tx, _) = broadcast::channel(DEFAULT_IFACE_STATE_CAPACITY);
 
         Self {
             counter: 0,
@@ -639,6 +675,7 @@ impl InterfaceManager {
             ifaces: Vec::new(),
             tasks: Vec::new(),
             stats_map: Arc::new(Mutex::new(HashMap::new())),
+            state_tx,
         }
     }
 
@@ -660,7 +697,8 @@ impl InterfaceManager {
 
         let stop = CancellationToken::new();
         let stats = Arc::new(InterfaceStats::new());
-        let runtime = Arc::new(InterfaceRuntime::new(descriptor, bitrate, parent));
+        let runtime =
+            Arc::new(InterfaceRuntime::new(descriptor, bitrate, parent, self.state_tx.clone()));
 
         self.stats_map.lock().expect("interface stats lock").insert(address, stats.clone());
         self.ifaces.push(LocalInterface { address, tx_send, stop: stop.clone(), stats, runtime });
@@ -670,6 +708,18 @@ impl InterfaceManager {
 
     pub fn new_channel(&mut self, tx_cap: usize) -> InterfaceChannel {
         self.new_channel_with_runtime(tx_cap, InterfaceDescriptor::default(), None, None)
+    }
+
+    /// Register a channel whose byte transport and lifecycle are driven by an embedding host.
+    pub fn new_host_channel(
+        &mut self,
+        tx_cap: usize,
+        descriptor: InterfaceDescriptor,
+    ) -> (InterfaceChannel, HostInterfaceControl) {
+        let channel = self.new_channel_with_runtime(tx_cap, descriptor, None, None);
+        let runtime = self.ifaces.last().expect("newly registered host interface").runtime.clone();
+        let control = HostInterfaceControl { runtime, stop: channel.stop.clone() };
+        (channel, control)
     }
 
     pub fn new_context<T: Interface>(&mut self, inner: T) -> InterfaceContext<T> {
@@ -803,6 +853,10 @@ impl InterfaceManager {
             .collect();
         snapshots.sort_by_key(|snapshot| snapshot.hash.as_slice().to_vec());
         snapshots
+    }
+
+    pub fn subscribe_state_changes(&self) -> broadcast::Receiver<InterfaceStateEvent> {
+        self.state_tx.subscribe()
     }
 
     pub fn interface_mode(&self, hash: &AddressHash) -> InterfaceMode {
@@ -1165,7 +1219,8 @@ mod tests {
 
     #[test]
     fn path_request_rate_controls_are_disabled_by_default() {
-        let runtime = InterfaceRuntime::new(InterfaceDescriptor::default(), None, None);
+        let (state_tx, _state_rx) = broadcast::channel(1);
+        let runtime = InterfaceRuntime::new(InterfaceDescriptor::default(), None, None, state_tx);
         let now = Instant::now();
         for offset in 0..20 {
             assert!(
@@ -1180,10 +1235,12 @@ mod tests {
 
     #[test]
     fn path_request_ingress_burst_activates_and_expires_limiting() {
+        let (state_tx, _state_rx) = broadcast::channel(1);
         let runtime = InterfaceRuntime::new(
             InterfaceDescriptor { ingress_control: true, ..Default::default() },
             None,
             None,
+            state_tx,
         );
         let now = Instant::now();
         assert!(!runtime.record_and_should_ingress_limit_path_request(now));

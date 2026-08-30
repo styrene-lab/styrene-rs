@@ -6,7 +6,25 @@
 use crate::transport::mesh_transport::MeshTransport;
 use rns_core::hash::AddressHash;
 use rns_core::identity::Identity;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
+
+const MAX_PUBLIC_IDENTITY_FIELD_CHARS: usize = 64;
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PublicIdentityMetadata {
+    pub display_name: Option<String>,
+    pub icon: Option<String>,
+    pub short_name: Option<String>,
+}
+
+#[derive(Default)]
+struct PublicIdentityState {
+    metadata: PublicIdentityMetadata,
+    path: Option<PathBuf>,
+}
 
 /// Manages the daemon's own identity and resolves peer identities.
 pub struct IdentityService {
@@ -16,12 +34,9 @@ pub struct IdentityService {
     delivery_destination_hash: std::sync::Mutex<Option<String>>,
     /// Transport for announce and identity resolution.
     transport: Arc<dyn MeshTransport>,
-    /// Operator display name (set via TUI or CLI).
-    display_name: std::sync::Mutex<Option<String>>,
-    /// Operator icon (emoji or short identifier).
-    icon: std::sync::Mutex<Option<String>>,
-    /// Operator short name.
-    short_name: std::sync::Mutex<Option<String>>,
+    /// Public fields and their persistence target share one serialized state.
+    public_identity: std::sync::Mutex<PublicIdentityState>,
+    custody: std::sync::Mutex<Option<styrene_ipc::types::IdentityCustodyInfo>>,
 }
 
 impl IdentityService {
@@ -31,9 +46,8 @@ impl IdentityService {
             identity_hash,
             delivery_destination_hash: std::sync::Mutex::new(None),
             transport,
-            display_name: std::sync::Mutex::new(None),
-            icon: std::sync::Mutex::new(None),
-            short_name: std::sync::Mutex::new(None),
+            public_identity: std::sync::Mutex::new(PublicIdentityState::default()),
+            custody: std::sync::Mutex::new(None),
         }
     }
 
@@ -43,9 +57,8 @@ impl IdentityService {
             identity_hash: String::new(),
             delivery_destination_hash: std::sync::Mutex::new(None),
             transport: Arc::new(crate::transport::null_transport::NullTransport::new()),
-            display_name: std::sync::Mutex::new(None),
-            icon: std::sync::Mutex::new(None),
-            short_name: std::sync::Mutex::new(None),
+            public_identity: std::sync::Mutex::new(PublicIdentityState::default()),
+            custody: std::sync::Mutex::new(None),
         }
     }
 
@@ -76,17 +89,74 @@ impl IdentityService {
 
     /// Get the operator display name.
     pub fn display_name(&self) -> Option<String> {
-        self.display_name.lock().unwrap().clone()
+        self.public_identity.lock().unwrap().metadata.display_name.clone()
     }
 
     /// Get the operator icon.
     pub fn icon(&self) -> Option<String> {
-        self.icon.lock().unwrap().clone()
+        self.public_identity.lock().unwrap().metadata.icon.clone()
     }
 
     /// Get the operator short name.
     pub fn short_name(&self) -> Option<String> {
-        self.short_name.lock().unwrap().clone()
+        self.public_identity.lock().unwrap().metadata.short_name.clone()
+    }
+
+    pub fn custody(&self) -> Option<styrene_ipc::types::IdentityCustodyInfo> {
+        self.custody.lock().unwrap().clone()
+    }
+
+    pub(crate) fn configure_mobile_identity(
+        &self,
+        metadata_path: PathBuf,
+        metadata: PublicIdentityMetadata,
+        custody: styrene_ipc::types::IdentityCustodyInfo,
+    ) {
+        *self.public_identity.lock().unwrap() =
+            PublicIdentityState { metadata, path: Some(metadata_path) };
+        *self.custody.lock().unwrap() = Some(custody);
+    }
+
+    pub fn set_identity_validated(
+        &self,
+        display_name: Option<&str>,
+        icon: Option<&str>,
+        short_name: Option<&str>,
+    ) -> Result<bool, String> {
+        let display_name = display_name.map(|value| validate_public_field("display name", value));
+        let icon = icon.map(|value| validate_public_field("icon", value));
+        let short_name = short_name.map(|value| validate_public_field("short name", value));
+        let display_name = display_name.transpose()?;
+        let icon = icon.transpose()?;
+        let short_name = short_name.transpose()?;
+
+        self.update_public_identity(display_name, icon, short_name)
+    }
+
+    fn update_public_identity(
+        &self,
+        display_name: Option<String>,
+        icon: Option<String>,
+        short_name: Option<String>,
+    ) -> Result<bool, String> {
+        let mut state = self.public_identity.lock().unwrap();
+        let current = &state.metadata;
+        let next = PublicIdentityMetadata {
+            display_name: display_name.or(current.display_name.clone()),
+            icon: icon.or(current.icon.clone()),
+            short_name: short_name.or(current.short_name.clone()),
+        };
+        if next == *current {
+            return Ok(false);
+        }
+        if let Some(path) = &state.path {
+            let bytes = serde_json::to_vec(&next)
+                .map_err(|error| format!("serialize public identity metadata: {error}"))?;
+            crate::config::atomic_write_private(path, &bytes)
+                .map_err(|error| format!("persist public identity metadata: {error}"))?;
+        }
+        state.metadata = next;
+        Ok(true)
     }
 
     /// Set identity fields. Returns true if any field changed.
@@ -96,29 +166,12 @@ impl IdentityService {
         icon: Option<&str>,
         short_name: Option<&str>,
     ) -> bool {
-        let mut changed = false;
-        if let Some(name) = display_name {
-            let mut dn = self.display_name.lock().unwrap();
-            if dn.as_deref() != Some(name) {
-                *dn = Some(name.to_string());
-                changed = true;
-            }
-        }
-        if let Some(ic) = icon {
-            let mut i = self.icon.lock().unwrap();
-            if i.as_deref() != Some(ic) {
-                *i = Some(ic.to_string());
-                changed = true;
-            }
-        }
-        if let Some(sn) = short_name {
-            let mut s = self.short_name.lock().unwrap();
-            if s.as_deref() != Some(sn) {
-                *s = Some(sn.to_string());
-                changed = true;
-            }
-        }
-        changed
+        self.update_public_identity(
+            display_name.map(str::to_owned),
+            icon.map(str::to_owned),
+            short_name.map(str::to_owned),
+        )
+        .unwrap_or(false)
     }
 
     /// Resolve a peer's identity from the transport announce table.
@@ -135,13 +188,34 @@ impl IdentityService {
 
     /// Trigger an announce with optional app_data.
     pub async fn announce(&self, app_data: Option<&[u8]>) {
-        self.transport.announce(app_data).await;
+        let encoded = if app_data.is_none() {
+            self.display_name().and_then(|name| {
+                crate::announce_names::encode_delivery_display_name_app_data(&name)
+            })
+        } else {
+            None
+        };
+        self.transport.announce(app_data.or(encoded.as_deref())).await;
     }
 
     /// Request path discovery for a destination.
     pub async fn request_path(&self, dest: &AddressHash) {
         self.transport.request_path(dest).await;
     }
+}
+
+pub(crate) fn validate_public_field(kind: &str, value: &str) -> Result<String, String> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return Err(format!("{kind} must not be empty"));
+    }
+    if normalized.chars().any(char::is_control) {
+        return Err(format!("{kind} must not contain control characters"));
+    }
+    if normalized.chars().count() > MAX_PUBLIC_IDENTITY_FIELD_CHARS {
+        return Err(format!("{kind} exceeds {MAX_PUBLIC_IDENTITY_FIELD_CHARS} characters"));
+    }
+    Ok(normalized.to_string())
 }
 
 impl Default for IdentityService {
@@ -154,6 +228,7 @@ impl Default for IdentityService {
 mod tests {
     use super::*;
     use crate::transport::mock_transport::MockTransport;
+    use std::sync::Barrier;
 
     #[test]
     fn identity_hash_returns_configured_value() {
@@ -208,11 +283,79 @@ mod tests {
         assert!(!changed);
     }
 
+    #[test]
+    fn concurrent_public_metadata_edits_merge_in_memory_and_on_disk() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("identity-public.json");
+        let svc = Arc::new(IdentityService::new());
+        svc.public_identity.lock().unwrap().path = Some(path.clone());
+        let barrier = Arc::new(Barrier::new(4));
+
+        let edits = [
+            (Some("Field Node"), None, None),
+            (None, Some("radio"), None),
+            (None, None, Some("FN")),
+        ];
+        let threads = edits.map(|(display_name, icon, short_name)| {
+            let svc = svc.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                svc.set_identity_validated(display_name, icon, short_name).unwrap()
+            })
+        });
+        barrier.wait();
+        for thread in threads {
+            assert!(thread.join().unwrap());
+        }
+
+        let persisted: PublicIdentityMetadata =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let in_memory = svc.public_identity.lock().unwrap().metadata.clone();
+        assert_eq!(persisted, in_memory);
+        assert_eq!(persisted.display_name.as_deref(), Some("Field Node"));
+        assert_eq!(persisted.icon.as_deref(), Some("radio"));
+        assert_eq!(persisted.short_name.as_deref(), Some("FN"));
+    }
+
+    #[test]
+    fn failed_public_metadata_persistence_leaves_memory_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent_file = temp.path().join("not-a-directory");
+        std::fs::write(&parent_file, b"occupied").unwrap();
+        let svc = IdentityService::new();
+        svc.public_identity.lock().unwrap().path = Some(parent_file.join("identity-public.json"));
+
+        let error = svc
+            .set_identity_validated(Some("Field Node"), None, None)
+            .expect_err("persistence through a file parent must fail");
+
+        assert!(error.contains("persist public identity metadata"));
+        assert_eq!(svc.display_name(), None);
+    }
+
     #[tokio::test]
     async fn announce_delegates_to_transport() {
         let mock = Arc::new(MockTransport::new_default());
         let svc = IdentityService::with_transport("test".into(), mock.clone());
         svc.announce(Some(b"app-data")).await;
         assert_eq!(mock.call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn announce_uses_current_normalized_public_name() {
+        use crate::transport::mock_transport::MockCall;
+
+        let mock = Arc::new(MockTransport::new_default());
+        let svc = IdentityService::with_transport("test".into(), mock.clone());
+        assert!(svc.set_identity_validated(Some("  Field Node  "), None, None).unwrap());
+
+        svc.announce(None).await;
+
+        let expected = crate::announce_names::encode_delivery_display_name_app_data("Field Node");
+        assert!(matches!(
+            mock.calls().as_slice(),
+            [MockCall::Announce { app_data }] if app_data == &expected
+        ));
     }
 }

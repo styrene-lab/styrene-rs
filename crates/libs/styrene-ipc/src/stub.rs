@@ -13,6 +13,13 @@ pub struct StubDaemon;
 
 #[async_trait]
 impl DaemonMessaging for StubDaemon {
+    async fn start_conversation(
+        &self,
+        _peer_hash: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        Err(IpcError::not_implemented("start_conversation"))
+    }
+
     async fn send_chat(&self, _request: SendChatRequest) -> Result<MessageId, IpcError> {
         Err(IpcError::not_implemented("send_chat"))
     }
@@ -469,6 +476,7 @@ mod tests {
         let stub = StubDaemon;
 
         // DaemonMessaging
+        assert!(stub.start_conversation("abc").await.is_err());
         let err =
             stub.send_chat(SendChatRequest::default()).await.expect_err("should be NotImplemented");
         assert_eq!(err, IpcError::NotImplemented { method: "send_chat".into() });
