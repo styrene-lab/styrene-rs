@@ -216,7 +216,9 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use crate::crypt::fernet::{AES_BLOCK_SIZE, FERNET_OVERHEAD_SIZE, Fernet};
+    use crate::crypt::fernet::{
+        AES_BLOCK_SIZE, AES_KEY_SIZE, CachedFernet, FERNET_OVERHEAD_SIZE, Fernet, Token,
+    };
     use core::str;
     use rand_core::OsRng;
 
@@ -260,6 +262,27 @@ mod tests {
         let mut out_buf = [0u8; FERNET_OVERHEAD_SIZE + AES_BLOCK_SIZE - 1];
         assert!(fernet.encrypt(test_msg.into(), &mut out_buf[..]).is_err());
     }
+
+    #[test]
+    fn cached_fernet_authenticates_before_decryption() {
+        let key = [0x31; AES_KEY_SIZE];
+        let cached = CachedFernet::new_from_slices(&key, &key);
+        let mut token_buf = [0; 128];
+        let token = cached
+            .encrypt(OsRng, "cached verifier".into(), &mut token_buf)
+            .expect("encrypted token");
+        let mut token_bytes = token.as_bytes().to_vec();
+        let verified = cached.verify(Token::from(token_bytes.as_slice())).expect("valid tag");
+        let mut plain_buf = [0; 32];
+        assert_eq!(
+            cached.decrypt(verified, &mut plain_buf).expect("plaintext").as_bytes(),
+            b"cached verifier"
+        );
+
+        let last = token_bytes.len() - 1;
+        token_bytes[last] ^= 1;
+        assert!(cached.verify(Token::from(token_bytes.as_slice())).is_err());
+    }
 }
 pub struct CachedFernet {
     sign_key: [u8; AES_KEY_SIZE],
@@ -302,17 +325,9 @@ impl CachedFernet {
 
         hmac.update(&token_data[..token_data.len() - HMAC_OUT_SIZE]);
 
-        let actual_tag = hmac.finalize().into_bytes();
+        hmac.verify_slice(expected_tag).map_err(|_| RnsError::IncorrectSignature)?;
 
-        let valid = expected_tag
-            .iter()
-            .zip(actual_tag.as_slice())
-            .map(|(x, y)| x.cmp(y))
-            .find(|&ord| ord != cmp::Ordering::Equal)
-            .unwrap_or(actual_tag.len().cmp(&expected_tag.len()))
-            == cmp::Ordering::Equal;
-
-        if valid { Ok(VerifiedToken(token_data)) } else { Err(RnsError::IncorrectSignature) }
+        Ok(VerifiedToken(token_data))
     }
 
     pub fn decrypt<'a, 'b>(

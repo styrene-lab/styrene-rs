@@ -110,6 +110,7 @@ impl Transport {
             fixed_dest_path_requests: path_request_dest,
             cancel: cancel.clone(),
             receipt_handler: None,
+            terminal_receipt_history: VecDeque::new(),
         }));
 
         let weak_handler = Arc::downgrade(&handler);
@@ -350,16 +351,17 @@ impl Transport {
     }
 
     pub async fn handle_inbound_for_test(&self, packet: Packet) {
-        let (receipt, receipt_handler) = {
+        let receipt = {
             let handler = self.handler.lock().await;
-            let receipt = super::wire::validated_receipt_hash(&packet, &handler)
-                .await
-                .map(DeliveryReceipt::new);
-            let receipt_handler = handler.receipt_handler.clone();
-            (receipt, receipt_handler)
+            super::wire::validated_receipt_hash(&packet, &handler).await
         };
 
-        if let (Some(receipt), Some(handler)) = (receipt, receipt_handler) {
+        let conclusion = if let Some(message_id) = receipt {
+            self.handler.lock().await.conclude_receipt(message_id)
+        } else {
+            None
+        };
+        if let Some((receipt, handler)) = conclusion {
             handler.on_receipt(&receipt);
         }
     }

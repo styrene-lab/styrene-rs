@@ -3,7 +3,7 @@
 mod common;
 
 use rand_core::OsRng;
-use rns_core::crypt::fernet::{Fernet, Token};
+use rns_core::crypt::fernet::{CachedFernet, Fernet, Token};
 
 #[derive(serde::Deserialize)]
 struct FernetVector {
@@ -90,4 +90,42 @@ fn fernet_rejects_tampered_token() {
             v.description
         );
     }
+}
+
+#[test]
+fn canonical_1_5_1_token_tags_are_verified_before_decryption() {
+    let index = common::load_rns_index().expect("valid RNS fixture index");
+    let valid = common::load_rns_vector_bytes(&index, "rns-1.5.1-token-valid")
+        .expect("valid token fixture");
+    let invalid = common::load_rns_vector_bytes(&index, "rns-1.5.1-token-invalid-tag")
+        .expect("invalid token fixture");
+    let truncated = common::load_rns_vector_bytes(&index, "rns-1.5.1-token-truncated-tag")
+        .expect("truncated token fixture");
+    let key = (0_u8..64).collect::<Vec<_>>();
+    let (sign_key, enc_key) = key.split_at(32);
+    let fernet = Fernet::new_from_slices(sign_key, enc_key, OsRng);
+    let cached = CachedFernet::new_from_slices(sign_key, enc_key);
+
+    for token in [&invalid, &truncated] {
+        let output = [0xa5; 64];
+        assert!(fernet.verify(Token::from(token.as_slice())).is_err());
+        assert!(cached.verify(Token::from(token.as_slice())).is_err());
+        assert_eq!(output, [0xa5; 64], "authentication failure must not expose plaintext");
+    }
+
+    let verified = fernet.verify(Token::from(valid.as_slice())).expect("canonical token HMAC");
+    let mut output = [0; 64];
+    assert_eq!(
+        fernet.decrypt(verified, &mut output).expect("canonical token plaintext").as_bytes(),
+        b"RNS 1.5.1 token"
+    );
+    assert!(cached.verify(Token::from(valid.as_slice())).is_ok());
+}
+
+#[test]
+fn every_token_verifier_uses_the_constant_time_mac_api() {
+    let source = include_str!("../src/crypt/fernet.rs");
+    assert_eq!(source.matches("hmac.verify_slice(expected_tag)").count(), 2);
+    assert!(!source.contains(".zip(actual_tag"));
+    assert!(!source.contains("x.cmp(y)"));
 }

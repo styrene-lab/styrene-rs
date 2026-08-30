@@ -59,16 +59,16 @@
 ## 9. Receipt Callback Reentrancy
 <!-- specs: link-resource-security -->
 
-- [ ] 9.1 Add failing reentrant receipt tests in which a validated proof callback synchronously sends another packet, plus duplicate-proof and concurrent-expiry adversarial cases
-- [ ] 9.2 Minimally select receipt candidates and mutate collection state under synchronization, then release synchronization before proof validation side effects and callback invocation
-- [ ] 9.3 Verify callback send completes within a deterministic timeout, the original receipt transitions exactly once, duplicate/expiry races remain terminally idempotent, and no receipt collection lock is held during callbacks
+- [x] 9.1 Add failing reentrant receipt tests in which a validated proof callback synchronously sends another packet, plus duplicate-proof and concurrent-expiry adversarial cases
+- [x] 9.2 Minimally select receipt candidates and mutate collection state under synchronization, then release synchronization before proof validation side effects and callback invocation
+- [x] 9.3 Verify callback send completes within a deterministic timeout, the original receipt transitions exactly once, duplicate/expiry races remain terminally idempotent, and no receipt collection lock is held during callbacks
 
 ## 10. Canonical Token Authentication
 <!-- specs: link-resource-security -->
 
-- [ ] 10.1 Add failing 1.5.1 valid, invalid, and truncated token-tag fixtures plus a regression guard that detects ordinary equality comparison in every token HMAC verification implementation path
-- [ ] 10.2 Minimally retain or restore constant-time HMAC comparison before decryption without changing canonical token bytes or accepted key modes
-- [ ] 10.3 Verify canonical crypto vectors, no plaintext on authentication failure, all feature-specific token implementations, and warning-denied focused tests
+- [x] 10.1 Add failing 1.5.1 valid, invalid, and truncated token-tag fixtures plus a regression guard that detects ordinary equality comparison in every token HMAC verification implementation path
+- [x] 10.2 Minimally retain or restore constant-time HMAC comparison before decryption without changing canonical token bytes or accepted key modes
+- [x] 10.3 Verify canonical crypto vectors, no plaintext on authentication failure, all feature-specific token implementations, and warning-denied focused tests
 
 ## 11. Interface Discovery Metadata
 <!-- specs: interface-discovery -->
