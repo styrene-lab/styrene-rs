@@ -4,12 +4,12 @@ use alloc::collections::BTreeSet;
 
 use crate::destination::{DestinationName, SingleInputDestination};
 use crate::identity::PrivateIdentity;
-use crate::packet::{Header, HeaderType};
+use crate::packet::{Header, HeaderType, PacketType};
 use crate::ratchets::encrypt_for_public_key;
 use crate::transport::destination_ext::link::{
     Link, LinkCloseReason, LinkEvent, LinkEventData, LinkPayload,
 };
-use crate::transport::iface::{InterfaceMode, RxMessage, TxMessageType};
+use crate::transport::iface::{InterfaceMode, InterfaceState, RxMessage, TxMessageType};
 use crate::transport::resource::{ResourceEventKind, ResourceFailure};
 use crate::transport::time::{ManualMonotonicClock, MonotonicClock};
 use rand_core::OsRng;
@@ -214,6 +214,68 @@ async fn path_requests_batch_by_destination_and_answer_each_active_waiter_once()
     assert_eq!(response_b.packet.destination, destination);
     assert!(timeout(Duration::from_millis(50), iface_c.tx_channel.recv()).await.is_err());
     assert_eq!(transport.path_request_snapshot().await.in_flight, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn path_request_handler_uses_current_slowest_online_bitrate() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("bitrate-path-deadline", &identity, true);
+    config.set_retransmit(true);
+    let transport = Transport::new(config);
+    let slow = test_interface_channel(&transport).await;
+    let fast = test_interface_channel(&transport).await;
+    {
+        let manager = transport.iface_manager.lock().await;
+        assert!(manager.set_interface_bitrate(&slow.address, Some(100)));
+        assert!(manager.set_interface_bitrate(&fast.address, Some(1_000)));
+        assert!(manager.set_interface_state(&slow.address, InterfaceState::Active));
+        assert!(manager.set_interface_state(&fast.address, InterfaceState::Active));
+    }
+
+    let destination = AddressHash::new([0x6A; 16]);
+    let request =
+        transport.handler.lock().await.path_requests.generate(&destination, Some(vec![0xA1; 16]));
+    let now = time::Instant::now();
+    let mut handler = transport.handler.lock().await;
+    path::handle_path_request(&request, &mut handler, slow.address, false).await;
+
+    assert_eq!(
+        handler.path_requests.discovery_expires_at(&destination),
+        Some(now + Duration::from_secs(86))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn routed_link_request_uses_selected_interface_bitrate_and_route_hops() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let transport = Transport::new(TransportConfig::new("bitrate-link-deadline", &identity, true));
+    let ingress = test_interface_channel(&transport).await;
+    let egress = test_interface_channel(&transport).await;
+    {
+        let manager = transport.iface_manager.lock().await;
+        assert!(manager.set_interface_bitrate(&egress.address, Some(500)));
+        assert!(manager.set_interface_state(&egress.address, InterfaceState::Active));
+    }
+
+    let destination = AddressHash::new([0x6B; 16]);
+    let next_hop = AddressHash::new([0x6C; 16]);
+    let packet = Packet {
+        header: Header { packet_type: PacketType::LinkRequest, ..Default::default() },
+        destination,
+        ..Default::default()
+    };
+    let link_id = LinkId::from(&packet);
+    let now = time::Instant::now();
+    {
+        let mut handler = transport.handler.lock().await;
+        handler.path_table.insert_for_test(destination, next_hop, egress.address, 3);
+        path::handle_link_request(&packet, ingress.address, handler).await;
+    }
+
+    assert_eq!(
+        transport.handler.lock().await.link_table.proof_timeout_for_test(&link_id),
+        Some(now + Duration::from_secs(26))
+    );
 }
 
 #[tokio::test]

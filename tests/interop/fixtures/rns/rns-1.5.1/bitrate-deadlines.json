@@ -1,0 +1,160 @@
+{
+  "link_proof_extra_grace": [
+    {
+      "bitrate": null,
+      "expected_nanos": 0
+    },
+    {
+      "bitrate": 0,
+      "expected_nanos": 0
+    },
+    {
+      "bitrate": 4,
+      "expected_nanos": 1000000000000
+    },
+    {
+      "bitrate": 5,
+      "expected_nanos": 800000000000
+    },
+    {
+      "bitrate": 6,
+      "expected_nanos": 666666666667
+    },
+    {
+      "bitrate": 9,
+      "expected_nanos": 444444444444
+    },
+    {
+      "bitrate": 100,
+      "expected_nanos": 40000000000
+    },
+    {
+      "bitrate": 500,
+      "expected_nanos": 8000000000
+    },
+    {
+      "bitrate": 1000,
+      "expected_nanos": 4000000000
+    },
+    {
+      "bitrate": 62500,
+      "expected_nanos": 64000000
+    },
+    {
+      "bitrate": 2243903,
+      "expected_nanos": 1782608
+    },
+    {
+      "bitrate": 18446744073709551615,
+      "expected_nanos": 0
+    }
+  ],
+  "medium_path_grace": [
+    {
+      "bitrate": null,
+      "expected_nanos": 0
+    },
+    {
+      "bitrate": 0,
+      "expected_nanos": 0
+    },
+    {
+      "bitrate": 4,
+      "expected_nanos": 1606000000000
+    },
+    {
+      "bitrate": 5,
+      "expected_nanos": 1606000000000
+    },
+    {
+      "bitrate": 6,
+      "expected_nanos": 1339333333333
+    },
+    {
+      "bitrate": 9,
+      "expected_nanos": 894888888889
+    },
+    {
+      "bitrate": 100,
+      "expected_nanos": 86000000000
+    },
+    {
+      "bitrate": 500,
+      "expected_nanos": 22000000000
+    },
+    {
+      "bitrate": 1000,
+      "expected_nanos": 14000000000
+    },
+    {
+      "bitrate": 62500,
+      "expected_nanos": 6128000000
+    },
+    {
+      "bitrate": 2243903,
+      "expected_nanos": 6003565216
+    },
+    {
+      "bitrate": 18446744073709551615,
+      "expected_nanos": 6000000000
+    }
+  ],
+  "online_bitrate_selection": [
+    {
+      "expected_lowest": 1000,
+      "interfaces": [
+        {
+          "bitrate": 5,
+          "online": false
+        },
+        {
+          "bitrate": 1000,
+          "online": true
+        }
+      ]
+    },
+    {
+      "expected_lowest": 500,
+      "interfaces": [
+        {
+          "bitrate": 500,
+          "online": true
+        },
+        {
+          "bitrate": 1000,
+          "online": true
+        }
+      ]
+    },
+    {
+      "expected_lowest": 1000,
+      "interfaces": [
+        {
+          "bitrate": null,
+          "online": true
+        },
+        {
+          "bitrate": 0,
+          "online": true
+        },
+        {
+          "bitrate": 1000,
+          "online": true
+        }
+      ]
+    },
+    {
+      "expected_lowest": null,
+      "interfaces": [
+        {
+          "bitrate": 5,
+          "online": false
+        },
+        {
+          "bitrate": 0,
+          "online": true
+        }
+      ]
+    }
+  ]
+}

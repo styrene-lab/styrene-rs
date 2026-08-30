@@ -92,6 +92,31 @@ impl PathTable {
         Self { map: HashMap::new(), lost_destinations: VecDeque::new() }
     }
 
+    #[cfg(test)]
+    pub(crate) fn insert_for_test(
+        &mut self,
+        destination: AddressHash,
+        received_from: AddressHash,
+        iface: AddressHash,
+        hops: u8,
+    ) {
+        let now = Instant::now();
+        self.map.insert(
+            destination,
+            PathEntry {
+                timestamp: now,
+                observed_at: SystemTime::now(),
+                lifetime: Duration::from_secs(300),
+                replacement_expires_at: now,
+                random_blobs: VecDeque::new(),
+                received_from,
+                hops,
+                iface,
+                packet_hash: Hash::new_from_slice(b"test route"),
+            },
+        );
+    }
+
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
@@ -125,6 +150,13 @@ impl PathTable {
 
     pub fn next_hop_full(&self, destination: &AddressHash) -> Option<(AddressHash, AddressHash)> {
         self.map.get(destination).map(|entry| (entry.received_from, entry.iface))
+    }
+
+    pub fn next_hop_with_hops(
+        &self,
+        destination: &AddressHash,
+    ) -> Option<(AddressHash, AddressHash, u8)> {
+        self.map.get(destination).map(|entry| (entry.received_from, entry.iface, entry.hops))
     }
 
     pub fn next_hop_iface(&self, destination: &AddressHash) -> Option<AddressHash> {

@@ -9,6 +9,7 @@ import json
 import pathlib
 import subprocess
 import sys
+from types import SimpleNamespace
 
 REVISION = "149e4151095adf098b8f53eab0c03b37169e8559"
 TYPE1 = bytes.fromhex("017f000102030405060708090a0b0c0d0e0f00a5")
@@ -74,12 +75,86 @@ def main() -> int:
     finally:
         token_module.os.urandom = original_urandom
 
+    bitrate_cases = [
+        None,
+        0,
+        4,
+        5,
+        6,
+        9,
+        100,
+        500,
+        1000,
+        62500,
+        2243903,
+        (1 << 64) - 1,
+    ]
+    interface_cases = [
+        [{"online": False, "bitrate": 5}, {"online": True, "bitrate": 1000}],
+        [{"online": True, "bitrate": 500}, {"online": True, "bitrate": 1000}],
+        [
+            {"online": True, "bitrate": None},
+            {"online": True, "bitrate": 0},
+            {"online": True, "bitrate": 1000},
+        ],
+        [{"online": False, "bitrate": 5}, {"online": True, "bitrate": 0}],
+    ]
+    original_interfaces = RNS.Transport.interfaces
+    original_lowest_bitrate = RNS.Transport.lowest_interface_bitrate
+    original_highest_bitrate = RNS.Transport.highest_interface_bitrate
+    try:
+        online_bitrate_selection = []
+        for interfaces in interface_cases:
+            RNS.Transport.interfaces = [SimpleNamespace(**interface) for interface in interfaces]
+            RNS.Transport.lowest_interface_bitrate = None
+            RNS.Transport.highest_interface_bitrate = None
+            RNS.Transport.prioritize_interfaces()
+            online_bitrate_selection.append(
+                {
+                    "interfaces": interfaces,
+                    "expected_lowest": RNS.Transport.lowest_interface_bitrate,
+                }
+            )
+
+        medium_path_grace = []
+        for bitrate in bitrate_cases:
+            RNS.Transport.lowest_interface_bitrate = bitrate
+            seconds = RNS.Transport.medium_path_timeout()
+            medium_path_grace.append(
+                {"bitrate": bitrate, "expected_nanos": round(seconds * 1_000_000_000)}
+            )
+    finally:
+        RNS.Transport.interfaces = original_interfaces
+        RNS.Transport.lowest_interface_bitrate = original_lowest_bitrate
+        RNS.Transport.highest_interface_bitrate = original_highest_bitrate
+
+    link_proof_extra_grace = []
+    for bitrate in bitrate_cases:
+        interface = None if bitrate is None else SimpleNamespace(bitrate=bitrate)
+        seconds = RNS.Transport.extra_link_proof_timeout(interface)
+        link_proof_extra_grace.append(
+            {"bitrate": bitrate, "expected_nanos": round(seconds * 1_000_000_000)}
+        )
+
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "packet-type1-hop127.bin").write_bytes(TYPE1)
     (args.output / "packet-type2-hop127.bin").write_bytes(TYPE2)
     (args.output / "token-valid.bin").write_bytes(encrypted)
     (args.output / "packet-admission.json").write_text(
         json.dumps(admission, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (args.output / "bitrate-deadlines.json").write_text(
+        json.dumps(
+            {
+                "medium_path_grace": medium_path_grace,
+                "link_proof_extra_grace": link_proof_extra_grace,
+                "online_bitrate_selection": online_bitrate_selection,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
     )
     return 0
 
