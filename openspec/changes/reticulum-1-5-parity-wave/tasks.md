@@ -5,14 +5,14 @@
 
 - [x] 1.1 Add failing schema/provenance tests requiring `tests/interop/fixtures/rns/index-v2.json`, schema version 2, separate `rns-1.4.2` and `rns-1.5.1` authority records, typed vector expectations, source symbols, and artifact SHA-256 values while asserting every existing 1.4.2 ID, path, byte sequence, and checksum is unchanged
 - [x] 1.2 Minimally add the shared additive v2 index and bounded 1.5.1 vectors, retain `provenance-v1.toml` readability, and expose one fixture-loader contract for `beechat-rns-corrections-wave`, `freetak-rns-hardening-wave`, and `leviculum-rns-corpus-wave` consumers without vendoring Python or mutable revisions
-- [x] 1.3 Verify both authority revisions and all checksums offline, prove old 1.4.2 fixture consumers still pass, and prove the three consumer waves can reference the v2 authority IDs without defining another canonical RNS schema
+- [ ] 1.3 Verify both authority revisions and all checksums offline, prove old 1.4.2 fixture consumers still pass, and prove the three consumer waves use the shared `styrene-interop-runner` loader and v2 authority IDs without defining another canonical RNS schema
 
 ## 2. Packet Admission And Received Hops
 <!-- specs: packet-admission-routing -->
 
 - [x] 2.1 Add failing canonical/adversarial tests in `styrene-rns` for short Type 1/Type 2 frames, incomplete IDs, zero data, oversized payload/frame, wire hops 127/128/255, outbound hop limits, and physical versus local ingress
 - [x] 2.2 Minimally make `Packet::from_bytes` and interface admission reject rather than truncate, increment physical ingress exactly once with checked semantics, and carry canonical post-ingress hops through routing and `ReceivedData`
-- [x] 2.3 Run focused packet, interface, three-node route, and canonical fixture tests and retain an acceptance matrix for every malformed vector and hop boundary
+- [x] 2.3 Run focused packet, interface, synthetic three-hop admission, and canonical fixture tests and retain an acceptance matrix for every malformed vector and hop boundary
 
 ## 3. Violations And Policy Drops
 <!-- specs: packet-admission-routing, link-resource-security -->
@@ -31,9 +31,9 @@
 ## 5. Path-Request Batching And Canonical Limits
 <!-- specs: packet-admission-routing, bounded-ingress -->
 
-- [x] 5.1 Add failing differential/adversarial boundary tests for tag entries 16,000 and the crossing entry, duplicates in current/previous generations, generation aging, one 120-second in-flight gate per destination, duplicate waiters from one interface, waiter count equal to registered-interface count, detached waiters, pending discovery entries 32/33, ingress limiting, and a late egress-state change
-- [x] 5.2 Minimally separate two-generation tag replay state from destination-keyed in-flight discovery, rotate tags by count rather than time, deduplicate waiters by registered interface, expire gates after 120 seconds, refuse the 33rd pending discovery enqueue observably, answer each eligible interface once, and enforce pre-send plus late egress checks
-- [x] 5.3 Verify one recursive request per destination, exact cleanup on answer/timeout/local resolution/detach, duplicate rejection across both tag generations, acceptance only after the containing generation ages out, and no invented fixed total in-flight or waiter limit beyond canonical lifetime and registered-interface bounds
+- [x] 5.1 Add failing differential/adversarial boundary tests for tag entries 16,000 and the crossing entry, duplicates in current/previous generations, generation aging, one 45-second in-flight gate per destination, duplicate waiters from one interface, waiter count equal to registered-interface count, detached waiters, pending discovery entries 32/33, ingress limiting, and a late egress-state change
+- [x] 5.2 Minimally separate two-generation tag replay state from destination-keyed in-flight discovery, rotate tags by count rather than time, deduplicate waiters by registered interface, expire gates after 45 seconds, refuse the 33rd pending discovery enqueue observably, answer each eligible interface once, and enforce pre-send plus late egress checks
+- [x] 5.3 Verify one recursive request per destination, waiter reattachment under the independent destination gate, exact cleanup on answer/local resolution/detach and each applicable timeout, duplicate rejection across both tag generations, acceptance only after the containing generation ages out, and no invented fixed total in-flight or waiter limit beyond canonical lifetime and registered-interface bounds
 
 ## 6. Online Bitrate Metadata And Deadlines
 <!-- specs: packet-admission-routing -->

@@ -13,6 +13,8 @@ use std::sync::mpsc::{self, SyncSender};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub mod rns_fixtures;
+
 const EVENT_PREFIX: &str = "STYRENE_EVENT ";
 const MAX_EVENT_LINE_BYTES: usize = 16 * 1024;
 const MAX_PROBE_BYTES: usize = 4096;
