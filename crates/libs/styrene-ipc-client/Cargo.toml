@@ -1,0 +1,23 @@
+[package]
+name = "styrene-ipc-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bounded typed client transport for Styrene local IPC"
+keywords = ["styrene", "ipc", "client", "async"]
+categories = ["network-programming"]
+
+[dependencies]
+rmpv.workspace = true
+styrene-ipc.workspace = true
+styrene-ipc-wire.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

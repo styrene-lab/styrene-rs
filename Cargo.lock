@@ -4352,6 +4352,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-ipc-client"
+version = "0.1.0"
+dependencies = [
+ "rmpv",
+ "styrene-ipc",
+ "styrene-ipc-wire",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "styrene-ipc-server"
 version = "0.1.0"
 dependencies = [
