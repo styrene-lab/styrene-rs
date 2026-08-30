@@ -139,13 +139,19 @@ pub(super) async fn handle_path_request<'a>(
         }
 
         if handler.config.retransmit {
-            let active_interfaces =
-                handler.iface_manager.lock().await.active_interface_hashes().into_iter().collect();
-            handler.path_requests.register_discovery(
+            let (active_interfaces, lowest_online_bitrate) = {
+                let manager = handler.iface_manager.lock().await;
+                (
+                    manager.active_interface_hashes().into_iter().collect(),
+                    manager.lowest_online_positive_bitrate(),
+                )
+            };
+            handler.path_requests.register_discovery_with_bitrate(
                 &request,
                 iface,
                 ingress_limited,
                 &active_interfaces,
+                lowest_online_bitrate,
             );
         }
     }
@@ -220,10 +226,20 @@ pub(super) async fn handle_link_request_as_intermediate<'a>(
     received_from: AddressHash,
     next_hop: AddressHash,
     next_hop_iface: AddressHash,
+    remaining_hops: u8,
+    outbound_bitrate: Option<u64>,
     packet: &Packet,
     mut handler: MutexGuard<'a, TransportHandler>,
 ) {
-    handler.link_table.add(packet, packet.destination, received_from, next_hop, next_hop_iface);
+    handler.link_table.add(
+        packet,
+        packet.destination,
+        received_from,
+        next_hop,
+        next_hop_iface,
+        remaining_hops,
+        outbound_bitrate,
+    );
 
     send_to_next_hop(packet, &mut handler, None).await;
 }
@@ -243,15 +259,26 @@ pub(super) async fn handle_link_request<'a>(
         log::trace!("tp({}): handle link request for {}", handler.config.name, packet.destination);
 
         handle_link_request_as_destination(destination, packet, iface, handler).await;
-    } else if let Some(entry) = handler.path_table.next_hop_full(&packet.destination) {
+    } else if let Some(entry) = handler.path_table.next_hop_with_hops(&packet.destination) {
         log::trace!(
             "tp({}): handle link request for remote destination {}",
             handler.config.name,
             packet.destination
         );
 
-        let (next_hop, next_iface) = entry;
-        handle_link_request_as_intermediate(iface, next_hop, next_iface, packet, handler).await;
+        let (next_hop, next_iface, remaining_hops) = entry;
+        let outbound_bitrate =
+            handler.iface_manager.lock().await.online_positive_bitrate(&next_iface);
+        handle_link_request_as_intermediate(
+            iface,
+            next_hop,
+            next_iface,
+            remaining_hops,
+            outbound_bitrate,
+            packet,
+            handler,
+        )
+        .await;
     } else {
         log::trace!(
             "tp({}): dropping link request to unknown destination {}",

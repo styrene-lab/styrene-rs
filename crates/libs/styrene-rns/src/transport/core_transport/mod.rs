@@ -66,6 +66,7 @@ use crate::transport::time::{MonotonicClock, SystemMonotonicClock};
 #[allow(dead_code)] // Scaffolded from upstream — awaiting integration into transport loop
 mod announce_limits;
 pub mod announce_table;
+pub mod deadlines;
 pub mod discovery;
 mod link_table;
 mod packet_cache;
@@ -201,7 +202,8 @@ pub struct TransportConfig {
     announce_queue_len: usize,
     announce_cap: usize,
     path_request_timeout_secs: u64,
-    link_proof_timeout_secs: u64,
+    link_proof_timeout_secs: Option<u64>,
+    link_proof_timeout_per_hop_secs: u64,
     link_idle_timeout_secs: u64,
     resource_retry_interval_secs: u64,
     resource_retry_limit: u8,

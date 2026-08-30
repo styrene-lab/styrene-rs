@@ -38,15 +38,21 @@ fn send_backwards(packet: &Packet, entry: &LinkEntry) -> (Packet, AddressHash) {
 
 pub struct LinkTable {
     entries: HashMap<LinkId, LinkEntry>,
-    proof_timeout: Duration,
+    fixed_proof_timeout: Option<Duration>,
+    proof_timeout_per_hop: Duration,
     idle_timeout: Duration,
 }
 
 impl LinkTable {
-    pub fn new(proof_timeout: Duration, idle_timeout: Duration) -> Self {
-        Self { entries: HashMap::new(), proof_timeout, idle_timeout }
+    pub fn new(
+        fixed_proof_timeout: Option<Duration>,
+        proof_timeout_per_hop: Duration,
+        idle_timeout: Duration,
+    ) -> Self {
+        Self { entries: HashMap::new(), fixed_proof_timeout, proof_timeout_per_hop, idle_timeout }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add(
         &mut self,
         link_request: &Packet,
@@ -54,25 +60,52 @@ impl LinkTable {
         received_from: AddressHash,
         next_hop: AddressHash,
         iface: AddressHash,
+        remaining_hops: u8,
+        outbound_bitrate: Option<u64>,
+    ) {
+        self.add_at(
+            link_request,
+            destination,
+            received_from,
+            next_hop,
+            iface,
+            remaining_hops,
+            outbound_bitrate,
+            Instant::now(),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_at(
+        &mut self,
+        link_request: &Packet,
+        destination: AddressHash,
+        received_from: AddressHash,
+        next_hop: AddressHash,
+        iface: AddressHash,
+        remaining_hops: u8,
+        outbound_bitrate: Option<u64>,
+        now: Instant,
     ) {
         let link_id = LinkId::from(link_request);
 
-        if self.entries.contains_key(&link_id) {
-            return;
-        }
-
-        let now = Instant::now();
         let taken_hops = link_request.header.hops;
+        let proof_timeout = super::deadlines::link_proof_timeout(
+            self.fixed_proof_timeout,
+            self.proof_timeout_per_hop,
+            remaining_hops,
+            outbound_bitrate,
+        );
 
         let entry = LinkEntry {
             timestamp: now,
-            proof_timeout: now + self.proof_timeout,
+            proof_timeout: super::deadlines::deadline(now, proof_timeout),
             next_hop,
             next_hop_iface: iface,
             received_from,
             original_destination: destination,
             taken_hops,
-            remaining_hops: 0,
+            remaining_hops,
             validated: false,
         };
 
@@ -109,15 +142,18 @@ impl LinkTable {
     }
 
     pub fn remove_stale(&mut self) {
+        self.remove_stale_at(Instant::now());
+    }
+
+    fn remove_stale_at(&mut self, now: Instant) {
         let mut stale = vec![];
-        let now = Instant::now();
 
         for (link_id, entry) in &self.entries {
             if entry.validated {
-                if entry.timestamp + self.idle_timeout <= now {
+                if super::deadlines::deadline(entry.timestamp, self.idle_timeout) <= now {
                     stale.push(*link_id);
                 }
-            } else if entry.proof_timeout <= now {
+            } else if entry.proof_timeout < now {
                 stale.push(*link_id);
             }
         }
@@ -138,6 +174,11 @@ impl LinkTable {
     pub fn len(&self) -> usize {
         self.entries.len()
     }
+
+    #[cfg(test)]
+    pub(crate) fn proof_timeout_for_test(&self, link_id: &LinkId) -> Option<Instant> {
+        self.entries.get(link_id).map(|entry| entry.proof_timeout)
+    }
 }
 
 #[cfg(test)]
@@ -155,7 +196,7 @@ mod tests {
         let egress = address(b"egress");
         let link_id = address(b"link");
         let now = Instant::now();
-        let mut table = LinkTable::new(Duration::from_secs(10), Duration::from_secs(10));
+        let mut table = LinkTable::new(None, Duration::from_secs(10), Duration::from_secs(10));
         table.entries.insert(
             link_id,
             LinkEntry {
@@ -176,5 +217,84 @@ mod tests {
 
         table.remove_unavailable_interfaces(&[egress]);
         assert!(table.entries.is_empty());
+    }
+
+    #[test]
+    fn proof_deadline_uses_remaining_hops_and_outbound_bitrate() {
+        let ingress = address(b"ingress");
+        let egress = address(b"egress");
+        let destination = address(b"destination");
+        let next_hop = address(b"hop");
+        let packet = Packet { destination, ..Default::default() };
+        let link_id = LinkId::from(&packet);
+        let now = Instant::now();
+        let mut table = LinkTable::new(None, Duration::from_secs(6), Duration::from_secs(10));
+
+        table.add_at(&packet, destination, ingress, next_hop, egress, 3, Some(500), now);
+        assert_eq!(table.entries[&link_id].proof_timeout, now + Duration::from_secs(26));
+        table.remove_stale_at(now + Duration::from_secs(26));
+        assert!(table.entries.contains_key(&link_id));
+        table.remove_stale_at(now + Duration::from_secs(26) + Duration::from_nanos(1));
+        assert!(!table.entries.contains_key(&link_id));
+    }
+
+    #[test]
+    fn repeated_link_request_replaces_route_and_deadline_inputs() {
+        let destination = address(b"destination");
+        let packet = Packet { destination, ..Default::default() };
+        let link_id = LinkId::from(&packet);
+        let now = Instant::now();
+        let mut table = LinkTable::new(None, Duration::from_secs(6), Duration::from_secs(10));
+
+        table.add_at(
+            &packet,
+            destination,
+            address(b"ingress-a"),
+            address(b"hop-a"),
+            address(b"egress-a"),
+            3,
+            Some(500),
+            now,
+        );
+        table.add_at(
+            &packet,
+            destination,
+            address(b"ingress-b"),
+            address(b"hop-b"),
+            address(b"egress-b"),
+            1,
+            Some(1_000),
+            now + Duration::from_secs(1),
+        );
+
+        let entry = &table.entries[&link_id];
+        assert_eq!(entry.received_from, address(b"ingress-b"));
+        assert_eq!(entry.next_hop_iface, address(b"egress-b"));
+        assert_eq!(entry.remaining_hops, 1);
+        assert_eq!(entry.proof_timeout, now + Duration::from_secs(11));
+    }
+
+    #[test]
+    fn extreme_configured_timeout_cannot_overflow_absolute_deadline() {
+        let destination = address(b"destination");
+        let packet = Packet { destination, ..Default::default() };
+        let link_id = LinkId::from(&packet);
+        let now = Instant::now();
+        let mut table = LinkTable::new(Some(Duration::MAX), Duration::MAX, Duration::MAX);
+
+        table.add_at(
+            &packet,
+            destination,
+            address(b"ingress"),
+            address(b"hop"),
+            address(b"egress"),
+            u8::MAX,
+            Some(1),
+            now,
+        );
+        assert!(
+            table.entries[&link_id].proof_timeout
+                > now + Duration::from_secs(2 * 365 * 24 * 60 * 60)
+        );
     }
 }
