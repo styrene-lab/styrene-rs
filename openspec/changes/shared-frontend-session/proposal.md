@@ -11,8 +11,10 @@ wire frames or daemon application internals.
 This change adds a reusable IPC client, a transport-neutral frontend session,
 explicit Live and Embedded lifecycle adapters, generation-safe subscriptions,
 bounded request brokering, and contract fixtures in `styrene-rs`. It migrates
-`styrene-tui` in this repository and coordinates `styrene-ui` adoption through
-public, immutable `styrene-rs` contracts.
+`styrene-tui` and the `styrene` CLI in this repository and coordinates
+`styrene-ui` adoption through public, immutable `styrene-rs` contracts. Mobile
+uses the common typed semantics through its specialized embedded backend host;
+mobile-only lifecycle and bearer operations remain backend-owned extensions.
 
 This change excludes redesigning either UI and moving protocol behavior into a
 frontend crate. Dioxus source and validation remain owned by `styrene-ui`.

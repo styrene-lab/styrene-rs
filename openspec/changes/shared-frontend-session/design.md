@@ -9,6 +9,10 @@ set of conversation, message, network, or capability records.
 
 ## Crate Boundaries
 
+`styrene-ipc-wire` owns stable frame types, opcode discriminants, payload bounds,
+request identifier representation, and codecs used by both socket adapters. It
+contains no listener, daemon implementation, frontend, or lifecycle policy.
+
 `styrene-ipc-client` owns remote client mechanics:
 
 - Wire framing and opcode mapping.
@@ -16,6 +20,9 @@ set of conversation, message, network, or capability records.
 - Independent event subscription and compatibility polling.
 - Connection negotiation and generation changes.
 - typed errors and diagnostics.
+
+It depends on `styrene-ipc` and `styrene-ipc-wire`, not on
+`styrene-ipc-server`.
 
 `styrene-session` owns frontend lifecycle selection:
 
@@ -38,14 +45,22 @@ public client and session contracts at a declared immutable `styrene-rs`
 revision. Its stores, reducers, routes, Dioxus components, and validation remain
 in that repository.
 
+The one-shot `styrene` CLI also replaces its sequential raw-wire client and
+manual parsers. Command formatting and process exit behavior remain local.
+
 The shared boundary does not require Ratatui and Dioxus to share presentation
 reducers. It requires them to consume identical typed daemon semantics.
 
 ## Embedded Mobile Use
 
-Rust Dioxus mobile code consumes `EmbeddedSession` directly. Rust platform
-services provide OS integration without defining a second daemon API or a
-generated-language host.
+Rust Dioxus mobile code consumes a specialized backend-owned embedded host. It
+shares canonical daemon records, capabilities, generation facts, and lifecycle
+semantics with `EmbeddedSession`, but retains mobile-only boot, custody, bearer,
+RNode handoff, and propagation synchronization operations. Rust platform
+services provide OS integration without defining a second daemon API.
+
+The mobile host exposes explicit typed methods. UI code does not access
+`DaemonFacade` or `AppContext` fields directly.
 
 ## Failure Behavior
 
@@ -60,7 +75,8 @@ Closing a session is idempotent and waits for owned runtime shutdown.
 ## Compatibility And Rollout
 
 The reusable client first gains parity tests against the existing TUI client in
-`styrene-rs`. Ratatui migrates to prove the contract in an independent renderer.
-`styrene-ui` then pins the reviewed backend revision and migrates Dioxus in its
-own repository. Each private client is removed only after its owning repository's
-smoke and contract suites pass through the shared implementation.
+`styrene-rs` and the one-shot CLI. The CLI and Ratatui migrate first to prove the
+contract in independent consumers. `styrene-ui` then pins the reviewed backend
+revision and migrates Dioxus in its own repository. Each private client is
+removed only after its owning repository's smoke and contract suites pass
+through the shared implementation.
