@@ -209,6 +209,12 @@ revision = "795fdaa2b0777c13033787d933d1afc94a2377cb"
 version = "1.1.1"
 
 [[parity_upstreams]]
+id = "python-rns-1.5.1"
+repository = "https://github.com/markqvist/Reticulum"
+revision = "149e4151095adf098b8f53eab0c03b37169e8559"
+version = "1.5.1"
+
+[[parity_upstreams]]
 id = "python-nomadnet"
 repository = "https://github.com/markqvist/NomadNet"
 revision = "ad10301569a39d4f43b3d21ae9fc392602c937ca"
@@ -221,7 +227,7 @@ automated = true
 enabled = true
 ignored = false
 protocol = "native"
-upstreams = ["python-rns"]
+upstreams = ["python-rns", "python-rns-1.5.1"]
 command = "cargo test -p styrene-rns --features interop-tests,transport"
 evidence = [
   "crates/libs/styrene-rns/tests/interop_identity.rs",
@@ -230,6 +236,24 @@ evidence = [
   "crates/libs/styrene-rns/tests/interop_fernet.rs",
   "crates/libs/styrene-rns/tests/interop_hdlc.rs",
   "crates/libs/styrene-rns/tests/interop_ifac.rs",
+  "crates/libs/styrene-rns/tests/fixture_index.rs",
+  "tests/interop/fixtures/rns/index-v2.json",
+]
+
+[[parity_gates]]
+id = "rns-parity-contracts"
+kind = "fixture"
+automated = true
+enabled = true
+ignored = false
+protocol = "native"
+upstreams = ["python-rns", "python-rns-1.5.1"]
+command = "cargo test -p styrene-interop-runner --test rns_fixtures --test rns_handoff_manifests"
+evidence = [
+  "crates/tests/styrene-interop-runner/tests/rns_fixtures.rs",
+  "crates/tests/styrene-interop-runner/tests/rns_handoff_manifests.rs",
+  "tests/interop/fixtures/rns/consumers-v1.json",
+  "tests/interop/handoffs/reticulum-1.5.1-live.json",
 ]
 
 [[parity_gates]]

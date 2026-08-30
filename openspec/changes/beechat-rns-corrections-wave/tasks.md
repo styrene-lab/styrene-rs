@@ -3,7 +3,7 @@
 ## 1. Authority And Admission Dependencies
 <!-- specs: rns-wire-corrections, interface-failure-policy, embedded-time -->
 
-- [ ] 1.1 Depend on `reticulum-1-5-parity-wave` tasks 1.1-1.3 and consume its Reticulum 1.5.1 fixture manifest/corpus at `149e4151095adf098b8f53eab0c03b37169e8559` without creating another top-level pin
+- [ ] 1.1 Depend on `reticulum-1-5-parity-wave` tasks 1.1-1.2 and consume its Reticulum 1.5.1 fixture manifest/corpus at `149e4151095adf098b8f53eab0c03b37169e8559` without creating another top-level pin; Task 1.3 verifies this consumption and must not be a prerequisite
 - [ ] 1.2 Depend on its tasks 2.1-2.3 for raw Type-1/Type-2 frame admission and received hops, and identify the current-branch insertion point before queueing
 - [ ] 1.3 Coordinate with its tasks 4.1-4.3 so bounded ingress consumes this change's Type-2 next-hop result without duplicating correction ownership
 

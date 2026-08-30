@@ -1,0 +1,33 @@
+{
+  "contract": "rns-fixture-consumers-v1",
+  "fixture_index": "tests/interop/fixtures/rns/index-v2.json",
+  "consumers": [
+    {
+      "change_id": "beechat-rns-corrections-wave",
+      "authority_ids": ["rns-1.5.1"],
+      "vector_ids": [
+        "rns-1.5.1-packet-type2-hop127",
+        "rns-1.5.1-packet-admission"
+      ]
+    },
+    {
+      "change_id": "freetak-rns-hardening-wave",
+      "authority_ids": ["rns-1.5.1"],
+      "vector_ids": [
+        "rns-1.5.1-link-mtu-vectors",
+        "rns-1.5.1-token-valid",
+        "rns-1.5.1-token-invalid-tag",
+        "rns-1.5.1-token-truncated-tag"
+      ]
+    },
+    {
+      "change_id": "leviculum-rns-corpus-wave",
+      "authority_ids": ["rns-1.4.2", "rns-1.5.1"],
+      "vector_ids": [
+        "rns-1.4.2-packet-vectors",
+        "rns-1.5.1-packet-admission",
+        "rns-1.5.1-interface-discovery-vectors"
+      ]
+    }
+  ]
+}
