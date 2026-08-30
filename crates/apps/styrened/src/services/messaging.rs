@@ -282,6 +282,11 @@ impl OutboundOperation {
 
     fn complete_dispatch(&self, result: &Result<(String, WireRepresentation), TransportError>) {
         let mut state = self.lock_state();
+        if state.cancel_requested {
+            state.phase = OutboundOperationPhase::Cancelled;
+            self.changed.notify_waiters();
+            return;
+        }
         match result {
             Ok((hash, WireRepresentation::Resource)) => {
                 let resource_hash = hex::decode(hash)
@@ -303,6 +308,23 @@ impl OutboundOperation {
             }
         }
         self.changed.notify_waiters();
+    }
+
+    fn begin_fallback_dispatch(&self) -> Result<(), TransportError> {
+        let mut state = self.lock_state();
+        if state.cancel_requested {
+            state.phase = OutboundOperationPhase::Cancelled;
+            self.changed.notify_waiters();
+            return Err(TransportError::Cancelled);
+        }
+        if !matches!(state.phase, OutboundOperationPhase::Dispatching(_)) {
+            return Err(TransportError::SendFailed(
+                "outbound operation is not eligible for packet fallback".into(),
+            ));
+        }
+        state.phase = OutboundOperationPhase::Dispatching(LinkRepresentation::Packet);
+        self.changed.notify_waiters();
+        Ok(())
     }
 
     fn cancel_before_dispatch(&self) -> bool {
@@ -846,6 +868,28 @@ impl MessagingService {
         self.send_chat_with_method(peer_hash, content, title, None).await
     }
 
+    pub async fn send_chat_with_fields(
+        &self,
+        peer_hash: &str,
+        content: &str,
+        title: Option<&str>,
+        fields: serde_json::Value,
+    ) -> Result<String, std::io::Error> {
+        Ok(self
+            .send_chat_outcome_with_route(
+                peer_hash,
+                content,
+                title,
+                None,
+                None,
+                None,
+                &[],
+                Some(fields),
+            )
+            .await?
+            .message_id)
+    }
+
     pub async fn send_chat_with_method(
         &self,
         peer_hash: &str,
@@ -862,6 +906,7 @@ impl MessagingService {
                 None,
                 None,
                 &[],
+                None,
             )
             .await?
             .message_id)
@@ -884,6 +929,7 @@ impl MessagingService {
                 None,
                 None,
                 attachments,
+                None,
             )
             .await?
             .message_id)
@@ -905,6 +951,7 @@ impl MessagingService {
             None,
             None,
             attachments,
+            None,
         )
         .await
     }
@@ -919,6 +966,7 @@ impl MessagingService {
         correlation_id: Option<&str>,
         retry_of: Option<&str>,
         attachments: &[AttachmentBlobInput],
+        fields: Option<serde_json::Value>,
     ) -> Result<SendCommitOutcome, std::io::Error> {
         let transport = self.transport.get().cloned().ok_or_else(|| {
             std::io::Error::other("transport not available — call set_signer() first")
@@ -1015,14 +1063,31 @@ impl MessagingService {
                 "paper LXMF attachments are unsupported",
             ));
         }
-        let wire_fields = (!attachments.is_empty()).then(|| {
-            serde_json::json!({
-                "attachments": attachments.iter().map(|entry| serde_json::json!({
-                    "name": entry.wire_name,
-                    "data": entry.data,
-                })).collect::<Vec<_>>()
-            })
-        });
+        let wire_fields = if attachments.is_empty() {
+            fields.clone()
+        } else {
+            let mut value = fields.clone().unwrap_or_else(|| serde_json::json!({}));
+            let Some(map) = value.as_object_mut() else {
+                self.release_ticket_offer_reservation(ticket_offer.as_ref());
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "LXMF fields must be an object",
+                ));
+            };
+            map.insert(
+                "attachments".into(),
+                serde_json::json!(
+                    attachments
+                        .iter()
+                        .map(|entry| serde_json::json!({
+                            "name": entry.wire_name,
+                            "data": entry.data,
+                        }))
+                        .collect::<Vec<_>>()
+                ),
+            );
+            Some(value)
+        };
         let title = title.unwrap_or("").to_string();
         let title_for_wire = title.clone();
         let content_owned = content.to_string();
@@ -1070,16 +1135,29 @@ impl MessagingService {
             content: content.to_string(),
             timestamp: now,
             direction: "out".to_string(),
-            fields: (!attachments.is_empty()).then(|| {
-                serde_json::json!({
-                    "5": attachments.iter().enumerate().map(|(ordinal, entry)| serde_json::json!({
-                        "ordinal": ordinal,
-                        "name": entry.wire_name,
-                        "size": entry.data.len(),
-                        "data": "stored_attachment",
-                    })).collect::<Vec<_>>()
-                })
-            }),
+            fields: if attachments.is_empty() {
+                fields
+            } else {
+                let mut value = fields.unwrap_or_else(|| serde_json::json!({}));
+                if let Some(map) = value.as_object_mut() {
+                    map.insert(
+                        "5".into(),
+                        serde_json::json!(
+                            attachments
+                                .iter()
+                                .enumerate()
+                                .map(|(ordinal, entry)| serde_json::json!({
+                                    "ordinal": ordinal,
+                                    "name": entry.wire_name,
+                                    "size": entry.data.len(),
+                                    "data": "stored_attachment",
+                                }))
+                                .collect::<Vec<_>>()
+                        ),
+                    );
+                }
+                Some(value)
+            },
             receipt_status: Some("queued".to_string()),
             read: true, // Outgoing messages are always "read"
         };
@@ -1173,7 +1251,7 @@ impl MessagingService {
                 )
             }
         };
-        let plan = match queued {
+        let mut plan = match queued {
             Ok(plan) => plan,
             Err(error) => {
                 self.release_ticket_offer_reservation(ticket_offer.as_ref());
@@ -1445,7 +1523,7 @@ impl MessagingService {
         let operation = operation.ok_or_else(|| std::io::Error::other("delivery ownership missing"))?;
 
         // Run the coordinator-selected delivery attempt.
-        let delivery_result = match plan.actual_method {
+        let mut delivery_result = match plan.actual_method {
             DeliveryMethod::Direct => {
                 self.deliver_selected(
                     transport.as_ref(),
@@ -1485,6 +1563,42 @@ impl MessagingService {
             }
             DeliveryMethod::Propagated | DeliveryMethod::Paper => unreachable!(),
         };
+        if plan.actual_method == DeliveryMethod::Direct
+            && delivery_result.is_err()
+            && !matches!(delivery_result, Err(TransportError::Cancelled))
+            && opportunistic_payload.len() <= rns_core::packet::LXMF_MAX_PAYLOAD
+        {
+            let direct_error = delivery_result.as_ref().unwrap_err().to_string();
+            if let Err(error) = operation.begin_fallback_dispatch() {
+                delivery_result = Err(error);
+            } else {
+                let fallback = self.router.fallback_to_opportunistic(
+                    &msg_id,
+                    format!("direct delivery failed: {direct_error}"),
+                )?;
+                let remaining = self.router.remaining(fallback.deadline)?;
+                delivery_result = match tokio::time::timeout(
+                    remaining,
+                    transport.send_raw(dest_hash, opportunistic_payload),
+                )
+                .await
+                {
+                    Err(_) => Err(TransportError::SendFailed("router deadline expired".into())),
+                    Ok(Ok(outcome))
+                        if rns_core::transport::delivery::send_outcome_is_sent(outcome) =>
+                    {
+                        Ok((String::new(), WireRepresentation::Packet))
+                    }
+                    Ok(Ok(outcome)) => Err(TransportError::SendFailed(
+                        rns_core::transport::delivery::send_outcome_label(outcome).into(),
+                    )),
+                    Ok(Err(error)) => Err(error),
+                };
+                plan = fallback;
+                committed.actual_method = plan.actual_method.as_str().into();
+                committed.fallback_reason = plan.fallback_reason.clone();
+            }
+        }
         operation.complete_dispatch(&delivery_result);
 
         match &delivery_result {
@@ -2209,7 +2323,7 @@ impl MessagingService {
         &self,
         message: &MessageRecord,
         payload: Vec<u8>,
-        plan: crate::services::router::DeliveryPlan,
+        mut plan: crate::services::router::DeliveryPlan,
     ) -> Result<SendCommitOutcome, std::io::Error> {
         let transport = self
             .transport
@@ -2349,7 +2463,7 @@ impl MessagingService {
             self.remove_operation(&message.id);
             committed = committed.failed(detail);
         } else {
-            let delivery_result = match plan.actual_method {
+            let mut delivery_result = match plan.actual_method {
                 DeliveryMethod::Direct => {
                     self.deliver_selected(
                         transport.as_ref(),
@@ -2388,6 +2502,42 @@ impl MessagingService {
                     Err(TransportError::SendFailed("persisted retry method is unsupported".into()))
                 }
             };
+            if plan.actual_method == DeliveryMethod::Direct
+                && delivery_result.is_err()
+                && !matches!(delivery_result, Err(TransportError::Cancelled))
+                && opportunistic_payload.len() <= rns_core::packet::LXMF_MAX_PAYLOAD
+            {
+                let direct_error = delivery_result.as_ref().unwrap_err().to_string();
+                if let Err(error) = operation.begin_fallback_dispatch() {
+                    delivery_result = Err(error);
+                } else {
+                    let fallback = self.router.fallback_to_opportunistic(
+                        &message.id,
+                        format!("direct delivery failed: {direct_error}"),
+                    )?;
+                    let remaining = self.router.remaining(fallback.deadline)?;
+                    delivery_result = match tokio::time::timeout(
+                        remaining,
+                        transport.send_raw(dest_hash, opportunistic_payload),
+                    )
+                    .await
+                    {
+                        Err(_) => Err(TransportError::SendFailed("router deadline expired".into())),
+                        Ok(Ok(outcome))
+                            if rns_core::transport::delivery::send_outcome_is_sent(outcome) =>
+                        {
+                            Ok((String::new(), WireRepresentation::Packet))
+                        }
+                        Ok(Ok(outcome)) => Err(TransportError::SendFailed(
+                            rns_core::transport::delivery::send_outcome_label(outcome).into(),
+                        )),
+                        Ok(Err(error)) => Err(error),
+                    };
+                    plan = fallback;
+                    committed.actual_method = plan.actual_method.as_str().into();
+                    committed.fallback_reason = plan.fallback_reason.clone();
+                }
+            }
             operation.complete_dispatch(&delivery_result);
             match &delivery_result {
                 Ok((evidence_hash, representation)) => {
@@ -3650,6 +3800,17 @@ mod tests {
         assert_eq!(operation.wait_for_cancel_handoff().await, OutboundOperationPhase::Cancelled);
     }
 
+    #[test]
+    fn accepted_resource_cancellation_prevents_packet_fallback() {
+        let operation = OutboundOperation::new();
+        operation.begin_dispatch(LinkRepresentation::Resource).unwrap();
+        operation.request_resource_cancel();
+
+        assert!(matches!(operation.begin_fallback_dispatch(), Err(TransportError::Cancelled)));
+        operation.complete_dispatch(&Ok((String::new(), WireRepresentation::Packet)));
+        assert_eq!(operation.lock_state().phase, OutboundOperationPhase::Cancelled);
+    }
+
     #[tokio::test]
     async fn resource_cleanup_rejection_does_not_persist_cancelled() {
         let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
@@ -4200,6 +4361,42 @@ mod tests {
 
         assert_eq!(decoded.source, [0x22; 16]);
         assert_eq!(svc.get_message(&message_id).unwrap().unwrap().source, "22".repeat(16));
+    }
+
+    #[tokio::test]
+    async fn direct_failure_falls_back_with_same_persisted_message_and_structured_fields() {
+        use crate::transport::mock_transport::{MockCall, MockTransport};
+
+        let service = MessagingService::new();
+        let transport = Arc::new(MockTransport::new_default());
+        let remote = rns_core::identity::PrivateIdentity::new_from_name("fallback-remote");
+        transport.queue_resolve(Some(*remote.as_identity()));
+        transport.queue_send_link(Err(TransportError::SendFailed("link rejected".into())));
+        let signer = Arc::new(rns_core::identity::PrivateIdentity::new_from_name("fallback-local"));
+        service.set_signer(transport.clone(), signer);
+
+        let message_id = service
+            .send_chat_with_fields(
+                &"33".repeat(16),
+                "echo body",
+                Some("[auto-reply]"),
+                serde_json::json!({"styrene_echo": {"response": true, "request_id": "request"}}),
+            )
+            .await
+            .unwrap();
+        let route = service.outbound_lifecycle(&message_id).unwrap().unwrap().0;
+        assert_eq!(route.requested_method, "direct");
+        assert_eq!(route.actual_method, "opportunistic");
+        assert_eq!(route.correlation_id, message_id);
+        assert!(
+            route.fallback_reason.as_deref().is_some_and(|reason| reason.contains("link rejected"))
+        );
+        assert_eq!(route.attempt_count, 1);
+        assert!(transport.calls().iter().any(|call| matches!(call, MockCall::SendRaw { .. })));
+        assert_eq!(
+            service.get_message(&message_id).unwrap().unwrap().fields,
+            Some(serde_json::json!({"styrene_echo": {"response": true, "request_id": "request"}}))
+        );
     }
 
     #[tokio::test]

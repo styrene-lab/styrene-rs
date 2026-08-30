@@ -1741,6 +1741,7 @@ impl DaemonStatus for DaemonFacade {
             AutoReplyMode::Disabled => "disabled".into(),
             AutoReplyMode::All => "all".into(),
             AutoReplyMode::FirstOnly => "first_only".into(),
+            AutoReplyMode::Echo => "echo".into(),
         };
         ar.message = if config.message.is_empty() { None } else { Some(config.message) };
         ar.cooldown_secs = Some(config.cooldown.as_secs());
@@ -1758,17 +1759,20 @@ impl DaemonStatus for DaemonFacade {
             "disabled" | "off" => AutoReplyMode::Disabled,
             "all" => AutoReplyMode::All,
             "first_only" | "first" => AutoReplyMode::FirstOnly,
+            "echo" => AutoReplyMode::Echo,
             _ => {
                 return Err(IpcError::InvalidRequest {
                     message: format!("unknown auto-reply mode: {mode}"),
                 });
             }
         };
-        self.ctx.auto_reply().set_config(crate::services::auto_reply::AutoReplyConfig {
+        let config = crate::services::auto_reply::AutoReplyConfig {
             mode: auto_reply_mode,
             message: message.unwrap_or_default().to_string(),
             cooldown: std::time::Duration::from_secs(cooldown_secs.unwrap_or(300)),
-        });
+        };
+        self.ctx.config().set_auto_reply((&config).into()).map_err(internal)?;
+        self.ctx.auto_reply().set_config(config);
         Ok(true)
     }
 
@@ -3161,13 +3165,27 @@ mod tests {
 
     #[tokio::test]
     async fn set_auto_reply_updates_config() {
+        let dir = tempfile::tempdir().unwrap();
         let facade =
             make_facade_for_role(styrene_rbac::Role::Admin, Arc::new(NullTransport::new()));
+        facade.ctx.config().load_or_default(&dir.path().join("config.toml")).unwrap();
         facade.set_auto_reply("all", Some("I'm away"), Some(600)).await.unwrap();
         let config = facade.query_auto_reply().await.unwrap();
         assert_eq!(config.mode, "all");
         assert_eq!(config.message, Some("I'm away".into()));
         assert_eq!(config.cooldown_secs, Some(600));
+    }
+
+    #[tokio::test]
+    async fn set_auto_reply_accepts_echo() {
+        let dir = tempfile::tempdir().unwrap();
+        let facade =
+            make_facade_for_role(styrene_rbac::Role::Admin, Arc::new(NullTransport::new()));
+        facade.ctx.config().load_or_default(&dir.path().join("config.toml")).unwrap();
+        facade.set_auto_reply("echo", None, Some(0)).await.unwrap();
+        let config = facade.query_auto_reply().await.unwrap();
+        assert_eq!(config.mode, "echo");
+        assert_eq!(config.cooldown_secs, Some(0));
     }
 
     #[tokio::test]

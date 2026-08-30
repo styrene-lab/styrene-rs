@@ -328,6 +328,8 @@ async fn bootstrap_with_transport_override(
         let default = styrened::config::default_config_path();
         if default.exists() { Some(default) } else { None }
     });
+    let config_service_path =
+        args.config.clone().unwrap_or_else(styrened::config::default_config_path);
     let daemon_config = config_path.as_ref().and_then(|path| match DaemonConfig::from_path(path) {
         Ok(config) => Some(config),
         Err(err) => {
@@ -752,6 +754,9 @@ async fn bootstrap_with_transport_override(
         node_store,
         styrened::services::PolicyService::new(rbac_policy),
     ));
+    if let Some(config) = daemon_config.as_ref() {
+        app_context.auto_reply().set_config((&config.auto_reply).into());
+    }
     if let Some(endpoint) = standard_propagation.as_ref() {
         app_context.publish_standard_propagation(endpoint.runtime_observation());
         endpoint.set_events(app_context.events_arc());
@@ -767,10 +772,8 @@ async fn bootstrap_with_transport_override(
     ));
     legacy_workers.push(spawn_legacy_message_event_adapter(daemon.clone(), app_context.clone()));
     startup.record(startup_component::LEGACY_MESSAGE_EVENT_ADAPTER);
-    // Load config into ConfigService if a config file was provided
-    if let Some(config_path) = config_path.as_ref()
-        && let Err(e) = app_context.config().load(config_path)
-    {
+    // Keep a durable path even on first boot so IPC updates cannot silently become volatile.
+    if let Err(e) = app_context.config().load_or_default(&config_service_path) {
         eprintln!("[daemon] failed to load config into ConfigService: {}", e);
     }
     // Wire signing identity into services that need outbound delivery

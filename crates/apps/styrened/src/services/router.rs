@@ -731,6 +731,37 @@ impl RouterCoordinator {
         self.lock_store()?.outbound_retry_for(message_id).map_err(std::io::Error::other)
     }
 
+    pub fn fallback_to_opportunistic(
+        &self,
+        message_id: &str,
+        reason: impl Into<String>,
+    ) -> Result<DeliveryPlan, std::io::Error> {
+        self.ensure_ready()?;
+        let reason = reason.into();
+        if !self
+            .lock_store()?
+            .fallback_outbound_to_opportunistic(message_id, &reason)
+            .map_err(std::io::Error::other)?
+        {
+            return Err(std::io::Error::other("direct route is not eligible for fallback"));
+        }
+        let mut state = self.lock_state()?;
+        self.reload_state_locked(&mut state)?;
+        let message = state
+            .messages
+            .get(message_id)
+            .ok_or_else(|| std::io::Error::other("fallback route disappeared"))?;
+        Ok(DeliveryPlan {
+            requested_method: message.requested_method,
+            actual_method: message.actual_method,
+            representation: message.representation,
+            fallback_reason: message.fallback_reason.clone(),
+            correlation_id: message.correlation_id.clone(),
+            deadline: message.deadline,
+            deadline_unix_ms: message.deadline_unix_ms,
+        })
+    }
+
     pub fn begin_retry(&self, message_id: &str) -> Result<RetryStartResult, std::io::Error> {
         self.begin_retry_with_route(message_id, None)
     }
@@ -1232,6 +1263,33 @@ mod tests {
         assert!(persisted.fallback_reason.is_some());
         assert_eq!(persisted.correlation_id, "fallback");
         assert_eq!(persisted.deadline_unix_ms, fallback.deadline_unix_ms);
+    }
+
+    #[test]
+    fn direct_fallback_preserves_identity_correlation_and_deadline_across_restart() {
+        let store = Arc::new(Mutex::new(MessagesStore::in_memory().unwrap()));
+        let router = RouterCoordinator::new(store.clone());
+        let queued = router
+            .queue(&message("fallback-direct"), Some("direct"), 100, 84, Some("correlation"))
+            .unwrap();
+        router.begin_attempt("fallback-direct").unwrap();
+        let fallback = router
+            .fallback_to_opportunistic("fallback-direct", "direct identity resolution failed")
+            .unwrap();
+
+        assert_eq!(fallback.requested_method, DeliveryMethod::Direct);
+        assert_eq!(fallback.actual_method, DeliveryMethod::Opportunistic);
+        assert_eq!(fallback.correlation_id, "correlation");
+        assert_eq!(fallback.deadline_unix_ms, queued.deadline_unix_ms);
+
+        let reopened = RouterCoordinator::new(store);
+        let projected = reopened.message("fallback-direct").unwrap();
+        assert_eq!(projected.requested_method, DeliveryMethod::Direct);
+        assert_eq!(projected.actual_method, DeliveryMethod::Opportunistic);
+        assert_eq!(projected.correlation_id, "correlation");
+        assert_eq!(projected.deadline_unix_ms, queued.deadline_unix_ms);
+        assert_eq!(projected.total_attempts, 1);
+        assert_eq!(projected.fallback_reason.as_deref(), Some("direct identity resolution failed"));
     }
 
     #[test]
