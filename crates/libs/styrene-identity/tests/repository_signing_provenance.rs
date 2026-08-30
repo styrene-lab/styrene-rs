@@ -23,13 +23,12 @@ fn repository_signing_corpus_provenance_matches_source_tree() {
     let status = manifest["status"].as_str().expect("provenance status");
     let revision = manifest["generator_revision"].as_str().expect("generator revision");
     match status {
-        "candidate" => assert_eq!(revision, "PENDING_CLEAN_COMMIT"),
-        "released" => assert!(
+        "candidate" | "released" => assert!(
             revision.len() == 40
                 && revision
                     .bytes()
                     .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
-            "released provenance requires a full lowercase commit SHA"
+            "corpus provenance requires a full lowercase commit SHA"
         ),
         other => panic!("unsupported provenance status: {other}"),
     }
