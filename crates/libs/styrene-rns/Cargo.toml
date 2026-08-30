@@ -42,6 +42,7 @@ tokio-serial = { version = "5.4", optional = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 serde_json = { workspace = true }
+styrene-interop-runner = { path = "../../tests/styrene-interop-runner" }
 tokio = { workspace = true, features = ["test-util"] }
 
 [features]

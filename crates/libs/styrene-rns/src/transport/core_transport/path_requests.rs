@@ -13,7 +13,7 @@ use crate::packet::{
 
 pub const MAX_PR_TAGS: usize = 16_000;
 pub const MAX_PENDING_DISCOVERY_REQUESTS: usize = 32;
-pub const PATH_REQUEST_GATE_TIMEOUT: Duration = Duration::from_secs(120);
+pub const PATH_REQUEST_GATE_TIMEOUT: Duration = Duration::from_secs(45);
 
 pub fn create_path_request_destination() -> PlainInputDestination {
     PlainInputDestination::new(
@@ -83,7 +83,6 @@ impl PathRequest {
 pub enum DiscoveryAction {
     StartDiscovery,
     Batched,
-    Gated,
     IngressLimited,
     PendingQueueFull,
     InactiveInterface,
@@ -225,14 +224,46 @@ impl PathRequests {
             return DiscoveryAction::Batched;
         }
         if self.in_flight.contains_key(&request.destination) {
-            return DiscoveryAction::Gated;
+            if ingress_limited {
+                return DiscoveryAction::IngressLimited;
+            }
+            self.discovery.insert(
+                request.destination,
+                DiscoveryEntry {
+                    expires_at: now + self.discovery_timeout,
+                    waiters: BTreeSet::from([iface]),
+                    tag: request.tag_bytes.clone(),
+                    ingress_iface: iface,
+                    pending: false,
+                    sent_ifaces: BTreeSet::new(),
+                },
+            );
+            return DiscoveryAction::Batched;
         }
+        self.in_flight.insert(request.destination, now + PATH_REQUEST_GATE_TIMEOUT);
         if ingress_limited {
             return DiscoveryAction::IngressLimited;
         }
         let replacing_pending = self.pending.iter().any(|queued| *queued == request.destination);
         if self.pending.len() >= MAX_PENDING_DISCOVERY_REQUESTS && !replacing_pending {
             self.pending_dropped = self.pending_dropped.saturating_add(1);
+            let mut waiters = self
+                .discovery
+                .remove(&request.destination)
+                .map(|entry| entry.waiters)
+                .unwrap_or_default();
+            waiters.insert(iface);
+            self.discovery.insert(
+                request.destination,
+                DiscoveryEntry {
+                    expires_at: now + self.discovery_timeout,
+                    waiters,
+                    tag: request.tag_bytes.clone(),
+                    ingress_iface: iface,
+                    pending: false,
+                    sent_ifaces: BTreeSet::new(),
+                },
+            );
             return DiscoveryAction::PendingQueueFull;
         }
 
@@ -254,7 +285,6 @@ impl PathRequests {
                 sent_ifaces: BTreeSet::new(),
             },
         );
-        self.in_flight.insert(request.destination, now + PATH_REQUEST_GATE_TIMEOUT);
         self.pending.push_back(request.destination);
         DiscoveryAction::StartDiscovery
     }
@@ -313,11 +343,11 @@ impl PathRequests {
         destination: &AddressHash,
         active_interfaces: &BTreeSet<AddressHash>,
     ) -> Vec<AddressHash> {
+        self.in_flight.remove(destination);
+        self.pending.retain(|queued| queued != destination);
         let Some(mut entry) = self.discovery.remove(destination) else {
             return Vec::new();
         };
-        self.in_flight.remove(destination);
-        self.pending.retain(|queued| queued != destination);
         entry.waiters.retain(|iface| active_interfaces.contains(iface));
         entry.waiters.into_iter().collect()
     }
@@ -327,7 +357,7 @@ impl PathRequests {
     }
 
     fn prune_at(&mut self, now: Instant, active_interfaces: &BTreeSet<AddressHash>) {
-        self.in_flight.retain(|_, expires_at| *expires_at > now);
+        self.in_flight.retain(|_, expires_at| *expires_at >= now);
         self.discovery.retain(|_, entry| {
             entry.waiters.retain(|iface| active_interfaces.contains(iface));
             entry.expires_at > now && !entry.waiters.is_empty()
@@ -424,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn gate_expires_at_exact_120_second_boundary_and_has_no_global_cardinality_cap() {
+    fn gate_expires_after_45_seconds_and_has_no_global_cardinality_cap() {
         let mut testee = PathRequests::new("", None, 0, 0, 300);
         let now = Instant::now();
         let mut active = BTreeSet::new();
@@ -456,6 +486,16 @@ mod tests {
                 &active,
                 now + PATH_REQUEST_GATE_TIMEOUT,
             ),
+            DiscoveryAction::Batched
+        );
+        assert_eq!(
+            testee.register_discovery_at(
+                &request(destination, 4),
+                iface,
+                false,
+                &active,
+                now + PATH_REQUEST_GATE_TIMEOUT + Duration::from_nanos(1),
+            ),
             DiscoveryAction::StartDiscovery
         );
         testee.mark_dispatched(&destination);
@@ -463,11 +503,11 @@ mod tests {
             let destination = AddressHash::new([value; 16]);
             assert_eq!(
                 testee.register_discovery_at(
-                    &request(destination, value as u32),
+                    &request(destination, value as u32 + 4),
                     iface,
                     false,
                     &active,
-                    now + PATH_REQUEST_GATE_TIMEOUT,
+                    now + PATH_REQUEST_GATE_TIMEOUT + Duration::from_nanos(1),
                 ),
                 DiscoveryAction::StartDiscovery
             );
@@ -477,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn shorter_discovery_deadline_does_not_release_destination_gate() {
+    fn request_after_waiter_timeout_reattaches_without_restarting_discovery() {
         let mut testee = PathRequests::new("", None, 0, 0, 30);
         let now = Instant::now();
         let destination = AddressHash::new([0x45; 16]);
@@ -493,11 +533,11 @@ mod tests {
             testee.register_discovery_at(
                 &request(destination, 2),
                 iface,
-                false,
+                true,
                 &active,
                 now + Duration::from_secs(30),
             ),
-            DiscoveryAction::Gated
+            DiscoveryAction::IngressLimited
         );
         assert_eq!(
             testee.register_discovery_at(
@@ -505,7 +545,46 @@ mod tests {
                 iface,
                 false,
                 &active,
+                now + Duration::from_secs(30),
+            ),
+            DiscoveryAction::Batched
+        );
+        assert_eq!(testee.take_waiters(&destination, &active), vec![iface]);
+        assert_eq!(testee.snapshot().in_flight, 0);
+        assert_eq!(
+            testee.register_discovery_at(
+                &request(destination, 4),
+                iface,
+                false,
+                &active,
                 now + PATH_REQUEST_GATE_TIMEOUT,
+            ),
+            DiscoveryAction::StartDiscovery
+        );
+    }
+
+    #[test]
+    fn local_answer_after_waiter_timeout_releases_destination_gate() {
+        let mut testee = PathRequests::new("", None, 0, 0, 30);
+        let now = Instant::now();
+        let destination = AddressHash::new([0x46; 16]);
+        let iface = AddressHash::new([0x01; 16]);
+        let active = BTreeSet::from([iface]);
+        assert_eq!(
+            testee.register_discovery_at(&request(destination, 1), iface, false, &active, now),
+            DiscoveryAction::StartDiscovery
+        );
+
+        testee.prune_at(now + Duration::from_secs(30), &active);
+        assert!(testee.take_waiters(&destination, &active).is_empty());
+        assert_eq!(testee.snapshot().in_flight, 0);
+        assert_eq!(
+            testee.register_discovery_at(
+                &request(destination, 2),
+                iface,
+                false,
+                &active,
+                now + Duration::from_secs(30),
             ),
             DiscoveryAction::StartDiscovery
         );
@@ -539,7 +618,38 @@ mod tests {
         let snapshot = testee.snapshot();
         assert_eq!(snapshot.pending_depth, 32);
         assert_eq!(snapshot.pending_dropped, 1);
-        assert_eq!(snapshot.in_flight, 32);
+        assert_eq!(snapshot.in_flight, 33);
+        assert_eq!(
+            testee.register_discovery(
+                &request(AddressHash::new([0xFE; 16]), 100),
+                iface,
+                false,
+                &active,
+            ),
+            DiscoveryAction::Batched
+        );
+        assert_eq!(testee.snapshot().pending_dropped, 1);
+        assert_eq!(testee.take_waiters(&AddressHash::new([0xFE; 16]), &active), vec![iface]);
+    }
+
+    #[test]
+    fn first_ingress_limited_request_gates_unrestricted_duplicate() {
+        let mut testee = PathRequests::new("", None, 0, 0, 30);
+        let destination = AddressHash::new([0xEF; 16]);
+        let iface = AddressHash::new([0x55; 16]);
+        let active = BTreeSet::from([iface]);
+
+        assert_eq!(
+            testee.register_discovery(&request(destination, 1), iface, true, &active),
+            DiscoveryAction::IngressLimited
+        );
+        assert_eq!(testee.snapshot().in_flight, 1);
+        assert_eq!(
+            testee.register_discovery(&request(destination, 2), iface, false, &active),
+            DiscoveryAction::Batched
+        );
+        assert_eq!(testee.snapshot().pending_depth, 0);
+        assert_eq!(testee.take_waiters(&destination, &active), vec![iface]);
     }
 
     #[test]
@@ -567,7 +677,7 @@ mod tests {
                 iface,
                 false,
                 &active,
-                now + PATH_REQUEST_GATE_TIMEOUT,
+                now + PATH_REQUEST_GATE_TIMEOUT + Duration::from_nanos(1),
             ),
             DiscoveryAction::StartDiscovery
         );
