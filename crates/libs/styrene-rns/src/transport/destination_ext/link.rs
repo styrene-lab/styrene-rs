@@ -17,7 +17,8 @@ use crate::{
     hash::{ADDRESS_HASH_SIZE, AddressHash, HASH_SIZE, Hash},
     identity::{DecryptIdentity, DerivedKey, EncryptIdentity, Identity, PrivateIdentity},
     packet::{
-        DestinationType, Header, PACKET_MDU, Packet, PacketContext, PacketDataBuffer, PacketType,
+        DestinationType, Header, PACKET_DATA_CAPACITY, Packet, PacketContext, PacketDataBuffer,
+        PacketType,
     },
     transport::channel::{
         ChannelError, Envelope as ChannelEnvelope, Handler as ChannelHandler, HandlerId,
@@ -82,8 +83,33 @@ impl LinkStatus {
 
 pub type LinkId = AddressHash;
 
+include!("link/signalling.rs");
 include!("link/payload.rs");
 include!("link/id.rs");
+
+pub(crate) fn clamp_link_request_mtu(
+    packet: &Packet,
+    route_mtu: Option<usize>,
+) -> Result<Packet, RnsError> {
+    if packet.header.packet_type != PacketType::LinkRequest || !matches!(packet.data.len(), 64 | 67)
+    {
+        return Err(RnsError::PacketError);
+    }
+    if packet.data.len() == 64 {
+        return Ok(*packet);
+    }
+
+    let mut bytes = [0_u8; LINK_MTU_SIZE];
+    bytes.copy_from_slice(&packet.data.as_slice()[64..67]);
+    let signalling = LinkSignalling::decode(bytes)?;
+    let mut clamped = *packet;
+    clamped.data.reset();
+    clamped.data.write(&packet.data.as_slice()[..64])?;
+    if let Some(route_mtu) = route_mtu {
+        clamped.data.write(&signalling.clamp(route_mtu).encode())?;
+    }
+    Ok(clamped)
+}
 
 #[allow(clippy::large_enum_variant)]
 pub enum LinkHandleResult {
@@ -163,7 +189,7 @@ pub struct Link {
     close_reason: Option<LinkCloseReason>,
     derived_key: DerivedKey,
     session_cipher: Option<CachedFernet>,
-    signalling: Option<[u8; LINK_MTU_SIZE]>,
+    signalling: Option<LinkSignalling>,
     status: LinkStatus,
     request_time: Instant,
     rtt: Duration,
@@ -209,7 +235,7 @@ impl Link {
             close_reason: None,
             derived_key: DerivedKey::new_empty(),
             session_cipher: None,
-            signalling: None,
+            signalling: Some(LinkSignalling::base()),
             status: LinkStatus::Pending,
             request_time: Instant::now(),
             rtt: Duration::from_secs(0),
@@ -246,7 +272,7 @@ impl Link {
         destination: DestinationDesc,
         event_tx: tokio::sync::broadcast::Sender<LinkEventData>,
     ) -> Result<Self, RnsError> {
-        if packet.data.len() < PUBLIC_KEY_LENGTH * 2 {
+        if !matches!(packet.data.len(), 64 | 67) {
             return Err(RnsError::InvalidArgument);
         }
 
@@ -255,21 +281,14 @@ impl Link {
             &data[..PUBLIC_KEY_LENGTH],
             &data[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH * 2],
         );
-        let signalling = if data.len() >= PUBLIC_KEY_LENGTH * 2 + LINK_MTU_SIZE {
+        let signalling = if data.len() == PUBLIC_KEY_LENGTH * 2 + LINK_MTU_SIZE {
             let mut bytes = [0u8; LINK_MTU_SIZE];
             bytes.copy_from_slice(
                 &data[PUBLIC_KEY_LENGTH * 2..PUBLIC_KEY_LENGTH * 2 + LINK_MTU_SIZE],
             );
-            let remote_mtu = ((((bytes[0] & 0x1f) as usize) << 16)
-                | ((bytes[1] as usize) << 8)
-                | bytes[2] as usize)
-                .min(PACKET_MDU + HEADER_MAXSIZE + IFAC_MIN_SIZE);
-            bytes[0] = (bytes[0] & 0xe0) | ((remote_mtu >> 16) as u8 & 0x1f);
-            bytes[1] = (remote_mtu >> 8) as u8;
-            bytes[2] = remote_mtu as u8;
-            Some(bytes)
+            Some(LinkSignalling::decode(bytes)?.clamp(crate::packet::MAX_LINK_MTU))
         } else {
-            None
+            Some(LinkSignalling::base())
         };
 
         let link_id = LinkId::from(packet);
@@ -326,6 +345,9 @@ impl Link {
 
         packet_data.safe_write(self.priv_identity.as_identity().public_key.as_bytes());
         packet_data.safe_write(self.priv_identity.as_identity().verifying_key.as_bytes());
+        if let Some(signalling) = self.signalling {
+            packet_data.safe_write(&signalling.encode());
+        }
 
         let packet = Packet {
             header: Header { packet_type: PacketType::LinkRequest, ..Default::default() },
@@ -383,7 +405,7 @@ impl Link {
         packet_data.safe_write(self.priv_identity.as_identity().public_key.as_bytes());
         packet_data.safe_write(self.priv_identity.as_identity().verifying_key.as_bytes());
         if let Some(signalling) = self.signalling {
-            packet_data.safe_write(&signalling);
+            packet_data.safe_write(&signalling.encode());
         }
 
         let signature = self.priv_identity.sign(packet_data.as_slice());
@@ -392,7 +414,7 @@ impl Link {
         packet_data.safe_write(&signature.to_bytes()[..]);
         packet_data.safe_write(self.priv_identity.as_identity().public_key.as_bytes());
         if let Some(signalling) = self.signalling {
-            packet_data.safe_write(&signalling);
+            packet_data.safe_write(&signalling.encode());
         }
 
         Packet {
@@ -445,7 +467,7 @@ impl Link {
                 }
 
                 let proof = self.prove_packet(packet);
-                let mut buffer = [0u8; PACKET_MDU];
+                let mut buffer = [0u8; PACKET_DATA_CAPACITY];
                 if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
                     log::trace!("link({}): data {}B", self.id, plain_text.len());
                     self.handle_channel_frame(plain_text);
@@ -455,7 +477,7 @@ impl Link {
                 return LinkHandleResult::Proof(proof);
             }
             PacketContext::None | PacketContext::Request | PacketContext::Response => {
-                let mut buffer = [0u8; PACKET_MDU];
+                let mut buffer = [0u8; PACKET_DATA_CAPACITY];
                 if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
                     log::trace!("link({}): data {}B", self.id, plain_text.len());
                     let request_id = if packet.context == PacketContext::Request {
@@ -493,7 +515,7 @@ impl Link {
                 }
             }
             PacketContext::LinkIdentify => {
-                let mut buffer = [0u8; PACKET_MDU];
+                let mut buffer = [0u8; PACKET_DATA_CAPACITY];
                 if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
                     self.handle_identify(plain_text);
                 }
@@ -514,7 +536,7 @@ impl Link {
                 }
             }
             PacketContext::LinkClose => {
-                let mut buffer = [0u8; PACKET_MDU];
+                let mut buffer = [0u8; PACKET_DATA_CAPACITY];
                 if self
                     .decrypt(packet.data.as_slice(), &mut buffer[..])
                     .is_ok_and(|plain_text| plain_text == self.id.as_slice())
@@ -523,7 +545,7 @@ impl Link {
                 }
             }
             PacketContext::LinkRTT => {
-                let mut buffer = [0u8; PACKET_MDU];
+                let mut buffer = [0u8; PACKET_DATA_CAPACITY];
                 if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
                     let mut cursor = std::io::Cursor::new(plain_text);
                     if let Ok(peer_rtt) = rmp::decode::read_f32(&mut cursor) {
@@ -586,9 +608,22 @@ impl Link {
                 if self.status == LinkStatus::Pending
                     && packet.context == PacketContext::LinkRequestProof
                 {
-                    if let Ok(identity) =
+                    if let Ok((identity, confirmed_signalling)) =
                         validate_link_request_proof_packet(&self.destination, &self.id, packet)
                     {
+                        if confirmed_signalling.is_some_and(|confirmed| match self.signalling {
+                            Some(requested) => {
+                                confirmed.mode() != requested.mode()
+                                    || confirmed.mtu() > requested.mtu()
+                            }
+                            None => confirmed != LinkSignalling::base(),
+                        }) {
+                            log::warn!(
+                                "link({}): proof signalling does not match request",
+                                self.id
+                            );
+                            return LinkHandleResult::None;
+                        }
                         log::debug!("link({}): has been proved", self.id);
 
                         self.handshake(identity);
@@ -596,6 +631,7 @@ impl Link {
                         // The destination identity authenticated the link proof; keep it
                         // separate from the ephemeral link handshake key material.
                         self.remote_identity = Some(self.destination.identity);
+                        self.signalling = confirmed_signalling;
 
                         self.status = LinkStatus::Active;
                         self.rtt = self.request_time.elapsed();
@@ -952,16 +988,24 @@ impl Link {
         self.packet_with_context(self.id.as_slice(), PacketContext::LinkClose)
     }
 
-    pub(crate) fn resource_sdu(&self) -> usize {
-        self.signalling
-            .map(|bytes| {
-                let mtu =
-                    (((bytes[0] as usize) << 16) | ((bytes[1] as usize) << 8) | bytes[2] as usize)
-                        & 0x1f_ffff;
-                mtu.saturating_sub(HEADER_MAXSIZE + IFAC_MIN_SIZE)
-            })
-            .filter(|sdu| *sdu > 0)
-            .unwrap_or(PACKET_MDU)
+    pub fn resource_sdu(&self) -> usize {
+        resource_sdu(self.confirmed_mtu())
+    }
+
+    pub fn confirmed_mtu(&self) -> usize {
+        self.signalling.map(LinkSignalling::mtu).unwrap_or(crate::packet::MTU)
+    }
+
+    pub fn packet_mdu(&self) -> usize {
+        link_packet_mdu(self.confirmed_mtu())
+    }
+
+    pub fn channel_mdu(&self) -> usize {
+        channel_mdu(self.confirmed_mtu())
+    }
+
+    pub fn set_request_mtu(&mut self, mtu: Option<usize>) {
+        self.signalling = mtu.map(LinkSignalling::for_mtu);
     }
 
     pub fn data_packet_into(&self, data: &[u8], packet: &mut Packet) -> Result<(), RnsError> {
@@ -1198,6 +1242,9 @@ impl Link {
         data: &[u8],
         packet_data: &mut PacketDataBuffer,
     ) -> Result<(), RnsError> {
+        if data.len() > self.packet_mdu() {
+            return Err(RnsError::OutOfMemory);
+        }
         packet_data.reset();
         let cipher_text_len = {
             let cipher_text = self.encrypt(data, packet_data.accuire_buf_max())?;
@@ -1386,12 +1433,125 @@ mod tests {
         assert!(matches!(outbound.handle_packet(&proof, proof_iface), LinkHandleResult::Activated));
 
         let plaintext = b"session-cached-link-payload";
-        let mut cipher_buf = [0u8; PACKET_MDU];
+        let mut cipher_buf = [0u8; PACKET_DATA_CAPACITY];
         let ciphertext = outbound.encrypt(plaintext, &mut cipher_buf).expect("encrypt");
 
-        let mut plain_buf = [0u8; PACKET_MDU];
+        let mut plain_buf = [0u8; PACKET_DATA_CAPACITY];
         let decrypted = inbound.decrypt(ciphertext, &mut plain_buf).expect("decrypt");
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn route_clamping_uses_the_minimum_or_strips_unsupported_signalling() {
+        let mut packet = Packet {
+            header: Header { packet_type: PacketType::LinkRequest, ..Default::default() },
+            data: PacketDataBuffer::new_from_slice(&[0x41; 64]),
+            ..Default::default()
+        };
+        packet.data.write(&[0x24, 0x00, 0x00]).unwrap();
+
+        let clamped = clamp_link_request_mtu(&packet, Some(1280)).expect("supported route");
+        assert_eq!(clamped.data.len(), 67);
+        assert_eq!(&clamped.data.as_slice()[64..], &[0x20, 0x05, 0x00]);
+
+        let clamped = clamp_link_request_mtu(&clamped, Some(1024)).expect("slower next hop");
+        assert_eq!(&clamped.data.as_slice()[64..], &[0x20, 0x04, 0x00]);
+
+        let stripped = clamp_link_request_mtu(&clamped, None).expect("unsupported next hop");
+        assert_eq!(stripped.data.len(), 64);
+        assert_eq!(LinkId::from(&packet), LinkId::from(&clamped));
+        assert_eq!(LinkId::from(&packet), LinkId::from(&stripped));
+    }
+
+    #[test]
+    fn proof_signalling_is_authenticated_and_cannot_exceed_the_request() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("link", "mtu-proof"),
+        };
+        let (events, _) = tokio::sync::broadcast::channel(4);
+        let iface = AddressHash::new([9; ADDRESS_HASH_SIZE]);
+
+        let mut tamper_target = Link::new(destination, events.clone());
+        tamper_target.set_request_mtu(Some(1024));
+        let request = tamper_target.request();
+        let mut inbound = Link::new_from_request(
+            &request,
+            signer.sign_key().clone(),
+            destination,
+            events.clone(),
+        )
+        .expect("signalled request");
+        let mut tampered_proof = inbound.prove();
+        tampered_proof.data.as_mut_slice()[96..].copy_from_slice(&[0x20, 0x01, 0xf4]);
+        assert!(matches!(
+            tamper_target.handle_packet(&tampered_proof, iface),
+            LinkHandleResult::None
+        ));
+        assert_eq!(tamper_target.status(), LinkStatus::Pending);
+
+        let mut downgrade_target = Link::new(destination, events.clone());
+        downgrade_target.set_request_mtu(Some(1024));
+        let request = downgrade_target.request();
+        let mut upgraded_request = request;
+        upgraded_request.data.as_mut_slice()[64..].copy_from_slice(&[0x20, 0x08, 0x00]);
+        let mut upgraded_inbound = Link::new_from_request(
+            &upgraded_request,
+            signer.sign_key().clone(),
+            destination,
+            events,
+        )
+        .expect("higher-MTU request with the same link ID");
+        assert!(matches!(
+            downgrade_target.handle_packet(&upgraded_inbound.prove(), iface),
+            LinkHandleResult::None
+        ));
+        assert_eq!(downgrade_target.status(), LinkStatus::Pending);
+    }
+
+    #[test]
+    fn canonical_python_proof_fixture_passes_link_proof_validation() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/interop/fixtures/rns/rns-1.5.1/link-mtu-vectors.json"
+        )))
+        .expect("valid canonical link MTU fixture");
+        let vector = &fixture["vectors"][1];
+        let destination_key = hex::decode(
+            vector["destination_public_key_hex"].as_str().expect("destination public key"),
+        )
+        .expect("hex destination public key");
+        let proof_data = hex::decode(vector["proof_payload_hex"].as_str().expect("proof payload"))
+            .expect("hex proof payload");
+        let link_id_bytes =
+            hex::decode(vector["link_id_hex"].as_str().expect("link ID")).expect("hex link ID");
+        let identity = Identity::new_from_slices(&destination_key[..32], &destination_key[32..]);
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("link", "python-proof"),
+        };
+        let mut link_id = [0_u8; ADDRESS_HASH_SIZE];
+        link_id.copy_from_slice(&link_id_bytes);
+        let id = AddressHash::new(link_id);
+        let proof = Packet {
+            header: Header {
+                packet_type: PacketType::Proof,
+                destination_type: DestinationType::Link,
+                ..Default::default()
+            },
+            destination: id,
+            context: PacketContext::LinkRequestProof,
+            data: PacketDataBuffer::new_from_slice(&proof_data),
+            ..Default::default()
+        };
+
+        let (_, signalling) = validate_link_request_proof_packet(&destination, &id, &proof)
+            .expect("canonical Python proof must validate");
+        assert_eq!(signalling.map(LinkSignalling::mtu), Some(1024));
     }
 
     #[test]

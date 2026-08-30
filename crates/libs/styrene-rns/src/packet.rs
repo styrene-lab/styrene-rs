@@ -14,6 +14,8 @@ use crate::hash::Hash;
 // 500 - (2 + 1 + 16*2) - 1 = 464
 pub const MTU: usize = 500;
 pub const PACKET_MDU: usize = 464usize;
+pub const MAX_LINK_MTU: usize = 2048;
+pub const PACKET_DATA_CAPACITY: usize = MAX_LINK_MTU - 20;
 pub const LXMF_MAX_PAYLOAD: usize = PACKET_MDU - FERNET_OVERHEAD_SIZE - FERNET_MAX_PADDING_SIZE;
 pub const PACKET_IFAC_MAX_LENGTH: usize = 64usize;
 pub const MAX_HOPS: u8 = 128;
@@ -239,7 +241,7 @@ impl fmt::Display for Header {
     }
 }
 
-pub type PacketDataBuffer = StaticBuffer<PACKET_MDU>;
+pub type PacketDataBuffer = StaticBuffer<PACKET_DATA_CAPACITY>;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct PacketIfac {
@@ -316,7 +318,12 @@ impl Packet {
         if payload.is_empty() {
             return Err(RnsError::InvalidArgument);
         }
-        if payload.len() > PACKET_MDU {
+        let max_payload = if header.destination_type == DestinationType::Link {
+            PACKET_DATA_CAPACITY
+        } else {
+            PACKET_MDU
+        };
+        if payload.len() > max_payload {
             return Err(RnsError::OutOfMemory);
         }
         let mut data = PacketDataBuffer::new();
@@ -350,6 +357,9 @@ impl Packet {
         }
         if self.header.header_type == HeaderType::Type2 && self.transport.is_none() {
             return Err(RnsError::InvalidArgument);
+        }
+        if self.header.destination_type != DestinationType::Link && self.data.len() > PACKET_MDU {
+            return Err(RnsError::OutOfMemory);
         }
         Ok(())
     }

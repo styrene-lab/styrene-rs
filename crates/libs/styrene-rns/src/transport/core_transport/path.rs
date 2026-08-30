@@ -258,7 +258,13 @@ pub(super) async fn handle_link_request<'a>(
     if let Some(destination) = handler.single_in_destinations.get(&packet.destination).cloned() {
         log::trace!("tp({}): handle link request for {}", handler.config.name, packet.destination);
 
-        handle_link_request_as_destination(destination, packet, iface, handler).await;
+        let ingress_mtu = handler.iface_manager.lock().await.online_link_mtu(&iface);
+        let Ok(packet) =
+            crate::transport::destination_ext::link::clamp_link_request_mtu(packet, ingress_mtu)
+        else {
+            return;
+        };
+        handle_link_request_as_destination(destination, &packet, iface, handler).await;
     } else if let Some(entry) = handler.path_table.next_hop_with_hops(&packet.destination) {
         log::trace!(
             "tp({}): handle link request for remote destination {}",
@@ -267,15 +273,27 @@ pub(super) async fn handle_link_request<'a>(
         );
 
         let (next_hop, next_iface, remaining_hops) = entry;
-        let outbound_bitrate =
-            handler.iface_manager.lock().await.online_positive_bitrate(&next_iface);
+        let (outbound_bitrate, route_mtu) = {
+            let manager = handler.iface_manager.lock().await;
+            let ingress_mtu = manager.online_link_mtu(&iface);
+            let outbound_mtu = manager.online_link_mtu(&next_iface);
+            (
+                manager.online_positive_bitrate(&next_iface),
+                ingress_mtu.zip(outbound_mtu).map(|(ingress, outbound)| ingress.min(outbound)),
+            )
+        };
+        let Ok(packet) =
+            crate::transport::destination_ext::link::clamp_link_request_mtu(packet, route_mtu)
+        else {
+            return;
+        };
         handle_link_request_as_intermediate(
             iface,
             next_hop,
             next_iface,
             remaining_hops,
             outbound_bitrate,
-            packet,
+            &packet,
             handler,
         )
         .await;

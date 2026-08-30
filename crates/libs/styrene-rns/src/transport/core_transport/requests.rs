@@ -6,9 +6,7 @@ use super::*;
 use crate::destination::RequestLinkContext;
 use crate::transport::destination_ext::link::LinkPayload;
 use crate::transport::request::{decode_response_envelope, encode_response_envelope};
-use crate::transport::resource::{
-    LINK_PACKET_MDU, ResourceAdvertisement, ResourceEvent, ResourceEventKind,
-};
+use crate::transport::resource::{ResourceAdvertisement, ResourceEvent, ResourceEventKind};
 
 struct DecodedRequest<'a> {
     path_hash: RequestPathHash,
@@ -202,8 +200,8 @@ enum ServerResponseMode {
     Resource,
 }
 
-fn server_response_mode(encoded_size: usize) -> ServerResponseMode {
-    if encoded_size <= LINK_PACKET_MDU {
+fn server_response_mode(encoded_size: usize, packet_mdu: usize) -> ServerResponseMode {
+    if encoded_size <= packet_mdu {
         ServerResponseMode::Packet
     } else {
         ServerResponseMode::Resource
@@ -222,16 +220,14 @@ pub(super) async fn send_server_response(
     let ServerRequestOutcome::Handled(response) = &event.outcome else { return };
     let Some(envelope) = encode_response_envelope(request_id, response) else { return };
 
-    if server_response_mode(envelope.len()) == ServerResponseMode::Packet {
-        let packet = {
-            let link = link.lock().await;
-            link.response_packet(&envelope).ok()
-        };
+    let link = link.lock().await;
+    if server_response_mode(envelope.len(), link.packet_mdu()) == ServerResponseMode::Packet {
+        let packet = { link.response_packet(&envelope).ok() };
+        drop(link);
         if let Some(packet) = packet {
             handler.send(TxMessage { tx_type: TxMessageType::Direct(iface), packet }).await;
         }
     } else {
-        let link = link.lock().await;
         if let Ok((hash, packet)) =
             handler.resource_manager.start_response(&link, envelope, request_id)
         {
@@ -740,14 +736,15 @@ mod tests {
         let request_id = [0x55; crate::hash::ADDRESS_HASH_SIZE];
         let overhead =
             encode_response_envelope(request_id, &[0xc0]).expect("response envelope").len() - 1;
-        let packet_response = vec![0; LINK_PACKET_MDU - overhead];
-        let resource_response = vec![0; LINK_PACKET_MDU - overhead + 1];
+        let packet_response = vec![0; crate::transport::resource::LINK_PACKET_MDU - overhead];
+        let resource_response = vec![0; crate::transport::resource::LINK_PACKET_MDU - overhead + 1];
 
         assert_eq!(
             server_response_mode(
                 encode_response_envelope(request_id, &packet_response)
                     .expect("packet envelope")
-                    .len()
+                    .len(),
+                crate::transport::resource::LINK_PACKET_MDU,
             ),
             ServerResponseMode::Packet
         );
@@ -755,7 +752,8 @@ mod tests {
             server_response_mode(
                 encode_response_envelope(request_id, &resource_response)
                     .expect("resource envelope")
-                    .len()
+                    .len(),
+                crate::transport::resource::LINK_PACKET_MDU,
             ),
             ServerResponseMode::Resource
         );

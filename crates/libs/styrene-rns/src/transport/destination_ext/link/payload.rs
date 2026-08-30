@@ -1,6 +1,6 @@
 #[derive(Clone)]
 pub struct LinkPayload {
-    buffer: [u8; PACKET_MDU],
+    buffer: [u8; PACKET_DATA_CAPACITY],
     len: usize,
     context: PacketContext,
     request_id: Option<[u8; ADDRESS_HASH_SIZE]>,
@@ -8,7 +8,12 @@ pub struct LinkPayload {
 
 impl LinkPayload {
     pub fn new() -> Self {
-        Self { buffer: [0u8; PACKET_MDU], len: 0, context: PacketContext::None, request_id: None }
+        Self {
+            buffer: [0u8; PACKET_DATA_CAPACITY],
+            len: 0,
+            context: PacketContext::None,
+            request_id: None,
+        }
     }
 
     pub fn new_from_slice(data: &[u8]) -> Self {
@@ -16,7 +21,7 @@ impl LinkPayload {
     }
 
     pub fn new_from_slice_with_context(data: &[u8], context: PacketContext) -> Self {
-        let mut buffer = [0u8; PACKET_MDU];
+        let mut buffer = [0u8; PACKET_DATA_CAPACITY];
         let len = min(data.len(), buffer.len());
         buffer[..len].copy_from_slice(&data[..len]);
 
@@ -34,7 +39,7 @@ impl LinkPayload {
     }
 
     pub fn new_from_vec(data: &[u8]) -> Self {
-        let mut buffer = [0u8; PACKET_MDU];
+        let mut buffer = [0u8; PACKET_DATA_CAPACITY];
         let copy_len = min(buffer.len(), data.len());
         buffer[..copy_len].copy_from_slice(&data[..copy_len]);
 

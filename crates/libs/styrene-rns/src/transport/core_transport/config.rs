@@ -14,6 +14,7 @@ impl TransportConfig {
             path_request_timeout_secs: 30,
             link_proof_timeout_secs: None,
             link_proof_timeout_per_hop_secs: 6,
+            link_mtu_discovery: true,
             link_idle_timeout_secs: 900,
             resource_retry_interval_secs: 2,
             resource_retry_limit: 5,
@@ -59,6 +60,10 @@ impl TransportConfig {
         self.link_proof_timeout_per_hop_secs = secs;
     }
 
+    pub fn set_link_mtu_discovery(&mut self, enabled: bool) {
+        self.link_mtu_discovery = enabled;
+    }
+
     pub fn set_link_idle_timeout_secs(&mut self, secs: u64) {
         self.link_idle_timeout_secs = secs;
     }
@@ -98,6 +103,7 @@ impl Default for TransportConfig {
             path_request_timeout_secs: 30,
             link_proof_timeout_secs: None,
             link_proof_timeout_per_hop_secs: 6,
+            link_mtu_discovery: true,
             link_idle_timeout_secs: 900,
             resource_retry_interval_secs: 2,
             resource_retry_limit: 5,

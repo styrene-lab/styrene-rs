@@ -204,6 +204,7 @@ pub struct TransportConfig {
     path_request_timeout_secs: u64,
     link_proof_timeout_secs: Option<u64>,
     link_proof_timeout_per_hop_secs: u64,
+    link_mtu_discovery: bool,
     link_idle_timeout_secs: u64,
     resource_retry_interval_secs: u64,
     resource_retry_limit: u8,
