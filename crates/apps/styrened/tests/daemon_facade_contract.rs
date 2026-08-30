@@ -224,7 +224,7 @@ async fn query_identity_uses_transport_identity_and_destination() {
 }
 
 #[tokio::test]
-async fn direct_ipc_request_sends_full_lxmf_wire_over_link() {
+async fn direct_ipc_request_falls_back_after_sending_full_lxmf_wire_over_link() {
     let (daemon, transport) = make_messaging_daemon();
     let peer = rns_core::identity::PrivateIdentity::new_from_name("direct-peer");
     transport.queue_resolve(Some(*peer.as_identity()));
@@ -234,9 +234,7 @@ async fn direct_ipc_request_sends_full_lxmf_wire_over_link() {
     request.content = "direct boundary".into();
     request.delivery_method = Some("direct".into());
 
-    assert!(
-        matches!(daemon.send_chat(request).await, Err(IpcError::Internal { message }) if message.contains("test stop"))
-    );
+    let message_id = daemon.send_chat(request).await.unwrap();
 
     let calls = transport.calls();
     let data = calls
@@ -254,6 +252,13 @@ async fn direct_ipc_request_sends_full_lxmf_wire_over_link() {
     )
     .unwrap();
     assert_eq!(decoded.content, b"direct boundary");
+    assert!(calls.iter().any(|call| matches!(call, MockCall::SendRaw { .. })));
+    let messages = daemon.query_messages(&hex::encode([0x33; 16]), 10, None).await.unwrap();
+    let sent = messages.iter().find(|message| message.id == message_id).unwrap();
+    assert_eq!(sent.requested_delivery_method.as_deref(), Some("direct"));
+    assert_eq!(sent.actual_delivery_method.as_deref(), Some("opportunistic"));
+    assert!(sent.fallback_reason.as_deref().is_some_and(|reason| reason.contains("test stop")));
+    assert_eq!(sent.attempts.len(), 1);
 }
 
 #[tokio::test]
@@ -329,7 +334,7 @@ async fn oversized_opportunistic_request_reports_direct_lxmf_fallback() {
 }
 
 #[tokio::test]
-async fn selected_packet_representation_rejects_resource_redecision() {
+async fn selected_packet_representation_rejection_uses_opportunistic_fallback() {
     let (daemon, transport) = make_messaging_daemon();
     let peer = rns_core::identity::PrivateIdentity::new_from_name("representation-peer");
     transport.queue_resolve(Some(*peer.as_identity()));
@@ -342,13 +347,18 @@ async fn selected_packet_representation_rejects_resource_redecision() {
     request.content = "packet-sized".into();
     request.delivery_method = Some("direct".into());
 
-    assert!(
-        matches!(daemon.send_chat(request).await, Err(IpcError::Internal { message }) if message.contains("mock refused Resource"))
-    );
+    let message_id = daemon.send_chat(request).await.unwrap();
 
     let messages = daemon.query_messages(&peer_hash, 10, None).await.unwrap();
-    let sent = &messages[0];
-    assert!(sent.status.contains("mock refused Resource result for selected Packet"));
+    let sent = messages.iter().find(|message| message.id == message_id).unwrap();
+    assert_eq!(sent.requested_delivery_method.as_deref(), Some("direct"));
+    assert_eq!(sent.actual_delivery_method.as_deref(), Some("opportunistic"));
+    assert!(
+        sent.fallback_reason.as_deref().is_some_and(
+            |reason| reason.contains("mock refused Resource result for selected Packet")
+        )
+    );
+    assert_eq!(sent.attempts.len(), 1);
 }
 
 #[tokio::test]
@@ -621,7 +631,9 @@ async fn daemon_trait_object_announce() {
 
 #[tokio::test]
 async fn daemon_trait_object_auto_reply_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
     let ctx = make_ctx();
+    ctx.config().load_or_default(&dir.path().join("config.toml")).unwrap();
     let caller = "ca".repeat(16);
     ctx.policy()
         .grant(styrene_rbac::RosterEntry::new(&caller, styrene_rbac::Role::Admin), ctx.store())
@@ -640,7 +652,9 @@ async fn daemon_trait_object_auto_reply_roundtrip() {
 
 #[tokio::test]
 async fn direct_ipc_config_mutations_require_config_update_capability() {
+    let dir = tempfile::tempdir().unwrap();
     let ctx = make_ctx();
+    ctx.config().load_or_default(&dir.path().join("config.toml")).unwrap();
     let peer: Arc<dyn Daemon> = Arc::new(DaemonFacade::new(ctx.clone(), "peer".into()));
 
     assert!(peer.query_auto_reply().await.is_ok());

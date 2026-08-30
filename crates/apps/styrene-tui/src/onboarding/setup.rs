@@ -90,6 +90,7 @@ impl SetupResult {
             role: self.node_role,
             transport_retransmit: None,
             rbac: None,
+            auto_reply: Default::default(),
         };
         let config_toml =
             toml::to_string_pretty(&config).map_err(|error| io::Error::other(error.to_string()))?;
