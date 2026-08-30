@@ -92,7 +92,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
       - name: Test committed interoperability fixtures
-        run: cargo test --package styrene-rns --features interop-tests,transport
+        run: |
+          cargo test --package styrene-rns --features interop-tests,transport
+          cargo test -p styrene-interop-runner --test rns_fixtures --test rns_handoff_manifests
 
   # Verify all backend feature profiles compile
   feature-matrix:

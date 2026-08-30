@@ -32,11 +32,25 @@ pub struct RnsVector {
     pub expected: serde_json::Value,
 }
 
+#[derive(Debug, Deserialize)]
+struct RnsFixtureConsumerRegistry {
+    contract: String,
+    fixture_index: String,
+    consumers: Vec<RnsFixtureConsumer>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RnsFixtureConsumer {
+    pub change_id: String,
+    pub authority_ids: Vec<String>,
+    pub vector_ids: Vec<String>,
+}
+
 fn is_repository_relative(path: &Path) -> bool {
     !path.is_absolute() && path.components().all(|part| matches!(part, Component::Normal(_)))
 }
 
-fn repository_file(root: &Path, path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn repository_file(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let resolved = std::fs::canonicalize(path)
         .map_err(|error| format!("{} cannot be resolved: {error}", path.display()))?;
     if !resolved.starts_with(root) || !resolved.is_file() {
@@ -47,6 +61,52 @@ fn repository_file(root: &Path, path: &Path) -> Result<PathBuf, String> {
 
 pub fn load_rns_index(root: &Path) -> Result<RnsFixtureIndex, Vec<String>> {
     load_rns_index_from(root, &root.join("tests/interop/fixtures/rns/index-v2.json"))
+}
+
+pub fn load_rns_fixture_consumers(
+    root: &Path,
+) -> Result<(RnsFixtureIndex, Vec<RnsFixtureConsumer>), Vec<String>> {
+    let root = std::fs::canonicalize(root)
+        .map_err(|error| vec![format!("failed to resolve {}: {error}", root.display())])?;
+    let index = load_rns_index(&root)?;
+    let path = repository_file(&root, &root.join("tests/interop/fixtures/rns/consumers-v1.json"))
+        .map_err(|error| vec![error])?;
+    let data = std::fs::read_to_string(&path)
+        .map_err(|error| vec![format!("failed to read {}: {error}", path.display())])?;
+    let registry: RnsFixtureConsumerRegistry = serde_json::from_str(&data)
+        .map_err(|error| vec![format!("failed to parse {}: {error}", path.display())])?;
+    let mut errors = Vec::new();
+    if registry.contract != "rns-fixture-consumers-v1" {
+        errors.push(format!("{}: unsupported consumer contract", path.display()));
+    }
+    if registry.fixture_index != "tests/interop/fixtures/rns/index-v2.json" {
+        errors.push(format!("{}: consumer registry must use the shared v2 index", path.display()));
+    }
+    let mut change_ids = HashSet::new();
+    for consumer in &registry.consumers {
+        if consumer.change_id.is_empty() || !change_ids.insert(consumer.change_id.as_str()) {
+            errors.push(format!("{}: missing or duplicate consumer change id", consumer.change_id));
+        }
+        if consumer.authority_ids.is_empty() || consumer.vector_ids.is_empty() {
+            errors.push(format!("{}: consumer references must not be empty", consumer.change_id));
+        }
+        for authority_id in &consumer.authority_ids {
+            if !index.authorities.contains_key(authority_id) {
+                errors.push(format!("{}: unknown authority {authority_id}", consumer.change_id));
+            }
+        }
+        for vector_id in &consumer.vector_ids {
+            match rns_vector(&index, vector_id) {
+                Ok(vector) if consumer.authority_ids.contains(&vector.authority_id) => {}
+                Ok(vector) => errors.push(format!(
+                    "{}: vector {vector_id} uses undeclared authority {}",
+                    consumer.change_id, vector.authority_id
+                )),
+                Err(error) => errors.push(format!("{}: {error}", consumer.change_id)),
+            }
+        }
+    }
+    if errors.is_empty() { Ok((index, registry.consumers)) } else { Err(errors) }
 }
 
 pub fn load_rns_index_from(root: &Path, path: &Path) -> Result<RnsFixtureIndex, Vec<String>> {

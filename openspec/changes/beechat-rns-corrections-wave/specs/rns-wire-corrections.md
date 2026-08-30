@@ -7,6 +7,9 @@
 LinkRTT payloads must encode finite non-negative RTT seconds as a MessagePack 64-bit float and
 must interoperate with canonical Python Reticulum 1.5.1. Fixture evidence must come from the shared
 `reticulum-1-5-parity-wave` provenance authority rather than an independent pin or manifest.
+Fixture tests must load `tests/interop/fixtures/rns/index-v2.json` through
+`styrene_interop_runner::rns_fixtures`, select the `rns-1.5.1` authority ID,
+and must not define another canonical RNS index, schema, or fixture root.
 
 #### Scenario: Python RTT activates the inbound link
 Given canonical Python Reticulum emits an encrypted LinkRTT payload containing a MessagePack 64-bit float

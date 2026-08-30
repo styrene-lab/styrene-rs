@@ -41,3 +41,23 @@ fn unknown_vector_id_is_rejected() {
     let index = load_rns_index().expect("committed RNS fixture index must validate");
     assert!(rns_vector(&index, "missing-vector").is_err());
 }
+
+#[test]
+fn cross_wave_consumers_use_the_shared_v2_loader_and_authorities() {
+    let (index, consumers) = common::load_rns_fixture_consumers()
+        .expect("cross-wave RNS fixture consumers must validate through the shared loader");
+    assert_eq!(
+        consumers.iter().map(|consumer| consumer.change_id.as_str()).collect::<Vec<_>>(),
+        ["beechat-rns-corrections-wave", "freetak-rns-hardening-wave", "leviculum-rns-corpus-wave",]
+    );
+    for consumer in consumers {
+        for authority_id in consumer.authority_ids {
+            assert!(index.authorities.contains_key(&authority_id));
+        }
+        for vector_id in consumer.vector_ids {
+            assert!(
+                !load_rns_vector_bytes(&index, &vector_id).expect("consumer vector").is_empty()
+            );
+        }
+    }
+}
