@@ -173,6 +173,36 @@
         "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
         "plaintext_hex": "524e5320312e352e3120746f6b656e"
       }
+    },
+    {
+      "id": "rns-1.5.1-token-invalid-tag",
+      "authority_id": "rns-1.5.1",
+      "kind": "token",
+      "artifact": "tests/interop/fixtures/rns/rns-1.5.1/token-invalid-tag.bin",
+      "sha256": "9e3e34e610363caf5226e99b33de18d3be6e7ce3755ad0fde701d84601c4e84d",
+      "generator": "tests/interop/python/generate_rns_1_5_fixtures.py",
+      "source_symbols": ["RNS.Cryptography.Token.Token.verify_hmac"],
+      "expected": {
+        "type": "token",
+        "authenticated": false,
+        "mode": "AES_256_CBC",
+        "rejection": "invalid_tag"
+      }
+    },
+    {
+      "id": "rns-1.5.1-token-truncated-tag",
+      "authority_id": "rns-1.5.1",
+      "kind": "token",
+      "artifact": "tests/interop/fixtures/rns/rns-1.5.1/token-truncated-tag.bin",
+      "sha256": "a50a1e2e5e3e9769331e791de540e84f4c4c294eb6bc36b8a09662013d363aec",
+      "generator": "tests/interop/python/generate_rns_1_5_fixtures.py",
+      "source_symbols": ["RNS.Cryptography.Token.Token.verify_hmac"],
+      "expected": {
+        "type": "token",
+        "authenticated": false,
+        "mode": "AES_256_CBC",
+        "rejection": "truncated_tag"
+      }
     }
   ]
 }

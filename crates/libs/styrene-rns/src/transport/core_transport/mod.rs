@@ -227,6 +227,8 @@ pub trait ReceiptHandler: Send + Sync {
     fn on_receipt(&self, receipt: &DeliveryReceipt);
 }
 
+const TERMINAL_RECEIPT_HISTORY_CAPACITY: usize = 200;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DestinationRegistrationError {
     Duplicate(AddressHash),
@@ -278,6 +280,23 @@ pub(crate) struct TransportHandler {
 
     cancel: CancellationToken,
     receipt_handler: Option<Arc<dyn ReceiptHandler>>,
+    terminal_receipt_history: VecDeque<[u8; HASH_SIZE]>,
+}
+
+impl TransportHandler {
+    fn conclude_receipt(
+        &mut self,
+        message_id: [u8; HASH_SIZE],
+    ) -> Option<(DeliveryReceipt, Arc<dyn ReceiptHandler>)> {
+        if self.terminal_receipt_history.contains(&message_id) {
+            return None;
+        }
+        if self.terminal_receipt_history.len() >= TERMINAL_RECEIPT_HISTORY_CAPACITY {
+            self.terminal_receipt_history.pop_front();
+        }
+        self.terminal_receipt_history.push_back(message_id);
+        Some((DeliveryReceipt::new(message_id), self.receipt_handler.clone()?))
+    }
 }
 
 pub struct Transport {

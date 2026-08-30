@@ -196,6 +196,9 @@ def main() -> int:
     (args.output / "packet-type1-hop127.bin").write_bytes(TYPE1)
     (args.output / "packet-type2-hop127.bin").write_bytes(TYPE2)
     (args.output / "token-valid.bin").write_bytes(encrypted)
+    invalid_token = encrypted[:-1] + bytes([encrypted[-1] ^ 0x01])
+    (args.output / "token-invalid-tag.bin").write_bytes(invalid_token)
+    (args.output / "token-truncated-tag.bin").write_bytes(encrypted[:-1])
     (args.output / "packet-admission.json").write_text(
         json.dumps(admission, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
