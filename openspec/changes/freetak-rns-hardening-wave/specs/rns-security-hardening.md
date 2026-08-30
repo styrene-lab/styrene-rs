@@ -5,6 +5,9 @@
 ### Requirement: Cached Fernet tags are verified in constant time
 
 Cached Fernet authentication must use a constant-time MAC verification primitive and must not compare tags with data-dependent early exit.
+Canonical token tests must load `tests/interop/fixtures/rns/index-v2.json` through
+`styrene_interop_runner::rns_fixtures`, select the `rns-1.5.1` authority ID,
+and must not copy vectors or define another canonical RNS index, schema, or fixture root.
 
 #### Scenario: Tampered cached token is rejected
 Given a valid token produced by a cached Fernet key

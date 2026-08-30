@@ -44,8 +44,15 @@ fn write_index(root: &Path, index: &Value) -> PathBuf {
 fn shared_rns_fixture_contract_validates_authorities_and_artifacts() {
     let index = load_rns_index(&workspace_root()).expect("shared RNS fixture index must validate");
 
-    assert!(index.authorities.contains_key("rns-1.4.2"));
-    assert!(index.authorities.contains_key("rns-1.5.1"));
+    for (id, revision, release) in [
+        ("rns-1.4.2", "b48b96e61676504e0a4e527b33b9a0b4495c6872", "1.4.2"),
+        ("rns-1.5.1", "149e4151095adf098b8f53eab0c03b37169e8559", "1.5.1"),
+    ] {
+        let authority = &index.authorities[id];
+        assert_eq!(authority.repository, "https://github.com/markqvist/Reticulum.git");
+        assert_eq!(authority.revision, revision);
+        assert_eq!(authority.release, release);
+    }
     for vector in &index.vectors {
         assert!(
             !load_rns_vector_bytes(&index, &vector.id)
