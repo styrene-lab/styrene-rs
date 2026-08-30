@@ -697,12 +697,8 @@ impl InterfaceManager {
 
         let stop = CancellationToken::new();
         let stats = Arc::new(InterfaceStats::new());
-        let runtime = Arc::new(InterfaceRuntime::new(
-            descriptor,
-            bitrate,
-            parent,
-            self.state_tx.clone(),
-        ));
+        let runtime =
+            Arc::new(InterfaceRuntime::new(descriptor, bitrate, parent, self.state_tx.clone()));
 
         self.stats_map.lock().expect("interface stats lock").insert(address, stats.clone());
         self.ifaces.push(LocalInterface { address, tx_send, stop: stop.clone(), stats, runtime });
@@ -720,7 +716,7 @@ impl InterfaceManager {
         tx_cap: usize,
         descriptor: InterfaceDescriptor,
     ) -> (InterfaceChannel, HostInterfaceControl) {
-        let channel = self.new_channel_with_runtime(tx_cap, descriptor, None);
+        let channel = self.new_channel_with_runtime(tx_cap, descriptor, None, None);
         let runtime = self.ifaces.last().expect("newly registered host interface").runtime.clone();
         let control = HostInterfaceControl { runtime, stop: channel.stop.clone() };
         (channel, control)
@@ -1224,8 +1220,7 @@ mod tests {
     #[test]
     fn path_request_rate_controls_are_disabled_by_default() {
         let (state_tx, _state_rx) = broadcast::channel(1);
-        let runtime =
-            InterfaceRuntime::new(InterfaceDescriptor::default(), None, None, state_tx);
+        let runtime = InterfaceRuntime::new(InterfaceDescriptor::default(), None, None, state_tx);
         let now = Instant::now();
         for offset in 0..20 {
             assert!(
