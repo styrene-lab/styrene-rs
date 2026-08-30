@@ -9,7 +9,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use rmpv::Value;
+use serde::de::DeserializeOwned;
 use styrene_ipc::IpcError;
+use styrene_ipc::types::{
+    ConversationInfo, DaemonStatusInfo, DeviceInfo, IdentityInfo, MessageInfo, SendChatOutcome,
+    SendChatRequest, StandardPropagationSnapshot,
+};
 use styrene_ipc_wire::{self as wire, Frame, MessageType, REQUEST_ID_SIZE};
 use thiserror::Error;
 use tokio::net::UnixStream;
@@ -17,6 +22,8 @@ use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 use tokio::time::timeout;
 
 pub const DEFAULT_CAPACITY: usize = 32;
+pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(5);
+pub const SEND_DEADLINE: Duration = Duration::from_secs(35);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ConnectionGeneration(pub u64);
@@ -228,6 +235,114 @@ impl Client {
         }
     }
 
+    pub async fn ping(&self) -> Result<(), ClientError> {
+        let frame = self.request(MessageType::Ping, HashMap::new(), DEFAULT_DEADLINE).await?;
+        if frame.msg_type != MessageType::Pong {
+            return Err(ClientError::Protocol {
+                message: format!("ping returned {:?} instead of Pong", frame.msg_type),
+            });
+        }
+        Ok(())
+    }
+
+    pub async fn identity(&self) -> Result<IdentityInfo, ClientError> {
+        let frame =
+            self.request(MessageType::QueryIdentity, HashMap::new(), DEFAULT_DEADLINE).await?;
+        decode_map(&frame.payload, "identity")
+    }
+
+    pub async fn status(&self) -> Result<DaemonStatusInfo, ClientError> {
+        let frame =
+            self.request(MessageType::QueryStatus, HashMap::new(), DEFAULT_DEADLINE).await?;
+        decode_map(&frame.payload, "status")
+    }
+
+    pub async fn standard_propagation(&self) -> Result<StandardPropagationSnapshot, ClientError> {
+        let frame = self
+            .request(MessageType::QueryStandardPropagation, HashMap::new(), DEFAULT_DEADLINE)
+            .await?;
+        decode_map(&frame.payload, "standard propagation snapshot")
+    }
+
+    pub async fn devices(&self, styrene_only: bool) -> Result<Vec<DeviceInfo>, ClientError> {
+        let payload = HashMap::from([("styrene_only".into(), Value::from(styrene_only))]);
+        let frame = self.request(MessageType::QueryDevices, payload, DEFAULT_DEADLINE).await?;
+        decode_key(&frame.payload, &["devices", "result"], "devices")
+    }
+
+    pub async fn conversations(&self) -> Result<Vec<ConversationInfo>, ClientError> {
+        let frame =
+            self.request(MessageType::QueryConversations, HashMap::new(), DEFAULT_DEADLINE).await?;
+        decode_key(&frame.payload, &["conversations", "result"], "conversations")
+    }
+
+    pub async fn messages(
+        &self,
+        peer_hash: &str,
+        limit: u32,
+    ) -> Result<Vec<MessageInfo>, ClientError> {
+        let payload = HashMap::from([
+            ("peer_hash".into(), Value::from(peer_hash)),
+            ("limit".into(), Value::from(limit)),
+        ]);
+        let frame = self.request(MessageType::QueryMessages, payload, DEFAULT_DEADLINE).await?;
+        decode_key(&frame.payload, &["messages", "result"], "messages")
+    }
+
+    pub async fn send_chat_outcome(
+        &self,
+        request: &SendChatRequest,
+    ) -> Result<SendChatOutcome, ClientError> {
+        if request.reply_to_hash.is_some() {
+            return Err(ClientError::Protocol {
+                message: "reply_to_hash has no local IPC wire field".into(),
+            });
+        }
+        if request.attachment.is_some() && !request.attachments.is_empty() {
+            return Err(ClientError::Protocol {
+                message: "legacy attachment and attachments are mutually exclusive".into(),
+            });
+        }
+        let mut payload = HashMap::from([
+            ("peer_hash".into(), Value::from(request.peer_hash.as_str())),
+            ("content".into(), Value::from(request.content.as_str())),
+        ]);
+        insert_optional_text(&mut payload, "title", request.title.as_deref());
+        insert_optional_text(&mut payload, "delivery_method", request.delivery_method.as_deref());
+        if let Some(attachment) = &request.attachment {
+            payload.insert("attachment".into(), Value::Binary(attachment.clone()));
+            insert_optional_text(
+                &mut payload,
+                "attachment_name",
+                request.attachment_name.as_deref(),
+            );
+        } else if request.attachment_name.is_some() {
+            return Err(ClientError::Protocol {
+                message: "attachment_name requires a legacy attachment".into(),
+            });
+        }
+        if !request.attachments.is_empty() {
+            payload.insert(
+                "attachments".into(),
+                Value::Array(request.attachments.iter().map(attachment_value).collect()),
+            );
+        }
+        let frame = self.request(MessageType::CmdSendChatOutcome, payload, SEND_DEADLINE).await?;
+        let outcome: SendChatOutcome = decode_key(&frame.payload, &["outcome"], "send outcome")?;
+        if outcome.message_id.is_empty() || outcome.message.id != outcome.message_id {
+            return Err(ClientError::Protocol {
+                message: "send outcome omitted its authoritative message projection".into(),
+            });
+        }
+        Ok(outcome)
+    }
+
+    pub async fn announce(&self) -> Result<bool, ClientError> {
+        let frame =
+            self.request(MessageType::CmdAnnounce, HashMap::new(), DEFAULT_DEADLINE).await?;
+        required_bool(&frame.payload, "success", "announce response")
+    }
+
     #[must_use]
     pub fn diagnostics(&self) -> ClientDiagnostics {
         ClientDiagnostics {
@@ -376,6 +491,69 @@ fn parse_remote_error(payload: &HashMap<String, Value>) -> ClientError {
     }
 }
 
+fn decode_map<T: DeserializeOwned>(
+    payload: &HashMap<String, Value>,
+    context: &str,
+) -> Result<T, ClientError> {
+    decode_value(
+        Value::Map(
+            payload.iter().map(|(key, value)| (Value::from(key.as_str()), value.clone())).collect(),
+        ),
+        context,
+    )
+}
+
+fn decode_key<T: DeserializeOwned>(
+    payload: &HashMap<String, Value>,
+    keys: &[&str],
+    context: &str,
+) -> Result<T, ClientError> {
+    let value = keys.iter().find_map(|key| payload.get(*key)).cloned().ok_or_else(|| {
+        ClientError::Protocol {
+            message: format!("{context} response omitted {}", keys.join(" or ")),
+        }
+    })?;
+    decode_value(value, context)
+}
+
+fn decode_value<T: DeserializeOwned>(value: Value, context: &str) -> Result<T, ClientError> {
+    let json: serde_json::Value = rmpv::ext::from_value(value).map_err(|error| {
+        ClientError::Protocol { message: format!("invalid {context} value: {error}") }
+    })?;
+    serde_json::from_value(json)
+        .map_err(|error| ClientError::Protocol { message: format!("invalid {context}: {error}") })
+}
+
+fn required_bool(
+    payload: &HashMap<String, Value>,
+    key: &str,
+    context: &str,
+) -> Result<bool, ClientError> {
+    payload.get(key).and_then(Value::as_bool).ok_or_else(|| ClientError::Protocol {
+        message: format!("{context} omitted boolean {key}"),
+    })
+}
+
+fn insert_optional_text(payload: &mut HashMap<String, Value>, key: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        payload.insert(key.into(), Value::from(value));
+    }
+}
+
+fn attachment_value(attachment: &styrene_ipc::types::AttachmentInput) -> Value {
+    let mut fields = vec![
+        (Value::from("name"), Value::from(attachment.name.as_str())),
+        (Value::from("bytes"), Value::Binary(attachment.bytes.clone())),
+    ];
+    if let Some(content_type) = &attachment.content_type {
+        fields.push((Value::from("content_type"), Value::from(content_type.as_str())));
+    }
+    if let Some(expected) = &attachment.expected_sha256 {
+        fields.push((Value::from("expected_sha256"), Value::from(expected.as_str())));
+    }
+    Value::Map(fields)
+}
+
 fn text(payload: &HashMap<String, Value>, key: &str, default: &str) -> String {
     payload.get(key).and_then(Value::as_str).unwrap_or(default).to_string()
 }
@@ -399,6 +577,22 @@ async fn disconnect_pending(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn typed_value<T: serde::Serialize>(value: &T) -> Value {
+        let json = serde_json::to_value(value).expect("serialize typed value");
+        rmpv::ext::to_value(json).expect("project typed value")
+    }
+
+    fn typed_payload<T: serde::Serialize>(value: &T) -> HashMap<String, Value> {
+        typed_value(value)
+            .as_map()
+            .expect("typed payload map")
+            .iter()
+            .map(|(key, value)| {
+                (key.as_str().expect("string payload key").to_string(), value.clone())
+            })
+            .collect()
+    }
 
     fn pair(capacity: usize) -> (Client, UnixStream) {
         let (client, server) = UnixStream::pair().expect("Unix stream pair");
@@ -552,5 +746,59 @@ mod tests {
             Err(ClientError::Remote(error)) => assert_eq!(error, expected),
             other => panic!("unexpected result: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn decodes_status_and_capabilities_as_canonical_records() {
+        let (client, mut server) = pair(2);
+        let query = tokio::spawn({
+            let client = client.clone();
+            async move { client.status().await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("status request");
+        assert_eq!(request.msg_type, MessageType::QueryStatus);
+
+        let mut status = DaemonStatusInfo::default();
+        status.daemon_version = "contract-test".into();
+        status.connection_generation = Some(42);
+        let mut capabilities = styrene_ipc::types::ActiveCapabilitiesInfo::default();
+        capabilities.version = styrene_ipc::types::ACTIVE_CAPABILITIES_VERSION;
+        capabilities.generation = Some(42);
+        capabilities.runtime = vec!["runtime.lxmf.direct".into()];
+        capabilities.authorized_operations = vec!["chat.send".into()];
+        status.active_capabilities = Some(capabilities);
+        reply(&mut server, MessageType::Result, &request.request_id, &typed_payload(&status)).await;
+
+        assert_eq!(query.await.expect("status task").expect("typed status"), status);
+    }
+
+    #[tokio::test]
+    async fn encodes_send_request_and_requires_authoritative_outcome() {
+        let (client, mut server) = pair(2);
+        let mut send = SendChatRequest::default();
+        send.peer_hash = "22".repeat(16);
+        send.content = "hello".into();
+        send.title = Some("greeting".into());
+        send.delivery_method = Some("direct".into());
+        let query = tokio::spawn({
+            let client = client.clone();
+            let send = send.clone();
+            async move { client.send_chat_outcome(&send).await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("send request");
+        assert_eq!(request.msg_type, MessageType::CmdSendChatOutcome);
+        assert_eq!(request.payload["peer_hash"].as_str(), Some(send.peer_hash.as_str()));
+        assert_eq!(request.payload["content"].as_str(), Some("hello"));
+        assert_eq!(request.payload["title"].as_str(), Some("greeting"));
+        assert_eq!(request.payload["delivery_method"].as_str(), Some("direct"));
+
+        let mut outcome = SendChatOutcome::default();
+        outcome.message_id = "message-1".into();
+        outcome.message.id = outcome.message_id.clone();
+        outcome.message.projection_complete = true;
+        let payload = HashMap::from([("outcome".into(), typed_value(&outcome))]);
+        reply(&mut server, MessageType::Result, &request.request_id, &payload).await;
+
+        assert_eq!(query.await.expect("send task").expect("send outcome"), outcome);
     }
 }

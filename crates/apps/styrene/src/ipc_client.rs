@@ -5,18 +5,18 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use rmpv::Value as MpValue;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::UnixStream;
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 
 use styrene_ipc::types::{
-    ActiveCapabilitiesInfo, ConversationInfo, DaemonStatusInfo, DegradedCapabilityInfo, DeviceInfo,
-    IdentityInfo, MessageInfo, StandardPropagationSnapshot,
+    ConversationInfo, DaemonStatusInfo, DeviceInfo, IdentityInfo, MessageInfo, SendChatRequest,
+    StandardPropagationSnapshot,
 };
-use styrene_ipc_server::wire::{self, Frame, MessageType, REQUEST_ID_SIZE};
+use styrene_ipc_client::{Client, ConnectionGeneration};
+use styrene_ipc_wire::{Frame, MessageType};
 
 /// Default timeout for RPC calls.
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
@@ -27,14 +27,9 @@ pub struct CliSendOutcome {
     pub paper_uri: Option<String>,
 }
 
-/// Combined async read+write trait.
-trait AsyncStream: AsyncRead + AsyncWrite + Send + Unpin {}
-impl AsyncStream for UnixStream {}
-
 /// Client connection to a styrened daemon.
 pub struct DaemonClient {
-    stream: Pin<Box<dyn AsyncStream>>,
-    next_id: u64,
+    client: Client,
     /// Override timeout for the next RPC call (reset after use).
     next_timeout: Option<Duration>,
 }
@@ -60,25 +55,17 @@ impl DaemonClient {
                 path.display()
             ));
         }
-        let unix = UnixStream::connect(&path)
+        let stream = UnixStream::connect(&path)
             .await
             .map_err(|e| format!("connect {}: {e}", path.display()))?;
-        let stream: Pin<Box<dyn AsyncStream>> = Box::pin(unix);
+        static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+        let generation = ConnectionGeneration(NEXT_GENERATION.fetch_add(1, Ordering::Relaxed));
+        let client =
+            Self { client: Client::from_unix_stream(stream, generation), next_timeout: None };
 
-        let mut client = Self { stream, next_id: 0, next_timeout: None };
-
-        if !client.ping().await {
-            return Err("daemon did not respond to ping".into());
-        }
+        client.client.ping().await.map_err(|error| error.to_string())?;
 
         Ok(client)
-    }
-
-    fn next_request_id(&mut self) -> [u8; REQUEST_ID_SIZE] {
-        self.next_id = self.next_id.wrapping_add(1);
-        let mut id = [0u8; REQUEST_ID_SIZE];
-        id[..8].copy_from_slice(&self.next_id.to_le_bytes());
-        id
     }
 
     async fn rpc(
@@ -86,29 +73,8 @@ impl DaemonClient {
         msg_type: MessageType,
         payload: &HashMap<String, MpValue>,
     ) -> Result<Frame, String> {
-        let req_id = self.next_request_id();
         let rpc_timeout = self.next_timeout.take().unwrap_or(RPC_TIMEOUT);
-
-        wire::write_frame_async(&mut self.stream, msg_type, &req_id, payload)
-            .await
-            .map_err(|e| format!("write: {e}"))?;
-
-        let frame = timeout(rpc_timeout, wire::read_frame_async(&mut self.stream))
-            .await
-            .map_err(|_| "rpc timeout".to_string())?
-            .map_err(|e| format!("read: {e}"))?;
-
-        // Check for error responses from the daemon
-        if frame.msg_type == MessageType::Error {
-            let msg = frame
-                .payload
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown daemon error");
-            return Err(msg.to_string());
-        }
-
-        Ok(frame)
+        self.client.request(msg_type, payload.clone(), rpc_timeout).await.map_err(|e| e.to_string())
     }
 
     /// Set a custom timeout for the next RPC call only.
@@ -120,40 +86,27 @@ impl DaemonClient {
     }
 
     pub async fn ping(&mut self) -> bool {
-        self.rpc(MessageType::Ping, &HashMap::new())
-            .await
-            .map(|f| f.msg_type == MessageType::Pong)
-            .unwrap_or(false)
+        self.client.ping().await.is_ok()
     }
 
     pub async fn identity(&mut self) -> Result<IdentityInfo, String> {
-        let frame = self.rpc(MessageType::QueryIdentity, &HashMap::new()).await?;
-        parse_identity(&frame.payload)
+        self.client.identity().await.map_err(|error| error.to_string())
     }
 
     pub async fn status(&mut self) -> Result<DaemonStatusInfo, String> {
-        let frame = self.rpc(MessageType::QueryStatus, &HashMap::new()).await?;
-        parse_status(&frame.payload)
+        self.client.status().await.map_err(|error| error.to_string())
     }
 
     pub async fn standard_propagation(&mut self) -> Result<StandardPropagationSnapshot, String> {
-        let frame = self.rpc(MessageType::QueryStandardPropagation, &HashMap::new()).await?;
-        let encoded = rmp_serde::to_vec_named(&frame.payload)
-            .map_err(|error| format!("encode standard propagation snapshot: {error}"))?;
-        rmp_serde::from_slice(&encoded)
-            .map_err(|error| format!("decode standard propagation snapshot: {error}"))
+        self.client.standard_propagation().await.map_err(|error| error.to_string())
     }
 
     pub async fn devices(&mut self, styrene_only: bool) -> Result<Vec<DeviceInfo>, String> {
-        let mut p = HashMap::new();
-        p.insert("styrene_only".into(), MpValue::Boolean(styrene_only));
-        let frame = self.rpc(MessageType::QueryDevices, &p).await?;
-        parse_devices(&frame.payload)
+        self.client.devices(styrene_only).await.map_err(|error| error.to_string())
     }
 
     pub async fn conversations(&mut self) -> Result<Vec<ConversationInfo>, String> {
-        let frame = self.rpc(MessageType::QueryConversations, &HashMap::new()).await?;
-        parse_conversations(&frame.payload)
+        self.client.conversations().await.map_err(|error| error.to_string())
     }
 
     pub async fn messages(
@@ -161,11 +114,7 @@ impl DaemonClient {
         peer_hash: &str,
         limit: u32,
     ) -> Result<Vec<MessageInfo>, String> {
-        let mut p = HashMap::new();
-        p.insert("peer_hash".into(), MpValue::String(peer_hash.into()));
-        p.insert("limit".into(), MpValue::Integer(limit.into()));
-        let frame = self.rpc(MessageType::QueryMessages, &p).await?;
-        parse_messages(&frame.payload)
+        self.client.messages(peer_hash, limit).await.map_err(|error| error.to_string())
     }
 
     pub async fn send_chat(
@@ -194,23 +143,13 @@ impl DaemonClient {
         title: Option<&str>,
         delivery_method: &str,
     ) -> Result<CliSendOutcome, String> {
-        let mut payload = HashMap::new();
-        payload.insert("peer_hash".into(), MpValue::String(destination.into()));
-        payload.insert("content".into(), MpValue::String(content.into()));
-        payload.insert("delivery_method".into(), MpValue::String(delivery_method.into()));
-        if let Some(title) = title {
-            payload.insert("title".into(), MpValue::String(title.into()));
-        }
-        self.with_timeout(30);
-        let frame = self.rpc(MessageType::CmdSendChatOutcome, &payload).await?;
-        let value = frame.payload.get("outcome").cloned().ok_or("send response omitted outcome")?;
-        let encoded = rmp_serde::to_vec_named(&value)
-            .map_err(|error| format!("encode send outcome: {error}"))?;
-        let outcome: styrene_ipc::types::SendChatOutcome = rmp_serde::from_slice(&encoded)
-            .map_err(|error| format!("decode send outcome: {error}"))?;
-        if outcome.message_id.is_empty() || outcome.message.id != outcome.message_id {
-            return Err("send response omitted its authoritative message projection".into());
-        }
+        let mut request = SendChatRequest::default();
+        request.peer_hash = destination.into();
+        request.content = content.into();
+        request.title = title.map(str::to_owned);
+        request.delivery_method = Some(delivery_method.into());
+        let outcome =
+            self.client.send_chat_outcome(&request).await.map_err(|error| error.to_string())?;
         let disposition = match outcome.disposition {
             styrene_ipc::types::SendChatDisposition::Accepted => "accepted",
             styrene_ipc::types::SendChatDisposition::Failed => "failed",
@@ -226,8 +165,7 @@ impl DaemonClient {
     }
 
     pub async fn announce(&mut self) -> Result<bool, String> {
-        let frame = self.rpc(MessageType::CmdAnnounce, &HashMap::new()).await?;
-        Ok(mp_bool(&frame.payload, "success"))
+        self.client.announce().await.map_err(|error| error.to_string())
     }
 
     pub async fn config(&mut self) -> Result<HashMap<String, MpValue>, String> {
@@ -402,235 +340,4 @@ fn default_socket_path() -> PathBuf {
 
 fn mp_str(p: &HashMap<String, MpValue>, key: &str) -> String {
     p.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string()
-}
-
-fn mp_bool(p: &HashMap<String, MpValue>, key: &str) -> bool {
-    p.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
-}
-
-fn mp_u64(p: &HashMap<String, MpValue>, key: &str) -> u64 {
-    p.get(key).and_then(|v| v.as_u64()).unwrap_or(0)
-}
-
-fn mp_i64(p: &HashMap<String, MpValue>, key: &str) -> i64 {
-    p.get(key).and_then(|v| v.as_i64()).unwrap_or(0)
-}
-
-fn parse_identity(p: &HashMap<String, MpValue>) -> Result<IdentityInfo, String> {
-    let mut info = IdentityInfo::default();
-    info.identity_hash = mp_str(p, "identity_hash");
-    info.destination_hash = mp_str(p, "destination_hash");
-    info.lxmf_destination_hash = mp_str(p, "lxmf_destination_hash");
-    info.display_name = mp_str(p, "display_name");
-    info.icon = p.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string());
-    info.short_name = p.get("short_name").and_then(|v| v.as_str()).map(|s| s.to_string());
-    info.custody = p
-        .get("custody")
-        .cloned()
-        .map(rmpv::ext::from_value)
-        .transpose()
-        .map_err(|error| format!("invalid identity custody: {error}"))?;
-    Ok(info)
-}
-
-fn parse_status(p: &HashMap<String, MpValue>) -> Result<DaemonStatusInfo, String> {
-    let mut s = DaemonStatusInfo::default();
-    s.uptime = mp_u64(p, "uptime");
-    s.daemon_version = mp_str(p, "daemon_version");
-    s.rns_initialized = mp_bool(p, "rns_initialized");
-    s.lxmf_initialized = mp_bool(p, "lxmf_initialized");
-    s.device_count = mp_u64(p, "device_count") as u32;
-    s.interface_count = mp_u64(p, "interface_count") as u32;
-    s.hub_status = p.get("hub_status").and_then(|v| v.as_str()).map(|s| s.to_string());
-    s.propagation_enabled = mp_bool(p, "propagation_enabled");
-    s.standard_lxmf_propagation_destination_registered =
-        mp_bool(p, "standard_lxmf_propagation_destination_registered");
-    s.standard_lxmf_propagation_active = mp_bool(p, "standard_lxmf_propagation_active");
-    s.transport_enabled = mp_bool(p, "transport_enabled");
-    s.active_links = mp_u64(p, "active_links") as u32;
-    s.active_capabilities = p.get("active_capabilities").and_then(parse_capabilities);
-    s.connection_generation = p.get("connection_generation").and_then(MpValue::as_u64);
-    Ok(s)
-}
-
-fn parse_capabilities(value: &MpValue) -> Option<ActiveCapabilitiesInfo> {
-    let map = value.as_map()?;
-    let item = |key: &str| map.iter().find(|(k, _)| k.as_str() == Some(key)).map(|(_, v)| v);
-    let strings = |key: &str| {
-        item(key)?
-            .as_array()?
-            .iter()
-            .map(|value| value.as_str().map(ToOwned::to_owned))
-            .collect::<Option<Vec<_>>>()
-    };
-    let degraded = item("degraded")?
-        .as_array()?
-        .iter()
-        .map(|value| {
-            let map = value.as_map()?;
-            let get = |key: &str| {
-                map.iter()
-                    .find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, value)| value.as_str())
-                    .map(ToOwned::to_owned)
-            };
-            let mut degraded = DegradedCapabilityInfo::default();
-            degraded.id = get("id")?;
-            degraded.reason = get("reason")?;
-            Some(degraded)
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let mut capabilities = ActiveCapabilitiesInfo::default();
-    capabilities.version = u16::try_from(item("version")?.as_u64()?).ok()?;
-    capabilities.runtime = strings("runtime")?;
-    capabilities.degraded = degraded;
-    capabilities.authorized_operations = strings("authorized_operations")?;
-    Some(capabilities)
-}
-
-fn parse_devices(p: &HashMap<String, MpValue>) -> Result<Vec<DeviceInfo>, String> {
-    let arr = p
-        .get("devices")
-        .or_else(|| p.get("result"))
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "no 'devices' array in response".to_string())?;
-
-    Ok(arr.iter().filter_map(parse_device_value).collect())
-}
-
-fn parse_device_value(v: &MpValue) -> Option<DeviceInfo> {
-    let m = v.as_map()?;
-    let get = |key: &str| -> String {
-        m.iter()
-            .find(|(k, _)| k.as_str() == Some(key))
-            .and_then(|(_, v)| v.as_str())
-            .unwrap_or("")
-            .to_string()
-    };
-    let get_bool = |key: &str| -> bool {
-        m.iter()
-            .find(|(k, _)| k.as_str() == Some(key))
-            .and_then(|(_, v)| v.as_bool())
-            .unwrap_or(false)
-    };
-    let mut dev = DeviceInfo::default();
-    dev.destination_hash = get("destination_hash");
-    dev.identity_hash = get("identity_hash");
-    dev.name = get("name");
-    dev.device_type = get("device_type");
-    dev.status = get("status");
-    dev.is_styrene_node = get_bool("is_styrene_node");
-    dev.lxmf_destination_hash = get("lxmf_destination_hash");
-    dev.standard_lxmf_propagation_active = m
-        .iter()
-        .find(|(key, _)| key.as_str() == Some("standard_lxmf_propagation_active"))
-        .and_then(|(_, value)| value.as_bool());
-    Some(dev)
-}
-
-fn parse_conversations(p: &HashMap<String, MpValue>) -> Result<Vec<ConversationInfo>, String> {
-    let arr = p
-        .get("conversations")
-        .or_else(|| p.get("result"))
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "no 'conversations' array".to_string())?;
-
-    Ok(arr
-        .iter()
-        .filter_map(|v| {
-            let m = v.as_map()?;
-            let get = |key: &str| -> String {
-                m.iter()
-                    .find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, v)| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
-            };
-            let get_opt = |key: &str| -> Option<String> {
-                m.iter()
-                    .find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, v)| v.as_str())
-                    .map(|s| s.to_string())
-            };
-            let get_u32 = |key: &str| -> u32 {
-                m.iter()
-                    .find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, v)| v.as_u64())
-                    .unwrap_or(0) as u32
-            };
-            let get_i64 = |key: &str| -> Option<i64> {
-                m.iter().find(|(k, _)| k.as_str() == Some(key)).and_then(|(_, v)| v.as_i64())
-            };
-            let mut c = ConversationInfo::default();
-            c.peer_hash = get("peer_hash");
-            c.peer_name = get_opt("peer_name");
-            c.last_message_content = get_opt("last_message_content");
-            c.last_message_timestamp = get_i64("last_message_timestamp");
-            c.unread_count = get_u32("unread_count");
-            c.message_count = get_u32("message_count");
-            c.pinned = m
-                .iter()
-                .find(|(k, _)| k.as_str() == Some("pinned"))
-                .and_then(|(_, v)| v.as_bool())
-                .unwrap_or(false);
-            c.muted = m
-                .iter()
-                .find(|(k, _)| k.as_str() == Some("muted"))
-                .and_then(|(_, v)| v.as_bool())
-                .unwrap_or(false);
-            Some(c)
-        })
-        .collect())
-}
-
-fn parse_messages(p: &HashMap<String, MpValue>) -> Result<Vec<MessageInfo>, String> {
-    let arr = p
-        .get("messages")
-        .or_else(|| p.get("result"))
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "no 'messages' array".to_string())?;
-
-    Ok(arr
-        .iter()
-        .filter_map(|v| {
-            let m = v.as_map()?;
-            let get = |key: &str| -> String {
-                m.iter()
-                    .find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, v)| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
-            };
-            let get_bool = |key: &str| -> bool {
-                m.iter()
-                    .find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, v)| v.as_bool())
-                    .unwrap_or(false)
-            };
-            let get_i64 = |key: &str| -> i64 {
-                m.iter()
-                    .find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, v)| v.as_i64())
-                    .unwrap_or(0)
-            };
-            let mut msg = MessageInfo::default();
-            msg.id = get("id");
-            if msg.id.is_empty() {
-                return None;
-            }
-            msg.source_hash = get("source_hash");
-            msg.destination_hash = get("destination_hash");
-            msg.timestamp = get_i64("timestamp");
-            msg.content = get("content");
-            msg.title = m
-                .iter()
-                .find(|(k, _)| k.as_str() == Some("title"))
-                .and_then(|(_, v)| v.as_str())
-                .map(|s| s.to_string());
-            msg.status = get("status");
-            msg.is_outgoing = get_bool("is_outgoing");
-            msg.read = get_bool("read");
-            Some(msg)
-        })
-        .collect())
 }
