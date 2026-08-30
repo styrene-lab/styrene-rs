@@ -1350,6 +1350,34 @@ impl ReceiptHandler for CountingReceiptHandler {
     }
 }
 
+struct ReentrantReceiptHandler {
+    transport: Arc<Mutex<TransportHandler>>,
+    callbacks: Arc<AtomicUsize>,
+    sends: Arc<AtomicUsize>,
+}
+
+impl ReceiptHandler for ReentrantReceiptHandler {
+    fn on_receipt(&self, _receipt: &DeliveryReceipt) {
+        self.callbacks.fetch_add(1, Ordering::SeqCst);
+        let outcome = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.transport
+                    .lock()
+                    .await
+                    .send_packet_with_outcome(Packet {
+                        destination: AddressHash::new([0x91; crate::hash::ADDRESS_HASH_SIZE]),
+                        data: PacketDataBuffer::new_from_slice(b"receipt callback send"),
+                        ..Default::default()
+                    })
+                    .await
+            })
+        });
+        if outcome == SendPacketOutcome::DroppedMissingDestinationIdentity {
+            self.sends.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
 #[tokio::test]
 async fn handle_inbound_for_test_rejects_forged_destination_proof() {
     let local_identity = PrivateIdentity::new_from_rand(OsRng);
@@ -1414,4 +1442,56 @@ async fn handle_inbound_for_test_accepts_valid_destination_proof() {
     transport.handle_inbound_for_test(packet).await;
 
     assert_eq!(count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn receipt_callback_reenters_send_and_duplicate_expiry_race_is_terminal() {
+    let local_identity = PrivateIdentity::new_from_rand(OsRng);
+    let config = TransportConfig::new("test", &local_identity, true);
+    let mut transport = Transport::new(config);
+    let handler = transport.get_handler();
+    let remote_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut remote_destination =
+        SingleInputDestination::new(remote_identity, DestinationName::new("lxmf", "receipt"));
+    let announce = remote_destination.announce(OsRng, None).expect("valid announce packet");
+    handle_announce(&announce, handler.lock().await, AddressHash::new_from_rand(OsRng)).await;
+
+    let callbacks = Arc::new(AtomicUsize::new(0));
+    let sends = Arc::new(AtomicUsize::new(0));
+    transport
+        .set_receipt_handler(Box::new(ReentrantReceiptHandler {
+            transport: handler.clone(),
+            callbacks: callbacks.clone(),
+            sends: sends.clone(),
+        }))
+        .await;
+    let packet_hash = [0x92; HASH_SIZE];
+    let signature = remote_destination.identity.sign(&packet_hash).to_bytes();
+    let mut data = PacketDataBuffer::new();
+    data.safe_write(&packet_hash);
+    data.safe_write(&signature);
+    let proof = Packet {
+        header: Header { packet_type: PacketType::Proof, ..Default::default() },
+        destination: announce.destination,
+        context: PacketContext::None,
+        data,
+        ..Default::default()
+    };
+
+    tokio::time::timeout(Duration::from_secs(1), transport.handle_inbound_for_test(proof))
+        .await
+        .expect("reentrant callback completed");
+    {
+        let handler = handler.lock().await;
+        let mut cache = handler.packet_cache.lock().await;
+        cache.update(&proof);
+        cache.release(Duration::ZERO);
+    }
+    let ((), ()) = tokio::join!(
+        transport.handle_inbound_for_test(proof),
+        transport.handle_inbound_for_test(proof),
+    );
+
+    assert_eq!(callbacks.load(Ordering::SeqCst), 1);
+    assert_eq!(sends.load(Ordering::SeqCst), 1);
 }
