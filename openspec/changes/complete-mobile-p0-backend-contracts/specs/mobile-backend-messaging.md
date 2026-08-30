@@ -77,3 +77,14 @@ Given a message attempt was persisted without an attributable path or interface 
 When delivery details are queried
 Then route and bearer evidence are explicitly unknown
 And current interface state is not retroactively attached to the attempt
+
+### Requirement: Outbound LXMF identifies the delivery destination
+
+Every outbound LXMF message must identify the sender by its canonical
+`lxmf.delivery` destination rather than its raw identity hash.
+
+#### Scenario: Identity and delivery hashes differ
+Given a mobile node whose identity hash differs from its LXMF delivery destination
+When the node persists and sends an outbound LXMF message
+Then the wire source is the LXMF delivery destination
+And the durable outbound source matches that same destination

@@ -935,7 +935,7 @@ impl MessagingService {
         let dest_hash = AddressHash::new(dest_bytes);
 
         // Build LXMF wire message
-        let source_hash = transport.identity_hash();
+        let source_hash = transport.destination_hash();
         let mut source_bytes = [0u8; 16];
         source_bytes.copy_from_slice(source_hash.as_slice());
         let now = std::time::SystemTime::now()
@@ -4161,6 +4161,45 @@ mod tests {
             result.unwrap_err().to_string().contains("transport not available"),
             "should fail when no transport"
         );
+    }
+
+    #[tokio::test]
+    async fn outbound_lxmf_uses_delivery_destination_as_source() {
+        use crate::transport::mock_transport::{MockCall, MockTransport};
+
+        let svc = MessagingService::new();
+        let transport = Arc::new(MockTransport::new(
+            AddressHash::new([0x11; 16]),
+            AddressHash::new([0x22; 16]),
+        ));
+        let signer = Arc::new(rns_core::identity::PrivateIdentity::new_from_name(
+            "outbound-delivery-source",
+        ));
+        svc.set_signer(transport.clone(), signer);
+
+        let message_id = svc
+            .send_chat_with_method(&"33".repeat(16), "body", None, Some("opportunistic"))
+            .await
+            .expect("send opportunistic message");
+        let stripped = transport
+            .calls()
+            .into_iter()
+            .find_map(|call| match call {
+                MockCall::SendRaw { data, .. } => Some(data),
+                _ => None,
+            })
+            .expect("opportunistic wire send");
+        let mut wire = vec![0x33; 16];
+        wire.extend_from_slice(&stripped);
+        let decoded = lxmf::inbound_decode::decode_inbound_message(
+            [0x33; 16],
+            &wire,
+            InboundPayloadMode::FullWire,
+        )
+        .expect("decode outbound wire");
+
+        assert_eq!(decoded.source, [0x22; 16]);
+        assert_eq!(svc.get_message(&message_id).unwrap().unwrap().source, "22".repeat(16));
     }
 
     #[tokio::test]

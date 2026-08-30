@@ -1331,8 +1331,6 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
     wait_for_peer_event(&server, &mut client_peers, &server_delivery).await;
     wait_for_peer_event(&client, &mut server_peers, &client_delivery).await;
 
-    let server_identity = server.app_context.identity().identity_hash().to_string();
-    let client_identity = client.app_context.identity().identity_hash().to_string();
     let mut client_messages = client.subscribe_message_events().await;
     let red_outcome = server
         .send_text(MobileSendRequest {
@@ -1355,7 +1353,7 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
         wait_for_new_message_event(&mut client_messages, &red_outcome.message_id).await;
     assert_eq!(red_inbound.kind, MobileMessageEventKind::New);
     assert_eq!(red_inbound.message.id, red_outcome.message_id);
-    assert_eq!(red_inbound.message.source_hash, server_identity);
+    assert_eq!(red_inbound.message.source_hash, server_delivery);
     assert_eq!(red_inbound.message.destination_hash, client_delivery);
     assert_eq!(red_inbound.message.content, "red to yellow");
 
@@ -1373,40 +1371,46 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
     let yellow_inbound =
         wait_for_new_message_event(&mut server_messages, &yellow_outcome.message_id).await;
     assert_eq!(yellow_inbound.message.id, yellow_outcome.message_id);
-    assert_eq!(yellow_inbound.message.source_hash, client_identity);
+    assert_eq!(yellow_inbound.message.source_hash, client_delivery);
     assert_eq!(yellow_inbound.message.destination_hash, server_delivery);
     assert_eq!(yellow_inbound.message.content, "yellow to red");
 
-    let server_outbound = server.get_messages(&client_delivery, 20).await.unwrap();
-    assert_eq!(server_outbound.len(), 1);
-    assert_eq!(server_outbound[0].id, red_outcome.message_id);
-    assert!(server_outbound[0].is_outgoing);
-    let client_outbound = client.get_messages(&server_delivery, 20).await.unwrap();
-    assert_eq!(client_outbound.len(), 1);
-    assert_eq!(client_outbound[0].id, yellow_outcome.message_id);
-    assert!(client_outbound[0].is_outgoing);
+    let server_messages = server.get_messages(&client_delivery, 20).await.unwrap();
+    assert_eq!(server_messages.len(), 2);
+    assert!(
+        server_messages
+            .iter()
+            .any(|message| message.id == red_outcome.message_id && message.is_outgoing)
+    );
+    let client_messages = client.get_messages(&server_delivery, 20).await.unwrap();
+    assert_eq!(client_messages.len(), 2);
+    assert!(
+        client_messages
+            .iter()
+            .any(|message| message.id == yellow_outcome.message_id && message.is_outgoing)
+    );
 
     let client_inbound = client
-        .get_messages(&server_identity, 20)
+        .get_messages(&server_delivery, 20)
         .await
         .unwrap()
         .into_iter()
         .filter(|message| {
             !message.is_outgoing
-                && message.source_hash == server_identity
+                && message.source_hash == server_delivery
                 && message.content == "red to yellow"
         })
         .count();
     assert_eq!(client_inbound, 1);
 
     let server_inbound = server
-        .get_messages(&client_identity, 20)
+        .get_messages(&client_delivery, 20)
         .await
         .unwrap()
         .into_iter()
         .filter(|message| {
             !message.is_outgoing
-                && message.source_hash == client_identity
+                && message.source_hash == client_delivery
                 && message.content == "yellow to red"
         })
         .count();
@@ -1417,17 +1421,17 @@ async fn two_mobile_nodes_exchange_lxmf_directly_without_hub() {
         .await
         .unwrap()
         .into_iter()
-        .find(|conversation| conversation.peer_hash == client_identity)
+        .find(|conversation| conversation.peer_hash == client_delivery)
         .expect("unread conversation is visible");
     assert_eq!(unread_conversation.unread_count, 1);
 
-    server.mark_read(&client_identity).await.unwrap();
+    server.mark_read(&client_delivery).await.unwrap();
     let conversation = server
         .list_conversations()
         .await
         .unwrap()
         .into_iter()
-        .find(|conversation| conversation.peer_hash == client_identity)
+        .find(|conversation| conversation.peer_hash == client_delivery)
         .expect("read conversation remains visible");
     assert_eq!(conversation.unread_count, 0);
 

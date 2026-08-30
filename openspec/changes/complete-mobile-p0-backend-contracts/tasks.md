@@ -49,6 +49,7 @@
 - [x] 6.2 Persist or reconstruct only documented stable correlation and test direct TCP, absent route, stale route, reconnect, retry, and restart outcomes
 - [x] 6.3 Preserve delivery method, bearer, path, and receipt as independent fields and reject inference from current interface state
 - [x] 6.4 Add projection and serialization tests that retain unknown evidence explicitly and expose no private underlay data
+- [x] 6.5 Use the canonical LXMF delivery destination as the outbound wire and durable source, with a regression test where the identity and destination hashes differ
 
 ## 7. Diagnostics And Export
 <!-- specs: mobile-backend-observability -->
