@@ -4698,7 +4698,7 @@ mod tests {
         assert!(!error.to_string().contains(root.path().to_string_lossy().as_ref()));
         {
             let handles = evidence.worker_handles.lock().unwrap();
-            assert_eq!(handles.len(), 9);
+            assert_eq!(handles.len(), 10);
             assert!(handles.iter().all(tokio::task::AbortHandle::is_finished));
         }
 

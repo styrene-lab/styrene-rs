@@ -16,6 +16,16 @@ use rns_core::transport::resource::{ResourceEventKind, ResourceFailure};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
+const ECHO_FIELD: &str = "styrene_echo";
+const RESPONSE_QUEUE_CAPACITY: usize = 64;
+
+struct ResponseRequest {
+    peer: String,
+    destination: String,
+    content: String,
+    request_id: String,
+}
+
 /// Tasks owned by the inbound worker.
 ///
 /// The resource task is separate because large LXMF payloads arrive through a
@@ -23,6 +33,7 @@ use tokio::task::JoinHandle;
 pub struct InboundWorkerHandle {
     packet: JoinHandle<()>,
     resource: JoinHandle<()>,
+    response: JoinHandle<()>,
 }
 
 pub struct InboundDestinations {
@@ -43,20 +54,22 @@ impl InboundWorkerHandle {
     pub fn abort(&self) {
         self.packet.abort();
         self.resource.abort();
+        self.response.abort();
     }
 
     pub fn is_finished(&self) -> bool {
-        self.packet.is_finished() && self.resource.is_finished()
+        self.packet.is_finished() && self.resource.is_finished() && self.response.is_finished()
     }
 
     pub async fn wait(&mut self) {
         let _ = (&mut self.packet).await;
         let _ = (&mut self.resource).await;
+        let _ = (&mut self.response).await;
     }
 
     #[cfg(test)]
-    pub(crate) fn abort_handles(&self) -> [tokio::task::AbortHandle; 2] {
-        [self.packet.abort_handle(), self.resource.abort_handle()]
+    pub(crate) fn abort_handles(&self) -> [tokio::task::AbortHandle; 3] {
+        [self.packet.abort_handle(), self.resource.abort_handle(), self.response.abort_handle()]
     }
 }
 
@@ -64,6 +77,51 @@ fn to_lxmf_mode(mode: ReceivedPayloadMode) -> InboundPayloadMode {
     match mode {
         ReceivedPayloadMode::FullWire => InboundPayloadMode::FullWire,
         ReceivedPayloadMode::DestinationStripped => InboundPayloadMode::DestinationStripped,
+    }
+}
+
+fn response_destination(record: &crate::storage::messages::MessageRecord) -> Option<String> {
+    let source: [u8; 16] = hex::decode(&record.source).ok()?.try_into().ok()?;
+    Some(hex::encode(source))
+}
+
+fn is_response_candidate(record: &crate::storage::messages::MessageRecord) -> bool {
+    let fields = record.fields.as_ref();
+    let protocol = fields.and_then(|value| value.get("protocol")).is_some();
+    let marked_response = fields
+        .and_then(|value| value.get(ECHO_FIELD))
+        .and_then(|value| value.get("response"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    !protocol && !marked_response && response_destination(record).is_some()
+}
+
+fn maybe_enqueue_response(
+    record: &crate::storage::messages::MessageRecord,
+    auto_reply: Option<&Arc<AutoReplyService>>,
+    response_tx: &tokio::sync::mpsc::Sender<ResponseRequest>,
+) {
+    if !is_response_candidate(record) {
+        return;
+    }
+    let Some(content) =
+        auto_reply.and_then(|service| service.reply_for(&record.source, &record.content))
+    else {
+        return;
+    };
+    let Some(destination) = response_destination(record) else {
+        return;
+    };
+    if let Err(error) = response_tx.try_send(ResponseRequest {
+        peer: record.source.clone(),
+        destination,
+        content,
+        request_id: record.id.clone(),
+    }) {
+        if let Some(service) = auto_reply {
+            service.clear_peer_cooldown(&record.source);
+        }
+        crate::daemon_diagnostic!("[worker] automatic response queue unavailable: {error}");
     }
 }
 
@@ -122,6 +180,33 @@ pub fn spawn_inbound_worker_with_auto_reply(
     let InboundDestinations { local_delivery_hash, excluded_propagation_destination } =
         destinations;
     let mut rx = transport.subscribe_inbound();
+    let (response_tx, mut response_rx) =
+        tokio::sync::mpsc::channel::<ResponseRequest>(RESPONSE_QUEUE_CAPACITY);
+    let response = {
+        let messaging = messaging.clone();
+        let auto_reply = auto_reply.clone();
+        tokio::spawn(async move {
+            while let Some(request) = response_rx.recv().await {
+                let fields = serde_json::json!({
+                    ECHO_FIELD: { "response": true, "request_id": request.request_id }
+                });
+                if let Err(error) = messaging
+                    .send_chat_with_fields(
+                        &request.destination,
+                        &request.content,
+                        Some("[auto-reply]"),
+                        fields,
+                    )
+                    .await
+                {
+                    if let Some(service) = auto_reply.as_ref() {
+                        service.clear_peer_cooldown(&request.peer);
+                    }
+                    crate::daemon_diagnostic!("[worker] automatic response failed: {error}");
+                }
+            }
+        })
+    };
 
     // Spawn a resource event handler that processes completed resource transfers.
     // Large payloads (> LINK_PACKET_MDU) are sent as RNS resources and arrive
@@ -133,6 +218,8 @@ pub fn spawn_inbound_worker_with_auto_reply(
         let protocol = protocol.clone();
         let transport = transport.clone();
         let local_delivery_hash = local_delivery_hash.clone();
+        let auto_reply = auto_reply.clone();
+        let response_tx = response_tx.clone();
         tokio::spawn(async move {
             loop {
                 match resource_rx.recv().await {
@@ -268,6 +355,11 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                         .unwrap_or(false)
                                     {
                                         protocol.dispatch_inbound(&record).await;
+                                        maybe_enqueue_response(
+                                            &record,
+                                            auto_reply.as_ref(),
+                                            &response_tx,
+                                        );
                                     } else {
                                         events.emit_inbound_drop(
                                             "direct_resource",
@@ -464,51 +556,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
 
                             // Route only authenticated and stamp-policy-compliant messages.
                             protocol.dispatch_inbound(&record).await;
-
-                            // Auto-reply: if enabled and cooldown permits, send reply.
-                            // Skip auto-reply for:
-                            // - Protocol messages (e.g., Fleet RPC with fields.protocol set)
-                            // - Messages that are themselves auto-replies (title contains "[auto-reply]")
-                            let is_protocol_message =
-                                record.fields.as_ref().and_then(|f| f.get("protocol")).is_some();
-                            let is_auto_reply_message = record.title.contains("[auto-reply]");
-                            let should_auto_reply = !is_protocol_message && !is_auto_reply_message;
-
-                            if should_auto_reply
-                                && let Some(ref ar) = auto_reply
-                                && let Some(reply_text) = ar.should_reply(&record.source)
-                            {
-                                // Determine the sender's delivery hash for reply routing.
-                                // The record.source is the sender's identity hash; we need
-                                // their delivery destination hash for send_chat.
-                                // The inbound worker knows the delivery hash is what the
-                                // transport resolved — look it up from the source identity.
-                                let source_delivery_hash =
-                                    (record.source.len() == 32).then(|| record.source.clone());
-
-                                if let Some(dest_hash) = source_delivery_hash {
-                                    let m = messaging.clone();
-                                    tokio::spawn(async move {
-                                        if let Err(e) = m
-                                            .send_chat(
-                                                &dest_hash,
-                                                &reply_text,
-                                                Some("[auto-reply]"),
-                                            )
-                                            .await
-                                        {
-                                            crate::daemon_diagnostic!(
-                                                "[worker] auto-reply failed: {e}"
-                                            );
-                                        } else {
-                                            crate::daemon_diagnostic!(
-                                                "[worker] auto-reply sent to {}",
-                                                dest_hash
-                                            );
-                                        }
-                                    });
-                                }
-                            } // close should_auto_reply
+                            maybe_enqueue_response(&record, auto_reply.as_ref(), &response_tx);
                         }
                         InboundAcceptOutcome::Duplicate { message_id } => {
                             events.emit_inbound_drop(
@@ -556,5 +604,63 @@ pub fn spawn_inbound_worker_with_auto_reply(
         }
     });
 
-    InboundWorkerHandle { packet, resource }
+    InboundWorkerHandle { packet, resource, response }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InboundWorkerHandle, is_response_candidate, response_destination};
+    use crate::storage::messages::MessageRecord;
+
+    fn record(source: &str, fields: Option<serde_json::Value>) -> MessageRecord {
+        MessageRecord {
+            id: "request-id".into(),
+            source: source.into(),
+            destination: "22".repeat(16),
+            title: String::new(),
+            content: "content".into(),
+            timestamp: 0,
+            direction: "in".into(),
+            fields,
+            receipt_status: None,
+            read: false,
+        }
+    }
+
+    #[test]
+    fn response_destination_is_exactly_the_inbound_delivery_source() {
+        let source = "591469f284414d4df04151f138ecc072";
+        assert_eq!(response_destination(&record(source, None)).as_deref(), Some(source));
+        assert!(response_destination(&record(&"11".repeat(15), None)).is_none());
+        assert!(response_destination(&record("not-hex", None)).is_none());
+    }
+
+    #[test]
+    fn protocol_and_marked_responses_are_not_candidates() {
+        assert!(!is_response_candidate(&record(
+            &"11".repeat(16),
+            Some(serde_json::json!({"protocol": "fleet"})),
+        )));
+        assert!(!is_response_candidate(&record(
+            &"11".repeat(16),
+            Some(serde_json::json!({"styrene_echo": {"response": true}})),
+        )));
+        assert!(is_response_candidate(&record(&"11".repeat(16), None)));
+    }
+
+    #[tokio::test]
+    async fn abort_and_wait_own_in_flight_response_worker() {
+        let mut handle = InboundWorkerHandle {
+            packet: tokio::spawn(std::future::pending()),
+            resource: tokio::spawn(std::future::pending()),
+            response: tokio::spawn(std::future::pending()),
+        };
+        let response = handle.response.abort_handle();
+
+        handle.abort();
+        handle.wait().await;
+
+        assert!(response.is_finished());
+        assert!(handle.is_finished());
+    }
 }

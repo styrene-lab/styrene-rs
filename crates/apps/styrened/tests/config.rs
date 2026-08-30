@@ -25,6 +25,7 @@ fn filters_enabled_tcp_clients() {
         role: Default::default(),
         transport_retransmit: None,
         rbac: None,
+        auto_reply: Default::default(),
         interfaces: vec![
             InterfaceConfig {
                 kind: "tcp_client".into(),

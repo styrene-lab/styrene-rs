@@ -37,6 +37,7 @@ impl GhostPreferences {
             role: styrened::config::NodeRole::FullNode,
             transport_retransmit: None,
             rbac: None,
+            auto_reply: Default::default(),
         };
         let content = toml::to_string_pretty(&config).map_err(io::Error::other)?;
         if let Some(parent) = path.parent() {

@@ -6,7 +6,7 @@
 //! Note: this wraps the `DaemonConfig` model from `crate::config`,
 //! adding service-layer operations (load, reload, interface enumeration).
 
-use crate::config::{DaemonConfig, InterfaceConfig, NodeRole};
+use crate::config::{AutoReplySettings, DaemonConfig, InterfaceConfig, NodeRole};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -41,6 +41,16 @@ impl ConfigService {
         let mut s = self.state.lock().unwrap();
         s.path = Some(path.to_path_buf());
         s.config = Some(config);
+        Ok(())
+    }
+
+    /// Set the durable configuration path, loading it when present.
+    pub fn load_or_default(&self, path: &Path) -> Result<(), std::io::Error> {
+        let config =
+            if path.exists() { DaemonConfig::from_path(path)? } else { DaemonConfig::default() };
+        let mut state = self.state.lock().unwrap();
+        state.path = Some(path.to_path_buf());
+        state.config = Some(config);
         Ok(())
     }
 
@@ -82,6 +92,35 @@ impl ConfigService {
     /// Get the configured node role (default: FullNode).
     pub fn node_role(&self) -> NodeRole {
         self.state.lock().unwrap().config.as_ref().map(|c| c.role).unwrap_or_default()
+    }
+
+    pub fn auto_reply(&self) -> AutoReplySettings {
+        self.state
+            .lock()
+            .unwrap()
+            .config
+            .as_ref()
+            .map(|config| config.auto_reply.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_auto_reply(&self, settings: AutoReplySettings) -> Result<(), std::io::Error> {
+        let mut state = self.state.lock().unwrap();
+        if state.path.is_none() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no config path set"));
+        }
+        let config = state.config.get_or_insert_with(DaemonConfig::default);
+        let previous = std::mem::replace(&mut config.auto_reply, settings);
+        if let (Some(path), Some(config)) = (state.path.as_ref(), state.config.as_ref()) {
+            let result = toml::to_string_pretty(config)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+                .and_then(|bytes| crate::config::atomic_write_private(path, bytes.as_bytes()));
+            if let Err(error) = result {
+                state.config.as_mut().expect("config initialized above").auto_reply = previous;
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 
     /// Save the current configuration to disk.
@@ -256,5 +295,71 @@ port = 4242
         std::fs::write(&path, r#"role = "hub""#).unwrap();
         svc.reload().unwrap();
         assert_eq!(svc.node_role(), NodeRole::Hub);
+    }
+
+    #[test]
+    fn auto_reply_update_is_persisted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "").unwrap();
+        let service = ConfigService::with_path(&path).unwrap();
+        service
+            .set_auto_reply(AutoReplySettings {
+                mode: crate::config::AutoReplySettingMode::Echo,
+                message: String::new(),
+                cooldown_secs: 0,
+            })
+            .unwrap();
+        assert_eq!(
+            DaemonConfig::from_path(path).unwrap().auto_reply.mode,
+            crate::config::AutoReplySettingMode::Echo
+        );
+    }
+
+    #[test]
+    fn first_boot_path_persists_auto_reply_and_missing_path_is_rejected() {
+        let settings = AutoReplySettings {
+            mode: crate::config::AutoReplySettingMode::Echo,
+            message: String::new(),
+            cooldown_secs: 0,
+        };
+        let service = ConfigService::new();
+        assert_eq!(
+            service.set_auto_reply(settings.clone()).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        service.load_or_default(&path).unwrap();
+        service.set_auto_reply(settings).unwrap();
+
+        assert_eq!(
+            DaemonConfig::from_path(path).unwrap().auto_reply.mode,
+            crate::config::AutoReplySettingMode::Echo
+        );
+    }
+
+    #[test]
+    fn failed_auto_reply_persistence_preserves_in_memory_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "").unwrap();
+        let service = ConfigService::with_path(&path).unwrap();
+        let previous = service.auto_reply();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(dir.path()).unwrap();
+        std::fs::write(dir.path(), "not a directory").unwrap();
+
+        assert!(
+            service
+                .set_auto_reply(AutoReplySettings {
+                    mode: crate::config::AutoReplySettingMode::Echo,
+                    message: String::new(),
+                    cooldown_secs: 0,
+                })
+                .is_err()
+        );
+        assert_eq!(service.auto_reply(), previous);
     }
 }

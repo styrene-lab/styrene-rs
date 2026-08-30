@@ -21,6 +21,8 @@ pub enum AutoReplyMode {
     All,
     /// Reply only to first message from each peer (within cooldown).
     FirstOnly,
+    /// Return accepted message content unchanged.
+    Echo,
 }
 
 /// Auto-reply configuration.
@@ -38,6 +40,34 @@ impl Default for AutoReplyConfig {
             message: String::new(),
             cooldown: Duration::from_secs(300), // 5 minutes
         }
+    }
+}
+
+impl From<&crate::config::AutoReplySettings> for AutoReplyConfig {
+    fn from(settings: &crate::config::AutoReplySettings) -> Self {
+        let mode = match settings.mode {
+            crate::config::AutoReplySettingMode::Disabled => AutoReplyMode::Disabled,
+            crate::config::AutoReplySettingMode::All => AutoReplyMode::All,
+            crate::config::AutoReplySettingMode::FirstOnly => AutoReplyMode::FirstOnly,
+            crate::config::AutoReplySettingMode::Echo => AutoReplyMode::Echo,
+        };
+        Self {
+            mode,
+            message: settings.message.clone(),
+            cooldown: Duration::from_secs(settings.cooldown_secs),
+        }
+    }
+}
+
+impl From<&AutoReplyConfig> for crate::config::AutoReplySettings {
+    fn from(config: &AutoReplyConfig) -> Self {
+        let mode = match config.mode {
+            AutoReplyMode::Disabled => crate::config::AutoReplySettingMode::Disabled,
+            AutoReplyMode::All => crate::config::AutoReplySettingMode::All,
+            AutoReplyMode::FirstOnly => crate::config::AutoReplySettingMode::FirstOnly,
+            AutoReplyMode::Echo => crate::config::AutoReplySettingMode::Echo,
+        };
+        Self { mode, message: config.message.clone(), cooldown_secs: config.cooldown.as_secs() }
     }
 }
 
@@ -76,6 +106,10 @@ impl AutoReplyService {
     /// Returns `Some(reply_text)` if a reply should be sent, `None` otherwise.
     /// Automatically updates the cooldown tracker on positive decisions.
     pub fn should_reply(&self, peer_identity_hash: &str) -> Option<String> {
+        self.reply_for(peer_identity_hash, "")
+    }
+
+    pub fn reply_for(&self, peer_identity_hash: &str, content: &str) -> Option<String> {
         let config = self.config.lock().unwrap().clone();
 
         match config.mode {
@@ -94,12 +128,19 @@ impl AutoReplyService {
                     None
                 }
             }
+            AutoReplyMode::Echo => self
+                .check_and_update_cooldown(peer_identity_hash, config.cooldown)
+                .then(|| content.to_string()),
         }
     }
 
     /// Clear all cooldown tracking (e.g., on config change).
     pub fn clear_cooldowns(&self) {
         self.cooldowns.lock().unwrap().clear();
+    }
+
+    pub fn clear_peer_cooldown(&self, peer: &str) {
+        self.cooldowns.lock().unwrap().remove(peer);
     }
 
     /// Check cooldown for a peer and update if allowed.
@@ -190,5 +231,19 @@ mod tests {
         let config = svc.config();
         assert_eq!(config.mode, AutoReplyMode::Disabled);
         assert_eq!(config.cooldown, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn echo_returns_content_unchanged() {
+        let svc = AutoReplyService::new();
+        svc.set_config(AutoReplyConfig {
+            mode: AutoReplyMode::Echo,
+            message: "ignored".into(),
+            cooldown: Duration::ZERO,
+        });
+        assert_eq!(
+            svc.reply_for("peer", "\0 exact content \n"),
+            Some("\0 exact content \n".into())
+        );
     }
 }
