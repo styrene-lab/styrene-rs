@@ -35,6 +35,7 @@ impl GhostPreferences {
         let config = styrened::config::DaemonConfig {
             interfaces: self.interfaces.clone(),
             role: styrened::config::NodeRole::FullNode,
+            transport_retransmit: None,
             rbac: None,
         };
         let content = toml::to_string_pretty(&config).map_err(io::Error::other)?;

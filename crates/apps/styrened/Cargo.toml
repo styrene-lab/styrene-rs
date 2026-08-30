@@ -75,6 +75,8 @@ mobile-android-keystore = ["dep:styrene-identity", "styrene-identity/android-key
 mobile-identity = ["dep:styrene-identity", "styrene-identity/file-signer"]
 ## Bundle SQLite for cross-compilation (Android/iOS — no system libsqlite3)
 bundled-sqlite = ["rusqlite/bundled"]
+## Native USB serial ownership for stock RNode devices on desktop hosts
+native-serial = ["rns_core/serial"]
 
 [dev-dependencies]
 styrene-interop-runner = { path = "../../tests/styrene-interop-runner" }

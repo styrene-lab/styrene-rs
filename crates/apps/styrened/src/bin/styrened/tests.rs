@@ -149,7 +149,8 @@ async fn standalone_runtime_advertises_only_composed_capabilities() {
         rpc_tls_client_ca: None,
         socket: Some(root.path().join("daemon.sock")),
     })
-    .await;
+    .await
+    .expect("bootstrap");
 
     let contract = &context.startup_contract;
     assert_eq!(contract.runtime(), RuntimeKind::Standalone);
@@ -211,7 +212,8 @@ async fn standalone_hub_activates_complete_standard_propagation_composition() {
         rpc_tls_client_ca: None,
         socket: Some(root.path().join("daemon.sock")),
     })
-    .await;
+    .await
+    .expect("bootstrap");
     assert!(
         context.startup_contract.has_component(components::STANDARD_LXMF_PROPAGATION_DESTINATION)
     );
@@ -287,7 +289,7 @@ async fn standalone_hub_restart_keeps_standard_destination_hash_and_drops_old_re
         rpc_tls_client_ca: None,
         socket: Some(root.path().join("daemon.sock")),
     };
-    let first = crate::bootstrap::bootstrap(args()).await;
+    let first = crate::bootstrap::bootstrap(args()).await.expect("first bootstrap");
     assert_eq!(
         first.standard_propagation.as_ref().unwrap().queue_stats(2).unwrap().queued_count,
         1
@@ -299,7 +301,7 @@ async fn standalone_hub_restart_keeps_standard_destination_hash_and_drops_old_re
     first.shutdown().await;
     assert!(old_destination.upgrade().is_none());
 
-    let second = crate::bootstrap::bootstrap(args()).await;
+    let second = crate::bootstrap::bootstrap(args()).await.expect("second bootstrap");
     assert_eq!(
         second.standard_propagation.as_ref().unwrap().queue_stats(3).unwrap().queued_count,
         1
@@ -326,7 +328,8 @@ async fn standalone_without_transport_advertises_no_transport_capabilities() {
         rpc_tls_client_ca: None,
         socket: Some(root.path().join("daemon.sock")),
     })
-    .await;
+    .await
+    .expect("bootstrap");
 
     let contract = &context.startup_contract;
     assert!(!contract.has_component(components::LXMF_DELIVERY));
@@ -383,7 +386,8 @@ async fn production_bootstrap_has_one_canonical_inbound_persistence_owner() {
         },
         transport.clone(),
     )
-    .await;
+    .await
+    .expect("bootstrap");
     assert!(context.startup_contract.has_component(components::INBOUND_PACKET_WORKER));
     assert!(context.startup_contract.has_component(components::LEGACY_MESSAGE_EVENT_ADAPTER));
     assert!(!context.startup_contract.has_component(components::LEGACY_INBOUND_WORKER));

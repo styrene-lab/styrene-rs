@@ -1,13 +1,55 @@
 //! Bearer-neutral RNode protocol and bounded ordered-byte attempt contract.
 
 use std::collections::VecDeque;
+use std::fmt;
+
+#[cfg(feature = "serial")]
+use std::sync::{Arc, Mutex};
+#[cfg(feature = "serial")]
+use std::time::Duration;
+
+#[cfg(feature = "serial")]
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(feature = "serial")]
+use tokio_serial::SerialStream;
 
 use super::kiss::{CMD_DATA, KissDecoder, KissFrame, kiss_encode_command};
+#[cfg(feature = "serial")]
+use super::{
+    Interface, InterfaceContext, InterfaceDescriptor, InterfaceEndpoint, InterfaceKind,
+    InterfaceMode, InterfaceState, RxMessage,
+};
+#[cfg(feature = "serial")]
+use crate::buffer::{InputBuffer, OutputBuffer};
+#[cfg(feature = "serial")]
+use crate::packet::Packet;
+#[cfg(feature = "serial")]
+use crate::serde::Serialize;
+#[cfg(feature = "serial")]
+use crate::transport::iface::ifac::{ifac_unwrap, ifac_wrap};
 
 pub const RNODE_MTU: usize = 508;
 const DEFAULT_WRITE_CAP: usize = 20;
 const MAX_INPUT_CHUNK: usize = 4_096;
 const MAX_PENDING_WRITES: usize = 32;
+#[cfg(feature = "serial")]
+const DEFAULT_BAUD_RATE: u32 = 115_200;
+#[cfg(feature = "serial")]
+const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+#[cfg(feature = "serial")]
+const DEFAULT_RECONNECT_DELAY: Duration = Duration::from_secs(3);
+#[cfg(feature = "serial")]
+const MIN_RECONNECT_DELAY: Duration = Duration::from_millis(100);
+#[cfg(feature = "serial")]
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(60);
+#[cfg(feature = "serial")]
+const OPEN_SETTLE_DELAY: Duration = Duration::from_secs(2);
+#[cfg(feature = "serial")]
+const CONFIG_COMMAND_DELAY: Duration = Duration::from_millis(100);
+#[cfg(feature = "serial")]
+const RADIO_OFF_TIMEOUT: Duration = Duration::from_millis(250);
+#[cfg(feature = "serial")]
+const PACKET_BUFFER_SIZE: usize = 2_048;
 
 pub const CMD_FREQUENCY: u8 = 0x01;
 pub const CMD_BANDWIDTH: u8 = 0x02;
@@ -90,7 +132,65 @@ impl RNodeRadioProfile {
         spreading_factor: 7,
         coding_rate: 5,
     };
+
+    pub fn new(
+        frequency_hz: u32,
+        bandwidth_hz: u32,
+        tx_power_dbm: u8,
+        spreading_factor: u8,
+        coding_rate: u8,
+    ) -> Result<Self, RNodeProfileError> {
+        let profile =
+            Self { frequency_hz, bandwidth_hz, tx_power_dbm, spreading_factor, coding_rate };
+        profile.validate()?;
+        Ok(profile)
+    }
+
+    pub fn validate(&self) -> Result<(), RNodeProfileError> {
+        if !(137_000_000..=3_000_000_000).contains(&self.frequency_hz) {
+            return Err(RNodeProfileError::Frequency(self.frequency_hz));
+        }
+        if !(7_800..=500_000).contains(&self.bandwidth_hz) {
+            return Err(RNodeProfileError::Bandwidth(self.bandwidth_hz));
+        }
+        // Effective output power includes supported RNodes with an external PA.
+        if self.tx_power_dbm > 37 {
+            return Err(RNodeProfileError::TxPower(self.tx_power_dbm));
+        }
+        if !(5..=12).contains(&self.spreading_factor) {
+            return Err(RNodeProfileError::SpreadingFactor(self.spreading_factor));
+        }
+        if !(5..=8).contains(&self.coding_rate) {
+            return Err(RNodeProfileError::CodingRate(self.coding_rate));
+        }
+        Ok(())
+    }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RNodeProfileError {
+    Frequency(u32),
+    Bandwidth(u32),
+    TxPower(u8),
+    SpreadingFactor(u8),
+    CodingRate(u8),
+}
+
+impl fmt::Display for RNodeProfileError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Frequency(value) => write!(formatter, "invalid RNode frequency: {value}"),
+            Self::Bandwidth(value) => write!(formatter, "invalid RNode bandwidth: {value}"),
+            Self::TxPower(value) => write!(formatter, "invalid RNode tx power: {value}"),
+            Self::SpreadingFactor(value) => {
+                write!(formatter, "invalid RNode spreading factor: {value}")
+            }
+            Self::CodingRate(value) => write!(formatter, "invalid RNode coding rate: {value}"),
+        }
+    }
+}
+
+impl std::error::Error for RNodeProfileError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RNodeProtocolOutput {
@@ -106,6 +206,7 @@ pub enum RNodeProtocolError {
     NotReady,
     Closed,
     WriteQueueFull,
+    ConfigurationMismatch,
 }
 
 impl std::fmt::Display for RNodeProtocolError {
@@ -120,6 +221,9 @@ impl std::fmt::Display for RNodeProtocolError {
             ),
             Self::Closed => formatter.write_str("RNode protocol is closed"),
             Self::WriteQueueFull => formatter.write_str("RNode write queue is at capacity"),
+            Self::ConfigurationMismatch => {
+                formatter.write_str("RNode configuration readback does not match requested profile")
+            }
         }
     }
 }
@@ -211,6 +315,16 @@ impl RNodeProtocol {
         frame: KissFrame,
         output: &mut RNodeProtocolOutput,
     ) -> Result<(), RNodeProtocolError> {
+        let was_ready = self.phase == RNodeProtocolPhase::Ready;
+        let is_configuration_readback = matches!(
+            frame.command,
+            CMD_FREQUENCY
+                | CMD_BANDWIDTH
+                | CMD_TX_POWER
+                | CMD_SPREADING_FACTOR
+                | CMD_CODING_RATE
+                | CMD_RADIO_STATE
+        );
         match frame.command {
             CMD_DATA if self.phase == RNodeProtocolPhase::Ready && !frame.payload.is_empty() => {
                 if frame.payload.len() <= RNODE_MTU {
@@ -233,6 +347,10 @@ impl RNodeProtocol {
             CMD_CODING_RATE => self.observed.coding_rate = frame.payload.first().copied(),
             CMD_RADIO_STATE => self.observed.radio_state = frame.payload.first().copied(),
             _ => {}
+        }
+        if was_ready && is_configuration_readback && !self.configuration_matches() {
+            self.phase = RNodeProtocolPhase::Configuring;
+            return Err(RNodeProtocolError::ConfigurationMismatch);
         }
         if self.phase == RNodeProtocolPhase::Configuring && self.configuration_matches() {
             self.phase = RNodeProtocolPhase::Ready;
@@ -340,6 +458,333 @@ impl<B: RNodeByteAttempt> RNodeEngine<B> {
     }
 }
 
+#[cfg(feature = "serial")]
+struct SerialAttempt {
+    path: String,
+    baud_rate: u32,
+    stream: Option<SerialStream>,
+}
+
+#[cfg(feature = "serial")]
+impl RNodeByteAttempt for SerialAttempt {
+    async fn open(&mut self) -> Result<RNodeBearerInfo, String> {
+        use tokio_serial::SerialPortBuilderExt;
+
+        let stream = tokio_serial::new(&self.path, self.baud_rate)
+            .open_native_async()
+            .map_err(|_| "serial open failed".to_string())?;
+        self.stream = Some(stream);
+        tokio::time::sleep(OPEN_SETTLE_DELAY).await;
+        Ok(RNodeBearerInfo {
+            kind: RNodeBearerKind::Serial,
+            negotiated_mtu: None,
+            max_write_size: Some(RNODE_MTU + 4),
+        })
+    }
+
+    async fn read(&mut self) -> Result<Option<Vec<u8>>, String> {
+        let stream = self.stream.as_mut().ok_or_else(|| "serial stream is closed".to_string())?;
+        let mut bytes = vec![0; MAX_INPUT_CHUNK];
+        let count = stream.read(&mut bytes).await.map_err(|_| "serial read failed".to_string())?;
+        if count == 0 {
+            return Err("serial stream closed".to_string());
+        }
+        bytes.truncate(count);
+        Ok(Some(bytes))
+    }
+
+    async fn write(&mut self, payload: Vec<u8>) -> Result<(), String> {
+        let stream = self.stream.as_mut().ok_or_else(|| "serial stream is closed".to_string())?;
+        stream.write_all(&payload).await.map_err(|_| "serial write failed".to_string())?;
+        stream.flush().await.map_err(|_| "serial flush failed".to_string())?;
+        if payload.get(1).is_some_and(|command| {
+            matches!(
+                *command,
+                CMD_FREQUENCY
+                    | CMD_BANDWIDTH
+                    | CMD_TX_POWER
+                    | CMD_SPREADING_FACTOR
+                    | CMD_CODING_RATE
+                    | CMD_RADIO_STATE
+            )
+        }) {
+            tokio::time::sleep(CONFIG_COMMAND_DELAY).await;
+        }
+        Ok(())
+    }
+
+    async fn close(&mut self) -> Result<(), String> {
+        let Some(mut stream) = self.stream.take() else {
+            return Ok(());
+        };
+        stream.shutdown().await.map_err(|_| "serial close failed".to_string())
+    }
+}
+
+#[cfg(feature = "serial")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RNodeState {
+    Disconnected,
+    Detecting,
+    Configuring,
+    Online,
+}
+
+#[cfg(feature = "serial")]
+#[derive(Clone)]
+pub struct RNodeStatus {
+    state: Arc<Mutex<RNodeState>>,
+}
+
+#[cfg(feature = "serial")]
+impl RNodeStatus {
+    pub fn state(&self) -> RNodeState {
+        *self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn set(&self, state: RNodeState) {
+        *self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = state;
+    }
+}
+
+/// Native serial interface for stock RNode firmware.
+#[cfg(feature = "serial")]
+pub struct RNodeInterface {
+    path: String,
+    baud_rate: u32,
+    profile: RNodeRadioProfile,
+    reconnect_delay: Duration,
+    command_timeout: Duration,
+    status: RNodeStatus,
+}
+
+#[cfg(feature = "serial")]
+impl RNodeInterface {
+    pub fn new(
+        path: impl Into<String>,
+        profile: RNodeRadioProfile,
+    ) -> Result<Self, RNodeProfileError> {
+        profile.validate()?;
+        Ok(Self {
+            path: path.into(),
+            baud_rate: DEFAULT_BAUD_RATE,
+            profile,
+            reconnect_delay: DEFAULT_RECONNECT_DELAY,
+            command_timeout: DEFAULT_COMMAND_TIMEOUT,
+            status: RNodeStatus { state: Arc::new(Mutex::new(RNodeState::Disconnected)) },
+        })
+    }
+
+    #[must_use]
+    pub fn with_baud_rate(mut self, baud_rate: u32) -> Self {
+        self.baud_rate = baud_rate;
+        self
+    }
+
+    #[must_use]
+    pub fn with_reconnect_delay(mut self, reconnect_delay: Duration) -> Self {
+        self.reconnect_delay = reconnect_delay.clamp(MIN_RECONNECT_DELAY, MAX_RECONNECT_DELAY);
+        self
+    }
+
+    #[must_use]
+    pub fn status(&self) -> RNodeStatus {
+        self.status.clone()
+    }
+
+    pub async fn spawn(context: InterfaceContext<Self>) {
+        let iface_stop = context.channel.stop.clone();
+        let (path, baud_rate, profile, reconnect_delay, command_timeout, status) = {
+            let inner = context.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            (
+                inner.path.clone(),
+                inner.baud_rate,
+                inner.profile,
+                inner.reconnect_delay,
+                inner.command_timeout,
+                inner.status.clone(),
+            )
+        };
+        let address = context.channel.address;
+        let runtime = context.runtime.clone();
+        let stats = context.stats.clone();
+        let ifac = context.ifac.clone();
+        let (rx_channel, mut tx_channel) = context.channel.split();
+
+        while !context.cancel.is_cancelled() && !iface_stop.is_cancelled() {
+            status.set(RNodeState::Disconnected);
+            runtime.set_state(InterfaceState::Connecting);
+            let attempt = SerialAttempt { path: path.clone(), baud_rate, stream: None };
+            let mut engine = RNodeEngine::new(attempt, profile);
+            let result = run_serial_session(
+                &mut engine,
+                address,
+                &rx_channel,
+                &mut tx_channel,
+                &context.cancel,
+                &iface_stop,
+                ifac.as_deref(),
+                command_timeout,
+                &status,
+                &runtime,
+                &stats,
+            )
+            .await;
+            let _ = tokio::time::timeout(RADIO_OFF_TIMEOUT, engine.close()).await;
+            if let Err(error) = result {
+                crate::transport_diagnostic!("[rnode] disconnected error={error}");
+            }
+            status.set(RNodeState::Disconnected);
+            runtime.set_state(InterfaceState::Retrying);
+            tokio::select! {
+                _ = context.cancel.cancelled() => break,
+                _ = iface_stop.cancelled() => break,
+                _ = tokio::time::sleep(reconnect_delay) => {}
+            }
+        }
+
+        status.set(RNodeState::Disconnected);
+        runtime.set_state(InterfaceState::Closed);
+        iface_stop.cancel();
+    }
+}
+
+#[cfg(feature = "serial")]
+impl Interface for RNodeInterface {
+    fn mtu() -> usize {
+        RNODE_MTU
+    }
+
+    fn hardware_mtu(&self) -> Option<usize> {
+        Some(RNODE_MTU)
+    }
+
+    fn bitrate(&self) -> Option<u64> {
+        // LoRa nominal bitrate: SF * (4 / CR) * BW / 2^SF.
+        let numerator = u64::from(self.profile.spreading_factor)
+            .saturating_mul(4)
+            .saturating_mul(u64::from(self.profile.bandwidth_hz));
+        let denominator = (1_u64 << self.profile.spreading_factor)
+            .saturating_mul(u64::from(self.profile.coding_rate));
+        Some(numerator / denominator)
+    }
+
+    fn supports_link_mtu_discovery(&self) -> bool {
+        true
+    }
+
+    fn descriptor(&self) -> InterfaceDescriptor {
+        InterfaceDescriptor {
+            kind: InterfaceKind::Kiss,
+            mode: InterfaceMode::Full,
+            local_endpoint: Some(InterfaceEndpoint::Device {
+                path: self.path.clone(),
+                baud_rate: self.baud_rate,
+            }),
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(feature = "serial")]
+#[allow(clippy::too_many_arguments)]
+async fn run_serial_session(
+    engine: &mut RNodeEngine<SerialAttempt>,
+    address: crate::hash::AddressHash,
+    rx_channel: &super::InterfaceRxSender,
+    tx_channel: &mut super::InterfaceTxReceiver,
+    cancel: &tokio_util::sync::CancellationToken,
+    iface_stop: &tokio_util::sync::CancellationToken,
+    ifac: Option<&super::ifac::IfacConfig>,
+    command_timeout: Duration,
+    status: &RNodeStatus,
+    runtime: &super::InterfaceRuntime,
+    stats: &super::InterfaceStats,
+) -> Result<(), String> {
+    status.set(RNodeState::Detecting);
+    tokio::select! {
+        _ = cancel.cancelled() => return Ok(()),
+        _ = iface_stop.cancelled() => return Ok(()),
+        result = engine.open() => result?,
+    };
+
+    status.set(RNodeState::Configuring);
+    let configure = async {
+        loop {
+            let output = engine.poll().await?;
+            if output.became_ready {
+                return Ok::<(), String>(());
+            }
+        }
+    };
+    tokio::select! {
+        _ = cancel.cancelled() => return Ok(()),
+        _ = iface_stop.cancelled() => return Ok(()),
+        result = tokio::time::timeout(command_timeout, configure) => {
+            result.map_err(|_| "radio configuration readback timed out".to_string())??;
+        }
+    }
+
+    status.set(RNodeState::Online);
+    runtime.set_state(InterfaceState::Active);
+    crate::transport_diagnostic!(
+        "[rnode] online frequency={} bandwidth={} tx_power={} sf={} cr={}",
+        engine.protocol.profile.frequency_hz,
+        engine.protocol.profile.bandwidth_hz,
+        engine.protocol.profile.tx_power_dbm,
+        engine.protocol.profile.spreading_factor,
+        engine.protocol.profile.coding_rate
+    );
+
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => return Ok(()),
+            _ = iface_stop.cancelled() => return Ok(()),
+            result = engine.poll() => {
+                for bytes in result?.packets {
+                    let packet_bytes = if let Some(config) = ifac {
+                        let packet = ifac_unwrap(&bytes, config);
+                        if packet.is_none() {
+                            stats.record_drop(super::InterfaceDropReason::IfacFailure);
+                        }
+                        packet
+                    } else if bytes.first().is_some_and(|byte| byte & 0x80 != 0) {
+                        stats.record_drop(super::InterfaceDropReason::IfacFailure);
+                        None
+                    } else {
+                        Some(bytes)
+                    };
+                    if let Some(bytes) = packet_bytes {
+                        match Packet::deserialize(&mut InputBuffer::new(&bytes)) {
+                            Ok(packet) => {
+                                let _ = rx_channel.send(RxMessage::physical(address, packet, RNODE_MTU)).await;
+                            }
+                            Err(_) => stats.record_drop(super::InterfaceDropReason::MalformedFrame),
+                        }
+                    }
+                }
+            }
+            message = tx_channel.recv() => {
+                let Some(message) = message else {
+                    return Ok(());
+                };
+                let mut packet_buffer = [0; PACKET_BUFFER_SIZE];
+                let mut output = OutputBuffer::new(&mut packet_buffer);
+                if message.packet.serialize(&mut output).is_err() {
+                    crate::transport_diagnostic!("[rnode] packet serialization failed");
+                    continue;
+                }
+                let bytes = if let Some(config) = ifac {
+                    ifac_wrap(output.as_slice(), config)
+                } else {
+                    output.as_slice().to_vec()
+                };
+                engine.send_packet(&bytes).await?;
+            }
+        }
+    }
+}
+
 fn read_u32(payload: &[u8]) -> Option<u32> {
     let bytes: [u8; 4] = payload.try_into().ok()?;
     Some(u32::from_be_bytes(bytes))
@@ -384,6 +829,60 @@ mod tests {
             protocol.encode_packet(b"packet").expect("packet"),
             kiss_encode_command(0, b"packet")
         );
+    }
+
+    #[test]
+    fn profile_validates_every_radio_field() {
+        assert!(RNodeRadioProfile::new(915_000_000, 125_000, 17, 7, 5).is_ok());
+        assert_eq!(
+            RNodeRadioProfile::new(1, 125_000, 17, 7, 5),
+            Err(RNodeProfileError::Frequency(1))
+        );
+        assert_eq!(
+            RNodeRadioProfile::new(915_000_000, 1, 17, 7, 5),
+            Err(RNodeProfileError::Bandwidth(1))
+        );
+        assert_eq!(
+            RNodeRadioProfile::new(915_000_000, 125_000, 38, 7, 5),
+            Err(RNodeProfileError::TxPower(38))
+        );
+        assert_eq!(
+            RNodeRadioProfile::new(915_000_000, 125_000, 17, 4, 5),
+            Err(RNodeProfileError::SpreadingFactor(4))
+        );
+        assert_eq!(
+            RNodeRadioProfile::new(915_000_000, 125_000, 17, 7, 9),
+            Err(RNodeProfileError::CodingRate(9))
+        );
+    }
+
+    #[cfg(feature = "serial")]
+    #[test]
+    fn native_interface_reports_the_canonical_rnode_mtu() {
+        let interface =
+            RNodeInterface::new("/dev/test-rnode", RNodeRadioProfile::US_915_DEVELOPMENT)
+                .expect("valid native interface");
+
+        assert_eq!(RNodeInterface::mtu(), RNODE_MTU);
+        assert_eq!(interface.hardware_mtu(), Some(RNODE_MTU));
+        assert_eq!(interface.bitrate(), Some(5_468));
+        assert!(interface.supports_link_mtu_discovery());
+    }
+
+    #[test]
+    fn post_ready_mismatch_revokes_payload_readiness() {
+        let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
+        let mut protocol = RNodeProtocol::new(profile);
+        protocol.start().expect("startup");
+        protocol.feed(&configured_responses(profile)).expect("configuration");
+
+        let error = protocol
+            .feed(&kiss_encode_command(CMD_FREQUENCY, &914_000_000_u32.to_be_bytes()))
+            .expect_err("changed readback must fail closed");
+
+        assert_eq!(error, RNodeProtocolError::ConfigurationMismatch);
+        assert_eq!(protocol.phase(), RNodeProtocolPhase::Configuring);
+        assert_eq!(protocol.encode_packet(b"blocked"), Err(RNodeProtocolError::NotReady));
     }
 
     #[test]
