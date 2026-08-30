@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/styrene-lab/styrene-rs/compare/styrene-a2a-v0.1.1...styrene-a2a-v0.1.2) - 2026-08-30
+
+### Other
+
+- migrate to Rust 2024 while retaining the existing Rust 1.97 minimum
+
 ## [0.1.1](https://github.com/styrene-lab/styrene-rs/compare/styrene-a2a-v0.1.0...styrene-a2a-v0.1.1) - 2026-08-27
 
 ### Added
