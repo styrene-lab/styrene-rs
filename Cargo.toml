@@ -9,6 +9,7 @@ members = [
   "crates/libs/styrene-mesh",
   "crates/libs/styrene-ipc",
   "crates/libs/styrene-ipc-wire",
+  "crates/libs/styrene-ipc-client",
   "crates/libs/styrene-ipc-server",
   "crates/libs/styrene-identity",
   "crates/libs/styrene-tunnel",
@@ -36,6 +37,7 @@ default-members = [
   "crates/libs/styrene-mesh",
   "crates/libs/styrene-ipc",
   "crates/libs/styrene-ipc-wire",
+  "crates/libs/styrene-ipc-client",
   "crates/libs/styrene-ipc-server",
   "crates/libs/styrene-identity",
   "crates/libs/styrene-tunnel",
@@ -63,6 +65,7 @@ public-crates = [
   "styrene-mesh",
   "styrene-ipc",
   "styrene-ipc-wire",
+  "styrene-ipc-client",
   "styrene-ipc-server",
   "styrene-identity",
   "styrene-tunnel",
@@ -91,7 +94,7 @@ domain = [
   "styrene-forge",
   "styrene-amcp",
 ]
-interface = ["styrene-ipc", "styrene-ipc-wire", "styrene-ipc-server"]
+interface = ["styrene-ipc", "styrene-ipc-wire", "styrene-ipc-client", "styrene-ipc-server"]
 runtime = ["styrened"]
 application = ["styrene", "styrene-i2p", "styrene-tui"]
 tooling = ["styrene-interop-runner"]
@@ -108,6 +111,7 @@ styrene-rns = { version = "0.1.0", path = "crates/libs/styrene-rns" }
 styrene-mesh = { version = "0.1.0", path = "crates/libs/styrene-mesh" }
 styrene-ipc = { version = "0.1.0", path = "crates/libs/styrene-ipc" }
 styrene-ipc-wire = { version = "0.1.0", path = "crates/libs/styrene-ipc-wire" }
+styrene-ipc-client = { version = "0.1.0", path = "crates/libs/styrene-ipc-client" }
 styrene-ipc-server = { version = "0.1.0", path = "crates/libs/styrene-ipc-server" }
 styrene-tunnel = { version = "0.1.0", path = "crates/libs/styrene-tunnel" }
 styrene-micron = { version = "0.1.0", path = "crates/libs/styrene-micron" }

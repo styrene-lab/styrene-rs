@@ -11,7 +11,7 @@
 ## 2. Reusable IPC Client
 <!-- specs: frontend-session/spec -->
 
-- [ ] 2.1 Create `styrene-ipc-client` without dependencies on Ratatui or Dioxus
+- [x] 2.1 Create `styrene-ipc-client` without dependencies on Ratatui or Dioxus
 - [ ] 2.2 Move framing, opcode mapping, negotiation, request correlation, and typed decoding behind the client API
 - [ ] 2.3 Add bounded concurrency, deadlines, cancellation, event fanout, reconnect generations, and compatibility polling
 - [ ] 2.4 Add tests for overlap, out-of-order responses, timeout, cancellation, overload, disconnect, and stale generations
