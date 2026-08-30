@@ -182,6 +182,9 @@ pub enum MessageType {
     CmdSetDraft = 0xA7,
     CmdClearDraft = 0xA8,
     QueryMessage = 0xA9,
+    CmdStartConversation = 0xAA,
+    QueryMobileDiagnostics = 0xAB,
+    CmdExportMobileDiagnostics = 0xAC,
 
     // Responses (0x80-0x8F)
     Result = 0x81,
@@ -203,6 +206,7 @@ pub enum MessageType {
     EventReconcileRequired = 0xCC,
     EventMessagingOperation = 0xCD,
     EventStandardPropagationChanged = 0xCE,
+    EventConversationInvalidated = 0xCF,
 }
 
 impl MessageType {
@@ -320,6 +324,9 @@ impl MessageType {
             0xA7 => Ok(Self::CmdSetDraft),
             0xA8 => Ok(Self::CmdClearDraft),
             0xA9 => Ok(Self::QueryMessage),
+            0xAA => Ok(Self::CmdStartConversation),
+            0xAB => Ok(Self::QueryMobileDiagnostics),
+            0xAC => Ok(Self::CmdExportMobileDiagnostics),
             0x80 => Ok(Self::Pong),
             0x81 => Ok(Self::Result),
             0x82 => Ok(Self::Error),
@@ -338,6 +345,7 @@ impl MessageType {
             0xCC => Ok(Self::EventReconcileRequired),
             0xCD => Ok(Self::EventMessagingOperation),
             0xCE => Ok(Self::EventStandardPropagationChanged),
+            0xCF => Ok(Self::EventConversationInvalidated),
             other => Err(WireError::UnknownType(other)),
         }
     }
@@ -374,6 +382,7 @@ impl MessageType {
                 | Self::EventReconcileRequired
                 | Self::EventMessagingOperation
                 | Self::EventStandardPropagationChanged
+                | Self::EventConversationInvalidated
         )
     }
 }
@@ -671,6 +680,8 @@ mod tests {
         assert_eq!(MessageType::CmdSetDraft as u8, 0xA7);
         assert_eq!(MessageType::CmdClearDraft as u8, 0xA8);
         assert_eq!(MessageType::QueryMessage as u8, 0xA9);
+        assert_eq!(MessageType::QueryMobileDiagnostics as u8, 0xAB);
+        assert_eq!(MessageType::CmdExportMobileDiagnostics as u8, 0xAC);
         assert_eq!(MessageType::CmdPinConversation as u8, 0x7C);
         assert_eq!(MessageType::CmdUnpinConversation as u8, 0x7D);
         assert_eq!(MessageType::CmdMuteConversation as u8, 0x7E);

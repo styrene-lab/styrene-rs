@@ -120,6 +120,7 @@ mod tests {
                 started_unix_ms: 0,
                 deadline_unix_ms: 0,
                 state: "sending".into(),
+                route_observation: None,
             })
             .unwrap();
         store.lock().unwrap().finish_outbound(&message.id, "sent", "sent: direct").unwrap();

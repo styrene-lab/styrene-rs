@@ -193,10 +193,22 @@ fn test_reference(root: &Path, owner: &str, value: &str) -> Result<(), String> {
     if !nonblank(value) {
         return Err(format!("{owner}: test reference cannot be blank"));
     }
-    let path = value.split_once('#').map_or(value, |(path, _)| path);
-    repository_path(root, owner, path, false)?;
+    let (path, symbol) =
+        value.split_once('#').map_or((value, None), |(path, symbol)| (path, Some(symbol)));
+    repository_path(root, owner, path, true)?;
     if !path.ends_with(".rs") {
         return Err(format!("{owner}: test reference must name a Rust source file: {value}"));
+    }
+    if let Some(symbol) = symbol {
+        if !nonblank(symbol) {
+            return Err(format!("{owner}: test symbol cannot be blank: {value}"));
+        }
+        let source = std::fs::read_to_string(root.join(path))
+            .map_err(|error| format!("{owner}: failed to read test reference {path}: {error}"))?;
+        let function = format!("fn {symbol}");
+        if !source.contains(&function) {
+            return Err(format!("{owner}: test symbol does not exist: {value}"));
+        }
     }
     Ok(())
 }
@@ -397,6 +409,13 @@ mod mutation_tests {
             value["rows"][0]["owner_paths"][0] = Value::String("../outside.rs".into());
         });
         assert!(path.contains("repository-relative normal path"));
+
+        let symbol = validation_error(|value| {
+            value["rows"][0]["required_tests"][0] = Value::String(
+                "crates/apps/styrened/tests/mobile_p0_backend.rs#missing_test".into(),
+            );
+        });
+        assert!(symbol.contains("test symbol does not exist"));
     }
 
     #[test]
@@ -420,14 +439,13 @@ mod mutation_tests {
     #[test]
     fn false_frontend_readiness_and_unverified_evidence_are_rejected() {
         let readiness = validation_error(|value| {
-            value["rows"][0]["frontend_handoff"]["ready"] = Value::Bool(true);
+            value["rows"][0]["frontend_handoff"]["contracts"] = Value::Array(Vec::new());
         });
         assert!(readiness.contains("frontend readiness"));
 
         let evidence = validation_error(|value| {
-            value["rows"][0]["evidence"] = Value::Array(vec![Value::String(
-                "crates/apps/styrened/tests/mobile_node.rs".into(),
-            )]);
+            value["rows"][0]["delivery_state"] = Value::String("planned".into());
+            value["rows"][0]["frontend_handoff"]["ready"] = Value::Bool(false);
         });
         assert!(evidence.contains("unverified row"));
     }

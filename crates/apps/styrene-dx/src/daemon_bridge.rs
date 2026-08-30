@@ -1900,6 +1900,9 @@ fn parse_observation(map: &[(MpValue, MpValue)]) -> ObservationMetadata {
     };
     observation.observed_at = item("observed_at").and_then(MpValue::as_i64);
     observation.connection_generation = item("connection_generation").and_then(MpValue::as_u64);
+    observation.ipc_connection_generation =
+        item("ipc_connection_generation").and_then(MpValue::as_u64);
+    observation.interface_generation = item("interface_generation").and_then(MpValue::as_u64);
     observation.age_secs = item("age_secs").and_then(MpValue::as_u64);
     observation.freshness_threshold_secs =
         item("freshness_threshold_secs").and_then(MpValue::as_u64);
@@ -2040,6 +2043,7 @@ fn parse_identity(p: &HashMap<String, MpValue>) -> IdentityInfo {
     info.display_name = mp_str(p, "display_name");
     info.icon = p.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string());
     info.short_name = p.get("short_name").and_then(|v| v.as_str()).map(ToOwned::to_owned);
+    info.custody = p.get("custody").cloned().and_then(|value| rmpv::ext::from_value(value).ok());
     info
 }
 

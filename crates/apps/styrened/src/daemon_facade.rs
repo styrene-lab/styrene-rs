@@ -8,7 +8,9 @@
 //!
 //! Package I — see ownership-matrix.md §DaemonFacade.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use sha2::Digest as _;
@@ -27,11 +29,88 @@ use styrene_rbac::Capability;
 const INTERFACE_FRESHNESS_THRESHOLD_SECS: u64 = 30;
 const PATH_FRESHNESS_THRESHOLD_SECS: u64 = 300;
 
+pub(crate) struct SessionGeneration {
+    current: AtomicU64,
+    state: Mutex<SessionGenerationState>,
+}
+
+#[derive(Default)]
+struct SessionGenerationState {
+    initialized: bool,
+    interfaces: HashMap<String, u64>,
+}
+
+impl SessionGeneration {
+    pub(crate) fn new(initial: u64) -> Self {
+        Self {
+            current: AtomicU64::new(initial.max(1)),
+            state: Mutex::new(SessionGenerationState::default()),
+        }
+    }
+
+    pub(crate) fn current(&self) -> u64 {
+        self.current.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn observe(
+        &self,
+        snapshots: &[rns_core::transport::iface::InterfaceSnapshot],
+    ) -> u64 {
+        self.observe_generations(
+            snapshots
+                .iter()
+                .map(|snapshot| (hex::encode(snapshot.hash.as_slice()), snapshot.generation)),
+        )
+    }
+
+    fn observe_generations(&self, observed: impl IntoIterator<Item = (String, u64)>) -> u64 {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let observed = observed.into_iter().collect::<HashMap<_, _>>();
+        let mut advance = 0;
+        let topology_changed = state.interfaces.len() != observed.len()
+            || state.interfaces.keys().any(|hash| !observed.contains_key(hash));
+        if state.initialized && topology_changed {
+            advance += 1;
+        }
+        for (hash, generation) in &observed {
+            advance += match state.interfaces.get(hash) {
+                Some(previous) => (*generation).max(1).saturating_sub((*previous).max(1)),
+                None => generation.saturating_sub(1),
+            };
+        }
+        state.interfaces = observed;
+        state.initialized = true;
+        drop(state);
+        if advance > 0 {
+            self.current.fetch_add(advance, Ordering::AcqRel).saturating_add(advance)
+        } else {
+            self.current()
+        }
+    }
+}
+
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
         .unwrap_or(0)
+}
+
+fn capability_failure_code(
+    kind: crate::startup_contract::CapabilityFailureKind,
+) -> CapabilityFailureCode {
+    match kind {
+        crate::startup_contract::CapabilityFailureKind::Unavailable => {
+            CapabilityFailureCode::Unavailable
+        }
+        crate::startup_contract::CapabilityFailureKind::Unauthorized => {
+            CapabilityFailureCode::Unauthorized
+        }
+        crate::startup_contract::CapabilityFailureKind::Degraded => CapabilityFailureCode::Degraded,
+        crate::startup_contract::CapabilityFailureKind::Unverified => {
+            CapabilityFailureCode::Unverified
+        }
+    }
 }
 
 fn standard_propagation_direction(value: &str) -> StandardPropagationDirection {
@@ -227,18 +306,8 @@ fn record_to_message_info(
         info.actual_delivery_method = Some(route.actual_method);
         info.fallback_reason = route.fallback_reason;
         info.correlation_id = Some(route.correlation_id);
-        info.attempts = attempts
-            .into_iter()
-            .map(|attempt| {
-                let mut info = styrene_ipc::types::MessageAttemptInfo::default();
-                info.message_id = attempt.message_id;
-                info.number = attempt.attempt_number;
-                info.started_unix_ms = attempt.started_unix_ms;
-                info.deadline_unix_ms = attempt.deadline_unix_ms;
-                info.state = attempt.state;
-                info
-            })
-            .collect();
+        info.attempts =
+            attempts.into_iter().map(crate::services::messaging::attempt_record_to_info).collect();
     }
     info.read = r.read;
     if let Some(canonical) = canonical {
@@ -272,6 +341,8 @@ fn record_to_message_info(
 /// remains available for frontend testing without daemon infrastructure.
 pub struct DaemonFacade {
     ctx: Arc<AppContext>,
+    mobile_diagnostics: Option<Arc<crate::mobile_diagnostics::MobileDiagnostics>>,
+    session_generation: Option<Arc<SessionGeneration>>,
     /// The identity hash of the IPC caller (for auth checks).
     /// In production, this comes from the Unix socket peer credentials
     /// or the authenticated TLS client identity.
@@ -285,7 +356,21 @@ impl DaemonFacade {
     /// `caller_identity` is the authenticated identity of the IPC peer.
     /// For local connections, pass the daemon's own identity hash.
     pub fn new(ctx: Arc<AppContext>, caller_identity: String) -> Self {
-        Self { ctx, caller_identity }
+        Self { ctx, mobile_diagnostics: None, session_generation: None, caller_identity }
+    }
+
+    pub(crate) fn new_mobile(
+        ctx: Arc<AppContext>,
+        caller_identity: String,
+        diagnostics: Arc<crate::mobile_diagnostics::MobileDiagnostics>,
+        session_generation: Arc<SessionGeneration>,
+    ) -> Self {
+        Self {
+            ctx,
+            mobile_diagnostics: Some(diagnostics),
+            session_generation: Some(session_generation),
+            caller_identity,
+        }
     }
 
     /// Check a capability and return IpcError if denied.
@@ -402,6 +487,51 @@ impl DaemonFacade {
         }
     }
 
+    fn conversation_info(
+        &self,
+        summary: crate::storage::messages::ConversationSummary,
+    ) -> Result<ConversationInfo, IpcError> {
+        let mut info = summary_to_conversation_info(summary);
+        info.peer_name = self
+            .ctx
+            .messaging()
+            .contact(&info.peer_hash)
+            .map_err(internal)?
+            .and_then(|contact| contact.alias)
+            .and_then(|alias| (!alias.trim().is_empty()).then(|| alias.trim().to_owned()))
+            .or_else(|| {
+                self.ctx
+                    .discovery()
+                    .peer(&info.peer_hash)
+                    .and_then(|peer| peer.display_name)
+                    .and_then(|name| (!name.trim().is_empty()).then(|| name.trim().to_owned()))
+            })
+            .or_else(|| Some(info.peer_hash.chars().take(12).collect()));
+        Ok(info)
+    }
+
+    fn emit_alias_invalidation(
+        &self,
+        peer_hash: &str,
+        invalidation: Option<crate::storage::messages::ContactAliasInvalidation>,
+    ) {
+        let Some(invalidation) = invalidation else {
+            return;
+        };
+        let reason = match invalidation {
+            crate::storage::messages::ContactAliasInvalidation::Changed => {
+                ConversationInvalidationReason::ContactAliasChanged
+            }
+            crate::storage::messages::ContactAliasInvalidation::Removed => {
+                ConversationInvalidationReason::ContactAliasRemoved
+            }
+        };
+        let mut invalidation = ConversationInvalidation::default();
+        invalidation.peer_hash = peer_hash.to_owned();
+        invalidation.reason = reason;
+        self.ctx.events().emit_conversation_invalidation(invalidation);
+    }
+
     async fn conversation_flag_outcome(
         &self,
         peer_hash: &str,
@@ -466,6 +596,7 @@ impl DaemonIdentity for DaemonFacade {
         info.display_name = svc.display_name().unwrap_or_default();
         info.icon = svc.icon();
         info.short_name = svc.short_name();
+        info.custody = svc.custody();
         Ok(info)
     }
 
@@ -476,7 +607,11 @@ impl DaemonIdentity for DaemonFacade {
         short_name: Option<&str>,
     ) -> Result<bool, IpcError> {
         self.require(Capability::RPC_CONFIG_UPDATE)?;
-        let changed = self.ctx.identity().set_identity(display_name, icon, short_name);
+        let changed = self
+            .ctx
+            .identity()
+            .set_identity_validated(display_name, icon, short_name)
+            .map_err(IpcError::invalid_request)?;
         if changed {
             // Re-announce with updated identity
             self.ctx.identity().announce(None).await;
@@ -498,6 +633,22 @@ impl DaemonIdentity for DaemonFacade {
 
 #[async_trait]
 impl DaemonMessaging for DaemonFacade {
+    async fn start_conversation(
+        &self,
+        peer_hash: &str,
+    ) -> Result<MessagingOperationOutcome, IpcError> {
+        self.require(Capability::MESSAGING_MANAGE)?;
+        let result = self.ctx.messaging().start_conversation(peer_hash).map_err(messaging_error)?;
+        let mut outcome = MessagingOperationOutcome::default();
+        outcome.disposition = mutation_disposition(result.disposition);
+        outcome.affected_count = result.affected_count;
+        outcome.target_id = peer_hash.to_ascii_lowercase();
+        outcome.conversation =
+            result.summary.map(|summary| self.conversation_info(summary)).transpose()?;
+        self.emit_messaging_mutation(&outcome);
+        Ok(outcome)
+    }
+
     async fn send_chat(&self, request: SendChatRequest) -> Result<MessageId, IpcError> {
         if request
             .delivery_method
@@ -858,7 +1009,7 @@ impl DaemonMessaging for DaemonFacade {
     ) -> Result<Vec<ConversationInfo>, IpcError> {
         self.require(Capability::MESSAGING_HISTORY_READ)?;
         let summaries = self.ctx.messaging().list_conversations(unread_only).map_err(internal)?;
-        Ok(summaries.into_iter().map(summary_to_conversation_info).collect())
+        summaries.into_iter().map(|summary| self.conversation_info(summary)).collect()
     }
 
     async fn query_conversation_page(
@@ -874,7 +1025,11 @@ impl DaemonMessaging for DaemonFacade {
             .conversation_page(unread_only, limit as usize, cursor)
             .map_err(page_error)?;
         let mut result = ConversationPage::default();
-        result.conversations = page.items.into_iter().map(summary_to_conversation_info).collect();
+        result.conversations = page
+            .items
+            .into_iter()
+            .map(|summary| self.conversation_info(summary))
+            .collect::<Result<Vec<_>, _>>()?;
         result.next_cursor = page.next_cursor;
         Ok(result)
     }
@@ -1136,12 +1291,14 @@ impl DaemonMessaging for DaemonFacade {
             .messaging()
             .set_contact_outcome(peer_hash, alias, notes)
             .map_err(messaging_error)?;
+        let alias_invalidation = result.alias_invalidation;
         let mut outcome = MessagingOperationOutcome::default();
         outcome.disposition = mutation_disposition(result.disposition);
         outcome.affected_count = result.affected_count;
         outcome.target_id = peer_hash.to_ascii_lowercase();
         outcome.contact = result.contact.map(contact_to_info);
         self.emit_messaging_mutation(&outcome);
+        self.emit_alias_invalidation(&outcome.target_id, alias_invalidation);
         Ok(outcome)
     }
 
@@ -1157,11 +1314,13 @@ impl DaemonMessaging for DaemonFacade {
         self.require(Capability::MESSAGING_MANAGE)?;
         let result =
             self.ctx.messaging().remove_contact_outcome(peer_hash).map_err(messaging_error)?;
+        let alias_invalidation = result.alias_invalidation;
         let mut outcome = MessagingOperationOutcome::default();
         outcome.disposition = mutation_disposition(result.disposition);
         outcome.affected_count = result.affected_count;
         outcome.target_id = peer_hash.to_ascii_lowercase();
         self.emit_messaging_mutation(&outcome);
+        self.emit_alias_invalidation(&outcome.target_id, alias_invalidation);
         Ok(outcome)
     }
 
@@ -1251,7 +1410,12 @@ impl DaemonStatus for DaemonFacade {
         info.rns_initialized = self.ctx.transport().is_connected();
         info.lxmf_initialized = self.ctx.transport().is_connected();
         info.device_count = self.ctx.discovery().peer_count() as u32;
-        info.interface_count = self.ctx.transport().interface_snapshots().await.len() as u32;
+        let interfaces = self.ctx.transport().interface_snapshots().await;
+        let connection_generation = self.session_generation.as_ref().map_or_else(
+            || interfaces.iter().map(|interface| interface.generation).max(),
+            |generation| Some(generation.observe(&interfaces)),
+        );
+        info.interface_count = interfaces.len() as u32;
         info.propagation_enabled = status.propagation_enabled();
         if let Some(contract) = self.ctx.startup_contract() {
             info.standard_lxmf_propagation_destination_registered = contract.has_component(
@@ -1271,6 +1435,9 @@ impl DaemonStatus for DaemonFacade {
             );
             let mut capabilities = styrene_ipc::types::ActiveCapabilitiesInfo::default();
             capabilities.version = styrene_ipc::types::ACTIVE_CAPABILITIES_VERSION;
+            capabilities.generation = connection_generation
+                .or((contract.runtime() == crate::startup_contract::RuntimeKind::Mobile)
+                    .then_some(1));
             capabilities.runtime = active.runtime().iter().map(|id| (*id).to_string()).collect();
             capabilities.degraded = active
                 .degraded()
@@ -1279,6 +1446,23 @@ impl DaemonStatus for DaemonFacade {
                     let mut info = styrene_ipc::types::DegradedCapabilityInfo::default();
                     info.id = degraded.id().to_string();
                     info.reason = degraded.reason().to_string();
+                    info.reason_code = active
+                        .failures()
+                        .iter()
+                        .find(|failure| failure.id() == degraded.id())
+                        .map(|failure| capability_failure_code(failure.kind()))
+                        .unwrap_or(CapabilityFailureCode::Degraded);
+                    info
+                })
+                .collect();
+            capabilities.failures = active
+                .failures()
+                .iter()
+                .map(|failure| {
+                    let mut info = styrene_ipc::types::CapabilityFailureInfo::default();
+                    info.id = failure.id().to_string();
+                    info.code = capability_failure_code(failure.kind());
+                    info.retryable = failure.retryable();
                     info
                 })
                 .collect();
@@ -1286,6 +1470,24 @@ impl DaemonStatus for DaemonFacade {
             info.active_capabilities = Some(capabilities);
         }
         Ok(info)
+    }
+
+    async fn mobile_diagnostics(&self) -> Result<MobileDiagnosticSnapshot, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        self.mobile_diagnostics.as_ref().map(|diagnostics| diagnostics.snapshot()).ok_or_else(
+            || IpcError::Unavailable { reason: "mobile diagnostics unavailable".into() },
+        )
+    }
+
+    async fn export_mobile_diagnostics(&self) -> Result<MobileDiagnosticExport, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        self.mobile_diagnostics
+            .as_ref()
+            .ok_or_else(|| IpcError::Unavailable {
+                reason: "mobile diagnostics unavailable".into(),
+            })?
+            .export()
+            .map_err(|error| IpcError::Internal { message: error.to_string() })
     }
 
     async fn query_standard_propagation(&self) -> Result<StandardPropagationSnapshot, IpcError> {
@@ -1610,6 +1812,10 @@ impl DaemonStatus for DaemonFacade {
     async fn list_interfaces(&self) -> Result<Vec<InterfaceDetail>, IpcError> {
         self.require(Capability::RPC_STATUS)?;
         let snapshots = self.ctx.transport().interface_snapshots().await;
+        let connection_generation = self.session_generation.as_ref().map_or_else(
+            || snapshots.iter().map(|interface| interface.generation).max().unwrap_or(1),
+            |generation| generation.observe(&snapshots),
+        );
         let observed_at = unix_now();
         Ok(snapshots
             .into_iter()
@@ -1662,6 +1868,28 @@ impl DaemonStatus for DaemonFacade {
                     observed_at,
                     INTERFACE_FRESHNESS_THRESHOLD_SECS,
                 );
+                d.observation.connection_generation = Some(connection_generation);
+                d.observation.interface_generation = Some(snapshot.generation);
+                d.failure = match snapshot.state {
+                    InterfaceState::Retrying => {
+                        let mut failure = InterfaceFailureInfo::default();
+                        failure.code = InterfaceFailureCode::Retrying;
+                        failure.retryable = true;
+                        Some(failure)
+                    }
+                    InterfaceState::Closed => {
+                        let mut failure = InterfaceFailureInfo::default();
+                        failure.code = InterfaceFailureCode::Closed;
+                        Some(failure)
+                    }
+                    InterfaceState::Unknown => {
+                        let mut failure = InterfaceFailureInfo::default();
+                        failure.code = InterfaceFailureCode::UnknownState;
+                        failure.retryable = true;
+                        Some(failure)
+                    }
+                    _ => None,
+                };
                 d
             })
             .collect())
@@ -2457,6 +2685,31 @@ mod tests {
     use crate::transport::null_transport::NullTransport;
     use std::sync::Mutex;
     use styrene_ipc::traits::Daemon;
+
+    #[test]
+    fn session_generation_advances_and_prunes_removed_interfaces() {
+        let generation = SessionGeneration::new(1);
+        assert_eq!(generation.observe_generations([("first".into(), 1)]), 1);
+
+        assert_eq!(generation.observe_generations([]), 2);
+        assert!(generation.state.lock().unwrap().interfaces.is_empty());
+
+        assert_eq!(generation.observe_generations([("second".into(), 1)]), 3);
+        let state = generation.state.lock().unwrap();
+        assert_eq!(state.interfaces.len(), 1);
+        assert_eq!(state.interfaces.get("second"), Some(&1));
+    }
+
+    #[test]
+    fn session_generation_treats_new_hash_as_replacement() {
+        let generation = SessionGeneration::new(1);
+        generation.observe_generations([("first".into(), 1)]);
+
+        assert_eq!(generation.observe_generations([("replacement".into(), 1)]), 2);
+        let state = generation.state.lock().unwrap();
+        assert!(!state.interfaces.contains_key("first"));
+        assert_eq!(state.interfaces.get("replacement"), Some(&1));
+    }
 
     #[test]
     fn stale_page_cursor_maps_to_typed_conflict() {

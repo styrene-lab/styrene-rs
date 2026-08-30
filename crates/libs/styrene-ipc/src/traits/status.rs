@@ -9,6 +9,16 @@ pub trait DaemonStatus: Send + Sync {
     /// Query daemon runtime status.
     async fn query_status(&self) -> Result<DaemonStatusInfo, IpcError>;
 
+    /// Query the bounded payload-free mobile diagnostic ring.
+    async fn mobile_diagnostics(&self) -> Result<MobileDiagnosticSnapshot, IpcError> {
+        Err(IpcError::not_implemented("mobile_diagnostics"))
+    }
+
+    /// Produce canonical redacted bytes for a frontend-owned share operation.
+    async fn export_mobile_diagnostics(&self) -> Result<MobileDiagnosticExport, IpcError> {
+        Err(IpcError::not_implemented("export_mobile_diagnostics"))
+    }
+
     /// Query local propagation queue and synchronization capability state.
     async fn propagation_snapshot(
         &self,

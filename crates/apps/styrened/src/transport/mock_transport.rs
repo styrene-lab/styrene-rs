@@ -101,8 +101,12 @@ pub struct MockTransport {
     close_results: Mutex<VecDeque<Result<(), TransportError>>>,
     request_results:
         Mutex<VecDeque<Result<styrene_ipc::types::RequestObservationInfo, TransportError>>>,
+    shutdown_results: Mutex<VecDeque<Result<(), TransportError>>>,
     cancel_request_delay: Mutex<Duration>,
     paths: Mutex<HashMap<AddressHash, (u8, AddressHash)>>,
+    path_snapshots:
+        Mutex<HashMap<AddressHash, rns_core::transport::core_transport::path_table::PathSnapshot>>,
+    interface_snapshots: Mutex<Vec<rns_core::transport::iface::InterfaceSnapshot>>,
 
     // Default behavior for send_raw when queue is exhausted
     default_send_raw: Mutex<Result<SendPacketOutcome, TransportError>>,
@@ -145,8 +149,11 @@ impl MockTransport {
             probe_results: Mutex::new(VecDeque::new()),
             close_results: Mutex::new(VecDeque::new()),
             request_results: Mutex::new(VecDeque::new()),
+            shutdown_results: Mutex::new(VecDeque::new()),
             cancel_request_delay: Mutex::new(Duration::ZERO),
             paths: Mutex::new(HashMap::new()),
+            path_snapshots: Mutex::new(HashMap::new()),
+            interface_snapshots: Mutex::new(Vec::new()),
             default_send_raw: Mutex::new(Ok(SendPacketOutcome::SentDirect)),
             inbound_tx,
             announce_tx,
@@ -167,6 +174,10 @@ impl MockTransport {
     }
 
     // --- Configuration ---
+
+    pub fn queue_shutdown(&self, result: Result<(), TransportError>) {
+        self.shutdown_results.lock().unwrap().push_back(result);
+    }
 
     /// Queue a specific result for the next `send_raw` call.
     pub fn queue_send_raw(&self, result: Result<SendPacketOutcome, TransportError>) {
@@ -216,6 +227,29 @@ impl MockTransport {
 
     pub fn set_path(&self, destination: AddressHash, hops: u8, next_hop: AddressHash) {
         self.paths.lock().unwrap().insert(destination, (hops, next_hop));
+    }
+
+    pub fn set_path_snapshot(
+        &self,
+        snapshot: rns_core::transport::core_transport::path_table::PathSnapshot,
+    ) {
+        self.paths
+            .lock()
+            .unwrap()
+            .insert(snapshot.destination, (snapshot.hops, snapshot.received_from));
+        self.path_snapshots.lock().unwrap().insert(snapshot.destination, snapshot);
+    }
+
+    pub fn remove_path_snapshot(&self, destination: &AddressHash) {
+        self.paths.lock().unwrap().remove(destination);
+        self.path_snapshots.lock().unwrap().remove(destination);
+    }
+
+    pub fn set_interface_snapshots(
+        &self,
+        snapshots: Vec<rns_core::transport::iface::InterfaceSnapshot>,
+    ) {
+        *self.interface_snapshots.lock().unwrap() = snapshots;
     }
 
     /// Set the connected state.
@@ -547,6 +581,19 @@ impl MeshTransport for MockTransport {
         self.paths.lock().unwrap().get(dest).copied()
     }
 
+    async fn query_path_snapshot(
+        &self,
+        dest: &AddressHash,
+    ) -> Option<rns_core::transport::core_transport::path_table::PathSnapshot> {
+        self.path_snapshots.lock().unwrap().get(dest).copied()
+    }
+
+    async fn path_snapshots(
+        &self,
+    ) -> Vec<rns_core::transport::core_transport::path_table::PathSnapshot> {
+        self.path_snapshots.lock().unwrap().values().copied().collect()
+    }
+
     fn identity_hash(&self) -> AddressHash {
         self.identity_addr
     }
@@ -564,7 +611,7 @@ impl MeshTransport for MockTransport {
     }
 
     async fn interface_snapshots(&self) -> Vec<rns_core::transport::iface::InterfaceSnapshot> {
-        Vec::new()
+        self.interface_snapshots.lock().unwrap().clone()
     }
 
     async fn link_lifecycle_snapshot(
@@ -575,7 +622,7 @@ impl MeshTransport for MockTransport {
 
     async fn shutdown(&self) -> Result<(), TransportError> {
         self.record(MockCall::Shutdown);
-        Ok(())
+        self.shutdown_results.lock().unwrap().pop_front().unwrap_or(Ok(()))
     }
 }
 

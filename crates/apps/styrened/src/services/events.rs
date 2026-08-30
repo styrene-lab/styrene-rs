@@ -117,6 +117,13 @@ impl EventService {
         let _ = self.daemon_tx.send(DaemonEvent::MessagingOperation { outcome: Box::new(outcome) });
     }
 
+    pub fn emit_conversation_invalidation(
+        &self,
+        invalidation: styrene_ipc::types::ConversationInvalidation,
+    ) {
+        let _ = self.daemon_tx.send(DaemonEvent::ConversationInvalidated { invalidation });
+    }
+
     pub fn emit_standard_propagation_changed(&self, observed_at: i64) {
         let _ = self.daemon_tx.send(DaemonEvent::StandardPropagationChanged { observed_at });
     }

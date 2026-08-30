@@ -96,6 +96,22 @@ impl AppContext {
         store: Arc<Mutex<MessagesStore>>,
         node_store: Arc<NodeStore>,
     ) -> Self {
+        Self::with_node_store_and_pages(
+            transport,
+            identity_hash,
+            store,
+            node_store,
+            PageService::with_default_dir(),
+        )
+    }
+
+    pub(crate) fn with_node_store_and_pages(
+        transport: Arc<dyn MeshTransport>,
+        identity_hash: String,
+        store: Arc<Mutex<MessagesStore>>,
+        node_store: Arc<NodeStore>,
+        pages: PageService,
+    ) -> Self {
         // Phase 1: Transport + config (foundation)
         let config = Arc::new(ConfigService::new());
         let policy = Arc::new(PolicyService::default());
@@ -140,7 +156,7 @@ impl AppContext {
         let i2p_proxy = Arc::new(I2pProxyService::new());
 
         // Phase 13: Page server (NomadNet-compatible page hosting)
-        let pages = Arc::new(PageService::with_default_dir());
+        let pages = Arc::new(pages);
         let native_browse =
             Arc::new(NativeNomadNetBrowseCoordinator::new(transport.clone(), discovery.clone()));
 
