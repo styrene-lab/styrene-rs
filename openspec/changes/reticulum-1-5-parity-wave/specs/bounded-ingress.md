@@ -42,10 +42,10 @@ And another class's counters are not incremented
 
 ### Requirement: Control-plane state remains bounded
 
-Path-request state must preserve canonical limits: a 16,000-entry replay-tag rotation threshold whose retained crossing entry produces a 16,001-entry previous generation, one 45-second in-flight gate per destination, at most one waiter per registered interface for a destination, and at most 32 pending discovery transmissions.
+Path-request state must preserve canonical limits: a 16,000-entry replay-tag rotation threshold whose retained crossing entry produces a 16,001-entry previous generation, one in-flight gate per destination eligible for pruning after 45 seconds, at most one waiter per registered interface for a destination, and at most 32 pending discovery transmissions.
 
 #### Scenario: Unique path requests exceed limits
 Given unique tagged path requests cross the 16,000-entry generation threshold and the pending discovery queue reaches 32 entries
 When additional requests arrive
 Then replay tags rotate current to previous and a new pending discovery item is not enqueued
-And a 45-second in-flight expiry or count-based tag-generation rotation releases the corresponding state
+And in-flight pruning after the 45-second threshold or count-based tag-generation rotation releases the corresponding state
