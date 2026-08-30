@@ -168,6 +168,8 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         std::env::var("LXMF_DISPLAY_NAME").ok().and_then(|v| normalize_display_name(&v));
 
     // --- Config ---
+    let config_service_path = (!cfg.ephemeral)
+        .then(|| cfg.config.clone().unwrap_or_else(crate::config::default_config_path));
     let config_path = cfg.config.or_else(|| {
         if cfg.ephemeral {
             return None;
@@ -421,6 +423,9 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         node_store,
         crate::services::PolicyService::new(rbac_policy),
     ));
+    if let Some(config) = daemon_config.as_ref() {
+        app_context.auto_reply().set_config((&config.auto_reply).into());
+    }
     if let Some(endpoint) = standard_propagation.as_ref() {
         app_context.publish_standard_propagation(endpoint.runtime_observation());
         endpoint.set_events(app_context.events_arc());
@@ -435,8 +440,8 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     app_context.set_signer(Arc::new(identity.clone()));
     app_context.identity().set_delivery_destination_hash(Some(delivery_hash.clone()));
 
-    if let Some(config_path) = config_path.as_ref()
-        && let Err(e) = app_context.config().load(config_path)
+    if let Some(config_path) = config_service_path.as_ref()
+        && let Err(e) = app_context.config().load_or_default(config_path)
     {
         crate::daemon_diagnostic!("[styrene] config load error: {e}");
     }

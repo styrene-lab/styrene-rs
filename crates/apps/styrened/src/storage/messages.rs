@@ -3410,6 +3410,20 @@ impl MessagesStore {
         statement.query_map([], parse_outbound_route_row)?.collect()
     }
 
+    pub fn fallback_outbound_to_opportunistic(
+        &self,
+        message_id: &str,
+        reason: &str,
+    ) -> rusqlite::Result<bool> {
+        Ok(self.conn.execute(
+            "UPDATE outbound_routes
+             SET actual_method = 'opportunistic', representation = 'packet', fallback_reason = ?2
+             WHERE message_id = ?1 AND requested_method = 'direct' AND actual_method = 'direct'
+               AND state = 'sending'",
+            params![message_id, reason],
+        )? == 1)
+    }
+
     pub fn outbound_retry_for(
         &self,
         message_id: &str,

@@ -194,6 +194,42 @@ pub struct DaemonConfig {
     /// RBAC policy — role roster, blocked prefixes, default role.
     #[serde(default)]
     pub rbac: Option<RbacPolicy>,
+    #[serde(default)]
+    pub auto_reply: AutoReplySettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoReplySettingMode {
+    #[default]
+    Disabled,
+    All,
+    FirstOnly,
+    Echo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutoReplySettings {
+    #[serde(default)]
+    pub mode: AutoReplySettingMode,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default = "default_auto_reply_cooldown_secs")]
+    pub cooldown_secs: u64,
+}
+
+impl Default for AutoReplySettings {
+    fn default() -> Self {
+        Self {
+            mode: AutoReplySettingMode::Disabled,
+            message: String::new(),
+            cooldown_secs: default_auto_reply_cooldown_secs(),
+        }
+    }
+}
+
+const fn default_auto_reply_cooldown_secs() -> u64 {
+    300
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -342,6 +378,21 @@ mod tests {
     fn node_role_defaults_to_full_node() {
         let config: DaemonConfig = toml::from_str("").unwrap();
         assert_eq!(config.role, NodeRole::FullNode);
+        assert_eq!(config.auto_reply, AutoReplySettings::default());
+    }
+
+    #[test]
+    fn parses_all_persistent_auto_reply_modes() {
+        for (value, expected) in [
+            ("disabled", AutoReplySettingMode::Disabled),
+            ("all", AutoReplySettingMode::All),
+            ("first_only", AutoReplySettingMode::FirstOnly),
+            ("echo", AutoReplySettingMode::Echo),
+        ] {
+            let config =
+                DaemonConfig::from_toml(&format!("[auto_reply]\nmode = \"{value}\"\n")).unwrap();
+            assert_eq!(config.auto_reply.mode, expected);
+        }
     }
 
     #[test]
