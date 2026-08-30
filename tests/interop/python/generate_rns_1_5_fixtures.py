@@ -41,6 +41,8 @@ def main() -> int:
 
     sys.path.insert(0, str(args.reticulum_checkout))
     import RNS  # type: ignore[import-not-found]  # noqa: PLC0415
+    channel_module = importlib.import_module("RNS.Channel")
+    resource_module = importlib.import_module("RNS.Resource")
     token_module = importlib.import_module("RNS.Cryptography.Token")
 
     for raw in (TYPE1, TYPE2):
@@ -136,6 +138,60 @@ def main() -> int:
             {"bitrate": bitrate, "expected_nanos": round(seconds * 1_000_000_000)}
         )
 
+    destination_identity = RNS.Identity.from_bytes(bytes(range(64)))
+    initiator_identity = RNS.Identity.from_bytes(bytes(range(64, 128)))
+    link_id = bytes(range(0xA0, 0xB0))
+    link_mtu_vectors = []
+    for mtu in (500, 1024, 1280, 2048):
+        signalling = RNS.Link.signalling_bytes(mtu, RNS.Link.MODE_DEFAULT)
+        request_payload = initiator_identity.get_public_key() + signalling
+        signed_data = (
+            link_id
+            + destination_identity.pub_bytes
+            + destination_identity.sig_pub_bytes
+            + signalling
+        )
+        proof_payload = (
+            destination_identity.sign(signed_data)
+            + destination_identity.pub_bytes
+            + signalling
+        )
+        request = SimpleNamespace(data=request_payload)
+        proof = SimpleNamespace(data=proof_payload)
+
+        link = object.__new__(RNS.Link)
+        link.mtu = mtu
+        link.rtt = 0
+        link.update_mdu()
+        channel = channel_module.Channel(channel_module.LinkChannelOutlet(link))
+        resource_link = SimpleNamespace(
+            mtu=mtu,
+            mdu=link.mdu,
+            rtt=1.0,
+            traffic_timeout_factor=6,
+        )
+        resource = resource_module.Resource(None, resource_link, advertise=False)
+
+        link_mtu_vectors.append(
+            {
+                "mtu": mtu,
+                "signalling_hex": signalling.hex(),
+                "request_payload_hex": request_payload.hex(),
+                "request_length": len(request_payload),
+                "proof_payload_hex": proof_payload.hex(),
+                "proof_length": len(proof_payload),
+                "proof_signed_data_hex": signed_data.hex(),
+                "destination_public_key_hex": destination_identity.get_public_key().hex(),
+                "link_id_hex": link_id.hex(),
+                "decoded_request_mtu": RNS.Link.mtu_from_lr_packet(request),
+                "decoded_proof_mtu": RNS.Link.mtu_from_lp_packet(proof),
+                "mode": RNS.Link.mode_from_lr_packet(request),
+                "packet_mdu": link.mdu,
+                "channel_mdu": channel.mdu,
+                "resource_sdu": resource.sdu,
+            }
+        )
+
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "packet-type1-hop127.bin").write_bytes(TYPE1)
     (args.output / "packet-type2-hop127.bin").write_bytes(TYPE2)
@@ -149,6 +205,27 @@ def main() -> int:
                 "medium_path_grace": medium_path_grace,
                 "link_proof_extra_grace": link_proof_extra_grace,
                 "online_bitrate_selection": online_bitrate_selection,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (args.output / "link-mtu-vectors.json").write_text(
+        json.dumps(
+            {
+                "disabled_discovery": {
+                    "request_length": RNS.Link.ECPUBSIZE + RNS.Link.LINK_MTU_SIZE,
+                    "signalling_hex": RNS.Link.signalling_bytes(
+                        RNS.Reticulum.MTU, RNS.Link.MODE_DEFAULT
+                    ).hex(),
+                },
+                "unsupported_forwarding": {
+                    "request_length_after_stripping": RNS.Link.ECPUBSIZE,
+                    "confirmed_mtu": RNS.Reticulum.MTU,
+                },
+                "vectors": link_mtu_vectors,
             },
             indent=2,
             sort_keys=True,

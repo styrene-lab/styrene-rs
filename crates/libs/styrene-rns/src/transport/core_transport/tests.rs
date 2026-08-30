@@ -246,22 +246,28 @@ async fn path_request_handler_uses_current_slowest_online_bitrate() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn routed_link_request_uses_selected_interface_bitrate_and_route_hops() {
+async fn routed_link_request_uses_selected_bitrate_hops_and_route_minimum_mtu() {
     let identity = PrivateIdentity::new_from_rand(OsRng);
     let transport = Transport::new(TransportConfig::new("bitrate-link-deadline", &identity, true));
     let ingress = test_interface_channel(&transport).await;
-    let egress = test_interface_channel(&transport).await;
+    let mut egress = test_interface_channel(&transport).await;
     {
         let manager = transport.iface_manager.lock().await;
         assert!(manager.set_interface_bitrate(&egress.address, Some(500)));
+        assert!(manager.set_interface_link_mtu(&ingress.address, Some(1280), true));
+        assert!(manager.set_interface_link_mtu(&egress.address, Some(1024), true));
+        assert!(manager.set_interface_state(&ingress.address, InterfaceState::Active));
         assert!(manager.set_interface_state(&egress.address, InterfaceState::Active));
     }
 
     let destination = AddressHash::new([0x6B; 16]);
     let next_hop = AddressHash::new([0x6C; 16]);
+    let mut data = PacketDataBuffer::new_from_slice(&[0_u8; 64]);
+    data.write(&[0x20, 0x08, 0x00]).expect("2048-byte MTU signalling");
     let packet = Packet {
         header: Header { packet_type: PacketType::LinkRequest, ..Default::default() },
         destination,
+        data,
         ..Default::default()
     };
     let link_id = LinkId::from(&packet);
@@ -276,6 +282,31 @@ async fn routed_link_request_uses_selected_interface_bitrate_and_route_hops() {
         transport.handler.lock().await.link_table.proof_timeout_for_test(&link_id),
         Some(now + Duration::from_secs(26))
     );
+    let forwarded = timeout(Duration::from_secs(1), egress.tx_channel.recv())
+        .await
+        .expect("forwarded request deadline")
+        .expect("forwarded request");
+    assert_eq!(forwarded.packet.data.len(), 67);
+    assert_eq!(&forwarded.packet.data.as_slice()[64..], &[0x20, 0x04, 0x00]);
+}
+
+#[tokio::test]
+async fn global_link_mtu_disable_signals_the_canonical_base_mtu() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("disabled-link-mtu", &identity, true);
+    config.set_link_mtu_discovery(false);
+    let transport = Transport::new(config);
+    let remote = PrivateIdentity::new_from_rand(OsRng);
+    let destination = DestinationDesc {
+        identity: *remote.as_identity(),
+        address_hash: remote.as_identity().address_hash,
+        name: DestinationName::new("link", "mtu-disabled"),
+    };
+
+    let (_, request) = transport.register_pending_outbound_link(destination).await;
+
+    assert_eq!(request.data.len(), 67);
+    assert_eq!(&request.data.as_slice()[64..], &[0x20, 0x01, 0xf4]);
 }
 
 #[tokio::test]

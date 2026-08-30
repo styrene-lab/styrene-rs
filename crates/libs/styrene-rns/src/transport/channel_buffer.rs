@@ -8,15 +8,17 @@ use bzip2::Compression;
 use bzip2::write::BzEncoder;
 use tokio::time::{Instant, sleep};
 
-use crate::packet::PACKET_MDU;
 use crate::transport::channel::{ChannelError, HandlerId, SystemMessageTypes, TypedMessage};
 use crate::transport::core_transport::TransportChannel;
+use crate::transport::resource::LINK_PACKET_MDU;
 
 const STREAM_ID_MAX: u16 = 0x3FFF;
 const STREAM_EOF_MASK: u16 = 0x8000;
 const STREAM_COMPRESSED_MASK: u16 = 0x4000;
-const STREAM_DATA_OVERHEAD: usize = 2 + 6;
-const STREAM_DATA_MAX_LEN: usize = PACKET_MDU - STREAM_DATA_OVERHEAD;
+const STREAM_DATA_HEADER_SIZE: usize = 2;
+const CHANNEL_ENVELOPE_SIZE: usize = 6;
+const STREAM_DATA_MAX_LEN: usize =
+    LINK_PACKET_MDU - CHANNEL_ENVELOPE_SIZE - STREAM_DATA_HEADER_SIZE;
 const MAX_CHUNK_LEN: usize = 1024 * 16;
 const COMPRESSION_TRIES: usize = 4;
 const CLOSE_WAIT_FALLBACK: Duration = Duration::from_secs(15);
@@ -258,7 +260,9 @@ impl RawChannelWriter {
             return Ok(0);
         }
 
-        let (message, processed) = Self::encode_chunk(self.stream_id, bytes, false)?;
+        let channel_mdu = self.channel.mdu().await?;
+        let (message, processed) =
+            Self::encode_chunk_with_mdu(self.stream_id, bytes, false, channel_mdu)?;
         self.channel.open().await?;
         match self.channel.send_typed(&message).await {
             Ok(_) => Ok(processed),
@@ -326,10 +330,20 @@ impl RawChannelWriter {
         bytes: &[u8],
         eof: bool,
     ) -> Result<(StreamDataMessage, usize), ChannelError> {
+        Self::encode_chunk_with_mdu(stream_id, bytes, eof, LINK_PACKET_MDU - CHANNEL_ENVELOPE_SIZE)
+    }
+
+    fn encode_chunk_with_mdu(
+        stream_id: u16,
+        bytes: &[u8],
+        eof: bool,
+        channel_mdu: usize,
+    ) -> Result<(StreamDataMessage, usize), ChannelError> {
         if stream_id > STREAM_ID_MAX {
             return Err(ChannelError::InvalidFrame);
         }
 
+        let stream_data_max_len = channel_mdu.saturating_sub(STREAM_DATA_HEADER_SIZE);
         let mut chunk_len = bytes.len().min(MAX_CHUNK_LEN);
         let mut compressed_data = None;
         let mut processed_length = 0usize;
@@ -344,7 +358,7 @@ impl RawChannelWriter {
                 let mut encoder = BzEncoder::new(Vec::new(), Compression::default());
                 encoder.write_all(&bytes[..segment_len]).map_err(|_| ChannelError::InvalidFrame)?;
                 let candidate = encoder.finish().map_err(|_| ChannelError::InvalidFrame)?;
-                if candidate.len() <= STREAM_DATA_MAX_LEN && candidate.len() < segment_len {
+                if candidate.len() <= stream_data_max_len && candidate.len() < segment_len {
                     compressed_data = Some(candidate);
                     processed_length = segment_len;
                     break;
@@ -357,7 +371,7 @@ impl RawChannelWriter {
             return Ok((message, processed_length));
         }
 
-        chunk_len = chunk_len.min(STREAM_DATA_MAX_LEN);
+        chunk_len = chunk_len.min(stream_data_max_len);
         let raw = bytes[..chunk_len].to_vec();
         let message = StreamDataMessage::new(stream_id, raw, eof, false)?;
         Ok((message, chunk_len))
@@ -616,7 +630,17 @@ mod tests {
 
         assert!(processed > 0);
         assert!(processed <= payload.len());
-        assert!(message.encode().len() <= PACKET_MDU);
+        assert!(message.encode().len() <= LINK_PACKET_MDU - CHANNEL_ENVELOPE_SIZE);
+    }
+
+    #[test]
+    fn stream_chunk_encoding_uses_negotiated_channel_mdu() {
+        let payload = (0..2048).map(|index| (index % 251) as u8).collect::<Vec<_>>();
+        let (message, processed) = RawChannelWriter::encode_chunk_with_mdu(3, &payload, false, 937)
+            .expect("1024-byte link channel chunk");
+
+        assert!(processed > STREAM_DATA_MAX_LEN);
+        assert!(message.encode().len() <= 937);
     }
 
     #[tokio::test]
