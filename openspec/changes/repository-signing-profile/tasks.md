@@ -6,7 +6,7 @@
 - [x] 1.1 Add a test that fails when an ordinary `styrene-identity` test modifies a tracked vector
 - [x] 1.2 Move vector generation out of `phase3_advanced` into an explicit maintainer command
 - [x] 1.3 Make ordinary tests load and verify the existing derivation vectors read-only
-- [ ] 1.4 Record generator revision, command, public-test-secret warning, and file digests in corpus provenance
+- [x] 1.4 Record generator revision, command, public-test-secret warning, and file digests in corpus provenance
 
 ## 2. Identity ID Authority
 <!-- specs: repository-signing-identity -->
