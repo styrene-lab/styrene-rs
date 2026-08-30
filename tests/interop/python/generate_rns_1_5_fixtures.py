@@ -42,8 +42,10 @@ def main() -> int:
     sys.path.insert(0, str(args.reticulum_checkout))
     import RNS  # type: ignore[import-not-found]  # noqa: PLC0415
     channel_module = importlib.import_module("RNS.Channel")
+    discovery_module = importlib.import_module("RNS.Discovery")
     resource_module = importlib.import_module("RNS.Resource")
     token_module = importlib.import_module("RNS.Cryptography.Token")
+    msgpack = importlib.import_module("RNS.vendor.umsgpack")
 
     for raw in (TYPE1, TYPE2):
         packet = RNS.Packet(None, raw)
@@ -199,6 +201,41 @@ def main() -> int:
     invalid_token = encrypted[:-1] + bytes([encrypted[-1] ^ 0x01])
     (args.output / "token-invalid-tag.bin").write_bytes(invalid_token)
     (args.output / "token-truncated-tag.bin").write_bytes(encrypted[:-1])
+    discovery_info = {
+        discovery_module.INTERFACE_TYPE: "TCPServerInterface",
+        discovery_module.TRANSPORT: True,
+        discovery_module.TRANSPORT_ID: bytes(range(16)),
+        discovery_module.TRANSPORT_IMPL: discovery_module.IMPLEMENTATION_NAME,
+        discovery_module.TRANSPORT_VERS: discovery_module.RNS_VERSION,
+        discovery_module.NAME: "Relay One",
+        discovery_module.LATITUDE: None,
+        discovery_module.LONGITUDE: None,
+        discovery_module.HEIGHT: None,
+        discovery_module.OP_ADDR: bytes(range(0x10, 0x20)),
+        discovery_module.REACHABLE_ON: "relay.example",
+        discovery_module.PORT: 4242,
+    }
+    discovery_cases = []
+    for case_id, updates, remove, accepted in [
+        ("valid-operator", {}, [], True),
+        ("absent-operator", {}, [discovery_module.OP_ADDR], True),
+        ("operator-wrong-type", {discovery_module.OP_ADDR: "not-bytes"}, [], False),
+        ("operator-wrong-length", {discovery_module.OP_ADDR: bytes(15)}, [], False),
+        ("transport-id-wrong-length", {discovery_module.TRANSPORT_ID: bytes(15)}, [], False),
+        ("transport-wrong-type", {discovery_module.TRANSPORT: 1}, [], False),
+        ("implementation-wrong-type", {discovery_module.TRANSPORT_IMPL: 1}, [], False),
+        ("name-wrong-type", {discovery_module.NAME: 1}, [], False),
+    ]:
+        info = dict(discovery_info)
+        info.update(updates)
+        for key in remove:
+            info.pop(key)
+        discovery_cases.append(
+            {"id": case_id, "packed_hex": msgpack.packb(info).hex(), "accepted": accepted}
+        )
+    (args.output / "interface-discovery-vectors.json").write_text(
+        json.dumps(discovery_cases, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     (args.output / "packet-admission.json").write_text(
         json.dumps(admission, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
