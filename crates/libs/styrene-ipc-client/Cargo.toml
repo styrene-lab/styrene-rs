@@ -11,6 +11,8 @@ categories = ["network-programming"]
 
 [dependencies]
 rmpv.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 styrene-ipc.workspace = true
 styrene-ipc-wire.workspace = true
 thiserror.workspace = true

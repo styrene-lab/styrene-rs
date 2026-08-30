@@ -4160,10 +4160,11 @@ dependencies = [
  "base64",
  "clap",
  "console",
- "rmp-serde",
  "rmpv",
  "styrene-ipc",
+ "styrene-ipc-client",
  "styrene-ipc-server",
+ "styrene-ipc-wire",
  "styrene-tui",
  "styrened",
  "tokio",
@@ -4356,6 +4357,8 @@ name = "styrene-ipc-client"
 version = "0.1.0"
 dependencies = [
  "rmpv",
+ "serde",
+ "serde_json",
  "styrene-ipc",
  "styrene-ipc-wire",
  "thiserror 1.0.69",
