@@ -12,7 +12,7 @@
 - [x] 1.7 Build the P0 workflow parity matrix for identity, TCP setup, discovery, conversations, drafts, direct send, receipts, retry, restart, propagation, and degraded states
 - [x] 1.8 Record the designated floor, observable Styrene outcome, intentional differences, exclusions, and status for every parity row
 - [x] 1.9 Add validation that rejects missing P0 rows, unresolved differences, invalid status, stale provenance, and application observations used as protocol evidence
-- [ ] 1.10 Copy the versioned application corpus into `styrene-ui` with exact backend revision provenance and add journey fixtures before implementing unmatched UI workflows
+- [x] 1.10 Copy the versioned application corpus into `styrene-ui` with exact backend revision provenance and add journey fixtures before implementing unmatched UI workflows
 - [x] 1.11 Seed the recovered inventory with Skywave `1.0` build `5` and the pinned Python RNS, LXMF, and NomadNet references
 - [x] 1.12 Record Sideband, Columba, and MeshChat as unevidenced candidates and Meshtastic and MeshCore as interaction-only references
 - [ ] 1.13 Resolve the `795fdaa2b0777c13033787d933d1afc94a2377cb` LXMF `1.1.0` versus `1.1.1` provenance conflict before admitting dependent rows
