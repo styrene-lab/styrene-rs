@@ -73,9 +73,9 @@
 ## 11. Interface Discovery Metadata
 <!-- specs: interface-discovery -->
 
-- [ ] 11.1 Add failing 1.5.1 MessagePack fixtures for required implementation/version fields, a valid 16-byte operator LXMF address, absent optional address, wrong types/lengths, and sanitized names
-- [ ] 11.2 Minimally implement the `rnstransport.discovery.interface` metadata codec and truthful runtime observations without automatic connection or a second discovery protocol
-- [ ] 11.3 Verify byte/semantic fixture agreement, fail-closed decode without partial persistence, and compatibility with discovery records that omit the new optional operator field
+- [x] 11.1 Add failing 1.5.1 MessagePack fixtures for required implementation/version fields, a valid 16-byte operator LXMF address, absent optional address, wrong types/lengths, and sanitized names
+- [x] 11.2 Minimally implement the `rnstransport.discovery.interface` metadata codec and truthful runtime observations without automatic connection or a second discovery protocol
+- [x] 11.3 Verify byte/semantic fixture agreement, fail-closed decode without partial persistence, and compatibility with discovery records that omit the new optional operator field
 
 ## 12. Offline And Live Gates
 <!-- specs: parity-evidence, packet-admission-routing, bounded-ingress, link-resource-security, interface-discovery -->

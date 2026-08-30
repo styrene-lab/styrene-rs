@@ -13,6 +13,7 @@ pub mod error;
 pub mod identity_bridge;
 pub mod identity_ext;
 pub mod iface;
+pub mod interface_discovery;
 pub(crate) mod ratchet_store;
 pub mod receipt;
 pub mod request;
