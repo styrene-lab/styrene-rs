@@ -117,7 +117,7 @@ pub struct PathRequests {
     discovery: BTreeMap<AddressHash, DiscoveryEntry>,
     pending: VecDeque<AddressHash>,
     pending_dropped: u64,
-    discovery_timeout: Duration,
+    configured_discovery_timeout: Duration,
 }
 
 impl PathRequests {
@@ -138,7 +138,7 @@ impl PathRequests {
             discovery: BTreeMap::new(),
             pending: VecDeque::new(),
             pending_dropped: 0,
-            discovery_timeout: Duration::from_secs(request_timeout_secs.max(1)),
+            configured_discovery_timeout: Duration::from_secs(request_timeout_secs.max(1)),
         }
     }
 
@@ -186,6 +186,7 @@ impl PathRequests {
         }
     }
 
+    #[cfg(test)]
     pub fn register_discovery(
         &mut self,
         request: &PathRequest,
@@ -193,15 +194,34 @@ impl PathRequests {
         ingress_limited: bool,
         active_interfaces: &BTreeSet<AddressHash>,
     ) -> DiscoveryAction {
-        self.register_discovery_at(
+        self.register_discovery_with_bitrate(
             request,
             iface,
             ingress_limited,
             active_interfaces,
+            None,
+        )
+    }
+
+    pub fn register_discovery_with_bitrate(
+        &mut self,
+        request: &PathRequest,
+        iface: AddressHash,
+        ingress_limited: bool,
+        active_interfaces: &BTreeSet<AddressHash>,
+        lowest_online_bitrate: Option<u64>,
+    ) -> DiscoveryAction {
+        self.register_discovery_with_bitrate_at(
+            request,
+            iface,
+            ingress_limited,
+            active_interfaces,
+            lowest_online_bitrate,
             Instant::now(),
         )
     }
 
+    #[cfg(test)]
     fn register_discovery_at(
         &mut self,
         request: &PathRequest,
@@ -210,7 +230,30 @@ impl PathRequests {
         active_interfaces: &BTreeSet<AddressHash>,
         now: Instant,
     ) -> DiscoveryAction {
+        self.register_discovery_with_bitrate_at(
+            request,
+            iface,
+            ingress_limited,
+            active_interfaces,
+            None,
+            now,
+        )
+    }
+
+    fn register_discovery_with_bitrate_at(
+        &mut self,
+        request: &PathRequest,
+        iface: AddressHash,
+        ingress_limited: bool,
+        active_interfaces: &BTreeSet<AddressHash>,
+        lowest_online_bitrate: Option<u64>,
+        now: Instant,
+    ) -> DiscoveryAction {
         self.prune_at(now, active_interfaces);
+        let discovery_timeout = super::deadlines::discovery_timeout(
+            self.configured_discovery_timeout,
+            lowest_online_bitrate,
+        );
         if !active_interfaces.contains(&iface) {
             return DiscoveryAction::InactiveInterface;
         }
@@ -230,7 +273,7 @@ impl PathRequests {
             self.discovery.insert(
                 request.destination,
                 DiscoveryEntry {
-                    expires_at: now + self.discovery_timeout,
+                    expires_at: super::deadlines::deadline(now, discovery_timeout),
                     waiters: BTreeSet::from([iface]),
                     tag: request.tag_bytes.clone(),
                     ingress_iface: iface,
@@ -256,7 +299,7 @@ impl PathRequests {
             self.discovery.insert(
                 request.destination,
                 DiscoveryEntry {
-                    expires_at: now + self.discovery_timeout,
+                    expires_at: super::deadlines::deadline(now, discovery_timeout),
                     waiters,
                     tag: request.tag_bytes.clone(),
                     ingress_iface: iface,
@@ -277,7 +320,7 @@ impl PathRequests {
         self.discovery.insert(
             request.destination,
             DiscoveryEntry {
-                expires_at: now + self.discovery_timeout,
+                expires_at: super::deadlines::deadline(now, discovery_timeout),
                 waiters,
                 tag: request.tag_bytes.clone(),
                 ingress_iface: iface,
@@ -360,7 +403,7 @@ impl PathRequests {
         self.in_flight.retain(|_, expires_at| *expires_at >= now);
         self.discovery.retain(|_, entry| {
             entry.waiters.retain(|iface| active_interfaces.contains(iface));
-            entry.expires_at > now && !entry.waiters.is_empty()
+            entry.expires_at >= now && !entry.waiters.is_empty()
         });
         self.pending.retain(|destination| self.discovery.contains_key(destination));
     }
@@ -374,6 +417,11 @@ impl PathRequests {
             pending_depth: self.pending.len() as u64,
             pending_dropped: self.pending_dropped,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn discovery_expires_at(&self, destination: &AddressHash) -> Option<Instant> {
+        self.discovery.get(destination).map(|entry| entry.expires_at)
     }
 }
 
@@ -527,7 +575,7 @@ mod tests {
             testee.register_discovery_at(&request(destination, 1), iface, false, &active, now),
             DiscoveryAction::StartDiscovery
         );
-        testee.prune_at(now + Duration::from_secs(30), &active);
+        testee.prune_at(now + Duration::from_secs(30) + Duration::from_nanos(1), &active);
         assert_eq!(testee.snapshot().in_flight, 1);
         assert_eq!(
             testee.register_discovery_at(
@@ -575,7 +623,7 @@ mod tests {
             DiscoveryAction::StartDiscovery
         );
 
-        testee.prune_at(now + Duration::from_secs(30), &active);
+        testee.prune_at(now + Duration::from_secs(30) + Duration::from_nanos(1), &active);
         assert!(testee.take_waiters(&destination, &active).is_empty());
         assert_eq!(testee.snapshot().in_flight, 0);
         assert_eq!(
@@ -587,6 +635,74 @@ mod tests {
                 now + Duration::from_secs(30),
             ),
             DiscoveryAction::StartDiscovery
+        );
+    }
+
+    #[test]
+    fn discovery_deadline_uses_current_slowest_online_bitrate() {
+        let mut testee = PathRequests::new("", None, 0, 0, 30);
+        let now = Instant::now();
+        let iface = AddressHash::new([0x01; 16]);
+        let active = BTreeSet::from([iface]);
+        let slow_destination = AddressHash::new([0x47; 16]);
+        let fallback_destination = AddressHash::new([0x48; 16]);
+
+        assert_eq!(
+            testee.register_discovery_with_bitrate_at(
+                &request(slow_destination, 1),
+                iface,
+                false,
+                &active,
+                Some(100),
+                now,
+            ),
+            DiscoveryAction::StartDiscovery
+        );
+        assert_eq!(testee.discovery[&slow_destination].expires_at, now + Duration::from_secs(86));
+        testee.prune_at(now + Duration::from_secs(86), &active);
+        assert!(testee.discovery.contains_key(&slow_destination));
+        testee.prune_at(now + Duration::from_secs(86) + Duration::from_nanos(1), &active);
+        assert!(!testee.discovery.contains_key(&slow_destination));
+
+        assert_eq!(
+            testee.register_discovery_with_bitrate_at(
+                &request(fallback_destination, 2),
+                iface,
+                false,
+                &active,
+                None,
+                now,
+            ),
+            DiscoveryAction::StartDiscovery
+        );
+        assert_eq!(
+            testee.discovery[&fallback_destination].expires_at,
+            now + Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn extreme_configured_discovery_timeout_is_bounded() {
+        let mut testee = PathRequests::new("", None, 0, 0, u64::MAX);
+        let now = Instant::now();
+        let destination = AddressHash::new([0x49; 16]);
+        let iface = AddressHash::new([0x01; 16]);
+        let active = BTreeSet::from([iface]);
+
+        assert_eq!(
+            testee.register_discovery_with_bitrate_at(
+                &request(destination, 1),
+                iface,
+                false,
+                &active,
+                Some(1),
+                now,
+            ),
+            DiscoveryAction::StartDiscovery
+        );
+        assert!(
+            testee.discovery[&destination].expires_at
+                > now + Duration::from_secs(2 * 365 * 24 * 60 * 60)
         );
     }
 

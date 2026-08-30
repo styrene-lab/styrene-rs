@@ -38,9 +38,9 @@
 ## 6. Online Bitrate Metadata And Deadlines
 <!-- specs: packet-admission-routing -->
 
-- [ ] 6.1 Add failing virtual-clock differential tests for runtime online positive bitrate metadata, exclusion of offline/missing/zero bitrates, slowest-online selection, path-discovery deadlines, and outbound-interface link-proof deadlines
-- [ ] 6.2 Minimally add the online positive bitrate runtime contract and derive every bitrate-based discovery/proof deadline from it with a finite configured fallback; do not add hardware MTU, MTU signaling, clamping, proof encoding/validation, or payload-limit behavior in this task
-- [ ] 6.3 Verify exact deadline boundaries and metadata transitions with no division-by-zero, overflow, wall-clock sleep, stale-interface influence, or dependency on Task 7 hardware MTU state
+- [x] 6.1 Add failing virtual-clock differential tests for runtime online positive bitrate metadata, exclusion of offline/missing/zero bitrates, slowest-online selection, path-discovery deadlines, and outbound-interface link-proof deadlines
+- [x] 6.2 Minimally add the online positive bitrate runtime contract and derive every bitrate-based discovery/proof deadline from it with a finite configured fallback; do not add hardware MTU, MTU signaling, clamping, proof encoding/validation, or payload-limit behavior in this task
+- [x] 6.3 Verify exact deadline boundaries and metadata transitions with no division-by-zero, overflow, wall-clock sleep, stale-interface influence, or dependency on Task 7 hardware MTU state
 
 ## 7. Link MTU Signaling, Proofs, And Payloads
 <!-- specs: link-resource-security -->

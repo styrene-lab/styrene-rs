@@ -12,7 +12,8 @@ impl TransportConfig {
             announce_queue_len: 64,
             announce_cap: 128,
             path_request_timeout_secs: 30,
-            link_proof_timeout_secs: 600,
+            link_proof_timeout_secs: None,
+            link_proof_timeout_per_hop_secs: 6,
             link_idle_timeout_secs: 900,
             resource_retry_interval_secs: 2,
             resource_retry_limit: 5,
@@ -50,7 +51,12 @@ impl TransportConfig {
     }
 
     pub fn set_link_proof_timeout_secs(&mut self, secs: u64) {
-        self.link_proof_timeout_secs = secs;
+        self.link_proof_timeout_secs = Some(secs);
+    }
+
+    pub fn set_link_proof_timeout_per_hop_secs(&mut self, secs: u64) {
+        self.link_proof_timeout_secs = None;
+        self.link_proof_timeout_per_hop_secs = secs;
     }
 
     pub fn set_link_idle_timeout_secs(&mut self, secs: u64) {
@@ -90,7 +96,8 @@ impl Default for TransportConfig {
             announce_queue_len: 64,
             announce_cap: 128,
             path_request_timeout_secs: 30,
-            link_proof_timeout_secs: 600,
+            link_proof_timeout_secs: None,
+            link_proof_timeout_per_hop_secs: 6,
             link_idle_timeout_secs: 900,
             resource_retry_interval_secs: 2,
             resource_retry_limit: 5,

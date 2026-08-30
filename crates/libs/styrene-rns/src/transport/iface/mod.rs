@@ -173,6 +173,10 @@ impl InterfaceChannel {
 pub trait Interface {
     fn mtu() -> usize;
 
+    fn bitrate(&self) -> Option<u64> {
+        None
+    }
+
     fn descriptor(&self) -> InterfaceDescriptor {
         InterfaceDescriptor::default()
     }
@@ -256,6 +260,10 @@ impl InterfaceState {
             Self::Unknown => "unknown",
         }
     }
+
+    pub const fn is_online(self) -> bool {
+        matches!(self, Self::Listening | Self::Connected | Self::Active)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,6 +303,7 @@ pub struct InterfaceSnapshot {
 #[derive(Debug)]
 struct InterfaceRuntimeMetadata {
     descriptor: InterfaceDescriptor,
+    bitrate: Option<u64>,
     state: InterfaceState,
     parent: Option<AddressHash>,
     generation: u64,
@@ -311,10 +320,15 @@ pub(crate) struct InterfaceRuntime {
 }
 
 impl InterfaceRuntime {
-    fn new(descriptor: InterfaceDescriptor, parent: Option<AddressHash>) -> Self {
+    fn new(
+        descriptor: InterfaceDescriptor,
+        bitrate: Option<u64>,
+        parent: Option<AddressHash>,
+    ) -> Self {
         Self {
             metadata: Mutex::new(InterfaceRuntimeMetadata {
                 descriptor,
+                bitrate,
                 state: InterfaceState::Starting,
                 parent,
                 generation: 0,
@@ -329,13 +343,7 @@ impl InterfaceRuntime {
 
     pub(crate) fn set_state(&self, state: InterfaceState) {
         let mut metadata = self.metadata.lock().expect("interface runtime lock");
-        let operational = |value| {
-            matches!(
-                value,
-                InterfaceState::Listening | InterfaceState::Connected | InterfaceState::Active
-            )
-        };
-        if operational(state) && !operational(metadata.state) {
+        if state.is_online() && !metadata.state.is_online() {
             metadata.generation = metadata.generation.saturating_add(1);
         }
         metadata.state = state;
@@ -638,6 +646,7 @@ impl InterfaceManager {
         &mut self,
         tx_cap: usize,
         descriptor: InterfaceDescriptor,
+        bitrate: Option<u64>,
         parent: Option<AddressHash>,
     ) -> InterfaceChannel {
         self.counter += 1;
@@ -651,7 +660,7 @@ impl InterfaceManager {
 
         let stop = CancellationToken::new();
         let stats = Arc::new(InterfaceStats::new());
-        let runtime = Arc::new(InterfaceRuntime::new(descriptor, parent));
+        let runtime = Arc::new(InterfaceRuntime::new(descriptor, bitrate, parent));
 
         self.stats_map.lock().expect("interface stats lock").insert(address, stats.clone());
         self.ifaces.push(LocalInterface { address, tx_send, stop: stop.clone(), stats, runtime });
@@ -660,7 +669,7 @@ impl InterfaceManager {
     }
 
     pub fn new_channel(&mut self, tx_cap: usize) -> InterfaceChannel {
-        self.new_channel_with_runtime(tx_cap, InterfaceDescriptor::default(), None)
+        self.new_channel_with_runtime(tx_cap, InterfaceDescriptor::default(), None, None)
     }
 
     pub fn new_context<T: Interface>(&mut self, inner: T) -> InterfaceContext<T> {
@@ -673,8 +682,13 @@ impl InterfaceManager {
         parent: Option<AddressHash>,
     ) -> InterfaceContext<T> {
         let descriptor = inner.descriptor();
-        let channel =
-            self.new_channel_with_runtime(DEFAULT_IFACE_TX_QUEUE_CAPACITY, descriptor, parent);
+        let bitrate = inner.bitrate();
+        let channel = self.new_channel_with_runtime(
+            DEFAULT_IFACE_TX_QUEUE_CAPACITY,
+            descriptor,
+            bitrate,
+            parent,
+        );
         let runtime = self.ifaces.last().expect("newly registered interface").runtime.clone();
         let stats = self.ifaces.last().expect("newly registered interface").stats.clone();
 
@@ -807,6 +821,52 @@ impl InterfaceManager {
             .filter(|interface| !interface.stop.is_cancelled())
             .map(|interface| interface.address)
             .collect()
+    }
+
+    pub fn lowest_online_positive_bitrate(&self) -> Option<u64> {
+        self.ifaces
+            .iter()
+            .filter(|interface| !interface.stop.is_cancelled())
+            .filter_map(|interface| {
+                let metadata = interface.runtime.metadata.lock().expect("interface runtime lock");
+                metadata.state.is_online().then_some(metadata.bitrate).flatten()
+            })
+            .filter(|bitrate| *bitrate > 0)
+            .min()
+    }
+
+    pub fn online_positive_bitrate(&self, address: &AddressHash) -> Option<u64> {
+        self.ifaces
+            .iter()
+            .find(|interface| interface.address == *address && !interface.stop.is_cancelled())
+            .and_then(|interface| {
+                let metadata = interface.runtime.metadata.lock().expect("interface runtime lock");
+                metadata
+                    .state
+                    .is_online()
+                    .then_some(metadata.bitrate)
+                    .flatten()
+                    .filter(|bitrate| *bitrate > 0)
+            })
+    }
+
+    pub fn set_interface_bitrate(&self, address: &AddressHash, bitrate: Option<u64>) -> bool {
+        let Some(interface) = self.ifaces.iter().find(|interface| interface.address == *address)
+        else {
+            return false;
+        };
+        interface.runtime.metadata.lock().expect("interface runtime lock").bitrate = bitrate;
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_interface_state(&self, address: &AddressHash, state: InterfaceState) -> bool {
+        let Some(interface) = self.ifaces.iter().find(|interface| interface.address == *address)
+        else {
+            return false;
+        };
+        interface.runtime.set_state(state);
+        true
     }
 
     pub fn can_egress_path_request(&self, excluded: Option<AddressHash>) -> bool {
@@ -1045,6 +1105,24 @@ impl InterfaceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct BitrateMatrix {
+        online_bitrate_selection: Vec<BitrateSelectionCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct BitrateSelectionCase {
+        interfaces: Vec<BitrateInterfaceCase>,
+        expected_lowest: Option<u64>,
+    }
+
+    #[derive(Deserialize)]
+    struct BitrateInterfaceCase {
+        online: bool,
+        bitrate: Option<u64>,
+    }
 
     #[test]
     fn shutdown_cancels_manager_and_local_interfaces() {
@@ -1087,7 +1165,7 @@ mod tests {
 
     #[test]
     fn path_request_rate_controls_are_disabled_by_default() {
-        let runtime = InterfaceRuntime::new(InterfaceDescriptor::default(), None);
+        let runtime = InterfaceRuntime::new(InterfaceDescriptor::default(), None, None);
         let now = Instant::now();
         for offset in 0..20 {
             assert!(
@@ -1105,6 +1183,7 @@ mod tests {
         let runtime = InterfaceRuntime::new(
             InterfaceDescriptor { ingress_control: true, ..Default::default() },
             None,
+            None,
         );
         let now = Instant::now();
         assert!(!runtime.record_and_should_ingress_limit_path_request(now));
@@ -1117,5 +1196,73 @@ mod tests {
         assert!(
             !runtime.record_and_should_ingress_limit_path_request(now + Duration::from_secs(16))
         );
+    }
+
+    #[test]
+    fn bitrate_queries_track_online_runtime_metadata() {
+        let mut manager = InterfaceManager::new(1);
+        let online_slow = manager.new_channel(1).address;
+        let online_fast = manager.new_channel(1).address;
+        let offline = manager.new_channel(1).address;
+        let missing = manager.new_channel(1).address;
+
+        assert!(manager.set_interface_bitrate(&online_slow, Some(500)));
+        assert!(manager.set_interface_bitrate(&online_fast, Some(1_000)));
+        assert!(manager.set_interface_bitrate(&offline, Some(5)));
+        assert!(manager.set_interface_bitrate(&missing, Some(0)));
+        for address in [online_slow, online_fast, missing] {
+            manager
+                .ifaces
+                .iter()
+                .find(|interface| interface.address == address)
+                .expect("registered interface")
+                .runtime
+                .set_state(InterfaceState::Active);
+        }
+
+        assert_eq!(manager.lowest_online_positive_bitrate(), Some(500));
+        assert_eq!(manager.online_positive_bitrate(&online_fast), Some(1_000));
+        assert_eq!(manager.online_positive_bitrate(&offline), None);
+        assert_eq!(manager.online_positive_bitrate(&missing), None);
+
+        manager
+            .ifaces
+            .iter()
+            .find(|interface| interface.address == online_slow)
+            .expect("registered interface")
+            .runtime
+            .set_state(InterfaceState::Retrying);
+        assert_eq!(manager.lowest_online_positive_bitrate(), Some(1_000));
+        assert!(manager.set_interface_bitrate(&online_fast, None));
+        assert_eq!(manager.lowest_online_positive_bitrate(), None);
+    }
+
+    #[test]
+    fn lowest_online_bitrate_matches_pinned_reticulum_matrix() {
+        let matrix: BitrateMatrix = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/interop/fixtures/rns/rns-1.5.1/bitrate-deadlines.json"
+        )))
+        .expect("valid canonical bitrate matrix");
+
+        for case in matrix.online_bitrate_selection {
+            let mut manager = InterfaceManager::new(1);
+            for configured in case.interfaces {
+                let address = manager.new_channel(1).address;
+                assert!(manager.set_interface_bitrate(&address, configured.bitrate));
+                manager
+                    .ifaces
+                    .iter()
+                    .find(|interface| interface.address == address)
+                    .expect("registered interface")
+                    .runtime
+                    .set_state(if configured.online {
+                        InterfaceState::Active
+                    } else {
+                        InterfaceState::Retrying
+                    });
+            }
+            assert_eq!(manager.lowest_online_positive_bitrate(), case.expected_lowest);
+        }
     }
 }
