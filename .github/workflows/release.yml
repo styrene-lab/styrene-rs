@@ -92,9 +92,8 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      # Exclude the Dioxus spike with platform-specific WebKit build dependencies.
-      - run: cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx
-      - run: cargo test --workspace --exclude styrene-dx --exclude styrene-e2e
+      - run: cargo clippy --workspace --all-targets --no-deps
+      - run: cargo test --workspace --exclude styrene-e2e
 
   # ── Publish library crates ────────────────────────────────────
   publish:
@@ -145,15 +144,12 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             zigbuild: true
-            dx: true
           - target: x86_64-apple-darwin
             os: macos-14
             zigbuild: false
-            dx: true
           - target: aarch64-apple-darwin
             os: macos-14
             zigbuild: false
-            dx: true
 
     steps:
       - uses: actions/checkout@v5
@@ -176,15 +172,6 @@ jobs:
         if: matrix.zigbuild
         run: cargo install cargo-zigbuild --locked
 
-      - name: Install Linux system deps (webkit2gtk for styrene-dx)
-        if: matrix.dx && runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev
-
       # Build daemon + TUI
       - name: Build product binaries
         run: |
@@ -192,17 +179,6 @@ jobs:
             cargo zigbuild --release --target ${{ matrix.target }} -p styrene --features tui -p styrened -p styrene-tui
           else
             cargo build --release --target ${{ matrix.target }} -p styrene --features tui -p styrened -p styrene-tui
-          fi
-
-      # Desktop app (may fail — still experimental)
-      - name: Build styrene-dx
-        if: matrix.dx
-        continue-on-error: true
-        run: |
-          if [ "${{ matrix.zigbuild }}" = "true" ]; then
-            cargo zigbuild --release --target ${{ matrix.target }} -p styrene-dx
-          else
-            cargo build --release --target ${{ matrix.target }} -p styrene-dx
           fi
 
       - name: Verify built product versions
@@ -219,7 +195,7 @@ jobs:
 
       - name: Strip binaries
         run: |
-          for bin in styrene styrened styrene-tui styrene-dx; do
+          for bin in styrene styrened styrene-tui; do
             BINARY="target/${{ matrix.target }}/release/${bin}"
             [ -f "$BINARY" ] || continue
             if command -v llvm-strip >/dev/null 2>&1; then
@@ -248,7 +224,7 @@ jobs:
       - name: Sign macOS binaries
         if: runner.os == 'macOS' && env.APPLE_SIGNING_CERT_B64 != '' && env.APPLE_CODESIGN_IDENTITY != ''
         run: |
-          for bin in styrene styrened styrene-tui styrene-dx; do
+          for bin in styrene styrened styrene-tui; do
             BINARY="target/${{ matrix.target }}/release/${bin}"
             [ -f "$BINARY" ] || continue
             codesign --force --options runtime --timestamp --sign "$APPLE_CODESIGN_IDENTITY" "$BINARY"
@@ -261,7 +237,7 @@ jobs:
           set -euo pipefail
           KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
           echo "$APPLE_API_KEY_P8_B64" | base64 --decode > "$KEY_PATH"
-          for bin in styrene styrened styrene-tui styrene-dx; do
+          for bin in styrene styrened styrene-tui; do
             BINARY="target/${{ matrix.target }}/release/${bin}"
             [ -f "$BINARY" ] || continue
             NOTARY_ZIP="$RUNNER_TEMP/${bin}-${{ matrix.target }}-notary.zip"
@@ -285,7 +261,7 @@ jobs:
           ARCHIVE="styrene-${VERSION}-${{ matrix.target }}.tar.gz"
           STAGING="styrene-${VERSION}-${{ matrix.target }}"
           mkdir -p "$STAGING"
-          for bin in styrene styrened styrene-tui styrene-dx; do
+          for bin in styrene styrened styrene-tui; do
             BINARY="target/${{ matrix.target }}/release/${bin}"
             [ -f "$BINARY" ] && cp "$BINARY" "$STAGING/"
           done

@@ -50,13 +50,10 @@ test:
         --test pqc_scenario
     cargo test -p styrene-tui --lib
     cargo test -p styrene --bin styrene
-    cargo test -p styrene-dx --bin styrene-dx components::
-    cargo test -p styrene-dx --bin styrene-dx fixture
 
 # Run tests with output
 test-verbose:
     cargo test --workspace \
-        --exclude styrene-dx \
         --exclude styrene-e2e \
         --exclude styrene-interop-runner \
         --exclude styrene-i2p \
@@ -68,11 +65,11 @@ test-verbose:
 
 # Run clippy linter
 lint:
-    cargo clippy --workspace --all-targets --exclude styrene-dx --no-deps -- -D warnings
+    cargo clippy --workspace --all-targets --no-deps -- -D warnings
 
-# Compile every maintained non-DX target without executing tests
+# Compile every maintained target without executing tests
 check-offline:
-    cargo check --workspace --all-targets --exclude styrene-dx
+    cargo check --workspace --all-targets
 
 # Compile reusable host library contracts with default features disabled
 check-library-minimal:
@@ -257,11 +254,6 @@ check-mobile-keychain:
 check-mobile-identity:
     cargo check -p styrened --no-default-features --features mobile-identity
 
-# Screenshot the desktop app for visual feedback
-screenshot-dx:
-    @./scripts/screenshot-dx.sh /tmp/styrene-dx-screenshot.png
-    @echo "View: open /tmp/styrene-dx-screenshot.png"
-
 # Build and start the isolated hub used by mobile simulator tests
 mobile-hub-start:
     cargo build -p styrened --bin styrened
@@ -337,8 +329,8 @@ test-mqtt-live:
 # Run the exact CI checks locally before tagging a release
 preflight:
     cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx
-    cargo test --workspace --exclude styrene-dx --exclude styrene-e2e
+    cargo clippy --workspace --all-targets --no-deps
+    cargo test --workspace --exclude styrene-e2e
 
 # ─── Hub Deployment ───────────────────────────────────────────────────────
 

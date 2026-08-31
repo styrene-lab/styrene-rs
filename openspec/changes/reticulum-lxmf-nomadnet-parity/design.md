@@ -29,7 +29,7 @@ Each claim is `unsupported`, `experimental`, `verified`, or `degraded`. `verifie
 ## Layer boundaries
 
 ```text
-styrene-dx / styrene-tui
+styrene-ui / styrene-tui
         |
         | typed IPC commands, observations, capabilities
         v
