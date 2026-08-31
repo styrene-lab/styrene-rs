@@ -642,8 +642,8 @@
       "assertions": [
         {"source": "daemon", "claim": "The contact store returns the new alias for the same peer hash", "oracle": "crates/apps/styrened/src/mobile.rs"}
       ],
-      "existing_tests": [],
-      "missing_capabilities": ["Dioxus alias editor", "contact mutation component tests"],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#contact_alias_resolves_in_conversation_summary", "crates/apps/styrened/tests/mobile_p0_backend.rs#alias_mutation_emits_scoped_invalidation"],
+      "missing_capabilities": ["Dioxus alias editor"],
       "not_proven": ["notes", "trust", "block state"]
     },
     {
@@ -681,7 +681,7 @@
         {"source": "daemon", "claim": "Each invalid profile is rejected before runtime composition with a descriptive boot error", "oracle": "crates/apps/styrened/tests/mobile_node.rs#invalid_and_duplicate_tcp_profiles_fail_before_boot"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_node.rs#invalid_and_duplicate_tcp_profiles_fail_before_boot"],
-      "missing_capabilities": ["typed profile validation errors", "Dioxus profile conversion tests", "Dioxus profile validation fixtures"],
+      "missing_capabilities": ["Dioxus profile conversion tests", "Dioxus profile validation fixtures"],
       "not_proven": ["Dioxus form validation"]
     },
     {
@@ -776,7 +776,7 @@
       "assertions": [
         {"source": "durable_store", "claim": "Accepted messages exist before the poll result is exposed", "oracle": "crates/apps/styrened/src/mobile.rs"}
       ],
-      "existing_tests": [],
+      "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#legacy_poll_acknowledges_only_durable_results", "crates/apps/styrened/tests/mobile_p0_backend.rs#legacy_poll_reports_partial_acknowledgement_failure"],
       "missing_capabilities": ["Dioxus propagation configuration", "Dioxus projection of per-message poll results"],
       "not_proven": ["standard LXMF propagation parity"]
     },
