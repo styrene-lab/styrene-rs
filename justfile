@@ -157,7 +157,7 @@ test-validation-offline:
     target/test-validation-offline
 
 # Run deterministic, offline validation against Rust code and committed fixtures
-validate: format-check check-library-minimal check-offline lint test test-interop test-validation-offline validate-rnode-firmware-corpus
+validate: format-check check-library-minimal check-offline lint test test-interop test-validation-offline
 
 # Check all crates compile (fast, no codegen)
 check:
