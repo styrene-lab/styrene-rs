@@ -58,14 +58,24 @@ pub const CMD_SPREADING_FACTOR: u8 = 0x04;
 pub const CMD_CODING_RATE: u8 = 0x05;
 pub const CMD_RADIO_STATE: u8 = 0x06;
 pub const CMD_DETECT: u8 = 0x08;
+pub const CMD_BOARD: u8 = 0x47;
 pub const CMD_PLATFORM: u8 = 0x48;
 pub const CMD_MCU: u8 = 0x49;
 pub const CMD_FIRMWARE_VERSION: u8 = 0x50;
+pub const CMD_ROM_READ: u8 = 0x51;
+pub const CMD_HASHES: u8 = 0x60;
 
 const DETECT_REQUEST: u8 = 0x73;
 const DETECT_RESPONSE: u8 = 0x46;
 const RADIO_OFF: u8 = 0x00;
 const RADIO_ON: u8 = 0x01;
+const TARGET_FIRMWARE_HASH: u8 = 0x01;
+const RUNNING_FIRMWARE_HASH: u8 = 0x02;
+const FIRMWARE_HASH_LEN: usize = 32;
+const RNODE_ROM_SIZE: usize = 200;
+const ROM_PRODUCT: usize = 0;
+const ROM_MODEL: usize = 1;
+const ROM_HARDWARE_REVISION: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RNodeBearerKind {
@@ -113,6 +123,35 @@ pub enum RNodeProtocolPhase {
     Configuring,
     Ready,
     Closed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RNodeFirmwareVersion {
+    pub major: u8,
+    pub minor: u8,
+}
+
+impl fmt::Display for RNodeFirmwareVersion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.major, self.minor)
+    }
+}
+
+/// Raw, read-only facts reported by one RNode protocol attempt.
+///
+/// Numeric platform, MCU, board, product, and model codes remain unclassified
+/// here so firmware policy cannot infer an exact target from partial evidence.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RNodeMetadata {
+    pub firmware_version: Option<RNodeFirmwareVersion>,
+    pub platform: Option<u8>,
+    pub mcu: Option<u8>,
+    pub board: Option<u8>,
+    pub product: Option<u8>,
+    pub model: Option<u8>,
+    pub hardware_revision: Option<u8>,
+    pub target_firmware_hash: Option<[u8; FIRMWARE_HASH_LEN]>,
+    pub running_firmware_hash: Option<[u8; FIRMWARE_HASH_LEN]>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -246,6 +285,7 @@ pub struct RNodeProtocol {
     phase: RNodeProtocolPhase,
     decoder: KissDecoder,
     observed: ObservedConfig,
+    metadata: RNodeMetadata,
 }
 
 impl RNodeProtocol {
@@ -256,6 +296,7 @@ impl RNodeProtocol {
             phase: RNodeProtocolPhase::Idle,
             decoder: KissDecoder::with_limits(RNODE_MTU + 1, MAX_PENDING_WRITES),
             observed: ObservedConfig::default(),
+            metadata: RNodeMetadata::default(),
         }
     }
 
@@ -264,16 +305,27 @@ impl RNodeProtocol {
         self.phase
     }
 
+    #[must_use]
+    pub const fn metadata(&self) -> &RNodeMetadata {
+        &self.metadata
+    }
+
     pub fn start(&mut self) -> Result<Vec<Vec<u8>>, RNodeProtocolError> {
         if self.phase == RNodeProtocolPhase::Closed {
             return Err(RNodeProtocolError::Closed);
         }
         self.phase = RNodeProtocolPhase::Detecting;
+        self.observed = ObservedConfig::default();
+        self.metadata = RNodeMetadata::default();
         Ok(vec![
             kiss_encode_command(CMD_DETECT, &[DETECT_REQUEST]),
             kiss_encode_command(CMD_FIRMWARE_VERSION, &[0]),
             kiss_encode_command(CMD_PLATFORM, &[0]),
             kiss_encode_command(CMD_MCU, &[0]),
+            kiss_encode_command(CMD_BOARD, &[0]),
+            kiss_encode_command(CMD_ROM_READ, &[0]),
+            kiss_encode_command(CMD_HASHES, &[TARGET_FIRMWARE_HASH]),
+            kiss_encode_command(CMD_HASHES, &[RUNNING_FIRMWARE_HASH]),
         ])
     }
 
@@ -346,6 +398,33 @@ impl RNodeProtocol {
             }
             CMD_CODING_RATE => self.observed.coding_rate = frame.payload.first().copied(),
             CMD_RADIO_STATE => self.observed.radio_state = frame.payload.first().copied(),
+            CMD_FIRMWARE_VERSION if frame.payload.len() == 2 => {
+                self.metadata.firmware_version =
+                    Some(RNodeFirmwareVersion { major: frame.payload[0], minor: frame.payload[1] });
+            }
+            CMD_PLATFORM if frame.payload.len() == 1 => {
+                self.metadata.platform = frame.payload.first().copied();
+            }
+            CMD_MCU if frame.payload.len() == 1 => {
+                self.metadata.mcu = frame.payload.first().copied();
+            }
+            CMD_BOARD if frame.payload.len() == 1 => {
+                self.metadata.board = frame.payload.first().copied();
+            }
+            CMD_ROM_READ if frame.payload.len() == RNODE_ROM_SIZE => {
+                self.metadata.product = frame.payload.get(ROM_PRODUCT).copied();
+                self.metadata.model = frame.payload.get(ROM_MODEL).copied();
+                self.metadata.hardware_revision = frame.payload.get(ROM_HARDWARE_REVISION).copied();
+            }
+            CMD_HASHES if frame.payload.len() == FIRMWARE_HASH_LEN + 1 => {
+                let mut hash = [0; FIRMWARE_HASH_LEN];
+                hash.copy_from_slice(&frame.payload[1..]);
+                match frame.payload[0] {
+                    TARGET_FIRMWARE_HASH => self.metadata.target_firmware_hash = Some(hash),
+                    RUNNING_FIRMWARE_HASH => self.metadata.running_firmware_hash = Some(hash),
+                    _ => {}
+                }
+            }
             _ => {}
         }
         if was_ready && is_configuration_readback && !self.configuration_matches() {
@@ -418,6 +497,11 @@ impl<B: RNodeByteAttempt> RNodeEngine<B> {
         let mut output = self.protocol.feed(&bytes).map_err(|error| error.to_string())?;
         self.write_all(std::mem::take(&mut output.writes)).await?;
         Ok(output)
+    }
+
+    #[must_use]
+    pub const fn metadata(&self) -> &RNodeMetadata {
+        self.protocol.metadata()
     }
 
     pub async fn send_packet(&mut self, packet: &[u8]) -> Result<(), String> {
@@ -531,19 +615,43 @@ pub enum RNodeState {
 }
 
 #[cfg(feature = "serial")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RNodeStatusSnapshot {
+    pub state: RNodeState,
+    pub generation: u64,
+    pub metadata: RNodeMetadata,
+}
+
+#[cfg(feature = "serial")]
 #[derive(Clone)]
 pub struct RNodeStatus {
-    state: Arc<Mutex<RNodeState>>,
+    snapshot: Arc<Mutex<RNodeStatusSnapshot>>,
 }
 
 #[cfg(feature = "serial")]
 impl RNodeStatus {
     pub fn state(&self) -> RNodeState {
-        *self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.snapshot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).state
+    }
+
+    pub fn snapshot(&self) -> RNodeStatusSnapshot {
+        self.snapshot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
     }
 
     fn set(&self, state: RNodeState) {
-        *self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = state;
+        self.snapshot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).state = state;
+    }
+
+    fn begin_attempt(&self) -> Result<(), &'static str> {
+        let mut snapshot = self.snapshot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        snapshot.generation =
+            snapshot.generation.checked_add(1).ok_or("RNode status generation exhausted")?;
+        snapshot.metadata = RNodeMetadata::default();
+        Ok(())
+    }
+
+    fn set_metadata(&self, metadata: RNodeMetadata) {
+        self.snapshot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).metadata = metadata;
     }
 }
 
@@ -571,7 +679,13 @@ impl RNodeInterface {
             profile,
             reconnect_delay: DEFAULT_RECONNECT_DELAY,
             command_timeout: DEFAULT_COMMAND_TIMEOUT,
-            status: RNodeStatus { state: Arc::new(Mutex::new(RNodeState::Disconnected)) },
+            status: RNodeStatus {
+                snapshot: Arc::new(Mutex::new(RNodeStatusSnapshot {
+                    state: RNodeState::Disconnected,
+                    generation: 0,
+                    metadata: RNodeMetadata::default(),
+                })),
+            },
         })
     }
 
@@ -612,6 +726,10 @@ impl RNodeInterface {
         let (rx_channel, mut tx_channel) = context.channel.split();
 
         while !context.cancel.is_cancelled() && !iface_stop.is_cancelled() {
+            if status.begin_attempt().is_err() {
+                crate::transport_diagnostic!("[rnode] status generation exhausted");
+                break;
+            }
             status.set(RNodeState::Disconnected);
             runtime.set_state(InterfaceState::Connecting);
             let attempt = SerialAttempt { path: path.clone(), baud_rate, stream: None };
@@ -712,6 +830,7 @@ async fn run_serial_session(
     let configure = async {
         loop {
             let output = engine.poll().await?;
+            status.set_metadata(engine.metadata().clone());
             if output.became_ready {
                 return Ok::<(), String>(());
             }
@@ -819,7 +938,7 @@ mod tests {
         let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
         let mut protocol = RNodeProtocol::new(profile);
         let startup = protocol.start().expect("startup frames");
-        assert_eq!(startup.len(), 4);
+        assert_eq!(startup.len(), 8);
         assert_eq!(protocol.encode_packet(b"blocked"), Err(RNodeProtocolError::NotReady));
 
         let output = protocol.feed(&configured_responses(profile)).expect("responses");
@@ -829,6 +948,100 @@ mod tests {
             protocol.encode_packet(b"packet").expect("packet"),
             kiss_encode_command(0, b"packet")
         );
+    }
+
+    #[test]
+    fn metadata_responses_are_retained_across_fragmented_feeds() {
+        let mut protocol = RNodeProtocol::new(RNodeRadioProfile::US_915_DEVELOPMENT);
+        let startup = protocol.start().expect("startup frames");
+        let commands = startup
+            .iter()
+            .map(|write| {
+                let mut decoder = KissDecoder::new();
+                decoder.feed(write);
+                decoder.take_kiss_frame().expect("inspection frame")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            commands,
+            [
+                KissFrame { command: CMD_DETECT, payload: vec![DETECT_REQUEST] },
+                KissFrame { command: CMD_FIRMWARE_VERSION, payload: vec![0] },
+                KissFrame { command: CMD_PLATFORM, payload: vec![0] },
+                KissFrame { command: CMD_MCU, payload: vec![0] },
+                KissFrame { command: CMD_BOARD, payload: vec![0] },
+                KissFrame { command: CMD_ROM_READ, payload: vec![0] },
+                KissFrame { command: CMD_HASHES, payload: vec![TARGET_FIRMWARE_HASH] },
+                KissFrame { command: CMD_HASHES, payload: vec![RUNNING_FIRMWARE_HASH] },
+            ]
+        );
+
+        let version = kiss_encode_command(CMD_FIRMWARE_VERSION, &[1, 86]);
+        protocol.feed(&version[..2]).expect("version fragment");
+        protocol.feed(&version[2..]).expect("version completion");
+        protocol.feed(&kiss_encode_command(CMD_PLATFORM, &[0x70])).expect("platform");
+        protocol.feed(&kiss_encode_command(CMD_MCU, &[0x71])).expect("MCU");
+        protocol.feed(&kiss_encode_command(CMD_BOARD, &[0x51])).expect("board");
+
+        let mut rom = vec![0xff; RNODE_ROM_SIZE];
+        rom[ROM_PRODUCT] = 0x10;
+        rom[ROM_MODEL] = 0x12;
+        rom[ROM_HARDWARE_REVISION] = 0x01;
+        protocol.feed(&kiss_encode_command(CMD_ROM_READ, &rom)).expect("ROM");
+
+        let target_hash = [0x11; FIRMWARE_HASH_LEN];
+        let running_hash = [0x22; FIRMWARE_HASH_LEN];
+        protocol
+            .feed(&kiss_encode_command(
+                CMD_HASHES,
+                &[&[TARGET_FIRMWARE_HASH], target_hash.as_slice()].concat(),
+            ))
+            .expect("target hash");
+        protocol
+            .feed(&kiss_encode_command(
+                CMD_HASHES,
+                &[&[RUNNING_FIRMWARE_HASH], running_hash.as_slice()].concat(),
+            ))
+            .expect("running hash");
+
+        assert_eq!(
+            protocol.metadata(),
+            &RNodeMetadata {
+                firmware_version: Some(RNodeFirmwareVersion { major: 1, minor: 86 }),
+                platform: Some(0x70),
+                mcu: Some(0x71),
+                board: Some(0x51),
+                product: Some(0x10),
+                model: Some(0x12),
+                hardware_revision: Some(0x01),
+                target_firmware_hash: Some(target_hash),
+                running_firmware_hash: Some(running_hash),
+            }
+        );
+    }
+
+    #[test]
+    fn malformed_metadata_does_not_replace_valid_observations() {
+        let mut protocol = RNodeProtocol::new(RNodeRadioProfile::US_915_DEVELOPMENT);
+        protocol.start().expect("startup");
+        protocol.feed(&kiss_encode_command(CMD_FIRMWARE_VERSION, &[1, 86])).expect("version");
+        protocol.feed(&kiss_encode_command(CMD_PLATFORM, &[0x70])).expect("platform");
+        protocol.feed(&kiss_encode_command(CMD_MCU, &[0x71])).expect("MCU");
+        protocol.feed(&kiss_encode_command(CMD_BOARD, &[0x51])).expect("board");
+        let retained = protocol.metadata().clone();
+
+        for (command, payload) in [
+            (CMD_FIRMWARE_VERSION, vec![2]),
+            (CMD_PLATFORM, vec![0x80, 0x81]),
+            (CMD_MCU, Vec::new()),
+            (CMD_BOARD, vec![0x52, 0x53]),
+            (CMD_ROM_READ, vec![0; RNODE_ROM_SIZE - 1]),
+            (CMD_HASHES, vec![TARGET_FIRMWARE_HASH; FIRMWARE_HASH_LEN]),
+        ] {
+            protocol.feed(&kiss_encode_command(command, &payload)).expect("malformed response");
+        }
+
+        assert_eq!(protocol.metadata(), &retained);
     }
 
     #[test]
@@ -867,6 +1080,28 @@ mod tests {
         assert_eq!(interface.hardware_mtu(), Some(RNODE_MTU));
         assert_eq!(interface.bitrate(), Some(5_468));
         assert!(interface.supports_link_mtu_discovery());
+    }
+
+    #[cfg(feature = "serial")]
+    #[test]
+    fn native_status_scopes_metadata_to_an_attempt_generation() {
+        let interface =
+            RNodeInterface::new("/dev/test-rnode", RNodeRadioProfile::US_915_DEVELOPMENT)
+                .expect("valid native interface");
+        let status = interface.status();
+        let clone = status.clone();
+        status.begin_attempt().expect("begin first attempt");
+        status.set_metadata(RNodeMetadata {
+            platform: Some(0x70),
+            mcu: Some(0x71),
+            ..RNodeMetadata::default()
+        });
+
+        assert_eq!(clone.snapshot().generation, 1);
+        assert_eq!(clone.snapshot().metadata.platform, Some(0x70));
+        status.begin_attempt().expect("begin second attempt");
+        assert_eq!(clone.snapshot().generation, 2);
+        assert_eq!(clone.snapshot().metadata, RNodeMetadata::default());
     }
 
     #[test]
@@ -1007,6 +1242,38 @@ mod tests {
         );
         engine.open().await.expect("open");
         assert_eq!(engine.poll().await.expect("empty read"), RNodeProtocolOutput::default());
+    }
+
+    #[tokio::test]
+    async fn engine_retains_metadata_after_poll_output_is_consumed() {
+        let info = RNodeBearerInfo {
+            kind: RNodeBearerKind::AndroidUsb,
+            negotiated_mtu: None,
+            max_write_size: Some(512),
+        };
+        let responses = [
+            kiss_encode_command(CMD_FIRMWARE_VERSION, &[1, 86]),
+            kiss_encode_command(CMD_PLATFORM, &[0x70]),
+            kiss_encode_command(CMD_MCU, &[0x71]),
+        ]
+        .concat();
+        let mut engine = RNodeEngine::new(
+            TestAttempt {
+                info: Some(info),
+                reads: VecDeque::from([responses]),
+                ..Default::default()
+            },
+            RNodeRadioProfile::US_915_DEVELOPMENT,
+        );
+        engine.open().await.expect("open");
+        engine.poll().await.expect("metadata poll");
+
+        assert_eq!(
+            engine.metadata().firmware_version,
+            Some(RNodeFirmwareVersion { major: 1, minor: 86 })
+        );
+        assert_eq!(engine.metadata().platform, Some(0x70));
+        assert_eq!(engine.metadata().mcu, Some(0x71));
     }
 
     #[test]

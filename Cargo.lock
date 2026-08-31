@@ -4628,6 +4628,7 @@ dependencies = [
  "styrene-mesh",
  "styrene-micron",
  "styrene-rbac",
+ "styrene-rnode-firmware",
  "styrene-rns",
  "styrene-services",
  "styrene-tunnel",

@@ -2978,6 +2978,19 @@ impl MobileNode {
         Ok(fragment_rnode_writes(attempt.info, output.writes))
     }
 
+    /// Return read-only RNode facts only for the current byte-attempt generation.
+    pub async fn rnode_metadata(
+        &self,
+        attempt: MobileRNodeAttempt,
+    ) -> Result<Option<rns_core::transport::iface::rnode::RNodeMetadata>, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let attempts = rnode.attempts.lock().await;
+        if attempts.active != Some(attempt) {
+            return Ok(None);
+        }
+        Ok(Some(rnode.protocol.lock().await.metadata().clone()))
+    }
+
     /// Poll and KISS-frame one outbound RNS packet as ordered bounded writes.
     pub async fn poll_rnode_bytes(
         &self,
@@ -4795,8 +4808,9 @@ mod tests {
     async fn configured_rnode_bytes_attribute_bluetooth_without_usb_fallback() {
         use rns_core::transport::iface::kiss::kiss_encode_command;
         use rns_core::transport::iface::rnode::{
-            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FREQUENCY, CMD_RADIO_STATE,
-            CMD_SPREADING_FACTOR, CMD_TX_POWER, RNodeRadioProfile,
+            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FIRMWARE_VERSION, CMD_FREQUENCY,
+            CMD_MCU, CMD_PLATFORM, CMD_RADIO_STATE, CMD_SPREADING_FACTOR, CMD_TX_POWER,
+            RNodeFirmwareVersion, RNodeRadioProfile,
         };
 
         let root = tempfile::tempdir().unwrap();
@@ -4830,7 +4844,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(start.writes.len(), 4);
+        assert_eq!(start.writes.len(), 8);
         let connecting = node.session_snapshot().await;
         assert_eq!(
             connecting.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
@@ -4842,6 +4856,17 @@ mod tests {
         );
 
         let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
+        let metadata = [
+            kiss_encode_command(CMD_FIRMWARE_VERSION, &[1, 86]),
+            kiss_encode_command(CMD_PLATFORM, &[0x70]),
+            kiss_encode_command(CMD_MCU, &[0x71]),
+        ]
+        .concat();
+        node.submit_rnode_bytes(start.attempt, &metadata).await.unwrap();
+        let observed = node.rnode_metadata(start.attempt).await.unwrap().unwrap();
+        assert_eq!(observed.firmware_version, Some(RNodeFirmwareVersion { major: 1, minor: 86 }));
+        assert_eq!(observed.platform, Some(0x70));
+        assert_eq!(observed.mcu, Some(0x71));
         let detect = kiss_encode_command(CMD_DETECT, &[0x46]);
         assert_eq!(node.submit_rnode_bytes(start.attempt, &detect).await.unwrap().len(), 6);
         let readback = [
@@ -4875,6 +4900,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!shutdown.is_empty());
+        assert_eq!(node.rnode_metadata(start.attempt).await.unwrap(), None);
         let stopped = node.session_snapshot().await;
         assert_eq!(
             stopped.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
@@ -4928,7 +4954,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(start.writes.len(), 4);
+        assert_eq!(start.writes.len(), 8);
 
         let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
         let detect = kiss_encode_command(CMD_DETECT, &[0x46]);
