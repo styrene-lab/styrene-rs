@@ -14,7 +14,7 @@
 - [x] 2.1 Add failing Rust corpus-consumer tests for target observations, capabilities, plans, manifests, and outcomes
 - [x] 2.2 Add canonical RNode target, operation, plan, progress, recovery, and evidence types outside renderer crates
 - [x] 2.3 Retain RNode platform, MCU, model, hardware revision, firmware version, running hash, and target hash observations
-- [ ] 2.4 Implement signed manifest and bounded archive admission against the artifact corpus
+- [x] 2.4 Implement signed manifest and bounded archive admission against the artifact corpus
 - [ ] 2.5 Implement immutable plan confirmation, generation checks, and post-write verification against the workflow corpus
 
 ## 3. Desktop Full-Machine Provisioning

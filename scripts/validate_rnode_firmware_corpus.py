@@ -35,6 +35,7 @@ ARTIFACT_REASONS = {
     "artifact_admitted",
     "manifest_signature_required",
     "manifest_signature_invalid",
+    "manifest_invalid",
     "archive_digest_mismatch",
     "target_mismatch",
     "unsafe_archive",

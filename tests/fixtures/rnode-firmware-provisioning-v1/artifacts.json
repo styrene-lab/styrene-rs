@@ -48,6 +48,15 @@
       "expected": {"decision": "deny", "reason": "manifest_signature_invalid"}
     },
     {
+      "id": "artifact.signed-malformed-manifest",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": [],
+      "layout_findings": ["manifest_invalid"],
+      "expected": {"decision": "deny", "reason": "manifest_invalid"}
+    },
+    {
       "id": "artifact.archive-hash-mismatch",
       "manifest_signature": "valid",
       "archive_digest": "mismatch",
