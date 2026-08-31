@@ -114,6 +114,18 @@ count, and progress regression. It preserves whether disconnect occurred before,
 during, or after the reported transfer. This contract performs no scan,
 connection, protocol command, packet write, or recovery decision.
 
+The bounded Apple transport is retained in `styrene-ui` revision
+`ed250481a5570c21febad53b2b7ab31d4830c528`. It implements only the RAK4631
+Legacy DFU `0.8` application sequence. It requires an admitted init packet,
+application bytes, and separate DFU peripheral identity. The bridge does not
+scan for or select a DFU peripheral.
+
+The transport uses fixed 20-byte packets and packet receipt notification
+interval 8. It reports progress only from exact remote offsets. Remote transfer
+and validation must complete before the bridge sends Activate and Reset. Only a
+disconnect after that command is an expected transport completion. Product
+success still requires NUS reconnection and authoritative RNode verification.
+
 ## Corpus-First Gate
 
 Three corpuses precede implementation:

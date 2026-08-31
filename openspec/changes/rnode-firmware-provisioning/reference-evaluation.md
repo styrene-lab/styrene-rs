@@ -50,6 +50,28 @@ A physical double-reset then exposed the read-only `RAK4631` UF2 volume. Its
 No firmware file was copied to the volume. A final physical reset returned the
 board to normal USB mode as `239a:8029`.
 
+## Bootloader Protocol Source
+
+WisBlock revision `adbeffead0ebaa17a4e7b5f8978aeec606a1993d` contains the
+RAK4631 bootloader source associated with the observed 2023-05-20 release. The
+source implements Nordic Legacy DFU protocol `0.8`. It does not implement the
+Secure DFU `FE59` object protocol.
+
+The Legacy DFU service uses UUID `00001530-1212-EFDE-1523-785FEABCD123`.
+Control, packet, and version characteristics use UUID suffixes `1531`, `1532`,
+and `1534`. The version characteristic contains little-endian value `0x0008`.
+The control characteristic uses writes with response and notifications. The
+packet characteristic uses writes without response.
+
+The source limits the ATT payload to 20 bytes. Application firmware must be
+word-aligned. Extended init packets have a 64-byte limit and contain a
+CRC-16/CCITT-FALSE application checksum. The application sequence uses image
+type `0x04`. Packet receipt notifications contain the remote byte offset.
+
+This source evidence defines a bounded implementation target. It does not prove
+that the observed physical candidate exposes the BLE service, accepts writes,
+or returns correct packet receipt notifications.
+
 ## Artifact Evidence
 
 The external artifact directory retained a canonical RNode Firmware 1.86 build:
@@ -93,6 +115,7 @@ post-write verification.
 | RAK4631, RAK19003, and 915 MHz physical observations | Investigate | Useful candidate facts, but hardware revision and retained photographic evidence are absent. |
 | Separate normal and serial-DFU USB identities | Adopt as evidence | The same attached candidate was observed in both modes without a firmware write. |
 | Exact bootloader observation | Adopt as evidence | Read-only UF2 metadata identifies bootloader `0.4.3` and SoftDevice `S140 6.1.1`. |
+| Pinned Legacy DFU `0.8` source contract | Adopt for implementation | The associated RAK source defines exact UUIDs, commands, packet limits, CRC, and response framing. |
 | BLE application upgrade claim | Defer | The reference exercises USB serial DFU only. It contains no BLE DFU service evidence. |
 | `delivery-approved` status | Skip | The retained provenance says delivery is blocked, and physical flash verification is incomplete. |
 | Committed stable USB serial | Skip | Stable device identifiers are prohibited in retained Styrene evidence. |

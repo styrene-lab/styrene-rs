@@ -32,7 +32,7 @@
 
 - [x] 4.1 Record one RAK4631 board and bootloader revision for acceptance without committing stable peripheral identity
 - [x] 4.2 Add failing mobile and Apple-bridge tests for NUS shutdown, DFU discovery, generation rejection, bounded progress, interruption, and recovery
-- [ ] 4.3 Implement the bounded iOS nRF52 BLE DFU transport without firmware selection policy in the Apple bridge
+- [x] 4.3 Implement the bounded iOS nRF52 BLE DFU transport without firmware selection policy in the Apple bridge
 - [ ] 4.4 Expose application upgrade only for the exact accepted board and bootloader combination
 - [ ] 4.5 Verify foreground behavior, manual DFU entry, identity change, MTU and PRN behavior, interruption, reconnect, and post-write hash
 - [ ] 4.6 Retain physical acceptance evidence before enabling the mobile BLE upgrade claim
