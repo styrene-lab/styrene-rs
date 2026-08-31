@@ -28,7 +28,7 @@ test:
         -p styrene-entropy -p styrene-content -p styrene-telemetry \
         -p styrene-rns -p styrene-lxmf -p styrene-mesh -p styrene-ipc \
         -p styrene-identity -p styrene-tunnel -p styrene-micron \
-        -p styrene-rbac -p styrene-secrets -p styrene-services \
+        -p styrene-rbac -p styrene-rnode-firmware -p styrene-secrets -p styrene-services \
         -p styrene-a2a -p styrene-mqtt -p styrene-forge -p styrene-amcp
     target/check-fixture-immutability verify target/identity-vectors.snapshot \
         crates/libs/styrene-identity/tests/test-vectors.json \
@@ -78,6 +78,7 @@ check-library-minimal:
     cargo test --lib --no-default-features -p styrene-lxmf
     cargo check --lib --no-default-features -p styrene-mesh
     cargo check --lib --no-default-features -p styrene-rbac
+    cargo check --lib --no-default-features -p styrene-rnode-firmware
     cargo check --lib --no-default-features -p styrene-identity
     cargo check --lib --no-default-features -p styrene-secrets
 
