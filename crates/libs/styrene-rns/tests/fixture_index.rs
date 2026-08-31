@@ -4,15 +4,26 @@ use common::{load_rns_index, load_rns_vector_bytes, rns_vector};
 
 const RNS_1_4_2: &str = "b48b96e61676504e0a4e527b33b9a0b4495c6872";
 const RNS_1_5_1: &str = "149e4151095adf098b8f53eab0c03b37169e8559";
+const RNS_1_5_2: &str = "ea98db4f53dcf0defc0e71a16e60d28b1229c4e6";
+
+#[derive(serde::Deserialize)]
+struct EmptyCarrierCase {
+    source_symbol: String,
+    empty_input: String,
+    inbound_calls: u64,
+    rx_bytes_delta: u64,
+}
 
 #[test]
-fn committed_v2_index_exposes_both_immutable_authorities() {
+fn committed_v2_index_exposes_immutable_authorities() {
     let index = load_rns_index().expect("committed RNS fixture index must validate");
     assert_eq!(index.schema_version, 2);
     assert_eq!(index.authorities["rns-1.4.2"].revision, RNS_1_4_2);
     assert_eq!(index.authorities["rns-1.4.2"].release, "1.4.2");
     assert_eq!(index.authorities["rns-1.5.1"].revision, RNS_1_5_1);
     assert_eq!(index.authorities["rns-1.5.1"].release, "1.5.1");
+    assert_eq!(index.authorities["rns-1.5.2"].revision, RNS_1_5_2);
+    assert_eq!(index.authorities["rns-1.5.2"].release, "1.5.2");
     assert!(
         index
             .authorities
@@ -33,6 +44,22 @@ fn every_committed_vector_resolves_to_digest_checked_bytes() {
                 .expect("indexed artifact must pass digest validation")
                 .is_empty()
         );
+    }
+}
+
+#[test]
+fn reticulum_1_5_2_empty_carrier_evidence_is_complete() {
+    let index = load_rns_index().expect("committed RNS fixture index must validate");
+    let bytes = load_rns_vector_bytes(&index, "rns-1.5.2-empty-carrier-input")
+        .expect("empty-carrier fixture");
+    let cases: Vec<EmptyCarrierCase> = serde_json::from_slice(&bytes).expect("fixture cases");
+
+    assert_eq!(cases.len(), 8);
+    for case in cases {
+        assert!(case.source_symbol.ends_with(".process_incoming"));
+        assert_eq!(case.empty_input, "ignored");
+        assert_eq!(case.inbound_calls, 0);
+        assert_eq!(case.rx_bytes_delta, 0);
     }
 }
 

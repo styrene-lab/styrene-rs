@@ -1,0 +1,50 @@
+[
+  {
+    "empty_input": "ignored",
+    "inbound_calls": 0,
+    "rx_bytes_delta": 0,
+    "source_symbol": "RNS.Interfaces.I2PInterface.I2PInterfacePeer.process_incoming"
+  },
+  {
+    "empty_input": "ignored",
+    "inbound_calls": 0,
+    "rx_bytes_delta": 0,
+    "source_symbol": "RNS.Interfaces.KISSInterface.KISSInterface.process_incoming"
+  },
+  {
+    "empty_input": "ignored",
+    "inbound_calls": 0,
+    "rx_bytes_delta": 0,
+    "source_symbol": "RNS.Interfaces.PipeInterface.PipeInterface.process_incoming"
+  },
+  {
+    "empty_input": "ignored",
+    "inbound_calls": 0,
+    "rx_bytes_delta": 0,
+    "source_symbol": "RNS.Interfaces.RNodeInterface.RNodeInterface.process_incoming"
+  },
+  {
+    "empty_input": "ignored",
+    "inbound_calls": 0,
+    "rx_bytes_delta": 0,
+    "source_symbol": "RNS.Interfaces.RNodeMultiInterface.RNodeSubInterface.process_incoming"
+  },
+  {
+    "empty_input": "ignored",
+    "inbound_calls": 0,
+    "rx_bytes_delta": 0,
+    "source_symbol": "RNS.Interfaces.SerialInterface.SerialInterface.process_incoming"
+  },
+  {
+    "empty_input": "ignored",
+    "inbound_calls": 0,
+    "rx_bytes_delta": 0,
+    "source_symbol": "RNS.Interfaces.TCPInterface.TCPClientInterface.process_incoming"
+  },
+  {
+    "empty_input": "ignored",
+    "inbound_calls": 0,
+    "rx_bytes_delta": 0,
+    "source_symbol": "RNS.Interfaces.UDPInterface.UDPInterface.process_incoming"
+  }
+]
