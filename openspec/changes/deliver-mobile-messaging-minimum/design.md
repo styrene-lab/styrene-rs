@@ -52,6 +52,13 @@ The recovered inventory starts with these evidence scopes:
 - Skywave `1.0` build `5`, with Reticulum `0.9.4`, is an observed RNS/LXMF
   application for public TCP connection and canonical `lxmf.delivery` announces
   only. It has no retained propagation or full-message acceptance evidence.
+- Skywave `1.0` build `9` is installed as the iOS beta bundle
+  `co.horsfalldesign.skywave`. Privacy-reviewed physical-device captures now
+  record its read-only launch, navigation, identity, interface, propagation, and
+  composition-entry surfaces and report Reticulum `1.4.2`. It remains a
+  candidate until distribution provenance and immutable publication are
+  resolved. Build `9` does not inherit build `5` interoperability evidence, and
+  no LXMF revision was established by the capture.
 - Python Reticulum `1.4.2` at
   `b48b96e61676504e0a4e527b33b9a0b4495c6872` and Python LXMF at
   `795fdaa2b0777c13033787d933d1afc94a2377cb` are protocol authorities.
