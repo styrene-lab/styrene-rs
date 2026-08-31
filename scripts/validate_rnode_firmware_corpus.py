@@ -123,7 +123,13 @@ def _validate_capabilities(document: dict[str, Any], path: pathlib.Path) -> list
         if not isinstance(target_id, str) or not target_id or target_id in target_by_id:
             errors.append(f"{prefix}: missing or duplicate target id {target_id!r}")
             continue
-        for field in ("mcu_family", "bootloader", "configured", "physical_acceptance"):
+        for field in (
+            "mcu_family",
+            "bootloader",
+            "bootloader_revision",
+            "configured",
+            "physical_acceptance",
+        ):
             if field not in target:
                 errors.append(f"{prefix}: {target_id}: missing {field}")
         target_by_id[target_id] = target
@@ -149,6 +155,8 @@ def _validate_capabilities(document: dict[str, Any], path: pathlib.Path) -> list
                 errors.append(f"{case_prefix}: mobile upgrade requires accepted nRF52840 evidence")
             if target.get("configured") != "yes":
                 errors.append(f"{case_prefix}: mobile upgrade requires a configured RNode")
+            if not target.get("bootloader_revision"):
+                errors.append(f"{case_prefix}: mobile upgrade requires an exact bootloader revision")
     return errors
 
 

@@ -59,6 +59,9 @@ impl CapabilityRequest {
             if self.target.mcu_family != McuFamily::Nrf52840 {
                 return deny(CapabilityReason::MobileExecutorUnavailable);
             }
+            if self.target.bootloader_revision.is_none() {
+                return deny(CapabilityReason::ExactTargetUnknown);
+            }
             if self.operation == FirmwareOperation::FreshInstall && !self.physical_acceptance {
                 return deny(CapabilityReason::PhysicalEvidenceMissing);
             }
