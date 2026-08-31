@@ -40,7 +40,7 @@
 ## 5. Fresh BLE Investigation
 <!-- specs: mobile-ble-firmware-update, provisioning-evidence -->
 
-- [ ] 5.1 Add a denied-by-default corpus row for a factory DFU bootloader without configured RNode state
+- [x] 5.1 Add a denied-by-default corpus row for a factory DFU bootloader without configured RNode state
 - [ ] 5.2 Test application install and complete RNode provisioning on one exact factory-bootstrapped board
 - [ ] 5.3 Enable fresh BLE installation only if physical evidence proves application, metadata, identity, signature, and post-write verification
 
