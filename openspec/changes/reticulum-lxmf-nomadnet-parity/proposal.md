@@ -22,7 +22,7 @@ Establish and meet evidence-backed baseline parity for ordinary Reticulum operat
 - NomadNet publishing and site administration before browsing parity is stable
 - Fault injection in ordinary Operate workflows
 - Treating Rust-only, Fixture, or Styrene-specific transport tests as upstream interoperability evidence
-- Maintaining duplicate protocol implementations in `styrene-dx`
+- Maintaining duplicate protocol implementations in `styrene-ui`
 
 ## Success criteria
 

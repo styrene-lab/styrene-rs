@@ -3,13 +3,14 @@
 ## Repository Roles
 
 `styrene-rs` owns protocol, runtime, daemon, IPC, transports, shared client and
-session crates, backend fixtures, and the Ratatui client.
+session contracts, backend fixtures, and the Ratatui client.
 
 `styrene-ui` owns Dioxus presentation, renderer-neutral presentation stores,
 desktop and mobile packaging, assets, native platform adapters, and UI tests.
 
-The planned canonical repository is `styrene-lab/styrene-ui`. Repository creation
-must stop if that target or its governance cannot be confirmed.
+The canonical Dioxus repository is `styrene-lab/styrene-ui`. `styrene-rs` no
+longer accepts Dioxus application changes. Remaining work that changes a backend
+contract and its Dioxus consumer is coordinated across both repositories.
 
 ## Extraction Method
 
@@ -18,10 +19,10 @@ rewrite the consolidation checkout or the reserved long-running Styrene clone.
 The extraction retains history for `crates/apps/styrene-dx` and records the
 source `styrene-rs` revision in migration documentation.
 
-After the new repository passes its acceptance gates, `styrene-rs` removes the
-maintained Dioxus copy in a separate reviewable commit. A short pointer may
-remain. There is no period where two repositories accept independent product
-changes to the same Dioxus source.
+The authority switch removes the maintained Dioxus copy from `styrene-rs` in a
+separate reviewable commit and leaves repository and compatibility pointers.
+There is no period where two repositories accept independent product changes to
+the same Dioxus source.
 
 ## Initial Workspace
 
@@ -48,7 +49,8 @@ commit identifier. Released crate versions may replace Git dependencies after
 the shared contracts have a compatible release policy. Local path overrides are
 allowed only in untracked developer configuration.
 
-`styrene-ui` consumes the shared client and session crates. It must not import
+`styrene-ui` consumes public shared client, session, and IPC contracts from
+`styrene-rs`. It must not import
 server wire modules or use private daemon internals. Protocol Lab uses the
 published runner boundary or a separately installed runner executable. Dioxus
 tasks never supervise Python or protocol test processes directly.
@@ -61,7 +63,9 @@ Breaking backend changes land with a migration path or a coordinated GUI pin.
 
 ## Rollout And Recovery
 
-The in-tree Dioxus application remains authoritative during extraction. The new
-repository must pass formatting, lint, unit, component, runtime-profile, and
-applicable Lab tests. If validation fails, the source remains in `styrene-rs`.
-No partial authority switch occurs.
+The Dioxus authority switch is complete: `styrene-ui` is authoritative and the
+maintained `styrene-dx` source is removed from `styrene-rs`. Validation of the
+post-removal `styrene-rs` TUI, workspace, documentation, and release boundary is
+still required before task 5.4 can close. A failed cross-repository change is
+repaired or reverted in its owning repository; it does not restore a second
+editable Dioxus copy to `styrene-rs`.

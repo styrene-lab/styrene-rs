@@ -37,9 +37,11 @@ styrene-lxmf    LXMF messaging
 styrene-mesh    Styrene wire protocol
 styrene-ipc     IPC type definitions
 styrened        Daemon + RPC server
-styrene-dx      Desktop app (Dioxus)
 styrene-tui     Terminal UI (Ratatui)
 `=
+
+Desktop and mobile UI source and packaging are maintained at:
+https://github.com/styrene-lab/styrene-ui
 
 -
 

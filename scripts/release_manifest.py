@@ -21,10 +21,10 @@ TARGETS = (
 
 # Binaries included per target
 BINARIES = {
-    "aarch64-apple-darwin": ["styrene", "styrened", "styrene-tui", "styrene-dx"],
-    "x86_64-apple-darwin": ["styrene", "styrened", "styrene-tui", "styrene-dx"],
+    "aarch64-apple-darwin": ["styrene", "styrened", "styrene-tui"],
+    "x86_64-apple-darwin": ["styrene", "styrened", "styrene-tui"],
     "aarch64-unknown-linux-gnu": ["styrene", "styrened", "styrene-tui"],
-    "x86_64-unknown-linux-gnu": ["styrene", "styrened", "styrene-tui", "styrene-dx"],
+    "x86_64-unknown-linux-gnu": ["styrene", "styrened", "styrene-tui"],
 }
 
 
