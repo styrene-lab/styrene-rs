@@ -12,11 +12,18 @@ capabilities. The iOS host can use CoreBluetooth only. Mobile support is limited
 to nRF52 application upgrades through physically accepted BLE DFU bootloaders.
 Normal RNode NUS traffic and bootloader DFU are separate sessions.
 
-`docs/hardware-evidence-boundary.md` currently assigns flashing to Nex. Before a
-write executor lands, that boundary must identify a versioned provisioning core
-that Styrene desktop and mobile hosts can call without moving policy into UI
-code. The implementation can remain Nex-owned if it is consumable as a bounded
-library or service.
+`docs/hardware-evidence-boundary.md` assigns generic flashing and hardware
+lifecycle tooling to Nex. RNode provisioning is a narrow product exception.
+Styrene owns exact target and artifact admission, immutable plans, product
+confirmation, RNode metadata semantics, recovery presentation, and verified
+product success. Nex owns reusable discovery, reset, programmer, byte-delivery,
+and low-level read backends.
+
+Until a versioned Nex provisioning API exists, Styrene can retain an exact
+bounded RNode executor adapter. It must accept only an admitted immutable plan.
+It must not accept arbitrary commands, device paths, images, offsets, erase
+ranges, reset sequences, or programmer options. Renderer code remains outside
+the policy and execution boundary.
 
 ## Operation Model
 

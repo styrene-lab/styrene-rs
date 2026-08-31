@@ -47,7 +47,7 @@
 ## 6. Safety And Release
 <!-- specs: firmware-provisioning, mobile-ble-firmware-update, desktop-hardware-provisioning, provisioning-evidence -->
 
-- [ ] 6.1 Reconcile the Nex and Styrene ownership boundary before adding an executor
+- [x] 6.1 Reconcile the Nex and Styrene ownership boundary before adding an executor
 - [ ] 6.2 Document firmware GPL source, notices, artifact retention, and distribution obligations
 - [ ] 6.3 Run corpus, unit, integration, warning-denied Clippy, desktop package, iOS package, and physical-device gates
 - [ ] 6.4 Publish only exact platform, board, bootloader, firmware, executor, and scenario claims supported by retained evidence
