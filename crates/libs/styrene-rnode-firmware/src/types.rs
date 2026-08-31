@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum FirmwareOperation {
     Inspect,
@@ -31,6 +31,18 @@ pub enum ExecutorClass {
     HostSerialAvr,
     HostSerialNrfDfu,
     IosNrfBleDfu,
+}
+
+impl ExecutorClass {
+    #[must_use]
+    pub const fn supports_mcu(self, mcu: McuFamily) -> bool {
+        matches!(
+            (self, mcu),
+            (Self::HostSerialEsp, McuFamily::Esp32 | McuFamily::Esp32s3)
+                | (Self::HostSerialAvr, McuFamily::Avr1284p | McuFamily::AvrMega2560)
+                | (Self::HostSerialNrfDfu | Self::IosNrfBleDfu, McuFamily::Nrf52840)
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -173,6 +185,7 @@ pub struct ImageRegion {
     pub name: String,
     pub region: MemoryRegion,
     pub sha256: Sha256Digest,
+    pub application: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -188,6 +201,9 @@ pub struct ExpectedDeviceState {
 pub struct RecoveryPolicy {
     pub executor: ExecutorClass,
     pub procedure_id: String,
+    pub physical_mode: String,
+    pub tool_id: String,
+    pub power_condition: String,
     pub requires_new_confirmation: bool,
 }
 
@@ -225,12 +241,96 @@ impl FirmwarePlan {
         {
             return Err(ConfirmationError::TargetChanged);
         }
+        self.validate().map_err(ConfirmationError::UnsafePlan)?;
         let digest = self.digest().map_err(|_| ConfirmationError::PlanDigestUnavailable)?;
         if confirmation.plan_digest != digest {
             return Err(ConfirmationError::PlanDigestMismatch);
         }
         Ok(ConfirmedFirmwarePlan { plan: self.clone(), digest })
     }
+
+    pub fn validate(&self) -> Result<(), PlanValidationError> {
+        if self.schema_version != 1
+            || self.target_generation != self.target.generation
+            || !self.target.has_exact_hardware()
+            || self.target.board.as_deref() != Some(self.expected.board.as_str())
+            || self.target.radio_variant.as_deref() != Some(self.expected.radio_variant.as_str())
+            || self.target.hardware_revision.as_deref()
+                != Some(self.expected.hardware_revision.as_str())
+        {
+            return Err(PlanValidationError::TargetMismatch);
+        }
+        if matches!(self.operation, FirmwareOperation::Inspect | FirmwareOperation::Plan)
+            || !self.executor.supports_mcu(self.target.mcu_family)
+            || !self.recovery.executor.supports_mcu(self.target.mcu_family)
+        {
+            return Err(PlanValidationError::ExecutorMismatch);
+        }
+        if self.artifact.manifest_entry.is_empty()
+            || self.artifact.firmware_version.is_empty()
+            || self.expected.firmware_version.is_empty()
+            || self.artifact.firmware_version != self.expected.firmware_version
+            || self.image_regions.is_empty()
+            || self.recovery.procedure_id.is_empty()
+            || self.recovery.physical_mode.is_empty()
+            || self.recovery.tool_id.is_empty()
+            || self.recovery.power_condition.is_empty()
+            || !self.recovery.requires_new_confirmation
+        {
+            return Err(PlanValidationError::IncompletePlan);
+        }
+        let mut applications = self.image_regions.iter().filter(|image| image.application);
+        let application = applications.next();
+        if applications.next().is_some()
+            || application.is_none_or(|image| {
+                image.sha256 != self.artifact.application_sha256
+                    || image.sha256 != self.expected.running_application_hash
+            })
+        {
+            return Err(PlanValidationError::IncompletePlan);
+        }
+        for (index, image) in self.image_regions.iter().enumerate() {
+            if image.name.is_empty() || !valid_region(&image.region) {
+                return Err(PlanValidationError::UnsafeLayout);
+            }
+            if self.image_regions[index + 1..]
+                .iter()
+                .any(|other| regions_overlap(&image.region, &other.region))
+                || self
+                    .preserved_regions
+                    .iter()
+                    .any(|preserved| regions_overlap(&image.region, preserved))
+            {
+                return Err(PlanValidationError::UnsafeLayout);
+            }
+        }
+        if self.preserved_regions.iter().any(|region| !valid_region(region)) {
+            return Err(PlanValidationError::UnsafeLayout);
+        }
+        Ok(())
+    }
+}
+
+fn valid_region(region: &MemoryRegion) -> bool {
+    region.length != 0 && region.offset.checked_add(region.length).is_some()
+}
+
+fn regions_overlap(left: &MemoryRegion, right: &MemoryRegion) -> bool {
+    let Some(left_end) = left.offset.checked_add(left.length) else { return true };
+    let Some(right_end) = right.offset.checked_add(right.length) else { return true };
+    left.offset < right_end && right.offset < left_end
+}
+
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum PlanValidationError {
+    #[error("firmware plan target does not match its expected state")]
+    TargetMismatch,
+    #[error("firmware plan executor does not support its target")]
+    ExecutorMismatch,
+    #[error("firmware plan is incomplete")]
+    IncompletePlan,
+    #[error("firmware plan contains an unsafe memory layout")]
+    UnsafeLayout,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -289,6 +389,8 @@ pub enum ConfirmationError {
     PlanDigestMismatch,
     #[error("firmware plan digest could not be calculated")]
     PlanDigestUnavailable,
+    #[error("firmware plan is unsafe: {0}")]
+    UnsafePlan(PlanValidationError),
 }
 
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]

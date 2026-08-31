@@ -1,9 +1,9 @@
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use styrene_rnode_firmware::{
-    ArchiveMember, ArtifactDecisionReason, ExecutorClass, FirmwareManifest, ManifestArtifact,
-    ManifestImage, ManifestTarget, MemoryRegion, Sha256Digest, SignedFirmwareManifest,
-    TargetObservation, admit_artifact,
+    ArchiveMember, ArtifactDecisionReason, ExecutorClass, FirmwareManifest, FirmwareOperation,
+    ManifestArtifact, ManifestImage, ManifestRecovery, ManifestTarget, MemoryRegion, Sha256Digest,
+    SignedFirmwareManifest, TargetObservation, admit_artifact,
 };
 
 fn digest(bytes: &[u8]) -> Sha256Digest {
@@ -19,6 +19,8 @@ fn fixture() -> Fixture {
     let manifest = FirmwareManifest {
         schema_version: 1,
         manifest_id: "synthetic-exact-v1".into(),
+        firmware_version: "1.86".into(),
+        operations: vec![FirmwareOperation::Upgrade],
         target: ManifestTarget {
             board: "exact-board".into(),
             radio_variant: "sx1262".into(),
@@ -37,6 +39,13 @@ fn fixture() -> Fixture {
             application: true,
         }],
         protected_regions: vec![MemoryRegion { offset: 0x9000, length: 0x1000 }],
+        recovery: ManifestRecovery {
+            executor: ExecutorClass::HostSerialEsp,
+            procedure_id: "synthetic-recovery".into(),
+            physical_mode: "rom_serial_bootloader".into(),
+            tool_id: "bounded_host_serial_esp".into(),
+            power_condition: "stable_usb_power".into(),
+        },
     };
     let payload = serde_json::to_vec(&manifest).expect("manifest payload");
     let key = SigningKey::from_bytes(&[0x42; 32]);
@@ -44,7 +53,11 @@ fn fixture() -> Fixture {
         payload: payload.clone(),
         signature: key.sign(&payload).to_bytes().to_vec(),
     };
-    let target = TargetObservation::default().with_hardware(
+    let target = TargetObservation::new(
+        styrene_rnode_firmware::McuFamily::Esp32,
+        styrene_rnode_firmware::ConfigurationState::Yes,
+    )
+    .with_hardware(
         Some("exact-board".into()),
         Some("sx1262".into()),
         Some("rev-a".into()),

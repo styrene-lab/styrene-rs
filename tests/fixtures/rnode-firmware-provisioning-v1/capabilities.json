@@ -55,6 +55,14 @@
       "expected": {"decision": "allow", "reason": "read_only_inspection"}
     },
     {
+      "id": "capability.desktop.unknown.inspect-destructive-executor",
+      "host": "desktop",
+      "target": "attached-espressif-unknown",
+      "operation": "inspect",
+      "executor": "host_serial_esp",
+      "expected": {"decision": "deny", "reason": "executor_mismatch"}
+    },
+    {
       "id": "capability.desktop.unknown.plan",
       "host": "desktop",
       "target": "attached-espressif-unknown",
@@ -69,6 +77,14 @@
       "operation": "upgrade",
       "executor": "host_serial_esp",
       "expected": {"decision": "deny", "reason": "physical_evidence_missing"}
+    },
+    {
+      "id": "capability.desktop.exact-esp.upgrade-wrong-executor",
+      "host": "desktop",
+      "target": "synthetic-esp32s3-exact",
+      "operation": "upgrade",
+      "executor": "host_serial_avr",
+      "expected": {"decision": "deny", "reason": "executor_mismatch"}
     },
     {
       "id": "capability.desktop.exact-esp.fresh-install-unverified",
