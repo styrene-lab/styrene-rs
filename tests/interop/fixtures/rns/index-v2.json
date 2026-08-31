@@ -10,6 +10,11 @@
       "repository": "https://github.com/markqvist/Reticulum.git",
       "revision": "149e4151095adf098b8f53eab0c03b37169e8559",
       "release": "1.5.1"
+    },
+    "rns-1.5.2": {
+      "repository": "https://github.com/markqvist/Reticulum.git",
+      "revision": "ea98db4f53dcf0defc0e71a16e60d28b1229c4e6",
+      "release": "1.5.2"
     }
   },
   "vectors": [
@@ -217,6 +222,30 @@
         "implementation": "RNS",
         "version": "1.5.1",
         "operator_address_length": 16
+      }
+    },
+    {
+      "id": "rns-1.5.2-empty-carrier-input",
+      "authority_id": "rns-1.5.2",
+      "kind": "empty-carrier-admission-matrix",
+      "artifact": "tests/interop/fixtures/rns/rns-1.5.2/empty-carrier-input.json",
+      "sha256": "1a1e9983597ab3389bb8c77627c037af5ce847f5d7fc3f7361ba70d05400c427",
+      "generator": "tests/interop/python/generate_rns_1_5_2_fixtures.py",
+      "source_symbols": [
+        "RNS.Interfaces.I2PInterface.I2PInterfacePeer.process_incoming",
+        "RNS.Interfaces.KISSInterface.KISSInterface.process_incoming",
+        "RNS.Interfaces.PipeInterface.PipeInterface.process_incoming",
+        "RNS.Interfaces.RNodeInterface.RNodeInterface.process_incoming",
+        "RNS.Interfaces.RNodeMultiInterface.RNodeSubInterface.process_incoming",
+        "RNS.Interfaces.SerialInterface.SerialInterface.process_incoming",
+        "RNS.Interfaces.TCPInterface.TCPClientInterface.process_incoming",
+        "RNS.Interfaces.UDPInterface.UDPInterface.process_incoming"
+      ],
+      "expected": {
+        "type": "acceptance-matrix",
+        "empty_input": "ignored",
+        "inbound_calls": 0,
+        "rx_bytes_delta": 0
       }
     }
   ]
