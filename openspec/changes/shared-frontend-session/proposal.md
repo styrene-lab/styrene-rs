@@ -10,13 +10,15 @@ wire frames or daemon application internals.
 
 This change adds a reusable IPC client, a transport-neutral frontend session,
 explicit Live and Embedded lifecycle adapters, generation-safe subscriptions,
-bounded request brokering, and contract fixtures. It migrates `styrene-tui` and
-the in-tree `styrene-dx` application to that boundary.
+bounded request brokering, and contract fixtures in `styrene-rs`. It migrates
+`styrene-tui` in this repository and coordinates `styrene-ui` adoption through
+public, immutable `styrene-rs` contracts.
 
-This change excludes creating the new GUI repository, redesigning either UI,
-and moving protocol behavior into a frontend crate.
+This change excludes redesigning either UI and moving protocol behavior into a
+frontend crate. Dioxus source and validation remain owned by `styrene-ui`.
 
-This change is the prerequisite for `extract-styrene-ui-repository`.
+The Dioxus authority transfer is complete. Remaining shared-session work is a
+cross-repository contract migration, not an in-tree Dioxus migration.
 
 ## Success criteria
 
@@ -27,4 +29,6 @@ This change is the prerequisite for `extract-styrene-ui-repository`.
   generations have shared tests.
 - Frontend applications no longer parse raw IPC maps or import server wire
   framing.
-- Existing TUI and Dioxus Live, Embedded, Fixture, and failure smoke tests pass.
+- Existing TUI checks pass in `styrene-rs`, and the corresponding Dioxus Live,
+  Embedded, Fixture, and failure checks pass in `styrene-ui` against the declared
+  backend revision.

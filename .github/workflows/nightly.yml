@@ -21,10 +21,9 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --no-deps --exclude styrene-dx -- -D warnings
+      - run: cargo clippy --workspace --all-targets --no-deps -- -D warnings
       - run: |
           cargo test --workspace \
-            --exclude styrene-dx \
             --exclude styrene-e2e \
             --exclude styrene-interop-runner \
             --exclude styrene-i2p \

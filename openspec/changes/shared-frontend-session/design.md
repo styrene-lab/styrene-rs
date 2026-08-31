@@ -33,9 +33,10 @@ clear and no frontend imports server wire implementation details.
 payload parsing with the shared client. Its terminal-specific state and Ratatui
 widgets remain local.
 
-`styrene-dx` replaces its private request broker and daemon bridge with the same
-client. Its domain stores, reducers, routes, and Dioxus components remain local
-until repository extraction.
+`styrene-ui` replaces its private request broker and daemon bridge with the same
+public client and session contracts at a declared immutable `styrene-rs`
+revision. Its stores, reducers, routes, Dioxus components, and validation remain
+in that repository.
 
 The shared boundary does not require Ratatui and Dioxus to share presentation
 reducers. It requires them to consume identical typed daemon semantics.
@@ -58,8 +59,8 @@ Closing a session is idempotent and waits for owned runtime shutdown.
 
 ## Compatibility And Rollout
 
-The reusable client first gains parity tests against the existing TUI and DX
-clients. Ratatui migrates before repository extraction to prove the contract in
-an independent renderer. Dioxus then migrates while still in-tree. The private
-clients are removed only after their smoke and contract suites pass through the
-shared implementation.
+The reusable client first gains parity tests against the existing TUI client in
+`styrene-rs`. Ratatui migrates to prove the contract in an independent renderer.
+`styrene-ui` then pins the reviewed backend revision and migrates Dioxus in its
+own repository. Each private client is removed only after its owning repository's
+smoke and contract suites pass through the shared implementation.

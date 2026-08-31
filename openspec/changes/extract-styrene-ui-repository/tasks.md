@@ -37,8 +37,8 @@
 ## 5. Authority Switch
 <!-- specs: gui-repository/spec -->
 
-- [ ] 5.1 Publish the validated GUI revision and record its tested `styrene-rs` revision
-- [ ] 5.2 Remove the maintained `styrene-dx` source from `styrene-rs` in a separate commit
-- [ ] 5.3 Add repository pointers and coordinated compatibility guidance to both repositories
-- [ ] 5.4 Verify `styrene-rs` TUI, workspace, documentation, and release checks after removal
-- [ ] 5.5 Confirm only `styrene-ui` accepts subsequent Dioxus application changes
+- [x] 5.1 Publish the validated GUI revision and record its tested `styrene-rs` revision
+- [x] 5.2 Remove the maintained `styrene-dx` source from `styrene-rs` in a separate commit
+- [x] 5.3 Add repository pointers and coordinated compatibility guidance to both repositories
+- [x] 5.4 Verify `styrene-rs` TUI, workspace, documentation, and release checks after removal
+- [x] 5.5 Confirm only `styrene-ui` accepts subsequent Dioxus application changes

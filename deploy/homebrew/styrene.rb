@@ -2,7 +2,7 @@
 # frozen_string_literal: true
 
 class Styrene < Formula
-  desc "Reticulum mesh network daemon, terminal UI, and desktop app"
+  desc "Reticulum mesh network daemon and terminal UI"
   homepage "https://github.com/styrene-lab/styrene-rs"
   license "MIT"
   version "0.1.0"
@@ -31,28 +31,23 @@ class Styrene < Formula
     end
   end
 
-  on_linux do
-    depends_on "webkitgtk" => "4.1"
-    depends_on "gtk+3"
-  end
-
   def install
     bin.install "styrened"
     bin.install "styrene-tui"
-    bin.install "styrene-dx" if File.exist?("styrene-dx")
   end
 
   def caveats
     <<~EOS
-      Three binaries are installed:
+      Two binaries are installed:
         styrened     # mesh daemon (runs in background)
         styrene-tui  # terminal UI
-        styrene-dx   # desktop app (Dioxus)
 
       Quick start:
         styrened                    # start the daemon
         styrene-tui                 # launch the TUI
-        styrene-dx                  # launch the desktop app
+
+      For the Styrene desktop app, see:
+        https://github.com/styrene-lab/styrene-ui
 
       To connect to the Styrene Community Hub:
         mkdir -p ~/.config/styrene

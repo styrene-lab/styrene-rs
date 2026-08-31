@@ -20,11 +20,10 @@ brew tap styrene-lab/tap
 brew install styrene
 `=
 
-This installs three binaries:
+This installs two binaries:
 `=
 styrened    -- mesh daemon
 styrene-tui -- terminal UI
-styrene-dx  -- desktop app
 `=
 
 >>Option 2: Download Binary
@@ -45,7 +44,7 @@ styrene-VERSION-aarch64-unknown-linux-gnu.tar.gz
 `=
 git clone https://github.com/styrene-lab/styrene-rs
 cd styrene-rs
-cargo build --release -p styrened -p styrene-tui -p styrene-dx
+cargo build --release -p styrened -p styrene-tui
 `=
 
 -
@@ -79,12 +78,8 @@ export LXMF_DISPLAY_NAME="YourCallsign"
 
 >>Desktop App
 
-`=
-styrene-dx
-`=
-
-The desktop app boots an embedded daemon automatically.
-It reads your config from ~/.config/styrene/config.toml.
+Desktop app packages:
+https://github.com/styrene-lab/styrene-ui/releases/latest
 
 >>Terminal UI
 
@@ -100,7 +95,7 @@ Full-featured operator interface in the terminal.
 styrened
 `=
 
-Run the daemon in background. The desktop app and TUI
+Run the daemon in background. Desktop clients and the TUI
 connect to it via IPC socket.
 
 -

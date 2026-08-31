@@ -11,23 +11,26 @@ The maintained product and workspace are Rust-only. The validation boundary is i
 - `cargo test --workspace` validates every maintained workspace member;
 - neither command depends on a host language runtime outside the Rust toolchain.
 
-Current Cargo metadata reports 25 workspace members. Ordinary validation uses
+Current Cargo metadata reports 24 workspace members. Ordinary validation uses
 the following exact matrix:
 
 ```bash
-cargo check --workspace --all-targets --exclude styrene-dx
-cargo clippy --workspace --all-targets --exclude styrene-dx --no-deps -- -D warnings
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets --no-deps -- -D warnings
 just test                    # explicit deterministic target matrix
 just test-interop            # committed fixtures only
 just test-validation-offline # recipes, workflows, targets, product registry
 ```
 
-`styrene-dx` remains excluded from whole-workspace check and Clippy commands because its desktop WebView dependency is platform-specific. `just test` executes its deterministic component and Fixture tests explicitly without Python or network access.
+The Dioxus application and its WebView dependencies are maintained in
+`styrene-lab/styrene-ui`. They are outside this workspace validation boundary.
+Cross-repository changes must report the applicable `styrene-rs` backend checks
+and `styrene-ui` presentation checks separately.
 
 ## Active validation boundary
 
 `just test` batches pure library packages once, then selects deterministic
-targets for `styrened`, `styrene-e2e`, IPC server, TUI, CLI, and the DX component and Fixture suites.
+targets for `styrened`, `styrene-e2e`, IPC server, TUI, and CLI.
 The selected application targets include config, identity storage, LXMF
 fidelity, NomadNet pages, TUI rendering/state units, and LXMF protocol gates.
 Named listener, live-peer, Python, broker, and subprocess integration targets
