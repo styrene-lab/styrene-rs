@@ -71,6 +71,16 @@ The current attached device reports Espressif USB JTAG/serial with VID/PID
 `303a:1001`. This proves an ESP-family USB interface only. The planner must not
 select a board or radio artifact until exact device metadata is captured.
 
+A second candidate on the `nucleus` host identifies a RAK4631 core on a RAK19003
+carrier from the 915 MHz population. Normal USB mode reports `239a:8029`. A
+non-writing 1200-baud reset reports serial DFU mode as `239a:002a`.
+
+The candidate RNode 1.86 application ZIP has SHA-256
+`3a61632282b7668b6c937646a891a604e6db236ed35473831a7e1575680600d7`.
+Exact bootloader and hardware revisions remain unknown, and BLE DFU was not
+observed. See `reference-evaluation.md`. These facts do not enable a target or
+mobile support claim.
+
 ## State And Failure
 
 The operation state machine separates non-destructive and destructive phases:
