@@ -13,7 +13,7 @@
 use std::sync::{Arc, Mutex};
 use styrene_ipc::error::IpcError;
 use styrene_ipc::traits::Daemon;
-use styrene_ipc::types::SendChatRequest;
+use styrene_ipc::types::{MessageRetryIneligibilityReason, SendChatRequest};
 use styrened::app_context::AppContext;
 use styrened::daemon_facade::DaemonFacade;
 use styrened::storage::messages::{MessageRecord, MessagesStore};
@@ -430,6 +430,8 @@ async fn retry_retains_original_requested_method() {
     );
     let messages = daemon.query_messages(&hex::encode([0x47; 16]), 10, None).await.unwrap();
     let message_id = messages[0].id.clone();
+    assert_eq!(messages[0].retry_eligible, Some(true));
+    assert_eq!(messages[0].retry_ineligibility_reason, None);
     let first_payload = transport
         .calls()
         .into_iter()
@@ -459,6 +461,11 @@ async fn retry_retains_original_requested_method() {
     assert_eq!(messages[0].requested_delivery_method.as_deref(), Some("opportunistic"));
     assert_eq!(messages[0].actual_delivery_method.as_deref(), Some("opportunistic"));
     assert_eq!(messages[0].correlation_id.as_deref(), Some(message_id.as_str()));
+    assert_eq!(messages[0].retry_eligible, Some(false));
+    assert_eq!(
+        messages[0].retry_ineligibility_reason,
+        Some(MessageRetryIneligibilityReason::LifecycleState)
+    );
     assert_eq!(messages[0].attempts.len(), 2);
     assert_eq!(
         messages[0].attempts.iter().map(|attempt| attempt.number).collect::<Vec<_>>(),

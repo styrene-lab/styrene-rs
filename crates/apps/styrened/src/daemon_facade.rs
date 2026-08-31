@@ -389,10 +389,22 @@ impl DaemonFacade {
         let lifecycle = self.ctx.messaging().outbound_lifecycle(message_id).map_err(internal)?;
         let canonical = self.ctx.messaging().canonical_inbound(message_id).map_err(internal)?;
         let mut info = record_to_message_info(message, lifecycle, canonical);
+        self.hydrate_retry_eligibility(&mut info)?;
         self.hydrate_attachments(&mut info)?;
         self.hydrate_propagation_correlations(&mut info)?;
         self.hydrate_delivery_evidence(&mut info)?;
         Ok(Some(info))
+    }
+
+    fn hydrate_retry_eligibility(&self, message: &mut MessageInfo) -> Result<(), IpcError> {
+        let Some((eligible, reason)) =
+            self.ctx.messaging().retry_eligibility(&message.id).map_err(internal)?
+        else {
+            return Ok(());
+        };
+        message.retry_eligible = Some(eligible);
+        message.retry_ineligibility_reason = reason;
+        Ok(())
     }
 
     fn hydrate_delivery_evidence(&self, message: &mut MessageInfo) -> Result<(), IpcError> {
@@ -598,6 +610,28 @@ impl DaemonIdentity for DaemonFacade {
         info.short_name = svc.short_name();
         info.custody = svc.custody();
         Ok(info)
+    }
+
+    async fn query_identity_backup_metadata(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupMetadata, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        self.ctx.identity().identity_backup_metadata()
+    }
+
+    async fn export_identity_backup(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupExport, IpcError> {
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
+        self.ctx.identity().export_identity_backup()
+    }
+
+    async fn restore_identity_backup(
+        &self,
+        backup: styrene_ipc::types::IdentityBackupImport,
+    ) -> Result<styrene_ipc::types::IdentityRestoreOutcome, IpcError> {
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
+        self.ctx.identity().restore_identity_backup(backup)
     }
 
     async fn set_identity(
@@ -1054,6 +1088,7 @@ impl DaemonMessaging for DaemonFacade {
                     snapshot.lifecycle,
                     snapshot.canonical,
                 );
+                self.hydrate_retry_eligibility(&mut info)?;
                 self.hydrate_attachments(&mut info)?;
                 self.hydrate_propagation_correlations(&mut info)?;
                 self.hydrate_delivery_evidence(&mut info)?;
@@ -1094,6 +1129,7 @@ impl DaemonMessaging for DaemonFacade {
                     snapshot.lifecycle,
                     snapshot.canonical,
                 );
+                self.hydrate_retry_eligibility(&mut info)?;
                 self.hydrate_attachments(&mut info)?;
                 self.hydrate_propagation_correlations(&mut info)?;
                 self.hydrate_delivery_evidence(&mut info)?;
@@ -1134,6 +1170,7 @@ impl DaemonMessaging for DaemonFacade {
                     snapshot.lifecycle,
                     snapshot.canonical,
                 );
+                self.hydrate_retry_eligibility(&mut info)?;
                 self.hydrate_attachments(&mut info)?;
                 self.hydrate_propagation_correlations(&mut info)?;
                 self.hydrate_delivery_evidence(&mut info)?;
@@ -2793,6 +2830,35 @@ mod tests {
         assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
         assert!(facade.mark_read_outcome("invalid").await.is_err());
         assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+    }
+
+    #[tokio::test]
+    async fn complete_message_projection_uses_backend_retry_eligibility_not_status_text() {
+        let facade =
+            make_facade_for_role(styrene_rbac::Role::Admin, Arc::new(NullTransport::new()));
+        let record = MessageRecord {
+            id: "inbound-retry-projection".into(),
+            source: "12".repeat(16),
+            destination: "34".repeat(16),
+            title: String::new(),
+            content: "not retryable".into(),
+            timestamp: 1,
+            direction: "in".into(),
+            fields: None,
+            receipt_status: Some("failed: display-only text".into()),
+            read: false,
+        };
+        assert!(facade.ctx.messaging().accept_inbound_record(&record).unwrap());
+
+        let projected = facade.query_message(&record.id).await.unwrap().unwrap();
+
+        assert!(projected.projection_complete);
+        assert_eq!(projected.status, "failed: display-only text");
+        assert_eq!(projected.retry_eligible, Some(false));
+        assert_eq!(
+            projected.retry_ineligibility_reason,
+            Some(styrene_ipc::types::MessageRetryIneligibilityReason::Inbound)
+        );
     }
 
     #[tokio::test]

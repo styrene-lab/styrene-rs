@@ -13,7 +13,8 @@ use serde::de::DeserializeOwned;
 use styrene_ipc::IpcError;
 use styrene_ipc::types::{
     ConfigApplyResult, ConfigSnapshot, ConversationInfo, DaemonStatusInfo, DeviceInfo, ExecResult,
-    IdentityInfo, MessageInfo, PathInfo, RebootResult, RemoteStatusInfo, SendChatOutcome,
+    IdentityBackupExport, IdentityBackupImport, IdentityBackupMetadata, IdentityInfo,
+    IdentityRestoreOutcome, MessageInfo, PathInfo, RebootResult, RemoteStatusInfo, SendChatOutcome,
     SendChatRequest, StandardPropagationSnapshot, TunnelInfo, TunnelOperationInfo,
 };
 use styrene_ipc_wire::{self as wire, Frame, MessageType, REQUEST_ID_SIZE};
@@ -259,6 +260,33 @@ impl Client {
         let frame =
             self.request(MessageType::QueryIdentity, HashMap::new(), DEFAULT_DEADLINE).await?;
         decode_map(&frame.payload, "identity")
+    }
+
+    pub async fn identity_backup_metadata(&self) -> Result<IdentityBackupMetadata, ClientError> {
+        let frame = self
+            .request(MessageType::QueryIdentityBackupMetadata, HashMap::new(), DEFAULT_DEADLINE)
+            .await?;
+        decode_map(&frame.payload, "identity backup metadata")
+    }
+
+    pub async fn export_identity_backup(&self) -> Result<IdentityBackupExport, ClientError> {
+        let frame = self
+            .request(MessageType::CmdExportIdentityBackup, HashMap::new(), DEFAULT_DEADLINE)
+            .await?;
+        decode_map(&frame.payload, "identity backup export")
+    }
+
+    pub async fn restore_identity_backup(
+        &self,
+        backup: &IdentityBackupImport,
+    ) -> Result<IdentityRestoreOutcome, ClientError> {
+        let payload = HashMap::from([(
+            "encrypted_bytes".into(),
+            Value::Binary(backup.encrypted_bytes.clone()),
+        )]);
+        let frame =
+            self.request(MessageType::CmdRestoreIdentityBackup, payload, DEFAULT_DEADLINE).await?;
+        decode_key(&frame.payload, &["outcome"], "identity restore outcome")
     }
 
     pub async fn status(&self) -> Result<DaemonStatusInfo, ClientError> {

@@ -37,7 +37,7 @@ const TAG_LEN: usize = 16;
 /// Expected file size: header(5) + salt(32) + nonce(12) + ciphertext(32+16) = 97 bytes.
 pub const FILE_LEN: usize = HEADER_LEN + SALT_LEN + NONCE_LEN + SECRET_LEN + TAG_LEN;
 /// Legacy file size (v0 format without header).
-const LEGACY_FILE_LEN: usize = SALT_LEN + NONCE_LEN + SECRET_LEN + TAG_LEN;
+pub(crate) const LEGACY_FILE_LEN: usize = SALT_LEN + NONCE_LEN + SECRET_LEN + TAG_LEN;
 
 /// Hardened Argon2id parameters.
 /// m=65536 KiB (64 MiB), t=3 iterations, p=1 parallelism.
@@ -244,7 +244,15 @@ impl FileSigner {
     /// and the legacy headerless format (92 bytes) for backward compatibility.
     pub fn load(&self, passphrase: &[u8]) -> Result<RootSecret, SignerError> {
         let file_data = std::fs::read(&self.path)?;
+        Self::decrypt(&file_data, passphrase)
+    }
 
+    pub(crate) fn load_encrypted_bytes(&self, file_data: &[u8]) -> Result<RootSecret, SignerError> {
+        let passphrase = zeroize::Zeroizing::new(self.passphrase_provider.get_passphrase()?);
+        Self::decrypt(file_data, &passphrase)
+    }
+
+    fn decrypt(file_data: &[u8], passphrase: &[u8]) -> Result<RootSecret, SignerError> {
         // Determine format: versioned (has STID header) or legacy (no header).
         let payload = if file_data.len() == FILE_LEN && file_data.starts_with(MAGIC) {
             let version = file_data[MAGIC.len()];
@@ -256,7 +264,7 @@ impl FileSigner {
             &file_data[HEADER_LEN..]
         } else if file_data.len() == LEGACY_FILE_LEN {
             // Legacy v0 format without header — still supported for migration.
-            &file_data[..]
+            file_data
         } else {
             return Err(SignerError::DecryptionFailed(format!(
                 "invalid identity file: {} bytes (expected {FILE_LEN} or {LEGACY_FILE_LEN})",

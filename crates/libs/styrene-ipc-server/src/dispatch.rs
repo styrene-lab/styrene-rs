@@ -69,6 +69,13 @@ pub async fn dispatch_for_connection(
             dispatch_cancel_attachment_transfer(daemon, &payload).await
         }
         MessageType::QueryIdentity => dispatch_query_identity(daemon).await,
+        MessageType::QueryIdentityBackupMetadata => {
+            dispatch_query_identity_backup_metadata(daemon).await
+        }
+        MessageType::CmdExportIdentityBackup => dispatch_export_identity_backup(daemon).await,
+        MessageType::CmdRestoreIdentityBackup => {
+            dispatch_restore_identity_backup(daemon, &payload).await
+        }
         MessageType::QueryDevices => dispatch_query_devices(daemon, &payload).await,
         MessageType::QueryAutoReply => dispatch_query_auto_reply(daemon).await,
         MessageType::CmdAnnounce => dispatch_announce(daemon).await,
@@ -1083,6 +1090,74 @@ async fn dispatch_query_identity(daemon: &Arc<dyn Daemon>) -> Result<Payload, St
         p.insert("custody".into(), identity_custody_value(custody));
     }
     ok_payload(p)
+}
+
+async fn dispatch_query_identity_backup_metadata(
+    daemon: &Arc<dyn Daemon>,
+) -> Result<Payload, String> {
+    let metadata = daemon.query_identity_backup_metadata().await.map_err(|e| e.to_string())?;
+    Ok(HashMap::from([
+        ("contract_version".into(), metadata.contract_version.into()),
+        ("format".into(), identity_backup_format_value(metadata.format)),
+        ("encrypted_size".into(), metadata.encrypted_size.into()),
+    ]))
+}
+
+async fn dispatch_export_identity_backup(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
+    let backup = daemon.export_identity_backup().await.map_err(|e| e.to_string())?;
+    Ok(HashMap::from([
+        ("metadata".into(), identity_backup_metadata_value(backup.metadata)),
+        ("encrypted_bytes".into(), rmpv::Value::Binary(backup.encrypted_bytes)),
+    ]))
+}
+
+async fn dispatch_restore_identity_backup(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let encrypted_bytes = payload
+        .get("encrypted_bytes")
+        .and_then(rmpv::Value::as_slice)
+        .ok_or_else(|| "encrypted_bytes must be binary".to_string())?
+        .to_vec();
+    let mut backup = styrene_ipc::types::IdentityBackupImport::default();
+    backup.encrypted_bytes = encrypted_bytes;
+    let outcome = daemon.restore_identity_backup(backup).await.map_err(|e| e.to_string())?;
+    Ok(HashMap::from([("outcome".into(), identity_restore_outcome_value(outcome))]))
+}
+
+fn identity_backup_format_value(format: styrene_ipc::types::IdentityBackupFormat) -> rmpv::Value {
+    use styrene_ipc::types::IdentityBackupFormat;
+
+    match format {
+        IdentityBackupFormat::LegacyV0 => "legacy_v0".into(),
+        IdentityBackupFormat::StidV1 => "stid_v1".into(),
+        IdentityBackupFormat::Unknown => "unknown".into(),
+        _ => "unknown".into(),
+    }
+}
+
+fn identity_backup_metadata_value(
+    metadata: styrene_ipc::types::IdentityBackupMetadata,
+) -> rmpv::Value {
+    rmpv::Value::Map(vec![
+        ("contract_version".into(), metadata.contract_version.into()),
+        ("format".into(), identity_backup_format_value(metadata.format)),
+        ("encrypted_size".into(), metadata.encrypted_size.into()),
+    ])
+}
+
+fn identity_restore_outcome_value(
+    outcome: styrene_ipc::types::IdentityRestoreOutcome,
+) -> rmpv::Value {
+    use styrene_ipc::types::IdentityRestoreOutcome;
+
+    match outcome {
+        IdentityRestoreOutcome::Restored => "restored".into(),
+        IdentityRestoreOutcome::AlreadyPresent => "already_present".into(),
+        IdentityRestoreOutcome::Unknown => "unknown".into(),
+        _ => "unknown".into(),
+    }
 }
 
 fn identity_custody_value(info: &styrene_ipc::types::IdentityCustodyInfo) -> rmpv::Value {

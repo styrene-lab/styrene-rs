@@ -222,6 +222,69 @@ pub struct IdentityInfo {
     pub custody: Option<IdentityCustodyInfo>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum IdentityBackupFormat {
+    LegacyV0,
+    StidV1,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct IdentityBackupMetadata {
+    pub contract_version: u8,
+    pub format: IdentityBackupFormat,
+    pub encrypted_size: u64,
+}
+
+/// Opaque encrypted artifact returned only by the explicit backup export operation.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct IdentityBackupExport {
+    pub metadata: IdentityBackupMetadata,
+    pub encrypted_bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for IdentityBackupExport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdentityBackupExport")
+            .field("metadata", &self.metadata)
+            .field("encrypted_bytes", &"[REDACTED]")
+            .finish()
+    }
+}
+
+/// Opaque encrypted artifact accepted only by the explicit backup restore operation.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct IdentityBackupImport {
+    pub encrypted_bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for IdentityBackupImport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdentityBackupImport").field("encrypted_bytes", &"[REDACTED]").finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum IdentityRestoreOutcome {
+    Restored,
+    AlreadyPresent,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
 // ── Daemon status ─────────────────────────────────────────────────────────────
 
 pub const ACTIVE_CAPABILITIES_VERSION: u16 = 1;
@@ -601,6 +664,20 @@ pub enum MessageLifecycleState {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
+pub enum MessageRetryIneligibilityReason {
+    Inbound,
+    MissingOutboundRoute,
+    LifecycleState,
+    CanonicalWireUnavailable,
+    AttemptLimitReached,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum MessageDeliveryEvidenceKind {
     PacketReceipt,
     ResourceCompletion,
@@ -661,6 +738,10 @@ pub struct MessageInfo {
     pub status: String,
     pub lifecycle_state: MessageLifecycleState,
     pub terminal_detail: Option<String>,
+    /// Authoritative retry eligibility. Absent on sparse or legacy projections.
+    pub retry_eligible: Option<bool>,
+    /// Present only when the backend established that retry is ineligible.
+    pub retry_ineligibility_reason: Option<MessageRetryIneligibilityReason>,
     pub is_outgoing: bool,
     pub delivery_method: Option<String>,
     pub requested_delivery_method: Option<String>,
@@ -710,6 +791,8 @@ impl std::fmt::Debug for MessageInfo {
             .field("status", &self.status)
             .field("lifecycle_state", &self.lifecycle_state)
             .field("terminal_detail", &self.terminal_detail)
+            .field("retry_eligible", &self.retry_eligible)
+            .field("retry_ineligibility_reason", &self.retry_ineligibility_reason)
             .field("is_outgoing", &self.is_outgoing)
             .field("attachments", &self.attachments)
             .field("authentication_state", &self.authentication_state)
@@ -2183,8 +2266,30 @@ mod capability_tests {
         assert_eq!(message.lxmf_timestamp, None);
         assert_eq!(message.authentication_state, MessageAuthenticationState::Unknown);
         assert_eq!(message.stamp_state, MessageStampState::Unknown);
+        assert_eq!(message.retry_eligible, None);
+        assert_eq!(message.retry_ineligibility_reason, None);
         assert!(message.canonical_wire.is_none());
         assert!(message.attachments.is_empty());
+    }
+
+    #[test]
+    fn message_retry_eligibility_roundtrips_typed_reason() {
+        let message = MessageInfo {
+            retry_eligible: Some(false),
+            retry_ineligibility_reason: Some(
+                MessageRetryIneligibilityReason::CanonicalWireUnavailable,
+            ),
+            ..MessageInfo::default()
+        };
+
+        let encoded = serde_json::to_string(&message).unwrap();
+        let decoded: MessageInfo = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded.retry_eligible, Some(false));
+        assert_eq!(
+            decoded.retry_ineligibility_reason,
+            Some(MessageRetryIneligibilityReason::CanonicalWireUnavailable)
+        );
     }
 
     #[test]
