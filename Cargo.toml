@@ -15,6 +15,7 @@ members = [
   "crates/libs/styrene-tunnel",
   "crates/libs/styrene-micron",
   "crates/libs/styrene-rbac",
+  "crates/libs/styrene-rnode-firmware",
   "crates/libs/styrene-secrets",
   "crates/apps/styrened",
   "crates/apps/styrene",
@@ -43,6 +44,7 @@ default-members = [
   "crates/libs/styrene-tunnel",
   "crates/libs/styrene-micron",
   "crates/libs/styrene-rbac",
+  "crates/libs/styrene-rnode-firmware",
   "crates/libs/styrene-secrets",
   "crates/apps/styrened",
   "crates/apps/styrene-tui",
@@ -87,6 +89,7 @@ protocol = ["styrene-lxmf", "styrene-mesh", "styrene-tunnel"]
 domain = [
   "styrene-identity",
   "styrene-rbac",
+  "styrene-rnode-firmware",
   "styrene-secrets",
   "styrene-services",
   "styrene-a2a",
@@ -116,6 +119,7 @@ styrene-ipc-server = { version = "0.1.0", path = "crates/libs/styrene-ipc-server
 styrene-tunnel = { version = "0.1.0", path = "crates/libs/styrene-tunnel" }
 styrene-micron = { version = "0.1.0", path = "crates/libs/styrene-micron" }
 styrene-rbac = { version = "0.1.0", path = "crates/libs/styrene-rbac" }
+styrene-rnode-firmware = { version = "0.1.0", path = "crates/libs/styrene-rnode-firmware" }
 styrene-secrets = { version = "0.1.1", path = "crates/libs/styrene-secrets" }
 aes = "0.8.4"
 aes-gcm = "0.10"

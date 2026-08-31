@@ -4460,6 +4460,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-rnode-firmware"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "styrene-rns"
 version = "0.1.0"
 dependencies = [
