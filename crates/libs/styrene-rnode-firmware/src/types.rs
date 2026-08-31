@@ -212,6 +212,97 @@ impl FirmwarePlan {
         let value = digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
         Ok(PlanDigest(Sha256Digest::new(value).map_err(PlanError::Digest)?))
     }
+
+    pub fn confirm(
+        &self,
+        confirmation: &PlanConfirmation,
+        current_target: &TargetObservation,
+    ) -> Result<ConfirmedFirmwarePlan, ConfirmationError> {
+        if self.target_generation != self.target.generation
+            || confirmation.target_generation != self.target_generation
+            || current_target.generation != self.target_generation
+            || current_target != &self.target
+        {
+            return Err(ConfirmationError::TargetChanged);
+        }
+        let digest = self.digest().map_err(|_| ConfirmationError::PlanDigestUnavailable)?;
+        if confirmation.plan_digest != digest {
+            return Err(ConfirmationError::PlanDigestMismatch);
+        }
+        Ok(ConfirmedFirmwarePlan { plan: self.clone(), digest })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PlanConfirmation {
+    pub plan_digest: PlanDigest,
+    pub target_generation: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfirmedFirmwarePlan {
+    plan: FirmwarePlan,
+    digest: PlanDigest,
+}
+
+impl ConfirmedFirmwarePlan {
+    #[must_use]
+    pub const fn plan(&self) -> &FirmwarePlan {
+        &self.plan
+    }
+
+    #[must_use]
+    pub const fn digest(&self) -> &PlanDigest {
+        &self.digest
+    }
+
+    pub fn verify_reopened(
+        &self,
+        observation: &TargetObservation,
+    ) -> Result<(), PostWriteVerificationError> {
+        let expected = &self.plan.expected;
+        if observation.board.as_deref() != Some(expected.board.as_str()) {
+            return Err(PostWriteVerificationError::Board);
+        }
+        if observation.radio_variant.as_deref() != Some(expected.radio_variant.as_str()) {
+            return Err(PostWriteVerificationError::RadioVariant);
+        }
+        if observation.hardware_revision.as_deref() != Some(expected.hardware_revision.as_str()) {
+            return Err(PostWriteVerificationError::HardwareRevision);
+        }
+        if observation.firmware_version.as_deref() != Some(expected.firmware_version.as_str()) {
+            return Err(PostWriteVerificationError::FirmwareVersion);
+        }
+        if observation.running_application_hash.as_ref() != Some(&expected.running_application_hash)
+        {
+            return Err(PostWriteVerificationError::RunningApplicationHash);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum ConfirmationError {
+    #[error("firmware target changed after planning")]
+    TargetChanged,
+    #[error("confirmed firmware plan digest does not match")]
+    PlanDigestMismatch,
+    #[error("firmware plan digest could not be calculated")]
+    PlanDigestUnavailable,
+}
+
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum PostWriteVerificationError {
+    #[error("reopened RNode board does not match the plan")]
+    Board,
+    #[error("reopened RNode radio variant does not match the plan")]
+    RadioVariant,
+    #[error("reopened RNode hardware revision does not match the plan")]
+    HardwareRevision,
+    #[error("reopened RNode firmware version does not match the plan")]
+    FirmwareVersion,
+    #[error("reopened RNode running application hash does not match the plan")]
+    RunningApplicationHash,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq, Hash)]

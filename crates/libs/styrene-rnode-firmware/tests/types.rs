@@ -2,7 +2,7 @@ use styrene_rnode_firmware::{
     ArtifactIdentity, ConfigurationState, EvidenceScope, ExecutorClass, ExpectedDeviceState,
     FirmwareEvent, FirmwareEvidence, FirmwareOperation, FirmwarePhase, FirmwarePlan,
     FirmwareProgress, FirmwareWorkflow, HostClass, ImageRegion, McuFamily, MemoryRegion,
-    RecoveryPolicy, Sha256Digest, TargetObservation,
+    PlanConfirmation, RecoveryPolicy, Sha256Digest, TargetObservation,
 };
 
 fn digest(value: char) -> Sha256Digest {
@@ -110,4 +110,44 @@ fn verification_requires_a_completed_write() {
     workflow.apply(FirmwareEvent::Reopened).expect("reopen target");
     assert!(workflow.apply(FirmwareEvent::Verified).is_err());
     assert_ne!(workflow.terminal_name(), "succeeded");
+}
+
+#[test]
+fn confirmation_binds_exact_plan_digest_and_current_target() {
+    let plan = plan();
+    let confirmation = PlanConfirmation {
+        plan_digest: plan.digest().expect("plan digest"),
+        target_generation: plan.target_generation,
+    };
+    assert!(plan.confirm(&confirmation, &plan.target).is_ok());
+
+    let mut changed = plan.target.clone();
+    changed.generation += 1;
+    assert!(plan.confirm(&confirmation, &changed).is_err());
+
+    let wrong = PlanConfirmation {
+        plan_digest: styrene_rnode_firmware::PlanDigest::new("f".repeat(64)).expect("test digest"),
+        target_generation: plan.target_generation,
+    };
+    assert!(plan.confirm(&wrong, &plan.target).is_err());
+}
+
+#[test]
+fn post_write_verification_requires_every_authoritative_field() {
+    let plan = plan();
+    let confirmation = PlanConfirmation {
+        plan_digest: plan.digest().expect("plan digest"),
+        target_generation: plan.target_generation,
+    };
+    let confirmed = plan.confirm(&confirmation, &plan.target).expect("confirmed plan");
+    let mut reopened = plan.target.clone();
+    reopened.board = Some(plan.expected.board.clone());
+    reopened.radio_variant = Some(plan.expected.radio_variant.clone());
+    reopened.hardware_revision = Some(plan.expected.hardware_revision.clone());
+    reopened.firmware_version = Some(plan.expected.firmware_version.clone());
+    reopened.running_application_hash = Some(plan.expected.running_application_hash.clone());
+    assert!(confirmed.verify_reopened(&reopened).is_ok());
+
+    reopened.running_application_hash = Some(digest('e'));
+    assert!(confirmed.verify_reopened(&reopened).is_err());
 }
