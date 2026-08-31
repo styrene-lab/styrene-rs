@@ -144,6 +144,11 @@ validate-product:
     python3 scripts/validate_product_capabilities.py
     python3 scripts/validate_fixture_provenance.py
 
+# Validate the corpus-first RNode firmware provisioning contract
+validate-rnode-firmware-corpus:
+    python3 scripts/test_validate_rnode_firmware_corpus.py
+    python3 scripts/validate_rnode_firmware_corpus.py
+
 # Prove ordinary validation does not invoke live or environment-dependent prerequisites
 test-validation-offline:
     mkdir -p target
@@ -151,7 +156,7 @@ test-validation-offline:
     target/test-validation-offline
 
 # Run deterministic, offline validation against Rust code and committed fixtures
-validate: format-check check-library-minimal check-offline lint test test-interop test-validation-offline
+validate: format-check check-library-minimal check-offline lint test test-interop test-validation-offline validate-rnode-firmware-corpus
 
 # Check all crates compile (fast, no codegen)
 check:
