@@ -51,8 +51,10 @@ executors.
 
 Archive processing is bounded and rejects path traversal, duplicate names,
 unexpected files, oversized expansion, and overlapping or protected regions.
-Firmware redistribution must retain the applicable GPL source and notice
-obligations.
+Firmware distribution must satisfy `docs/rnode-firmware-distribution.md`. Each
+published binary requires matching corresponding source, notices, immutable
+digests, and retention records. Artifact admission does not establish license
+compliance.
 
 ## Executor Matrix
 
