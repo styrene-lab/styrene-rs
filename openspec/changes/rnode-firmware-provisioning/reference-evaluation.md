@@ -31,17 +31,24 @@ The retained external record and a read-only host inspection identify:
 | Attached module | RAK1910 GPS, outside the RNode target |
 | Normal USB identity | VID `239a`, PID `8029`, RAK4631 product string |
 | Serial DFU identity | VID `239a`, PID `002a`, RAK4631 product string |
+| UF2 identity | VID `239a`, PID `0029`, label `RAK4631` |
 | USB device revision | `1.00` in both observed modes |
 | DFU family | Adafruit-compatible nRF52 serial DFU |
-| Exact bootloader revision | Unknown |
+| Exact bootloader revision | UF2 Bootloader `0.4.3`, dated 2023-05-20 |
+| Bootloader board ID | `WisBlock-RAK4631-Board` |
+| SoftDevice | `S140 6.1.1` |
 | Exact hardware revision | Unknown |
 | BLE DFU service and identity | Not observed |
 
 The approved non-writing 1200-baud reset changed the device from normal USB
 mode to serial DFU mode. Serial DFU exposed CDC interfaces only. It did not
-expose an UF2 mass-storage volume or `INFO_UF2.TXT`, so the exact bootloader and
-SoftDevice revisions remain unknown. A physical reset is required to return the
-board to normal operation and to attempt UF2 metadata inspection.
+expose an UF2 mass-storage volume or `INFO_UF2.TXT`.
+
+A physical double-reset then exposed the read-only `RAK4631` UF2 volume. Its
+`INFO_UF2.TXT` reported bootloader `0.4.3`, Board-ID
+`WisBlock-RAK4631-Board`, build date 2023-05-20, and SoftDevice `S140 6.1.1`.
+No firmware file was copied to the volume. A final physical reset returned the
+board to normal USB mode as `239a:8029`.
 
 ## Artifact Evidence
 
@@ -85,7 +92,7 @@ post-write verification.
 | Candidate application ZIP and digest | Investigate | Structure and digest pass, but signed admission and GPL release records are absent. |
 | RAK4631, RAK19003, and 915 MHz physical observations | Investigate | Useful candidate facts, but hardware revision and retained photographic evidence are absent. |
 | Separate normal and serial-DFU USB identities | Adopt as evidence | The same attached candidate was observed in both modes without a firmware write. |
-| Exact bootloader support claim | Defer | USB revision `1.00` is not a bootloader revision, and no UF2 metadata was available. |
+| Exact bootloader observation | Adopt as evidence | Read-only UF2 metadata identifies bootloader `0.4.3` and SoftDevice `S140 6.1.1`. |
 | BLE application upgrade claim | Defer | The reference exercises USB serial DFU only. It contains no BLE DFU service evidence. |
 | `delivery-approved` status | Skip | The retained provenance says delivery is blocked, and physical flash verification is incomplete. |
 | Committed stable USB serial | Skip | Stable device identifiers are prohibited in retained Styrene evidence. |
@@ -95,10 +102,10 @@ post-write verification.
 
 ## Remaining Gates
 
-Before task 4.1 can complete, retain the exact bootloader revision without a
-stable device identifier. Before mobile acceptance, also retain BLE DFU service,
-identity transition, MTU, packet receipt notification, interruption, recovery,
-and post-write RNode observations.
+Task 4.1 is complete for the recorded RAK4631 board and bootloader. Before mobile
+acceptance, retain the exact hardware revision, BLE DFU service, identity
+transition, MTU, packet receipt notification, interruption, recovery, and
+post-write RNode observations.
 
 Before desktop delivery, produce a Styrene-signed manifest and bounded executor
 for the exact target. Test application-only delivery, provisioning, interruption,

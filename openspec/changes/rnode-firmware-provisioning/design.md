@@ -75,11 +75,16 @@ A second candidate on the `nucleus` host identifies a RAK4631 core on a RAK19003
 carrier from the 915 MHz population. Normal USB mode reports `239a:8029`. A
 non-writing 1200-baud reset reports serial DFU mode as `239a:002a`.
 
+A physical double-reset exposes UF2 mode as `239a:0029`. Read-only
+`INFO_UF2.TXT` reports UF2 Bootloader `0.4.3`, Board-ID
+`WisBlock-RAK4631-Board`, build date 2023-05-20, and SoftDevice `S140 6.1.1`.
+A final reset returns the device to normal mode. No firmware write occurred.
+
 The candidate RNode 1.86 application ZIP has SHA-256
 `3a61632282b7668b6c937646a891a604e6db236ed35473831a7e1575680600d7`.
-Exact bootloader and hardware revisions remain unknown, and BLE DFU was not
-observed. See `reference-evaluation.md`. These facts do not enable a target or
-mobile support claim.
+The exact hardware revision remains unknown, and BLE DFU was not observed. See
+`reference-evaluation.md`. These facts do not enable a target or mobile support
+claim.
 
 ## State And Failure
 
