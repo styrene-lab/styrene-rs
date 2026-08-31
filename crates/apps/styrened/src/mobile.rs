@@ -915,6 +915,35 @@ pub struct MobilePropagationProgress {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum MobilePropagationTriggerSource {
+    InitialConnection,
+    Reconnect,
+    ForegroundOpportunity,
+    GrantedBackgroundOpportunity,
+    Manual,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobilePropagationTerminalOutcome {
+    Succeeded,
+    Failed,
+    TimedOut,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobilePropagationSynchronization {
+    pub trigger: MobilePropagationTriggerSource,
+    pub started_at: i64,
+    pub finished_at: i64,
+    pub outcome: MobilePropagationTerminalOutcome,
+    pub new_messages: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobilePropagationFailureCode {
     InvalidDestination,
     NotAnnounced,
@@ -953,6 +982,16 @@ pub struct MobilePropagationSnapshot {
     pub automatic_sync_enabled: bool,
     pub automatic_sync_cooldown_secs: u64,
     pub sync_deadline_secs: u64,
+    #[serde(default)]
+    pub trigger_capabilities: Vec<MobilePropagationTriggerSource>,
+    #[serde(default)]
+    pub active_trigger: Option<MobilePropagationTriggerSource>,
+    #[serde(default)]
+    pub active_sync_started_at: Option<i64>,
+    #[serde(default)]
+    pub last_synchronization: Option<MobilePropagationSynchronization>,
+    #[serde(default)]
+    pub cooldown_remaining_secs: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1068,6 +1107,45 @@ fn mobile_propagation_policy(
         stamp_flexibility: peer.stamp_flexibility?,
         peering_cost: peer.peering_cost?,
     })
+}
+
+fn mobile_propagation_trigger_source(
+    trigger: crate::workers::standard_propagation::StandardPropagationSyncTriggerKind,
+) -> MobilePropagationTriggerSource {
+    use crate::workers::standard_propagation::StandardPropagationSyncTriggerKind;
+
+    match trigger {
+        StandardPropagationSyncTriggerKind::InitialConnection => {
+            MobilePropagationTriggerSource::InitialConnection
+        }
+        StandardPropagationSyncTriggerKind::Reconnect => MobilePropagationTriggerSource::Reconnect,
+        StandardPropagationSyncTriggerKind::ForegroundOpportunity => {
+            MobilePropagationTriggerSource::ForegroundOpportunity
+        }
+        StandardPropagationSyncTriggerKind::BackgroundOpportunity => {
+            MobilePropagationTriggerSource::GrantedBackgroundOpportunity
+        }
+        StandardPropagationSyncTriggerKind::Manual => MobilePropagationTriggerSource::Manual,
+    }
+}
+
+fn mobile_propagation_terminal_outcome(
+    outcome: crate::workers::standard_propagation::StandardPropagationSyncTerminalOutcome,
+) -> MobilePropagationTerminalOutcome {
+    use crate::workers::standard_propagation::StandardPropagationSyncTerminalOutcome;
+
+    match outcome {
+        StandardPropagationSyncTerminalOutcome::Succeeded => {
+            MobilePropagationTerminalOutcome::Succeeded
+        }
+        StandardPropagationSyncTerminalOutcome::Failed => MobilePropagationTerminalOutcome::Failed,
+        StandardPropagationSyncTerminalOutcome::TimedOut => {
+            MobilePropagationTerminalOutcome::TimedOut
+        }
+        StandardPropagationSyncTerminalOutcome::Cancelled => {
+            MobilePropagationTerminalOutcome::Cancelled
+        }
+    }
 }
 
 fn decode_mobile_hash(value: &str) -> Result<[u8; 16], String> {
@@ -1373,6 +1451,7 @@ struct MobileIdentityRuntime {
     metadata: crate::services::identity::PublicIdentityMetadata,
     metadata_path: PathBuf,
     custody: styrene_ipc::types::IdentityCustodyInfo,
+    backup_custody: Option<Arc<dyn crate::services::identity::IdentityBackupCustody>>,
 }
 
 #[cfg(test)]
@@ -1483,6 +1562,7 @@ async fn compose_mobile_node(
         identity_runtime.metadata_path,
         identity_runtime.metadata,
         identity_runtime.custody,
+        identity_runtime.backup_custody,
     );
     if let Some(hub_hash) = &hub_delivery_hash {
         app_context.messaging().set_propagation_hub(hub_hash.clone(), app_context.fleet_arc());
@@ -1953,6 +2033,8 @@ impl MobileNode {
         }
 
         // Load or create identity via the configured backend.
+        let backup_custody =
+            identity_backup_custody(config.identity_backend, &paths, encrypted_file_key_material);
         let identity =
             load_or_create_identity(&config.identity_backend, &paths, encrypted_file_key_material)
                 .await?;
@@ -2091,7 +2173,7 @@ impl MobileNode {
                 identity,
                 MobileStores { messages: store.clone(), nodes: node_store },
                 transport_runtime,
-                MobileIdentityRuntime { metadata, metadata_path, custody },
+                MobileIdentityRuntime { metadata, metadata_path, custody, backup_custody },
                 config.hub_delivery_hash,
                 tcp_endpoint,
             )
@@ -2419,12 +2501,14 @@ impl MobileNode {
     pub async fn propagation_snapshot(
         &self,
     ) -> Result<MobilePropagationSnapshot, MobilePropagationFailure> {
-        let sync_policy = self.workers.lock().ok().and_then(|workers| {
+        let sync_worker = self.workers.lock().ok().and_then(|workers| {
             workers
                 .as_ref()
                 .and_then(|workers| workers.standard_propagation_sync.as_ref())
-                .map(crate::workers::standard_propagation::StandardPropagationSyncWorker::policy)
+                .map(|worker| (worker.policy(), worker.telemetry()))
         });
+        let sync_policy = sync_worker.map(|(policy, _)| policy);
+        let sync_telemetry = sync_worker.map(|(_, telemetry)| telemetry).unwrap_or_default();
         let observed_at = rns_core::transport::time::now_epoch_secs_i64();
         let runtime_policy =
             crate::standard_propagation::StandardPropagationRuntimeObservation::client().policy();
@@ -2484,7 +2568,7 @@ impl MobileNode {
             .iter()
             .filter(|attempt| attempt.direction == "sync")
             .max_by_key(|attempt| (attempt.updated_at, attempt.started_at));
-        let sync_state = if in_flight.is_some() {
+        let sync_state = if sync_telemetry.active.is_some() || in_flight.is_some() {
             MobilePropagationSyncState::InProgress
         } else {
             match latest_inbound.map(|attempt| attempt.state.as_str()) {
@@ -2538,6 +2622,34 @@ impl MobileNode {
             automatic_sync_enabled: sync_policy.is_some_and(|policy| policy.automatic),
             automatic_sync_cooldown_secs: sync_policy.map_or(0, |policy| policy.cooldown.as_secs()),
             sync_deadline_secs: sync_policy.map_or(0, |policy| policy.deadline.as_secs()),
+            trigger_capabilities: if sync_policy.is_some() {
+                vec![
+                    MobilePropagationTriggerSource::InitialConnection,
+                    MobilePropagationTriggerSource::Reconnect,
+                    MobilePropagationTriggerSource::ForegroundOpportunity,
+                    MobilePropagationTriggerSource::GrantedBackgroundOpportunity,
+                    MobilePropagationTriggerSource::Manual,
+                ]
+            } else {
+                vec![MobilePropagationTriggerSource::Manual]
+            },
+            active_trigger: sync_telemetry
+                .active
+                .map(|active| mobile_propagation_trigger_source(active.trigger)),
+            active_sync_started_at: sync_telemetry.active.map(|active| active.started_at),
+            last_synchronization: sync_telemetry.last_completed.map(|completed| {
+                MobilePropagationSynchronization {
+                    trigger: mobile_propagation_trigger_source(completed.trigger),
+                    started_at: completed.started_at,
+                    finished_at: completed.finished_at,
+                    outcome: mobile_propagation_terminal_outcome(completed.outcome),
+                    new_messages: u32::try_from(completed.new_messages).unwrap_or(u32::MAX),
+                }
+            }),
+            cooldown_remaining_secs: sync_telemetry
+                .cooldown_remaining
+                .as_secs()
+                .saturating_add(u64::from(sync_telemetry.cooldown_remaining.subsec_nanos() > 0)),
         })
     }
 
@@ -2690,6 +2802,18 @@ impl MobileNode {
                 )
             })
             .is_some_and(|trigger| trigger.foreground_opportunity())
+    }
+
+    pub fn propagation_background_opportunity(&self) -> bool {
+        self.workers
+            .lock()
+            .ok()
+            .and_then(|workers| {
+                workers.as_ref().and_then(|workers| workers.standard_propagation_sync.as_ref()).map(
+                    crate::workers::standard_propagation::StandardPropagationSyncWorker::trigger,
+                )
+            })
+            .is_some_and(|trigger| trigger.background_opportunity())
     }
 
     pub async fn set_draft(
@@ -3449,6 +3573,25 @@ impl MobileNode {
         &self.paths
     }
 
+    pub async fn identity_backup_metadata(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupMetadata, styrene_ipc::IpcError> {
+        self.facade.query_identity_backup_metadata().await
+    }
+
+    pub async fn export_identity_backup(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupExport, styrene_ipc::IpcError> {
+        self.facade.export_identity_backup().await
+    }
+
+    pub async fn restore_identity_backup(
+        &self,
+        backup: styrene_ipc::types::IdentityBackupImport,
+    ) -> Result<styrene_ipc::types::IdentityRestoreOutcome, styrene_ipc::IpcError> {
+        self.facade.restore_identity_backup(backup).await
+    }
+
     /// Access the full Daemon trait for advanced operations.
     pub fn daemon(&self) -> &dyn Daemon {
         self.facade.as_ref()
@@ -3465,6 +3608,113 @@ pub struct ConversationSummary {
 }
 
 // ── Identity Storage Backends ───────────────────────────────────────────────
+
+#[cfg(feature = "mobile-identity")]
+struct EncryptedFileBackupCustody {
+    vault: styrene_identity::vault::IdentityVault,
+}
+
+#[cfg(feature = "mobile-identity")]
+impl crate::services::identity::IdentityBackupCustody for EncryptedFileBackupCustody {
+    fn metadata(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupMetadata, styrene_ipc::IpcError> {
+        self.vault
+            .encrypted_backup_metadata()
+            .map(identity_backup_metadata)
+            .map_err(identity_backup_error)
+    }
+
+    fn export(&self) -> Result<styrene_ipc::types::IdentityBackupExport, styrene_ipc::IpcError> {
+        let backup = self.vault.export_encrypted_backup().map_err(identity_backup_error)?;
+        let mut exported = styrene_ipc::types::IdentityBackupExport::default();
+        exported.metadata = identity_backup_metadata(backup.metadata());
+        exported.encrypted_bytes = backup.encrypted_bytes().to_vec();
+        Ok(exported)
+    }
+
+    fn restore(
+        &self,
+        backup: styrene_ipc::types::IdentityBackupImport,
+    ) -> Result<styrene_ipc::types::IdentityRestoreOutcome, styrene_ipc::IpcError> {
+        use styrene_identity::vault::IdentityRestoreOutcome;
+
+        let backup = styrene_identity::vault::EncryptedIdentityBackup::from_encrypted_bytes(
+            backup.encrypted_bytes,
+        )
+        .map_err(identity_backup_error)?;
+        match self.vault.restore_encrypted_backup(&backup).map_err(identity_backup_error)? {
+            IdentityRestoreOutcome::Restored => {
+                Ok(styrene_ipc::types::IdentityRestoreOutcome::Restored)
+            }
+            IdentityRestoreOutcome::AlreadyPresent => {
+                Ok(styrene_ipc::types::IdentityRestoreOutcome::AlreadyPresent)
+            }
+        }
+    }
+}
+
+fn identity_backup_custody(
+    backend: IdentityBackend,
+    paths: &PlatformPaths,
+    key_material: Option<&[u8]>,
+) -> Option<Arc<dyn crate::services::identity::IdentityBackupCustody>> {
+    #[cfg(feature = "mobile-identity")]
+    if backend == IdentityBackend::EncryptedFile {
+        let key_material = key_material.filter(|material| !material.is_empty())?;
+        return Some(Arc::new(EncryptedFileBackupCustody {
+            vault: styrene_identity::vault::IdentityVault::new(
+                paths.identity_path(),
+                Box::new(styrene_identity::file_signer::StaticPassphraseProvider::new(
+                    key_material,
+                )),
+            ),
+        }));
+    }
+    let _ = (backend, paths, key_material);
+    None
+}
+
+#[cfg(feature = "mobile-identity")]
+fn identity_backup_metadata(
+    metadata: styrene_identity::vault::EncryptedIdentityBackupMetadata,
+) -> styrene_ipc::types::IdentityBackupMetadata {
+    use styrene_identity::vault::EncryptedIdentityBackupFormat;
+
+    let mut projected = styrene_ipc::types::IdentityBackupMetadata::default();
+    projected.contract_version = metadata.contract_version;
+    projected.format = match metadata.format {
+        EncryptedIdentityBackupFormat::LegacyV0 => {
+            styrene_ipc::types::IdentityBackupFormat::LegacyV0
+        }
+        EncryptedIdentityBackupFormat::StidV1 => styrene_ipc::types::IdentityBackupFormat::StidV1,
+    };
+    projected.encrypted_size = metadata.encrypted_size;
+    projected
+}
+
+#[cfg(feature = "mobile-identity")]
+fn identity_backup_error(error: styrene_identity::vault::VaultError) -> styrene_ipc::IpcError {
+    use styrene_identity::vault::VaultError;
+
+    match error {
+        VaultError::InvalidBackup => styrene_ipc::IpcError::invalid_request(
+            "invalid or unsupported encrypted identity backup",
+        ),
+        VaultError::BackupAuthenticationFailed => styrene_ipc::IpcError::invalid_request(
+            "encrypted identity backup authentication failed",
+        ),
+        VaultError::IdentityConflict => styrene_ipc::IpcError::Conflict {
+            message: "identity restore conflicts with existing custody".into(),
+        },
+        VaultError::CustodyUnavailable => styrene_ipc::IpcError::Unavailable {
+            reason: "identity backup custody unavailable".into(),
+        },
+        _ => styrene_ipc::IpcError::Unavailable {
+            reason: "identity backup custody unavailable".into(),
+        },
+    }
+}
 
 /// Load or create an RNS identity using the configured backend.
 ///
@@ -3897,8 +4147,74 @@ mod tests {
         assert_eq!(first.address_hash(), second.address_hash());
         assert_ne!(std::fs::read(paths.identity_path()).unwrap().len(), 64);
     }
+
+    #[cfg(feature = "mobile-identity")]
+    #[tokio::test]
+    async fn encrypted_backup_mobile_operations_survive_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = MobileConfig {
+            config_dir: temp.path().join("config"),
+            data_dir: temp.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("Backup Test".into()),
+            identity_backend: IdentityBackend::EncryptedFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: false,
+        };
+
+        let first =
+            MobileNode::boot_with_encrypted_file_key(config.clone(), b"host-owned-backup-key")
+                .await
+                .unwrap();
+        let exported = first.export_identity_backup().await.unwrap();
+        assert_eq!(first.identity_backup_metadata().await.unwrap(), exported.metadata);
+        let mut imported = styrene_ipc::types::IdentityBackupImport::default();
+        imported.encrypted_bytes = exported.encrypted_bytes.clone();
+        assert_eq!(
+            first.restore_identity_backup(imported).await.unwrap(),
+            styrene_ipc::types::IdentityRestoreOutcome::AlreadyPresent
+        );
+        first.shutdown().await.unwrap();
+        drop(first);
+
+        let restarted = MobileNode::boot_with_encrypted_file_key(config, b"host-owned-backup-key")
+            .await
+            .unwrap();
+        let after_restart = restarted.export_identity_backup().await.unwrap();
+        assert_eq!(after_restart.metadata, exported.metadata);
+        assert_eq!(after_restart.encrypted_bytes, exported.encrypted_bytes);
+        restarted.shutdown().await.unwrap();
+    }
     use styrene_ipc::types::DaemonEvent;
     use tokio::time::{Duration, timeout};
+
+    #[test]
+    fn propagation_snapshot_deserializes_without_additive_telemetry_fields() {
+        let snapshot: MobilePropagationSnapshot = serde_json::from_value(serde_json::json!({
+            "generation": 1,
+            "observed_at": 2,
+            "selected_destination": null,
+            "readiness": "unselected",
+            "ready": false,
+            "selected_policy": null,
+            "candidates": [],
+            "sync_state": "idle",
+            "new_messages": 0,
+            "in_flight": null,
+            "failure": null,
+            "automatic_sync_enabled": true,
+            "automatic_sync_cooldown_secs": 30,
+            "sync_deadline_secs": 32
+        }))
+        .unwrap();
+
+        assert!(snapshot.trigger_capabilities.is_empty());
+        assert_eq!(snapshot.active_trigger, None);
+        assert_eq!(snapshot.active_sync_started_at, None);
+        assert_eq!(snapshot.last_synchronization, None);
+        assert_eq!(snapshot.cooldown_remaining_secs, 0);
+    }
 
     fn test_rnode_info(bearer: MobileRNodeBearer, max_write_size: usize) -> RNodeBearerInfo {
         RNodeBearerInfo {
@@ -3989,6 +4305,7 @@ mod tests {
                 },
                 metadata_path: PathBuf::from("test-config/identity-public.json"),
                 custody: active_custody(IdentityBackend::PlaintextFile),
+                backup_custody: None,
             },
             None,
             None,
@@ -4022,6 +4339,7 @@ mod tests {
                 metadata,
                 metadata_path: paths.config_dir.join("identity-public.json"),
                 custody: active_custody(IdentityBackend::PlaintextFile),
+                backup_custody: None,
             },
             None,
             None,
@@ -4505,6 +4823,7 @@ mod tests {
                 metadata: crate::services::identity::PublicIdentityMetadata::default(),
                 metadata_path: PathBuf::from("test-config/identity-public.json"),
                 custody: active_custody(IdentityBackend::PlaintextFile),
+                backup_custody: None,
             },
             None,
             None,

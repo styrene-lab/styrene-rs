@@ -199,6 +199,9 @@ pub enum MessageType {
     CmdStartConversation = 0xAA,
     QueryMobileDiagnostics = 0xAB,
     CmdExportMobileDiagnostics = 0xAC,
+    QueryIdentityBackupMetadata = 0xAD,
+    CmdExportIdentityBackup = 0xAE,
+    CmdRestoreIdentityBackup = 0xAF,
 
     // Responses (0x80-0x8F)
     Result = 0x81,
@@ -341,6 +344,9 @@ impl MessageType {
             0xAA => Ok(Self::CmdStartConversation),
             0xAB => Ok(Self::QueryMobileDiagnostics),
             0xAC => Ok(Self::CmdExportMobileDiagnostics),
+            0xAD => Ok(Self::QueryIdentityBackupMetadata),
+            0xAE => Ok(Self::CmdExportIdentityBackup),
+            0xAF => Ok(Self::CmdRestoreIdentityBackup),
             0x80 => Ok(Self::Pong),
             0x81 => Ok(Self::Result),
             0x82 => Ok(Self::Error),
@@ -696,6 +702,9 @@ mod tests {
         assert_eq!(MessageType::QueryMessage as u8, 0xA9);
         assert_eq!(MessageType::QueryMobileDiagnostics as u8, 0xAB);
         assert_eq!(MessageType::CmdExportMobileDiagnostics as u8, 0xAC);
+        assert_eq!(MessageType::QueryIdentityBackupMetadata as u8, 0xAD);
+        assert_eq!(MessageType::CmdExportIdentityBackup as u8, 0xAE);
+        assert_eq!(MessageType::CmdRestoreIdentityBackup as u8, 0xAF);
         assert_eq!(MessageType::CmdPinConversation as u8, 0x7C);
         assert_eq!(MessageType::CmdUnpinConversation as u8, 0x7D);
         assert_eq!(MessageType::CmdMuteConversation as u8, 0x7E);

@@ -22,6 +22,7 @@ struct TestDaemon {
     cleanup_failures: std::sync::atomic::AtomicUsize,
     peer_calls: std::sync::atomic::AtomicUsize,
     send_chat_calls: std::sync::atomic::AtomicUsize,
+    restored_identity_backup: std::sync::Mutex<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -365,6 +366,27 @@ impl DaemonIdentity for TestDaemon {
             failure: None,
         });
         Ok(info)
+    }
+    async fn query_identity_backup_metadata(&self) -> Result<IdentityBackupMetadata, IpcError> {
+        let mut metadata = IdentityBackupMetadata::default();
+        metadata.contract_version = 1;
+        metadata.format = IdentityBackupFormat::StidV1;
+        metadata.encrypted_size = 97;
+        Ok(metadata)
+    }
+    async fn export_identity_backup(&self) -> Result<IdentityBackupExport, IpcError> {
+        let mut exported = IdentityBackupExport::default();
+        exported.metadata = self.query_identity_backup_metadata().await?;
+        exported.encrypted_bytes = b"opaque-encrypted-artifact".to_vec();
+        Ok(exported)
+    }
+    async fn restore_identity_backup(
+        &self,
+        backup: IdentityBackupImport,
+    ) -> Result<IdentityRestoreOutcome, IpcError> {
+        *self.restored_identity_backup.lock().expect("backup test state lock") =
+            backup.encrypted_bytes;
+        Ok(IdentityRestoreOutcome::Restored)
     }
     async fn set_identity(
         &self,
@@ -1917,6 +1939,34 @@ async fn query_identity() {
     for forbidden in ["private", "passphrase", "credential", "key_material", "export"] {
         assert!(!encoded.contains(forbidden), "custody projection leaked {forbidden}");
     }
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn identity_backup_operations_keep_artifact_bytes_on_explicit_wire_boundaries() {
+    let (mut server, sock, daemon) = setup_page_server().await;
+    let mut stream = UnixStream::connect(&sock).await.expect("connect");
+
+    let metadata =
+        send_and_recv(&mut stream, MessageType::QueryIdentityBackupMetadata, &HashMap::new()).await;
+    assert_eq!(metadata.payload.get("contract_version").and_then(rmpv::Value::as_u64), Some(1));
+    assert_eq!(metadata.payload.get("format"), Some(&rmpv::Value::from("stid_v1")));
+    assert!(!metadata.payload.contains_key("encrypted_bytes"));
+
+    let exported =
+        send_and_recv(&mut stream, MessageType::CmdExportIdentityBackup, &HashMap::new()).await;
+    assert_eq!(
+        exported.payload.get("encrypted_bytes").and_then(rmpv::Value::as_slice),
+        Some(b"opaque-encrypted-artifact".as_slice())
+    );
+
+    let imported = b"different-opaque-artifact".to_vec();
+    let restore_payload =
+        HashMap::from([("encrypted_bytes".into(), rmpv::Value::Binary(imported.clone()))]);
+    let restored =
+        send_and_recv(&mut stream, MessageType::CmdRestoreIdentityBackup, &restore_payload).await;
+    assert_eq!(restored.payload.get("outcome").and_then(rmpv::Value::as_str), Some("restored"));
+    assert_eq!(*daemon.restored_identity_backup.lock().expect("backup test state lock"), imported);
     server.stop().await;
 }
 

@@ -296,6 +296,25 @@ fn mobile_diagnostic_request_discriminants_are_stable_and_round_trip() {
     }
 }
 
+#[test]
+fn identity_backup_request_discriminants_are_additive_and_round_trip() {
+    for (msg_type, discriminant) in [
+        (MessageType::QueryIdentityBackupMetadata, 0xAD),
+        (MessageType::CmdExportIdentityBackup, 0xAE),
+        (MessageType::CmdRestoreIdentityBackup, 0xAF),
+    ] {
+        let encoded =
+            styrene_ipc_server::wire::encode_frame(msg_type, &FIXED_REQUEST_ID, &HashMap::new())
+                .expect("encode identity backup request");
+        assert_eq!(encoded[4], discriminant);
+        let decoded = styrene_ipc_server::wire::decode_frame(&encoded)
+            .expect("decode identity backup request");
+        assert_eq!(decoded.msg_type, msg_type);
+        assert_eq!(MessageType::from_byte(discriminant).expect("known discriminant"), msg_type);
+        assert!(decoded.msg_type.is_request());
+    }
+}
+
 // TUI-specific types (newly dispatched)
 wire_compat_test!(query_config, 0x13);
 wire_compat_test!(cmd_device_status, 0x23);
