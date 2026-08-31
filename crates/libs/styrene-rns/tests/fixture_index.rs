@@ -50,12 +50,27 @@ fn every_committed_vector_resolves_to_digest_checked_bytes() {
 #[test]
 fn reticulum_1_5_2_empty_carrier_evidence_is_complete() {
     let index = load_rns_index().expect("committed RNS fixture index must validate");
+    let vector =
+        rns_vector(&index, "rns-1.5.2-empty-carrier-input").expect("empty-carrier vector metadata");
     let bytes = load_rns_vector_bytes(&index, "rns-1.5.2-empty-carrier-input")
         .expect("empty-carrier fixture");
     let cases: Vec<EmptyCarrierCase> = serde_json::from_slice(&bytes).expect("fixture cases");
 
     assert_eq!(cases.len(), 8);
-    for case in cases {
+    assert_eq!(
+        vector.source_symbols,
+        cases.iter().map(|case| case.source_symbol.clone()).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        vector.expected,
+        serde_json::json!({
+            "type": "acceptance-matrix",
+            "empty_input": "ignored",
+            "inbound_calls": 0,
+            "rx_bytes_delta": 0,
+        })
+    );
+    for case in &cases {
         assert!(case.source_symbol.ends_with(".process_incoming"));
         assert_eq!(case.empty_input, "ignored");
         assert_eq!(case.inbound_calls, 0);
