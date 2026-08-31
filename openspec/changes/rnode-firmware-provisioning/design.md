@@ -101,6 +101,19 @@ requirement. A process exit, BLE disconnect, stale generation, or completed byte
 transfer cannot produce success. Only authoritative post-write verification can
 produce success.
 
+The transport-neutral mobile contract consumes a physically accepted,
+immutable confirmed plan. It binds progress to the admitted application length.
+A target-generation change invalidates confirmation. A reported transfer still
+requires NUS reconnection plus model, version, and application-hash verification.
+
+The Apple callback contract is retained in `styrene-ui` revision
+`d798453efb58e587c35357c017a11b3f64f5c685`. It can begin DFU discovery only
+after consuming single-use proof of an observed NUS disconnect. It rejects stale
+callbacks, incomplete DFU characteristics, progress outside the expected byte
+count, and progress regression. It preserves whether disconnect occurred before,
+during, or after the reported transfer. This contract performs no scan,
+connection, protocol command, packet write, or recovery decision.
+
 ## Corpus-First Gate
 
 Three corpuses precede implementation:
