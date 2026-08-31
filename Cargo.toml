@@ -16,7 +16,6 @@ members = [
   "crates/libs/styrene-secrets",
   "crates/apps/styrened",
   "crates/apps/styrene",
-  "crates/apps/styrene-dx",
   "crates/apps/styrene-i2p",
   "crates/apps/styrene-tui",
   "crates/libs/styrene-services",
@@ -42,7 +41,6 @@ default-members = [
   "crates/libs/styrene-rbac",
   "crates/libs/styrene-secrets",
   "crates/apps/styrened",
-  # "crates/apps/styrene-dx",  # desktop GUI - build explicitly with -p
   "crates/apps/styrene-tui",
   "crates/libs/styrene-amcp",
 ]
@@ -92,7 +90,7 @@ domain = [
 ]
 interface = ["styrene-ipc", "styrene-ipc-server"]
 runtime = ["styrened"]
-application = ["styrene", "styrene-dx", "styrene-i2p", "styrene-tui"]
+application = ["styrene", "styrene-i2p", "styrene-tui"]
 tooling = ["styrene-interop-runner"]
 test = ["styrene-e2e"]
 

@@ -63,12 +63,12 @@ EOF
 # Start the daemon
 styrened
 
-# Launch the desktop app
-styrene-dx
-
-# Or use the terminal UI
+# Launch the terminal UI
 styrene-tui
 `=
+
+Desktop app packages:
+https://github.com/styrene-lab/styrene-ui/releases/latest
 
 -
 
@@ -78,10 +78,9 @@ styrene-tui
 The mesh daemon. Runs in background, manages transport
 interfaces, routes messages, serves pages.
 
->>`F5afstyrene-dx`f
-Desktop app (Dioxus). Network graph, conversations,
-page browser. Connects to styrened via IPC or boots
-one in-process.
+>>`F5afstyrene-ui`f
+Desktop and mobile apps. Source: https://github.com/styrene-lab/styrene-ui
+Desktop packages: https://github.com/styrene-lab/styrene-ui/releases/latest
 
 >>`F5afstyrene-tui`f
 Terminal UI (Ratatui). Full operator interface for

@@ -876,7 +876,6 @@ fn ordinary_recipe_expansion_is_offline_and_has_no_shell_indirection() {
 
     let policy = read("tests/offline-validation.toml");
     let excluded = quoted_values(&policy, "excluded_packages");
-    assert!(!excluded.is_empty(), "offline package exclusions must not be empty");
     let invocations = cargo_invocations(&closure);
     assert!(!invocations.is_empty(), "ordinary Cargo target model was vacuous");
     for invocation in &invocations {

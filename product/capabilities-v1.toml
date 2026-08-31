@@ -65,14 +65,14 @@ notes = "Product implementation status only. Upstream compatibility is tracked b
 id = "messaging.history"
 stream = "conversations"
 status = "implemented"
-evidence = ["crates/apps/styrened/src/storage/messages.rs", "crates/apps/styrene-dx/src/main.rs"]
+evidence = ["crates/apps/styrened/src/storage/messages.rs", "crates/libs/styrene-ipc/src/traits/messaging.rs"]
 notes = "Local persisted history and management are independently authorized; transport is required only for send/retry/cancel."
 
 [[capabilities]]
 id = "messaging.receipts"
 stream = "conversations"
 status = "implemented"
-evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs", "crates/apps/styrene-dx/src/daemon_bridge.rs"]
+evidence = ["crates/libs/styrene-lxmf/src/sdk/profiles.rs", "crates/apps/styrened/src/receipt_bridge.rs"]
 
 [[capabilities]]
 id = "contacts.manage"
@@ -84,7 +84,7 @@ evidence = ["crates/apps/styrened/src/storage/messages.rs", "crates/libs/styrene
 id = "browse.nomadnet.micron"
 stream = "information-access"
 status = "implemented"
-evidence = ["crates/apps/styrene-dx/src/components/page_browser.rs", "crates/libs/styrene-micron/src/lib.rs"]
+evidence = ["crates/apps/styrened/src/daemon_facade.rs", "crates/libs/styrene-micron/src/lib.rs"]
 notes = "Micron implementation status only. Native NomadNet transport is tracked separately and is unsupported."
 
 [[capabilities]]
@@ -111,13 +111,13 @@ notes = "Capability contract exists; complete product session and media path are
 id = "network.node.embedded"
 stream = "mesh-operations"
 status = "implemented"
-evidence = ["crates/apps/styrene-tui/src/lib.rs", "crates/apps/styrene-dx/src/daemon_bridge.rs"]
+evidence = ["crates/apps/styrene-tui/src/lib.rs", "crates/apps/styrened/src/mobile.rs"]
 
 [[capabilities]]
 id = "network.topology.observe"
 stream = "mesh-operations"
 status = "implemented"
-evidence = ["crates/apps/styrene-dx/src/components/network_graph.rs", "crates/apps/styrene-dx/src/daemon_bridge.rs"]
+evidence = ["crates/apps/styrene-tui/src/tui/topology.rs", "crates/apps/styrened/src/services/network_operations.rs"]
 
 [[capabilities]]
 id = "network.i2p.adapter"

@@ -1,9 +1,8 @@
 schema_version = 1
 immutable_action_policy = "reusable-workflows"
 
-# All non-DX targets compile. Tests use the explicit matrix in `just test`;
-# only DX is a package-level platform exclusion.
-excluded_packages = ["styrene-dx"]
+# Tests use the explicit matrix in `just test`.
+excluded_packages = []
 
 selected_targets = [
   "styrene-entropy:*",
@@ -53,7 +52,6 @@ selected_targets = [
   "styrene-e2e:test/pqc_scenario",
   "styrene-tui:lib",
   "styrene:bin/styrene",
-  "styrene-dx:bin/styrene-dx",
 ]
 
 safe_sensitive_tests = [
@@ -70,10 +68,6 @@ safe_sensitive_tests = [
   "crates/apps/styrened/src/workers/native_nomadnet.rs#successful_dynamic_page_returns_without_deadline_and_cleans_descendants",
   "crates/libs/styrene-rns/src/transport/iface/udp.rs#udp_worker_survives_empty_datagram_and_wraps_egress_with_ifac",
 ]
-
-[[sensitive_tests]]
-path = "crates/apps/styrene-dx"
-evidence = "excluded-package:styrene-dx; selected-target:styrene-dx-bin; live-socket-smoke-ignored"
 
 [[sensitive_tests]]
 path = "crates/tests/styrene-e2e"

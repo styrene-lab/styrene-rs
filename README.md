@@ -30,6 +30,8 @@ Styrene is a communications runtime for networks where the Internet is unavailab
 
 The workspace also contains reusable crates for RNS, LXMF, IPC, identity, RBAC, content, telemetry, tunnels, and service composition.
 
+For desktop and mobile applications, see [`styrene-ui`](https://github.com/styrene-lab/styrene-ui).
+
 ## Getting started
 
 ### Prebuilt releases
@@ -154,7 +156,7 @@ See:
 | macOS Apple Silicon | Primary development and release target |
 | macOS x86-64 | Release target |
 | Linux x86-64 | Release target |
-| iOS / Android | Rust runtime here; Dioxus product and packaging in `styrene-ui` |
+| Desktop / iOS / Android | Rust runtime here; product UI and packaging in [`styrene-ui`](https://github.com/styrene-lab/styrene-ui) |
 | Windows | Not currently a release target |
 
 ## License

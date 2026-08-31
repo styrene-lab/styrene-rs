@@ -34,18 +34,18 @@
 - [ ] 4.3 Remove obsolete TUI client code after parity tests pass
 - [ ] 4.4 Run TUI unit, integration, Live-failure, Embedded, and terminal smoke checks
 
-## 5. In-Tree Dioxus Migration
+## 5. Cross-Repository Dioxus Migration
 <!-- specs: frontend-session/spec -->
 
-- [ ] 5.1 Replace `styrene-dx` request broker and daemon bridge with the shared client and sessions
-- [ ] 5.2 Adapt existing stores without creating duplicate IPC domain records
-- [ ] 5.3 Preserve explicit Live, Embedded, and Fixture profile behavior
-- [ ] 5.4 Remove obsolete Dioxus client code after component and smoke tests pass
+- [ ] 5.1 In `styrene-ui`, pin the reviewed `styrene-rs` revision and replace the Dioxus request broker and daemon bridge with the public client and sessions
+- [ ] 5.2 In `styrene-ui`, adapt existing stores without creating duplicate IPC domain records
+- [ ] 5.3 In `styrene-ui`, preserve explicit Live, Embedded, and Fixture profile behavior
+- [ ] 5.4 In `styrene-ui`, remove obsolete Dioxus client code after component and smoke tests pass
 
 ## 6. Verification And Release Boundary
 <!-- specs: frontend-session/spec -->
 
-- [ ] 6.1 Run focused client, session, daemon, TUI, and Dioxus tests
-- [ ] 6.2 Run warning-denied Clippy, formatting, dependency-boundary, and documentation checks
+- [ ] 6.1 Run focused client, session, daemon, and TUI tests in `styrene-rs`, plus Dioxus tests in `styrene-ui`
+- [ ] 6.2 Run each repository's warning-denied Clippy, formatting, dependency-boundary, and documentation checks
 - [ ] 6.3 Verify ordinary workspace tests require no external daemon, Python runtime, or network access
-- [ ] 6.4 Publish or expose immutable revisions consumable by the future `styrene-ui` repository
+- [ ] 6.4 Publish or expose an immutable `styrene-rs` revision consumable by `styrene-ui` and record the tested revision pair
