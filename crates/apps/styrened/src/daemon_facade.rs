@@ -163,6 +163,39 @@ fn standard_propagation_outcome(
     }
 }
 
+fn standard_propagation_trigger_source(
+    trigger: crate::workers::standard_propagation::StandardPropagationSyncTriggerKind,
+) -> StandardPropagationTriggerSource {
+    use crate::workers::standard_propagation::StandardPropagationSyncTriggerKind;
+
+    match trigger {
+        StandardPropagationSyncTriggerKind::InitialConnection => {
+            StandardPropagationTriggerSource::InitialConnection
+        }
+        StandardPropagationSyncTriggerKind::Reconnect => StandardPropagationTriggerSource::Reconnect,
+        StandardPropagationSyncTriggerKind::ForegroundOpportunity => {
+            StandardPropagationTriggerSource::ForegroundOpportunity
+        }
+        StandardPropagationSyncTriggerKind::BackgroundOpportunity => {
+            StandardPropagationTriggerSource::GrantedBackgroundOpportunity
+        }
+        StandardPropagationSyncTriggerKind::Manual => StandardPropagationTriggerSource::Manual,
+    }
+}
+
+fn standard_propagation_terminal_outcome(
+    outcome: crate::workers::standard_propagation::StandardPropagationSyncTerminalOutcome,
+) -> StandardPropagationSyncTerminalOutcome {
+    use crate::workers::standard_propagation::StandardPropagationSyncTerminalOutcome as WorkerOutcome;
+
+    match outcome {
+        WorkerOutcome::Succeeded => StandardPropagationSyncTerminalOutcome::Succeeded,
+        WorkerOutcome::Failed => StandardPropagationSyncTerminalOutcome::Failed,
+        WorkerOutcome::TimedOut => StandardPropagationSyncTerminalOutcome::TimedOut,
+        WorkerOutcome::Cancelled => StandardPropagationSyncTerminalOutcome::Cancelled,
+    }
+}
+
 fn path_observation(
     snapshot: rns_core::transport::core_transport::path_table::PathSnapshot,
 ) -> ObservationMetadata {
@@ -1531,11 +1564,16 @@ impl DaemonStatus for DaemonFacade {
         self.require(Capability::RPC_STATUS)?;
         let mut snapshot = StandardPropagationSnapshot::default();
         snapshot.version = STANDARD_PROPAGATION_SNAPSHOT_VERSION;
+        snapshot.selection_readiness = StandardPropagationSelectionReadiness::Unavailable;
+        snapshot.sync_readiness = StandardPropagationSyncReadiness::Unavailable;
         let Some(runtime) = self.ctx.standard_propagation() else {
             return Ok(snapshot);
         };
         snapshot.registered = runtime.is_registered();
+        snapshot.selection_readiness = StandardPropagationSelectionReadiness::NoSelection;
         let runtime_policy = runtime.policy();
+        let sync_policy = runtime.sync_policy();
+        let sync_telemetry = runtime.sync_telemetry();
         let storage_policy = crate::storage::standard_propagation::StandardPropagationPolicy {
             queue_max_count: runtime_policy.queue_max_count,
             queue_max_bytes: runtime_policy.queue_max_bytes,
@@ -1549,6 +1587,40 @@ impl DaemonStatus for DaemonFacade {
             .map_err(|error| IpcError::Internal { message: error.to_string() })?;
         drop(store);
         snapshot.active = runtime.active();
+        snapshot.automatic_sync_enabled = Some(sync_policy.automatic);
+        snapshot.automatic_sync_cooldown_secs = Some(sync_policy.cooldown.as_secs());
+        snapshot.sync_deadline_secs = Some(sync_policy.deadline.as_secs());
+        snapshot.trigger_capabilities = vec![
+            StandardPropagationTriggerCapabilityInfo {
+                source: StandardPropagationTriggerSource::InitialConnection,
+                platform_capability: StandardPropagationPlatformCapability::AutomaticForeground,
+                opportunity: StandardPropagationOpportunityState::Available,
+            },
+            StandardPropagationTriggerCapabilityInfo {
+                source: StandardPropagationTriggerSource::Reconnect,
+                platform_capability: StandardPropagationPlatformCapability::AutomaticForeground,
+                opportunity: StandardPropagationOpportunityState::Available,
+            },
+            StandardPropagationTriggerCapabilityInfo {
+                source: StandardPropagationTriggerSource::ForegroundOpportunity,
+                platform_capability: StandardPropagationPlatformCapability::AutomaticForeground,
+                opportunity: StandardPropagationOpportunityState::Available,
+            },
+            StandardPropagationTriggerCapabilityInfo {
+                source: StandardPropagationTriggerSource::GrantedBackgroundOpportunity,
+                platform_capability: StandardPropagationPlatformCapability::AutomaticBackground,
+                opportunity: if sync_policy.automatic {
+                    StandardPropagationOpportunityState::Available
+                } else {
+                    StandardPropagationOpportunityState::Denied
+                },
+            },
+            StandardPropagationTriggerCapabilityInfo {
+                source: StandardPropagationTriggerSource::Manual,
+                platform_capability: StandardPropagationPlatformCapability::Manual,
+                opportunity: StandardPropagationOpportunityState::Available,
+            },
+        ];
 
         let mut policy = StandardPropagationPolicyInfo::default();
         policy.target_cost = runtime_policy.target_cost;
@@ -1582,6 +1654,40 @@ impl DaemonStatus for DaemonFacade {
             info.selected_at = selection.selected_at;
             info
         });
+        if snapshot.selection.is_some() {
+            snapshot.selection_readiness = if snapshot.active {
+                StandardPropagationSelectionReadiness::Ready
+            } else {
+                StandardPropagationSelectionReadiness::Unavailable
+            };
+        }
+        snapshot.active_sync = sync_telemetry.active.map(|active| StandardPropagationActiveSyncInfo {
+            trigger: standard_propagation_trigger_source(active.trigger),
+            started_at: active.started_at,
+        });
+        snapshot.last_synchronization =
+            sync_telemetry.last_completed.map(|completed| StandardPropagationLastSynchronizationInfo {
+                trigger: standard_propagation_trigger_source(completed.trigger),
+                started_at: completed.started_at,
+                finished_at: completed.finished_at,
+                outcome: standard_propagation_terminal_outcome(completed.outcome),
+                new_messages: u32::try_from(completed.new_messages).unwrap_or(u32::MAX),
+            });
+        snapshot.cooldown_remaining_secs = Some(
+            sync_telemetry
+                .cooldown_remaining
+                .as_secs()
+                .saturating_add(u64::from(sync_telemetry.cooldown_remaining.subsec_nanos() > 0)),
+        );
+        snapshot.sync_readiness = if snapshot.active_sync.is_some() {
+            StandardPropagationSyncReadiness::InFlight
+        } else if snapshot.cooldown_remaining_secs.unwrap_or(0) > 0 {
+            StandardPropagationSyncReadiness::CoolingDown
+        } else if snapshot.active {
+            StandardPropagationSyncReadiness::Ready
+        } else {
+            StandardPropagationSyncReadiness::Unavailable
+        };
         snapshot.peers = observation
             .peers
             .into_iter()
@@ -3131,6 +3237,9 @@ mod tests {
         assert_eq!(absent.version, STANDARD_PROPAGATION_SNAPSHOT_VERSION);
         assert!(!absent.registered);
         assert!(!absent.active);
+        assert_eq!(absent.selection_readiness, StandardPropagationSelectionReadiness::Unavailable);
+        assert_eq!(absent.sync_readiness, StandardPropagationSyncReadiness::Unavailable);
+        assert_eq!(absent.automatic_sync_enabled, None);
         assert!(absent.policy.is_none());
         assert!(absent.peers.is_empty());
         assert!(absent.attempts.is_empty());
@@ -3141,6 +3250,10 @@ mod tests {
         let client = facade.query_standard_propagation().await.unwrap();
         assert!(!client.registered);
         assert!(client.active);
+        assert_eq!(client.selection_readiness, StandardPropagationSelectionReadiness::NoSelection);
+        assert_eq!(client.sync_readiness, StandardPropagationSyncReadiness::Ready);
+        assert_eq!(client.automatic_sync_enabled, Some(true));
+        assert_eq!(client.last_synchronization, None);
         assert!(client.policy.is_none());
         assert!(client.observed_at.is_some());
 
@@ -3152,6 +3265,10 @@ mod tests {
         let present = facade.query_standard_propagation().await.unwrap();
         assert!(present.registered);
         assert!(!present.active);
+        assert_eq!(present.selection_readiness, StandardPropagationSelectionReadiness::NoSelection);
+        assert_eq!(present.sync_readiness, StandardPropagationSyncReadiness::Unavailable);
+        assert_eq!(present.automatic_sync_enabled, Some(true));
+        assert_eq!(present.cooldown_remaining_secs, Some(0));
         let policy = present.policy.unwrap();
         assert_eq!(policy.target_cost, 16);
         assert_eq!(policy.flexibility, 3);

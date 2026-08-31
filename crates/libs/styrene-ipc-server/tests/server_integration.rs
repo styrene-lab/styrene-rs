@@ -253,6 +253,32 @@ impl DaemonStatus for TestDaemon {
         snapshot.registered = true;
         snapshot.active = true;
         snapshot.observed_at = Some(100);
+        snapshot.selection_readiness = StandardPropagationSelectionReadiness::Ready;
+        snapshot.sync_readiness = StandardPropagationSyncReadiness::CoolingDown;
+        snapshot.automatic_sync_enabled = Some(false);
+        snapshot.automatic_sync_cooldown_secs = Some(30);
+        snapshot.sync_deadline_secs = Some(32);
+        snapshot.cooldown_remaining_secs = Some(17);
+        snapshot.trigger_capabilities = vec![StandardPropagationTriggerCapabilityInfo {
+            source: StandardPropagationTriggerSource::ForegroundOpportunity,
+            platform_capability: StandardPropagationPlatformCapability::AutomaticForeground,
+            opportunity: StandardPropagationOpportunityState::Available,
+        }, StandardPropagationTriggerCapabilityInfo {
+            source: StandardPropagationTriggerSource::GrantedBackgroundOpportunity,
+            platform_capability: StandardPropagationPlatformCapability::AutomaticBackground,
+            opportunity: StandardPropagationOpportunityState::Denied,
+        }];
+        snapshot.active_sync = Some(StandardPropagationActiveSyncInfo {
+            trigger: StandardPropagationTriggerSource::ForegroundOpportunity,
+            started_at: 90,
+        });
+        snapshot.last_synchronization = Some(StandardPropagationLastSynchronizationInfo {
+            trigger: StandardPropagationTriggerSource::Manual,
+            started_at: 40,
+            finished_at: 45,
+            outcome: StandardPropagationSyncTerminalOutcome::Failed,
+            new_messages: 0,
+        });
         let mut policy = StandardPropagationPolicyInfo::default();
         policy.target_cost = 16;
         policy.flexibility = 3;
@@ -1880,6 +1906,29 @@ async fn standard_propagation_query_roundtrips_typed_metadata_without_payload_in
     assert!(snapshot.active);
     assert!(snapshot.connection_generation.is_some());
     assert_eq!(snapshot.policy.unwrap().transfer_limit_kb, 256);
+    assert_eq!(snapshot.selection_readiness, StandardPropagationSelectionReadiness::Ready);
+    assert_eq!(snapshot.sync_readiness, StandardPropagationSyncReadiness::CoolingDown);
+    assert_eq!(snapshot.automatic_sync_enabled, Some(false));
+    assert_eq!(snapshot.automatic_sync_cooldown_secs, Some(30));
+    assert_eq!(snapshot.sync_deadline_secs, Some(32));
+    assert_eq!(snapshot.cooldown_remaining_secs, Some(17));
+    assert_eq!(snapshot.trigger_capabilities.len(), 2);
+    assert_eq!(
+        snapshot.trigger_capabilities[1].source,
+        StandardPropagationTriggerSource::GrantedBackgroundOpportunity
+    );
+    assert_eq!(
+        snapshot.trigger_capabilities[1].opportunity,
+        StandardPropagationOpportunityState::Denied
+    );
+    assert_eq!(
+        snapshot.active_sync.as_ref().map(|sync| sync.trigger),
+        Some(StandardPropagationTriggerSource::ForegroundOpportunity)
+    );
+    assert_eq!(
+        snapshot.last_synchronization.as_ref().map(|sync| sync.outcome),
+        Some(StandardPropagationSyncTerminalOutcome::Failed)
+    );
     assert_eq!(snapshot.attempts.len(), 1);
     assert_eq!(snapshot.attempts[0].stage, StandardPropagationStage::Offer);
     assert_eq!(snapshot.attempts[0].outcome, StandardPropagationOutcome::Pending);

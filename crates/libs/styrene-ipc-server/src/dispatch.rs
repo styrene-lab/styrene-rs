@@ -926,6 +926,98 @@ fn standard_outcome_name(value: styrene_ipc::types::StandardPropagationOutcome) 
     }
 }
 
+fn standard_trigger_source_name(
+    value: styrene_ipc::types::StandardPropagationTriggerSource,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationTriggerSource;
+
+    match value {
+        StandardPropagationTriggerSource::InitialConnection => "initial_connection",
+        StandardPropagationTriggerSource::Reconnect => "reconnect",
+        StandardPropagationTriggerSource::ForegroundOpportunity => "foreground_opportunity",
+        StandardPropagationTriggerSource::GrantedBackgroundOpportunity => {
+            "granted_background_opportunity"
+        }
+        StandardPropagationTriggerSource::Manual => "manual",
+        StandardPropagationTriggerSource::Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
+fn standard_platform_capability_name(
+    value: styrene_ipc::types::StandardPropagationPlatformCapability,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationPlatformCapability;
+
+    match value {
+        StandardPropagationPlatformCapability::AutomaticForeground => "automatic_foreground",
+        StandardPropagationPlatformCapability::AutomaticBackground => "automatic_background",
+        StandardPropagationPlatformCapability::Manual => "manual",
+        StandardPropagationPlatformCapability::Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
+fn standard_opportunity_state_name(
+    value: styrene_ipc::types::StandardPropagationOpportunityState,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationOpportunityState;
+
+    match value {
+        StandardPropagationOpportunityState::Unsupported => "unsupported",
+        StandardPropagationOpportunityState::Available => "available",
+        StandardPropagationOpportunityState::Denied => "denied",
+        StandardPropagationOpportunityState::Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
+fn standard_selection_readiness_name(
+    value: styrene_ipc::types::StandardPropagationSelectionReadiness,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationSelectionReadiness;
+
+    match value {
+        StandardPropagationSelectionReadiness::Ready => "ready",
+        StandardPropagationSelectionReadiness::NoSelection => "no_selection",
+        StandardPropagationSelectionReadiness::Unavailable => "unavailable",
+        StandardPropagationSelectionReadiness::Unknown => "unknown",
+        StandardPropagationSelectionReadiness::Other => "other",
+        _ => "other",
+    }
+}
+
+fn standard_sync_readiness_name(
+    value: styrene_ipc::types::StandardPropagationSyncReadiness,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationSyncReadiness;
+
+    match value {
+        StandardPropagationSyncReadiness::Ready => "ready",
+        StandardPropagationSyncReadiness::InFlight => "in_flight",
+        StandardPropagationSyncReadiness::CoolingDown => "cooling_down",
+        StandardPropagationSyncReadiness::Unavailable => "unavailable",
+        StandardPropagationSyncReadiness::Unknown => "unknown",
+        StandardPropagationSyncReadiness::Other => "other",
+        _ => "other",
+    }
+}
+
+fn standard_terminal_outcome_name(
+    value: styrene_ipc::types::StandardPropagationSyncTerminalOutcome,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationSyncTerminalOutcome;
+
+    match value {
+        StandardPropagationSyncTerminalOutcome::Succeeded => "succeeded",
+        StandardPropagationSyncTerminalOutcome::Failed => "failed",
+        StandardPropagationSyncTerminalOutcome::TimedOut => "timed_out",
+        StandardPropagationSyncTerminalOutcome::Cancelled => "cancelled",
+        StandardPropagationSyncTerminalOutcome::Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
 fn optional_value(value: Option<impl Into<rmpv::Value>>) -> rmpv::Value {
     value.map(Into::into).unwrap_or(rmpv::Value::Nil)
 }
@@ -963,6 +1055,35 @@ async fn dispatch_query_standard_propagation(
             ("peer_hash", optional_value(selection.peer_hash)),
             ("mode", selection.mode.into()),
             ("selected_at", selection.selected_at.into()),
+        ])
+    });
+    let trigger_capabilities = snapshot
+        .trigger_capabilities
+        .into_iter()
+        .map(|capability| {
+            string_map([
+                ("source", standard_trigger_source_name(capability.source).into()),
+                (
+                    "platform_capability",
+                    standard_platform_capability_name(capability.platform_capability).into(),
+                ),
+                ("opportunity", standard_opportunity_state_name(capability.opportunity).into()),
+            ])
+        })
+        .collect();
+    let active_sync = snapshot.active_sync.map(|active| {
+        string_map([
+            ("trigger", standard_trigger_source_name(active.trigger).into()),
+            ("started_at", active.started_at.into()),
+        ])
+    });
+    let last_synchronization = snapshot.last_synchronization.map(|sync| {
+        string_map([
+            ("trigger", standard_trigger_source_name(sync.trigger).into()),
+            ("started_at", sync.started_at.into()),
+            ("finished_at", sync.finished_at.into()),
+            ("outcome", standard_terminal_outcome_name(sync.outcome).into()),
+            ("new_messages", sync.new_messages.into()),
         ])
     });
     let peers = snapshot
@@ -1057,6 +1178,30 @@ async fn dispatch_query_standard_propagation(
         ("policy".into(), policy.unwrap_or(rmpv::Value::Nil)),
         ("queue".into(), queue),
         ("selection".into(), selection.unwrap_or(rmpv::Value::Nil)),
+        (
+            "selection_readiness".into(),
+            standard_selection_readiness_name(snapshot.selection_readiness).into(),
+        ),
+        ("sync_readiness".into(), standard_sync_readiness_name(snapshot.sync_readiness).into()),
+        (
+            "automatic_sync_enabled".into(),
+            optional_value(snapshot.automatic_sync_enabled),
+        ),
+        (
+            "automatic_sync_cooldown_secs".into(),
+            optional_value(snapshot.automatic_sync_cooldown_secs),
+        ),
+        ("sync_deadline_secs".into(), optional_value(snapshot.sync_deadline_secs)),
+        ("trigger_capabilities".into(), rmpv::Value::Array(trigger_capabilities)),
+        ("active_sync".into(), active_sync.unwrap_or(rmpv::Value::Nil)),
+        (
+            "last_synchronization".into(),
+            last_synchronization.unwrap_or(rmpv::Value::Nil),
+        ),
+        (
+            "cooldown_remaining_secs".into(),
+            optional_value(snapshot.cooldown_remaining_secs),
+        ),
         ("peers".into(), rmpv::Value::Array(peers)),
         ("attempts".into(), rmpv::Value::Array(attempts)),
         ("checkpoints".into(), rmpv::Value::Array(checkpoints)),

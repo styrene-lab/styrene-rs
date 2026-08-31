@@ -420,6 +420,112 @@ pub const MAX_STANDARD_PROPAGATION_FAILURES: usize = 128;
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
+pub enum StandardPropagationTriggerSource {
+    InitialConnection,
+    Reconnect,
+    ForegroundOpportunity,
+    GrantedBackgroundOpportunity,
+    Manual,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum StandardPropagationOpportunityState {
+    Unsupported,
+    Available,
+    Denied,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum StandardPropagationPlatformCapability {
+    AutomaticForeground,
+    AutomaticBackground,
+    Manual,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum StandardPropagationSelectionReadiness {
+    Ready,
+    NoSelection,
+    Unavailable,
+    Unknown,
+    #[default]
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum StandardPropagationSyncReadiness {
+    Ready,
+    InFlight,
+    CoolingDown,
+    Unavailable,
+    Unknown,
+    #[default]
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum StandardPropagationSyncTerminalOutcome {
+    Succeeded,
+    Failed,
+    TimedOut,
+    Cancelled,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct StandardPropagationTriggerCapabilityInfo {
+    pub source: StandardPropagationTriggerSource,
+    pub platform_capability: StandardPropagationPlatformCapability,
+    pub opportunity: StandardPropagationOpportunityState,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct StandardPropagationActiveSyncInfo {
+    pub trigger: StandardPropagationTriggerSource,
+    pub started_at: i64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct StandardPropagationLastSynchronizationInfo {
+    pub trigger: StandardPropagationTriggerSource,
+    pub started_at: i64,
+    pub finished_at: i64,
+    pub outcome: StandardPropagationSyncTerminalOutcome,
+    pub new_messages: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum StandardPropagationDirection {
     Ingress,
     Egress,
@@ -592,6 +698,15 @@ pub struct StandardPropagationSnapshot {
     pub policy: Option<StandardPropagationPolicyInfo>,
     pub queue: StandardPropagationQueueStats,
     pub selection: Option<StandardPropagationSelectionInfo>,
+    pub selection_readiness: StandardPropagationSelectionReadiness,
+    pub sync_readiness: StandardPropagationSyncReadiness,
+    pub automatic_sync_enabled: Option<bool>,
+    pub automatic_sync_cooldown_secs: Option<u64>,
+    pub sync_deadline_secs: Option<u64>,
+    pub trigger_capabilities: Vec<StandardPropagationTriggerCapabilityInfo>,
+    pub active_sync: Option<StandardPropagationActiveSyncInfo>,
+    pub last_synchronization: Option<StandardPropagationLastSynchronizationInfo>,
+    pub cooldown_remaining_secs: Option<u64>,
     pub peers: Vec<StandardPropagationPeerObservation>,
     pub attempts: Vec<StandardPropagationAttemptObservation>,
     pub checkpoints: Vec<StandardPropagationCheckpointObservation>,
@@ -2728,6 +2843,63 @@ mod capability_tests {
         assert!(snapshot.registered);
         assert!(!snapshot.active);
         assert!(snapshot.peers.is_empty());
+        assert_eq!(snapshot.selection_readiness, StandardPropagationSelectionReadiness::Other);
+        assert_eq!(snapshot.sync_readiness, StandardPropagationSyncReadiness::Other);
+        assert_eq!(snapshot.automatic_sync_enabled, None);
+        assert!(snapshot.trigger_capabilities.is_empty());
+        assert!(snapshot.active_sync.is_none());
+        assert!(snapshot.last_synchronization.is_none());
+        assert_eq!(snapshot.cooldown_remaining_secs, None);
+    }
+
+    #[test]
+    fn standard_propagation_snapshot_roundtrips_explicit_trigger_projection() {
+        let snapshot = StandardPropagationSnapshot {
+            version: 1,
+            registered: true,
+            active: true,
+            observed_at: Some(10),
+            connection_generation: Some(11),
+            policy: None,
+            queue: StandardPropagationQueueStats::default(),
+            selection: None,
+            selection_readiness: StandardPropagationSelectionReadiness::Ready,
+            sync_readiness: StandardPropagationSyncReadiness::CoolingDown,
+            automatic_sync_enabled: Some(false),
+            automatic_sync_cooldown_secs: Some(30),
+            sync_deadline_secs: Some(32),
+            trigger_capabilities: vec![StandardPropagationTriggerCapabilityInfo {
+                source: StandardPropagationTriggerSource::ForegroundOpportunity,
+                platform_capability: StandardPropagationPlatformCapability::AutomaticForeground,
+                opportunity: StandardPropagationOpportunityState::Available,
+            }],
+            active_sync: Some(StandardPropagationActiveSyncInfo {
+                trigger: StandardPropagationTriggerSource::ForegroundOpportunity,
+                started_at: 12,
+            }),
+            last_synchronization: Some(StandardPropagationLastSynchronizationInfo {
+                trigger: StandardPropagationTriggerSource::Manual,
+                started_at: 1,
+                finished_at: 2,
+                outcome: StandardPropagationSyncTerminalOutcome::Failed,
+                new_messages: 0,
+            }),
+            cooldown_remaining_secs: Some(17),
+            peers: Vec::new(),
+            attempts: Vec::new(),
+            checkpoints: Vec::new(),
+            failures: Vec::new(),
+            peers_truncated: false,
+            attempts_truncated: false,
+            checkpoints_truncated: false,
+            failures_truncated: false,
+        };
+
+        let encoded = serde_json::to_string(&snapshot).expect("serialize standard propagation snapshot");
+        let decoded: StandardPropagationSnapshot =
+            serde_json::from_str(&encoded).expect("deserialize standard propagation snapshot");
+
+        assert_eq!(decoded, snapshot);
     }
 
     #[test]
