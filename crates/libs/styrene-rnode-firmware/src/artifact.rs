@@ -6,7 +6,7 @@ use std::path::{Component, Path};
 use ed25519_dalek::{Signature, VerifyingKey};
 use thiserror::Error;
 
-use crate::{ExecutorClass, MemoryRegion, Sha256Digest, TargetObservation};
+use crate::{ExecutorClass, FirmwareOperation, MemoryRegion, Sha256Digest, TargetObservation};
 
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 const MAX_ARCHIVE_MEMBERS: usize = 128;
@@ -132,10 +132,13 @@ const fn deny(reason: ArtifactDecisionReason) -> ArtifactAdmissionResult {
 pub struct FirmwareManifest {
     pub schema_version: u16,
     pub manifest_id: String,
+    pub firmware_version: String,
+    pub operations: Vec<FirmwareOperation>,
     pub target: ManifestTarget,
     pub artifact: ManifestArtifact,
     pub images: Vec<ManifestImage>,
     pub protected_regions: Vec<MemoryRegion>,
+    pub recovery: ManifestRecovery,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -162,6 +165,16 @@ pub struct ManifestImage {
     pub region: MemoryRegion,
     pub sha256: Sha256Digest,
     pub application: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestRecovery {
+    pub executor: ExecutorClass,
+    pub procedure_id: String,
+    pub physical_mode: String,
+    pub tool_id: String,
+    pub power_condition: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -221,6 +234,8 @@ pub fn admit_artifact(
     validate_manifest(&manifest)?;
 
     if manifest.target.executor != executor
+        || !executor.supports_mcu(target.mcu_family)
+        || !manifest.recovery.executor.supports_mcu(target.mcu_family)
         || target.board.as_deref() != Some(manifest.target.board.as_str())
         || target.radio_variant.as_deref() != Some(manifest.target.radio_variant.as_str())
         || target.hardware_revision.as_deref() != Some(manifest.target.hardware_revision.as_str())
@@ -242,6 +257,8 @@ pub fn admit_artifact(
 fn validate_manifest(manifest: &FirmwareManifest) -> Result<(), ArtifactAdmissionError> {
     if manifest.schema_version != 1
         || manifest.manifest_id.is_empty()
+        || manifest.firmware_version.is_empty()
+        || manifest.operations.is_empty()
         || manifest.target.board.is_empty()
         || manifest.target.radio_variant.is_empty()
         || manifest.target.hardware_revision.is_empty()
@@ -249,6 +266,17 @@ fn validate_manifest(manifest: &FirmwareManifest) -> Result<(), ArtifactAdmissio
         || manifest.artifact.max_expanded_bytes > MAX_EXPANDED_BYTES
         || manifest.artifact.expected_members.is_empty()
         || manifest.artifact.expected_members.len() > MAX_ARCHIVE_MEMBERS
+    {
+        return Err(admission_error(ArtifactDecisionReason::ManifestInvalid));
+    }
+    let mut operations = HashSet::new();
+    if manifest.operations.iter().any(|operation| {
+        matches!(operation, FirmwareOperation::Inspect | FirmwareOperation::Plan)
+            || !operations.insert(*operation)
+    }) || manifest.recovery.procedure_id.is_empty()
+        || manifest.recovery.physical_mode.is_empty()
+        || manifest.recovery.tool_id.is_empty()
+        || manifest.recovery.power_condition.is_empty()
     {
         return Err(admission_error(ArtifactDecisionReason::ManifestInvalid));
     }

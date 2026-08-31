@@ -45,11 +45,15 @@ fn plan() -> FirmwarePlan {
             name: "application".into(),
             region: MemoryRegion { offset: 65_536, length: 131_072 },
             sha256: digest('b'),
+            application: true,
         }],
         preserved_regions: vec![MemoryRegion { offset: 9_000, length: 4_000 }],
         recovery: RecoveryPolicy {
             executor: ExecutorClass::HostSerialEsp,
             procedure_id: "esp-rom-recovery-v1".into(),
+            physical_mode: "rom_serial_bootloader".into(),
+            tool_id: "bounded_host_serial_esp".into(),
+            power_condition: "stable_usb_power".into(),
             requires_new_confirmation: true,
         },
         expected: ExpectedDeviceState {

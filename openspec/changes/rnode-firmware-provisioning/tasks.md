@@ -21,7 +21,7 @@
 <!-- specs: desktop-hardware-provisioning, firmware-provisioning, provisioning-evidence -->
 
 - [ ] 3.1 Record the attached Espressif device's exact board, radio variant, revision, bootloader, and recovery method without committing its serial number
-- [ ] 3.2 Add failing desktop contract tests for inspection, dry-run plans, confirmation, preserved regions, and recovery
+- [x] 3.2 Add failing desktop contract tests for inspection, dry-run plans, confirmation, preserved regions, and recovery
 - [ ] 3.3 Implement one exact bounded ESP USB executor with no arbitrary command or image input
 - [ ] 3.4 Expose inspect, plan, upgrade, fresh-install, provision, and recovery actions according to executor capability
 - [ ] 3.5 Verify power loss, corrupted artifacts, model mismatch, protected regions, post-write hash mismatch, and explicit recovery

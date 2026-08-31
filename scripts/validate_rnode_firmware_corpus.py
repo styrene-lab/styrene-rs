@@ -27,6 +27,7 @@ CAPABILITY_REASONS = {
     "accepted_exact_target",
     "read_only_inspection",
     "exact_target_unknown",
+    "executor_mismatch",
     "mobile_executor_unavailable",
     "operation_not_mobile_supported",
     "physical_evidence_missing",
