@@ -67,7 +67,7 @@ ipc-server = ["dep:styrene-ipc-server"]
 wireguard = ["dep:styrene-tunnel"]
 ## I2P HTTP proxy support
 i2p-proxy = ["dep:reqwest"]
-## Keychain-backed identity for mobile (iOS/macOS biometric)
+## Device-bound Keychain identity for mobile (iOS/macOS first unlock)
 mobile-keychain = ["dep:styrene-identity", "styrene-identity/keychain", "styrene-identity/signing"]
 ## Android Keystore-wrapped identity for mobile
 mobile-android-keystore = ["dep:styrene-identity", "styrene-identity/android-keystore", "styrene-identity/signing"]
