@@ -57,6 +57,12 @@ pub enum ConfigurationState {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct TargetObservation {
     pub generation: u64,
+    pub platform_code: Option<u8>,
+    pub mcu_code: Option<u8>,
+    pub board_code: Option<u8>,
+    pub product_code: Option<u8>,
+    pub model_code: Option<u8>,
+    pub hardware_revision_code: Option<u8>,
     pub mcu_family: McuFamily,
     pub board: Option<String>,
     pub radio_variant: Option<String>,
@@ -118,6 +124,12 @@ impl Sha256Digest {
             return Err(DigestError::InvalidSha256);
         }
         Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        let value = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        Self(value)
     }
 
     #[must_use]

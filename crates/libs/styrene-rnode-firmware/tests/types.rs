@@ -12,6 +12,12 @@ fn digest(value: char) -> Sha256Digest {
 fn plan() -> FirmwarePlan {
     let target = TargetObservation {
         generation: 4,
+        platform_code: Some(0x80),
+        mcu_code: Some(0x81),
+        board_code: Some(0x3a),
+        product_code: Some(0x03),
+        model_code: Some(0xa6),
+        hardware_revision_code: Some(0x01),
         mcu_family: McuFamily::Esp32s3,
         board: Some("exact-board".into()),
         radio_variant: Some("sx1262".into()),

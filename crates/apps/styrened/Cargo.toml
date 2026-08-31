@@ -21,6 +21,7 @@ styrene-tunnel = { path = "../../libs/styrene-tunnel", version = "0.1.0", featur
 styrene-content = { path = "../../libs/styrene-content", version = "0.1.0", features = ["alloc", "std"] }
 styrene-micron = { workspace = true }
 styrene-rbac = { path = "../../libs/styrene-rbac", version = "0.1.0", features = ["config", "signing"] }
+styrene-rnode-firmware.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 ciborium = "0.2"
