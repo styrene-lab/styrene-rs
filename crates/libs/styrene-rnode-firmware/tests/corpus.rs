@@ -33,6 +33,7 @@ struct CapabilityTarget {
     radio_variant: Option<String>,
     hardware_revision: Option<String>,
     bootloader: String,
+    bootloader_revision: Option<String>,
     configured: ConfigurationState,
     physical_acceptance: bool,
 }
@@ -105,13 +106,14 @@ fn capability_corpus_matches_policy() {
             .iter()
             .find(|target| target.id == case.target)
             .unwrap_or_else(|| panic!("{} references missing target", case.id));
-        let observation = TargetObservation::new(target.mcu_family, target.configured)
+        let mut observation = TargetObservation::new(target.mcu_family, target.configured)
             .with_hardware(
                 target.board.clone(),
                 target.radio_variant.clone(),
                 target.hardware_revision.clone(),
                 Some(target.bootloader.clone()),
             );
+        observation.bootloader_revision = target.bootloader_revision.clone();
         let request = CapabilityRequest {
             host: case.host,
             operation: case.operation,

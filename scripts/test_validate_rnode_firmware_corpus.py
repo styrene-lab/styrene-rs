@@ -50,6 +50,20 @@ class RNodeFirmwareCorpusTests(unittest.TestCase):
         case["expected"] = {"decision": "allow", "reason": "accepted_exact_target"}
         self.assert_error_contains("capabilities.json", document, "nRF BLE upgrade only")
 
+    def test_rejects_mobile_upgrade_allowance_without_bootloader_revision(self) -> None:
+        document = self.load("capabilities.json")
+        target = next(
+            target
+            for target in document["targets"]
+            if target["id"] == "synthetic-rak4631-accepted"
+        )
+        target["bootloader_revision"] = None
+        self.assert_error_contains(
+            "capabilities.json",
+            document,
+            "exact bootloader revision",
+        )
+
     def test_rejects_mutable_upstream_revision(self) -> None:
         document = self.load("artifacts.json")
         document["authorities"][0]["revision"] = "master"

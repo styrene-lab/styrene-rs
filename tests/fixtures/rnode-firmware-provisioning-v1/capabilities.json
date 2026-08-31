@@ -11,6 +11,7 @@
       "radio_variant": null,
       "hardware_revision": null,
       "bootloader": "esp_rom_serial",
+      "bootloader_revision": null,
       "configured": "unknown",
       "physical_acceptance": false
     },
@@ -21,6 +22,7 @@
       "radio_variant": "synthetic_sx1262",
       "hardware_revision": "synthetic-rev-a",
       "bootloader": "esp_rom_serial",
+      "bootloader_revision": null,
       "configured": "yes",
       "physical_acceptance": false
     },
@@ -31,6 +33,7 @@
       "radio_variant": "synthetic-sx1262",
       "hardware_revision": "synthetic-rev-a",
       "bootloader": "adafruit_legacy_ble_dfu",
+      "bootloader_revision": "0.4.3",
       "configured": "yes",
       "physical_acceptance": true
     },
@@ -41,8 +44,20 @@
       "radio_variant": "synthetic-sx1262",
       "hardware_revision": "synthetic-rev-a",
       "bootloader": "adafruit_legacy_ble_dfu",
+      "bootloader_revision": "0.4.3",
       "configured": "no",
       "physical_acceptance": false
+    },
+    {
+      "id": "synthetic-rak4631-bootloader-revision-unknown",
+      "mcu_family": "nrf52840",
+      "board": "rak4631",
+      "radio_variant": "synthetic-sx1262",
+      "hardware_revision": "synthetic-rev-a",
+      "bootloader": "adafruit_legacy_ble_dfu",
+      "bootloader_revision": null,
+      "configured": "yes",
+      "physical_acceptance": true
     }
   ],
   "cases": [
@@ -109,6 +124,14 @@
       "operation": "inspect",
       "executor": "ble_nus_inspect",
       "expected": {"decision": "allow", "reason": "read_only_inspection"}
+    },
+    {
+      "id": "capability.ios.rak.bootloader-revision-unknown",
+      "host": "ios_mobile",
+      "target": "synthetic-rak4631-bootloader-revision-unknown",
+      "operation": "upgrade",
+      "executor": "ios_nrf_ble_dfu",
+      "expected": {"decision": "deny", "reason": "exact_target_unknown"}
     },
     {
       "id": "capability.ios.accepted-rak.fresh-install",
