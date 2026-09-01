@@ -1231,7 +1231,7 @@ async fn dispatch_query_identity(daemon: &Arc<dyn Daemon>) -> Result<Payload, St
 async fn dispatch_query_identity_backup_metadata(
     daemon: &Arc<dyn Daemon>,
 ) -> Result<Payload, String> {
-    let metadata = daemon.query_identity_backup_metadata().await.map_err(|e| e.to_string())?;
+    let metadata = daemon.query_identity_backup_metadata().await.map_err(typed_ipc_error)?;
     Ok(HashMap::from([
         ("contract_version".into(), metadata.contract_version.into()),
         ("format".into(), identity_backup_format_value(metadata.format)),
@@ -1240,7 +1240,7 @@ async fn dispatch_query_identity_backup_metadata(
 }
 
 async fn dispatch_export_identity_backup(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
-    let backup = daemon.export_identity_backup().await.map_err(|e| e.to_string())?;
+    let backup = daemon.export_identity_backup().await.map_err(typed_ipc_error)?;
     Ok(HashMap::from([
         ("metadata".into(), identity_backup_metadata_value(backup.metadata)),
         ("encrypted_bytes".into(), rmpv::Value::Binary(backup.encrypted_bytes)),
@@ -1258,7 +1258,7 @@ async fn dispatch_restore_identity_backup(
         .to_vec();
     let mut backup = styrene_ipc::types::IdentityBackupImport::default();
     backup.encrypted_bytes = encrypted_bytes;
-    let outcome = daemon.restore_identity_backup(backup).await.map_err(|e| e.to_string())?;
+    let outcome = daemon.restore_identity_backup(backup).await.map_err(typed_ipc_error)?;
     Ok(HashMap::from([("outcome".into(), identity_restore_outcome_value(outcome))]))
 }
 
@@ -1558,6 +1558,16 @@ pub(crate) fn message_info_value(message: &styrene_ipc::types::MessageInfo) -> r
             rmpv::Value::from("terminal_detail"),
             message.terminal_detail.as_deref().map_or(rmpv::Value::Nil, rmpv::Value::from),
         ),
+        (
+            rmpv::Value::from("retry_eligible"),
+            message.retry_eligible.map_or(rmpv::Value::Nil, rmpv::Value::from),
+        ),
+        (
+            rmpv::Value::from("retry_ineligibility_reason"),
+            message.retry_ineligibility_reason.map_or(rmpv::Value::Nil, |reason| {
+                rmpv::Value::from(message_retry_ineligibility_reason_name(reason))
+            }),
+        ),
     ];
     for (key, value) in [
         ("delivery_method", message.delivery_method.as_deref()),
@@ -1777,6 +1787,21 @@ fn message_lifecycle_state_name(state: styrene_ipc::types::MessageLifecycleState
         Cancelled => "cancelled",
         Expired => "expired",
         Rejected => "rejected",
+        Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
+fn message_retry_ineligibility_reason_name(
+    reason: styrene_ipc::types::MessageRetryIneligibilityReason,
+) -> &'static str {
+    use styrene_ipc::types::MessageRetryIneligibilityReason::*;
+    match reason {
+        Inbound => "inbound",
+        MissingOutboundRoute => "missing_outbound_route",
+        LifecycleState => "lifecycle_state",
+        CanonicalWireUnavailable => "canonical_wire_unavailable",
+        AttemptLimitReached => "attempt_limit_reached",
         Unknown => "unknown",
         _ => "unknown",
     }

@@ -410,6 +410,9 @@ impl DaemonIdentity for TestDaemon {
         &self,
         backup: IdentityBackupImport,
     ) -> Result<IdentityRestoreOutcome, IpcError> {
+        if backup.encrypted_bytes == b"unavailable" {
+            return Err(IpcError::Unavailable { reason: "identity backup unavailable".into() });
+        }
         *self.restored_identity_backup.lock().expect("backup test state lock") =
             backup.encrypted_bytes;
         Ok(IdentityRestoreOutcome::Restored)
@@ -532,6 +535,9 @@ impl DaemonMessaging for TestDaemon {
         message.actual_delivery_method = Some("direct".into());
         message.fallback_reason = Some("packet limit".into());
         message.correlation_id = Some("send-1".into());
+        message.retry_eligible = Some(false);
+        message.retry_ineligibility_reason =
+            Some(MessageRetryIneligibilityReason::AttemptLimitReached);
         message.attempts = vec![attempt];
         Ok(vec![message])
     }
@@ -2020,6 +2026,23 @@ async fn identity_backup_operations_keep_artifact_bytes_on_explicit_wire_boundar
 }
 
 #[tokio::test]
+async fn identity_backup_failures_preserve_typed_ipc_errors() {
+    let (mut server, sock) = setup_server().await;
+    let mut stream = UnixStream::connect(&sock).await.expect("connect");
+    let restore_payload =
+        HashMap::from([("encrypted_bytes".into(), rmpv::Value::Binary(b"unavailable".to_vec()))]);
+
+    let response =
+        send_and_recv(&mut stream, MessageType::CmdRestoreIdentityBackup, &restore_payload).await;
+
+    assert_eq!(response.msg_type, MessageType::Error);
+    let typed_error: IpcError = rmpv::ext::from_value(response.payload["typed_error"].clone())
+        .expect("typed identity backup error");
+    assert_eq!(typed_error, IpcError::Unavailable { reason: "identity backup unavailable".into() });
+    server.stop().await;
+}
+
+#[tokio::test]
 async fn mobile_diagnostics_snapshot_and_export_have_exact_bounded_wire_fields() {
     let (mut server, sock) = setup_server().await;
     let mut stream = UnixStream::connect(&sock).await.expect("connect");
@@ -2126,6 +2149,11 @@ async fn query_messages_serializes_authoritative_lifecycle() {
     assert_eq!(field("actual_delivery_method").and_then(rmpv::Value::as_str), Some("direct"));
     assert_eq!(field("fallback_reason").and_then(rmpv::Value::as_str), Some("packet limit"));
     assert_eq!(field("correlation_id").and_then(rmpv::Value::as_str), Some("send-1"));
+    assert_eq!(field("retry_eligible").and_then(rmpv::Value::as_bool), Some(false));
+    assert_eq!(
+        field("retry_ineligibility_reason").and_then(rmpv::Value::as_str),
+        Some("attempt_limit_reached")
+    );
     let attempt = field("attempts")
         .and_then(rmpv::Value::as_array)
         .and_then(|attempts| attempts.first())
