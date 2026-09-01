@@ -15,7 +15,7 @@ use crate::transport::iface::RxMessage;
 use super::ifac::{IfacConfig, ifac_unwrap, ifac_wrap};
 use super::{
     Interface, InterfaceContext, InterfaceDescriptor, InterfaceDropReason, InterfaceEndpoint,
-    InterfaceKind, InterfaceMode, InterfaceState,
+    InterfaceKind, InterfaceMode, InterfaceState, InterfaceStats,
 };
 
 // UDP trace logging stays on by default for packet-level network bring-up visibility.
@@ -31,9 +31,12 @@ impl UdpInterface {
         Self { bind_addr: bind_addr.into(), forward_addr: forward_addr.map(Into::into) }
     }
 
-    fn decode_packet(raw: &[u8], ifac: Option<&IfacConfig>) -> Result<Packet, InterfaceDropReason> {
+    fn decode_packet(
+        raw: &[u8],
+        ifac: Option<&IfacConfig>,
+    ) -> Result<Option<Packet>, InterfaceDropReason> {
         if raw.is_empty() {
-            return Err(InterfaceDropReason::MalformedFrame);
+            return Ok(None);
         }
         let inner = if let Some(config) = ifac {
             ifac_unwrap(raw, config).ok_or(InterfaceDropReason::IfacFailure)?
@@ -43,7 +46,23 @@ impl UdpInterface {
             raw.to_vec()
         };
         Packet::deserialize(&mut InputBuffer::new(&inner))
+            .map(Some)
             .map_err(|_| InterfaceDropReason::MalformedFrame)
+    }
+
+    fn admit_datagram(
+        raw: &[u8],
+        ifac: Option<&IfacConfig>,
+        stats: &InterfaceStats,
+    ) -> Option<Packet> {
+        match Self::decode_packet(raw, ifac) {
+            Ok(packet) => packet,
+            Err(reason) => {
+                stats.record_drop(reason);
+                log::debug!("udp_interface: dropping {:?} input", reason);
+                None
+            }
+        }
     }
 
     pub async fn spawn(context: InterfaceContext<Self>) {
@@ -110,17 +129,15 @@ impl UdpInterface {
                             result = socket.recv_from(&mut rx_buffer) => {
                                 match result {
                                     Ok((n, _in_addr)) => {
-                                        match Self::decode_packet(&rx_buffer[..n], ifac.as_deref()) {
-                                            Ok(packet) => {
+                                        if let Some(packet) = Self::admit_datagram(
+                                            &rx_buffer[..n],
+                                            ifac.as_deref(),
+                                            &stats,
+                                        ) {
                                                 if PACKET_TRACE {
                                                     log::trace!("udp_interface: rx << ({}) {}", iface_address, packet);
                                                 }
                                                 let _ = rx_channel.send(RxMessage::physical(iface_address, packet, Self::mtu())).await;
-                                            }
-                                            Err(reason) => {
-                                                stats.record_drop(reason);
-                                                log::debug!("udp_interface: dropping {:?} input", reason);
-                                            }
                                         }
                                     }
                                     Err(e) => {
@@ -243,6 +260,7 @@ mod tests {
         assert_eq!(
             UdpInterface::decode_packet(&wrapped, Some(&config))
                 .expect("authenticated packet")
+                .expect("non-empty packet")
                 .data
                 .as_slice(),
             b"udp IFAC"
@@ -254,22 +272,22 @@ mod tests {
     }
 
     #[test]
-    fn open_interface_rejects_ifac_and_empty_datagrams_without_closing() {
+    fn empty_datagrams_are_ignored_without_recording_a_violation() {
         let raw = packet_bytes();
         let wrapped = ifac_wrap(&raw, &ifac_config());
+        let stats = InterfaceStats::new();
 
         assert!(matches!(
             UdpInterface::decode_packet(&wrapped, None),
             Err(InterfaceDropReason::IfacFailure)
         ));
-        assert!(matches!(
-            UdpInterface::decode_packet(&[], None),
-            Err(InterfaceDropReason::MalformedFrame)
-        ));
-        assert!(UdpInterface::decode_packet(&raw, None).is_ok());
+        assert!(UdpInterface::admit_datagram(&[], None, &stats).is_none());
+        assert!(UdpInterface::admit_datagram(&raw, None, &stats).is_some());
+        assert_eq!(stats.snapshot().violations.malformed_frame, 0);
     }
 
     #[tokio::test]
+    #[ignore = "requires loopback UDP sockets"]
     async fn udp_worker_survives_empty_datagram_and_wraps_egress_with_ifac() {
         let reservation = UdpSocket::bind("127.0.0.1:0").await.expect("bind reservation");
         let bind_addr = reservation.local_addr().expect("reserved address");
@@ -309,7 +327,7 @@ mod tests {
             .expect("authenticated ingress");
         assert_eq!(received.packet.data.as_slice(), b"udp IFAC");
         let snapshot = manager.interface_snapshots().remove(0);
-        assert_eq!(snapshot.violations.malformed_frame, 1);
+        assert_eq!(snapshot.violations.malformed_frame, 0);
         assert_eq!(snapshot.violations.ifac_failure, 0);
 
         let outbound = Packet {

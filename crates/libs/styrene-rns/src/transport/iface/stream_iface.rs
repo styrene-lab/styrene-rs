@@ -86,6 +86,11 @@ pub(crate) async fn run_hdlc_rx_loop<R>(
                             if Hdlc::decode(frame, &mut output).is_ok() {
                                 let raw = output.as_slice();
 
+                                if raw.is_empty() {
+                                    frame_buffer.drain(..=end);
+                                    continue;
+                                }
+
                                 // IFAC: strip and verify if the interface requires it,
                                 // or drop packets that carry IFAC on an Open interface.
                                 let inner: Option<Vec<u8>> = if let Some(ref cfg) = ifac {
@@ -244,7 +249,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn malformed_and_ifac_drops_do_not_stop_stream_ingress() {
+    async fn empty_malformed_and_ifac_frames_do_not_stop_stream_ingress() {
         let (mut writer, reader) = tokio::io::duplex(4096);
         let (rx_send, mut rx_recv) = InterfaceChannel::make_rx_channel(4);
         let address = AddressHash::new([0x41; 16]);
@@ -267,7 +272,8 @@ mod tests {
         }
         .to_bytes()
         .expect("valid packet");
-        let mut input = frame(&[0x01]);
+        let mut input = frame(&[]);
+        input.extend(frame(&[0x01]));
         input.extend(frame(&[0x80]));
         input.extend(frame(&valid));
         writer.write_all(&input).await.expect("stream input");
