@@ -4311,38 +4311,42 @@ fn private_identity_from_root(
 async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<LoadedMobileIdentity> {
     #[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
     {
-        use styrene_identity::IdentitySigner;
         use styrene_identity::keychain_signer::{
             KeychainSigner, LEGACY_BIOMETRIC_ACCOUNT, SERVICE,
         };
+        use styrene_identity::{IdentitySigner, SignerError};
 
         let signer = KeychainSigner::default();
         let root = {
             let _guard = lock_mobile_identity_custody(_paths)
                 .map_err(|_| anyhow::anyhow!("Keychain custody lock unavailable"))?;
-            if signer.presence().map_err(|e| anyhow::anyhow!("keychain lookup: {e}"))? {
-                signer.root_secret().await.map_err(|e| anyhow::anyhow!("keychain access: {e}"))?
-            } else {
-                let legacy = KeychainSigner::new(SERVICE, LEGACY_BIOMETRIC_ACCOUNT);
-                if legacy.presence().map_err(|e| anyhow::anyhow!("legacy keychain lookup: {e}"))? {
-                    let root = legacy
-                        .root_secret()
-                        .await
-                        .map_err(|e| anyhow::anyhow!("legacy keychain access: {e}"))?;
-                    signer
-                        .create_from_root_secret(&root)
-                        .map_err(|e| anyhow::anyhow!("keychain migration: {e}"))?;
-                    crate::daemon_diagnostic!(
-                        "[mobile] migrated identity to first-unlock keychain policy"
-                    );
-                    root
-                } else {
-                    let root = signer
-                        .create_root_secret()
-                        .map_err(|e| anyhow::anyhow!("keychain create: {e}"))?;
-                    crate::daemon_diagnostic!("[mobile] created new identity in platform keychain");
-                    root
+            match signer.root_secret().await {
+                Ok(root) => root,
+                Err(SignerError::KeyNotFound(_)) => {
+                    let legacy = KeychainSigner::new(SERVICE, LEGACY_BIOMETRIC_ACCOUNT);
+                    match legacy.root_secret().await {
+                        Ok(root) => {
+                            signer
+                                .create_from_root_secret(&root)
+                                .map_err(|e| anyhow::anyhow!("keychain migration: {e}"))?;
+                            crate::daemon_diagnostic!(
+                                "[mobile] migrated identity to first-unlock keychain policy"
+                            );
+                            root
+                        }
+                        Err(SignerError::KeyNotFound(_)) => {
+                            let root = signer
+                                .create_root_secret()
+                                .map_err(|e| anyhow::anyhow!("keychain create: {e}"))?;
+                            crate::daemon_diagnostic!(
+                                "[mobile] created new identity in platform keychain"
+                            );
+                            root
+                        }
+                        Err(e) => return Err(anyhow::anyhow!("legacy keychain access: {e}")),
+                    }
                 }
+                Err(e) => return Err(anyhow::anyhow!("keychain access: {e}")),
             }
         };
 
