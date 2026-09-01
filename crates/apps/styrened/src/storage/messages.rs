@@ -536,7 +536,7 @@ fn conversation_summary(
                      ORDER BY timestamp DESC, id DESC LIMIT 1),
                     SUM(CASE WHEN direction = 'in' AND lower(source) = ?1
                                   AND COALESCE(read, 0) = 0 THEN 1 ELSE 0 END),
-                    COUNT(*), COALESCE(s.pinned, 0), COALESCE(s.muted, 0)
+                    COUNT(messages.id), COALESCE(s.pinned, 0), COALESCE(s.muted, 0)
              FROM (SELECT 1)
              LEFT JOIN messages ON lower(source) = ?1 OR lower(destination) = ?1
              LEFT JOIN conversation_state s ON s.peer_hash = ?1
@@ -7301,6 +7301,25 @@ mod tests {
         );
         assert_eq!(store.outbound_route("retry-prune").unwrap().unwrap().retry_of, None);
         assert_eq!(store.outbound_attempts("retry-prune").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn empty_conversation_shell_summary_reports_no_messages() {
+        let store = MessagesStore::in_memory().unwrap();
+        let peer = "e0".repeat(16);
+
+        let created = store.start_conversation(&peer).unwrap();
+        assert_eq!(created.disposition, MutationDisposition::Created);
+        let summary = created.summary.expect("created shell returns a summary");
+        assert_eq!(summary.peer_hash, peer);
+        assert_eq!(summary.message_count, 0);
+        assert_eq!(summary.unread_count, 0);
+        assert_eq!(summary.last_message_timestamp, None);
+        assert_eq!(summary.last_message_content, None);
+
+        let repeated = store.start_conversation(&peer).unwrap();
+        assert_eq!(repeated.disposition, MutationDisposition::Unchanged);
+        assert_eq!(repeated.summary.expect("existing shell returns a summary").message_count, 0);
     }
 
     #[test]
