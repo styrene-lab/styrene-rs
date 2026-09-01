@@ -6,7 +6,7 @@
 - [x] 1.1 `[styrene-rs]` Add failing serialization and projection tests for distinct runtime phases, canonical message and attempt identifiers, direction, persisted time, requested and actual method, retry eligibility, typed failure, route, bearer, propagation upload, and receipt evidence
 - [x] 1.2 `[styrene-rs]` Reconcile stale integration-corpus missing-capability text against completed backend P0 contracts without changing packaged or application-parity status
 - [x] 1.3 `[styrene-rs]` Record Reticulum `1.4.2` as a capture-scoped Skywave build 9 observation while retaining unresolved LXMF revision, distribution provenance, and candidate status
-- [ ] 1.4 `[cross-repo]` Define the additive handoff fixture and immutable revision metadata consumed by `styrene-ui`, including mutation tests that reject dropped or synthesized authoritative fields
+- [x] 1.4 `[cross-repo]` Define the additive handoff fixture and immutable revision metadata consumed by `styrene-ui`, including mutation tests that reject dropped or synthesized authoritative fields
 
 ## 2. Authoritative Runtime And Delivery Projection
 <!-- specs: mobile-product-projection -->
@@ -15,7 +15,7 @@
 - [x] 2.2 `[styrene-ui]` Preserve backend runtime state and every connection phase independently in renderer-neutral state, live projection, and rendered status
 - [x] 2.3 `[styrene-ui]` Replace lossy `project_message` mapping with exhaustive typed projection; remove text-based retry inference and preserve unknown evidence explicitly
 - [x] 2.4 `[styrene-ui]` Render message direction, canonical chronology, retry eligibility, delivery method, upload, route, bearer, receipt, and typed failure without conflating transport acceptance with delivery
-- [ ] 2.5 `[cross-repo]` Run equivalent backend projection, UI reducer, restart, stale-generation, duplicate-event, and non-retryable-failure tests against the declared revision pair
+- [x] 2.5 `[cross-repo]` Run equivalent backend projection, UI reducer, restart, stale-generation, duplicate-event, and non-retryable-failure tests against the declared revision pair
 
 ## 3. Discovery And New Message
 <!-- specs: mobile-product-projection, mobile-platform-workflows -->
@@ -50,7 +50,7 @@
 <!-- specs: mobile-platform-workflows -->
 
 - [x] 6.1 `[styrene-rs]` Remove or disable free-running mobile propagation polling so automatic synchronization starts only from connection, reconnection, foreground, or platform-granted background opportunities under single-flight cooldown and deadlines
-- [ ] 6.2 `[styrene-rs]` Expose trigger source, capability, readiness, last synchronization, progress, cooldown, and terminal outcome without claiming guaranteed background execution
+- [x] 6.2 `[styrene-rs]` Expose trigger source, capability, readiness, last synchronization, progress, cooldown, and terminal outcome without claiming guaranteed background execution
 - [ ] 6.3 `[styrene-ui]` Present independent camera, Bluetooth, notification, and secure-storage states plus supported system-settings recovery; do not request location permission in the P0 product
 - [x] 6.4 `[styrene-ui]` Replace unconditional automatic-sync copy with selected-node readiness, manual airtime disclosure, best-effort lifecycle disclosure, disabled Sync reason, and progress or failure
 - [ ] 6.5 `[styrene-ui]` Render the backend-owned last synchronization trigger source without inferring it from lifecycle or elapsed time
@@ -59,7 +59,7 @@
 ## 7. Adaptive UX And Accessibility
 <!-- specs: mobile-platform-workflows, mobile-product-verification -->
 
-- [ ] 7.1 `[styrene-ui]` Add semantic headings, lists, forms, status regions, aligned visible and accessible names, error association, disabled reasons, and deterministic focus restoration to every changed workflow
+- [x] 7.1 `[styrene-ui]` Add semantic headings, lists, forms, status regions, aligned visible and accessible names, error association, disabled reasons, and deterministic focus restoration to every changed workflow
 - [ ] 7.2 `[styrene-ui]` Verify compact, medium, expanded, landscape, split-window, keyboard-open, 320 CSS-pixel, 200 percent text, platform accessibility text, dark, increased-contrast, and reduced-motion states
 - [ ] 7.3 `[styrene-ui]` Verify ordinary controls meet iOS and Android target-size floors and that New Message, QR denial, backup/restore, retry, and propagation recovery have no gesture-only action or keyboard trap
 - [ ] 7.4 `[cross-repo]` Retain packaged VoiceOver and TalkBack evidence separately from document, reducer, simulator, and semantic-snapshot checks
