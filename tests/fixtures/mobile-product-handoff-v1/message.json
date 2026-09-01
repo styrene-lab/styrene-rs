@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "corpus": "styrene-mobile-product-handoff-v1",
+  "authority": {
+    "repository": "https://github.com/styrene-lab/styrene-rs.git",
+    "source_revision": "0d9dc04cab795f23f791278b019fe4c28430ab6f",
+    "source_type": "styrene_ipc::types::MessageInfo"
+  },
+  "authoritative_fields": [
+    "/projection_complete",
+    "/id",
+    "/source_hash",
+    "/destination_hash",
+    "/timestamp",
+    "/lxmf_timestamp",
+    "/status",
+    "/lifecycle_state",
+    "/terminal_detail",
+    "/is_outgoing",
+    "/requested_delivery_method",
+    "/actual_delivery_method",
+    "/fallback_reason",
+    "/retry_eligible",
+    "/retry_ineligibility_reason",
+    "/correlation_id",
+    "/attempts/0/message_id",
+    "/attempts/0/number",
+    "/attempts/0/state",
+    "/attempts/0/bearer",
+    "/attempts/0/route/outcome",
+    "/attempts/0/route/connection_generation",
+    "/attempts/0/route/interface/id",
+    "/attempts/0/route/interface/generation",
+    "/propagation_correlations/0/relation",
+    "/propagation_correlations/0/state",
+    "/delivery_evidence/0/kind",
+    "/delivery_evidence/0/state",
+    "/delivery_evidence/0/outcome",
+    "/delivery_evidence/0/correlation_id"
+  ],
+  "message": {
+    "projection_complete": true,
+    "id": "message-1",
+    "source_hash": "11111111111111111111111111111111",
+    "destination_hash": "22222222222222222222222222222222",
+    "timestamp": 1700000000,
+    "lxmf_timestamp": 1700000000.25,
+    "content": "authoritative handoff payload",
+    "title": "handoff",
+    "status": "failed",
+    "lifecycle_state": "failed",
+    "terminal_detail": "non-retryable policy rejection",
+    "is_outgoing": true,
+    "delivery_method": "propagated",
+    "requested_delivery_method": "propagated",
+    "actual_delivery_method": "direct",
+    "fallback_reason": "node unavailable",
+    "retry_eligible": false,
+    "retry_ineligibility_reason": "attempt_limit_reached",
+    "correlation_id": "correlation-1",
+    "attempts": [
+      {
+        "message_id": "message-1",
+        "number": 2,
+        "started_unix_ms": 1700000000000,
+        "deadline_unix_ms": 1700000030000,
+        "state": "failed",
+        "bearer": "tcp",
+        "route": {
+          "outcome": "observed",
+          "connection_generation": 7,
+          "observed_at": 1700000010,
+          "next_hop": "33333333333333333333333333333333",
+          "hops": 2,
+          "interface": {
+            "id": "interface-id",
+            "kind": "tcp_client",
+            "generation": 7
+          }
+        }
+      }
+    ],
+    "propagation_correlations": [
+      {
+        "relation": "upload",
+        "transient_id": "transient-1",
+        "attempt_id": "attempt-2",
+        "peer_hash": "44444444444444444444444444444444",
+        "state": "accepted",
+        "created_at": 1700000001,
+        "updated_at": 1700000002
+      }
+    ],
+    "read": true,
+    "authentication_state": "verified",
+    "stamp_state": "verified",
+    "stamp_value": 18,
+    "stamp_cost": 16,
+    "delivery_evidence": [
+      {
+        "kind": "packet_receipt",
+        "hash": "55555555555555555555555555555555",
+        "representation": "packet",
+        "state": "completed",
+        "outcome": "delivered",
+        "attempt": 2,
+        "correlation_id": "correlation-1",
+        "observed_at": 1700000020,
+        "terminal_at": 1700000021,
+        "transferred_bytes": null,
+        "total_bytes": null,
+        "progress": null
+      }
+    ]
+  }
+}

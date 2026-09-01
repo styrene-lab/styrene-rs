@@ -830,6 +830,8 @@ async fn typed_direct_send_returns_and_restores_the_authoritative_failed_project
     assert_eq!(outcome.message.destination_hash, destination);
     assert_eq!(outcome.message.correlation_id.as_deref(), Some(outcome.message_id.as_str()));
     assert!(outcome.message.projection_complete);
+    assert_eq!(outcome.message.retry_eligible, Some(true));
+    assert_eq!(outcome.message.retry_ineligibility_reason, None);
     assert!(outcome.terminal_failure.as_ref().is_some_and(|failure| failure.retryable));
 
     let exact =
@@ -847,11 +849,13 @@ async fn typed_direct_send_returns_and_restores_the_authoritative_failed_project
         .expect("restored persisted message");
     assert_eq!(exact.id, message_id);
     assert_eq!(exact.destination_hash, destination);
+    assert_eq!(exact.retry_eligible, Some(true));
     assert_eq!(restored.get_messages(destination, 10).await.unwrap().len(), 1);
     let retry = restored.retry_text(&message_id).await.expect("restart-safe retry");
     assert_eq!(retry.disposition, MobileRetryDisposition::Applied);
     assert_eq!(retry.message.id, message_id);
     assert_eq!(retry.message.correlation_id.as_deref(), Some(message_id.as_str()));
+    assert_eq!(retry.message.retry_eligible, Some(true));
     assert_eq!(
         retry.message.attempts.iter().map(|attempt| attempt.number).collect::<Vec<_>>(),
         [1, 2]

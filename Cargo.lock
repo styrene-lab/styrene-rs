@@ -1414,6 +1414,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4157,13 +4167,10 @@ name = "styrene"
 version = "0.3.0"
 dependencies = [
  "anyhow",
- "base64",
  "clap",
  "console",
- "rmp-serde",
- "rmpv",
  "styrene-ipc",
- "styrene-ipc-server",
+ "styrene-ipc-client",
  "styrene-tui",
  "styrened",
  "tokio",
@@ -4299,6 +4306,7 @@ dependencies = [
  "base64",
  "bech32",
  "chacha20poly1305",
+ "core-foundation",
  "ctap-hid-fido2",
  "data-encoding",
  "ed25519-dalek",
@@ -4311,6 +4319,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rcgen",
  "security-framework",
+ "security-framework-sys",
  "serde_json",
  "sha2",
  "sha3",
@@ -4352,6 +4361,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-ipc-client"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "styrene-ipc",
+ "styrene-ipc-wire",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "styrene-ipc-server"
 version = "0.1.0"
 dependencies = [
@@ -4364,10 +4387,21 @@ dependencies = [
  "serde",
  "serde_json",
  "styrene-ipc",
+ "styrene-ipc-wire",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "styrene-ipc-wire"
+version = "0.1.0"
+dependencies = [
+ "rmp-serde",
+ "rmpv",
+ "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
@@ -4435,6 +4469,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "styrene-rnode-firmware"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -4571,6 +4616,7 @@ dependencies = [
  "ciborium",
  "clap",
  "dirs",
+ "fs2",
  "hex",
  "hkdf",
  "hmac",
@@ -4596,6 +4642,7 @@ dependencies = [
  "styrene-mesh",
  "styrene-micron",
  "styrene-rbac",
+ "styrene-rnode-firmware",
  "styrene-rns",
  "styrene-services",
  "styrene-tunnel",

@@ -22,6 +22,7 @@ struct TestDaemon {
     cleanup_failures: std::sync::atomic::AtomicUsize,
     peer_calls: std::sync::atomic::AtomicUsize,
     send_chat_calls: std::sync::atomic::AtomicUsize,
+    restored_identity_backup: std::sync::Mutex<Vec<u8>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -252,6 +253,32 @@ impl DaemonStatus for TestDaemon {
         snapshot.registered = true;
         snapshot.active = true;
         snapshot.observed_at = Some(100);
+        snapshot.selection_readiness = StandardPropagationSelectionReadiness::Ready;
+        snapshot.sync_readiness = StandardPropagationSyncReadiness::CoolingDown;
+        snapshot.automatic_sync_enabled = Some(false);
+        snapshot.automatic_sync_cooldown_secs = Some(30);
+        snapshot.sync_deadline_secs = Some(32);
+        snapshot.cooldown_remaining_secs = Some(17);
+        let mut foreground = StandardPropagationTriggerCapabilityInfo::default();
+        foreground.source = StandardPropagationTriggerSource::ForegroundOpportunity;
+        foreground.platform_capability = StandardPropagationPlatformCapability::AutomaticForeground;
+        foreground.opportunity = StandardPropagationOpportunityState::Available;
+        let mut background = StandardPropagationTriggerCapabilityInfo::default();
+        background.source = StandardPropagationTriggerSource::GrantedBackgroundOpportunity;
+        background.platform_capability = StandardPropagationPlatformCapability::AutomaticBackground;
+        background.opportunity = StandardPropagationOpportunityState::Denied;
+        snapshot.trigger_capabilities = vec![foreground, background];
+        let mut active_sync = StandardPropagationActiveSyncInfo::default();
+        active_sync.trigger = StandardPropagationTriggerSource::ForegroundOpportunity;
+        active_sync.started_at = 90;
+        snapshot.active_sync = Some(active_sync);
+        let mut last_synchronization = StandardPropagationLastSynchronizationInfo::default();
+        last_synchronization.trigger = StandardPropagationTriggerSource::Manual;
+        last_synchronization.started_at = 40;
+        last_synchronization.finished_at = 45;
+        last_synchronization.outcome = StandardPropagationSyncTerminalOutcome::Failed;
+        last_synchronization.new_messages = 0;
+        snapshot.last_synchronization = Some(last_synchronization);
         let mut policy = StandardPropagationPolicyInfo::default();
         policy.target_cost = 16;
         policy.flexibility = 3;
@@ -365,6 +392,30 @@ impl DaemonIdentity for TestDaemon {
             failure: None,
         });
         Ok(info)
+    }
+    async fn query_identity_backup_metadata(&self) -> Result<IdentityBackupMetadata, IpcError> {
+        let mut metadata = IdentityBackupMetadata::default();
+        metadata.contract_version = 1;
+        metadata.format = IdentityBackupFormat::StidV1;
+        metadata.encrypted_size = 97;
+        Ok(metadata)
+    }
+    async fn export_identity_backup(&self) -> Result<IdentityBackupExport, IpcError> {
+        let mut exported = IdentityBackupExport::default();
+        exported.metadata = self.query_identity_backup_metadata().await?;
+        exported.encrypted_bytes = b"opaque-encrypted-artifact".to_vec();
+        Ok(exported)
+    }
+    async fn restore_identity_backup(
+        &self,
+        backup: IdentityBackupImport,
+    ) -> Result<IdentityRestoreOutcome, IpcError> {
+        if backup.encrypted_bytes == b"unavailable" {
+            return Err(IpcError::Unavailable { reason: "identity backup unavailable".into() });
+        }
+        *self.restored_identity_backup.lock().expect("backup test state lock") =
+            backup.encrypted_bytes;
+        Ok(IdentityRestoreOutcome::Restored)
     }
     async fn set_identity(
         &self,
@@ -484,6 +535,9 @@ impl DaemonMessaging for TestDaemon {
         message.actual_delivery_method = Some("direct".into());
         message.fallback_reason = Some("packet limit".into());
         message.correlation_id = Some("send-1".into());
+        message.retry_eligible = Some(false);
+        message.retry_ineligibility_reason =
+            Some(MessageRetryIneligibilityReason::AttemptLimitReached);
         message.attempts = vec![attempt];
         Ok(vec![message])
     }
@@ -1753,6 +1807,9 @@ async fn authorization_denial_is_typed_and_non_retryable_over_socket() {
     assert_eq!(response.payload["kind"].as_str(), Some("denied"));
     assert_eq!(response.payload["code"].as_str(), Some("denied"));
     let error = IpcError::Denied { capability: "messaging.history.read".into() };
+    let typed_error: IpcError = rmpv::ext::from_value(response.payload["typed_error"].clone())
+        .expect("typed authorization error");
+    assert_eq!(typed_error, error);
     assert!(!error.is_retryable());
     let invalid = HashMap::from([
         ("query".into(), rmpv::Value::from("")),
@@ -1790,6 +1847,18 @@ async fn query_status() {
     assert_eq!(item("version").and_then(|v| v.as_u64()), Some(1));
     assert_eq!(item("runtime").and_then(|v| v.as_array()).map(Vec::len), Some(1));
     assert_eq!(item("degraded").and_then(|v| v.as_array()).map(Vec::len), Some(1));
+    let capability_json: serde_json::Value = rmpv::ext::from_value(
+        resp.payload.get("active_capabilities").expect("active capabilities").clone(),
+    )
+    .expect("JSON-compatible active capabilities");
+    let typed_capabilities: ActiveCapabilitiesInfo =
+        serde_json::from_value(capability_json).expect("typed active capabilities");
+    assert_eq!(typed_capabilities.version, ACTIVE_CAPABILITIES_VERSION);
+    assert_eq!(typed_capabilities.runtime, ["runtime.lxmf.direct"]);
+    assert_eq!(typed_capabilities.authorized_operations, ["chat.send"]);
+    assert_eq!(typed_capabilities.degraded.len(), 1);
+    assert_eq!(typed_capabilities.degraded[0].id, "runtime.native-nomadnet.host");
+    assert_eq!(typed_capabilities.degraded[0].reason, "request handler unavailable");
     server.stop().await;
 }
 
@@ -1843,6 +1912,29 @@ async fn standard_propagation_query_roundtrips_typed_metadata_without_payload_in
     assert!(snapshot.active);
     assert!(snapshot.connection_generation.is_some());
     assert_eq!(snapshot.policy.unwrap().transfer_limit_kb, 256);
+    assert_eq!(snapshot.selection_readiness, StandardPropagationSelectionReadiness::Ready);
+    assert_eq!(snapshot.sync_readiness, StandardPropagationSyncReadiness::CoolingDown);
+    assert_eq!(snapshot.automatic_sync_enabled, Some(false));
+    assert_eq!(snapshot.automatic_sync_cooldown_secs, Some(30));
+    assert_eq!(snapshot.sync_deadline_secs, Some(32));
+    assert_eq!(snapshot.cooldown_remaining_secs, Some(17));
+    assert_eq!(snapshot.trigger_capabilities.len(), 2);
+    assert_eq!(
+        snapshot.trigger_capabilities[1].source,
+        StandardPropagationTriggerSource::GrantedBackgroundOpportunity
+    );
+    assert_eq!(
+        snapshot.trigger_capabilities[1].opportunity,
+        StandardPropagationOpportunityState::Denied
+    );
+    assert_eq!(
+        snapshot.active_sync.as_ref().map(|sync| sync.trigger),
+        Some(StandardPropagationTriggerSource::ForegroundOpportunity)
+    );
+    assert_eq!(
+        snapshot.last_synchronization.as_ref().map(|sync| sync.outcome),
+        Some(StandardPropagationSyncTerminalOutcome::Failed)
+    );
     assert_eq!(snapshot.attempts.len(), 1);
     assert_eq!(snapshot.attempts[0].stage, StandardPropagationStage::Offer);
     assert_eq!(snapshot.attempts[0].outcome, StandardPropagationOutcome::Pending);
@@ -1902,6 +1994,51 @@ async fn query_identity() {
     for forbidden in ["private", "passphrase", "credential", "key_material", "export"] {
         assert!(!encoded.contains(forbidden), "custody projection leaked {forbidden}");
     }
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn identity_backup_operations_keep_artifact_bytes_on_explicit_wire_boundaries() {
+    let (mut server, sock, daemon) = setup_page_server().await;
+    let mut stream = UnixStream::connect(&sock).await.expect("connect");
+
+    let metadata =
+        send_and_recv(&mut stream, MessageType::QueryIdentityBackupMetadata, &HashMap::new()).await;
+    assert_eq!(metadata.payload.get("contract_version").and_then(rmpv::Value::as_u64), Some(1));
+    assert_eq!(metadata.payload.get("format"), Some(&rmpv::Value::from("stid_v1")));
+    assert!(!metadata.payload.contains_key("encrypted_bytes"));
+
+    let exported =
+        send_and_recv(&mut stream, MessageType::CmdExportIdentityBackup, &HashMap::new()).await;
+    assert_eq!(
+        exported.payload.get("encrypted_bytes").and_then(rmpv::Value::as_slice),
+        Some(b"opaque-encrypted-artifact".as_slice())
+    );
+
+    let imported = b"different-opaque-artifact".to_vec();
+    let restore_payload =
+        HashMap::from([("encrypted_bytes".into(), rmpv::Value::Binary(imported.clone()))]);
+    let restored =
+        send_and_recv(&mut stream, MessageType::CmdRestoreIdentityBackup, &restore_payload).await;
+    assert_eq!(restored.payload.get("outcome").and_then(rmpv::Value::as_str), Some("restored"));
+    assert_eq!(*daemon.restored_identity_backup.lock().expect("backup test state lock"), imported);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn identity_backup_failures_preserve_typed_ipc_errors() {
+    let (mut server, sock) = setup_server().await;
+    let mut stream = UnixStream::connect(&sock).await.expect("connect");
+    let restore_payload =
+        HashMap::from([("encrypted_bytes".into(), rmpv::Value::Binary(b"unavailable".to_vec()))]);
+
+    let response =
+        send_and_recv(&mut stream, MessageType::CmdRestoreIdentityBackup, &restore_payload).await;
+
+    assert_eq!(response.msg_type, MessageType::Error);
+    let typed_error: IpcError = rmpv::ext::from_value(response.payload["typed_error"].clone())
+        .expect("typed identity backup error");
+    assert_eq!(typed_error, IpcError::Unavailable { reason: "identity backup unavailable".into() });
     server.stop().await;
 }
 
@@ -2012,6 +2149,11 @@ async fn query_messages_serializes_authoritative_lifecycle() {
     assert_eq!(field("actual_delivery_method").and_then(rmpv::Value::as_str), Some("direct"));
     assert_eq!(field("fallback_reason").and_then(rmpv::Value::as_str), Some("packet limit"));
     assert_eq!(field("correlation_id").and_then(rmpv::Value::as_str), Some("send-1"));
+    assert_eq!(field("retry_eligible").and_then(rmpv::Value::as_bool), Some(false));
+    assert_eq!(
+        field("retry_ineligibility_reason").and_then(rmpv::Value::as_str),
+        Some("attempt_limit_reached")
+    );
     let attempt = field("attempts")
         .and_then(rmpv::Value::as_array)
         .and_then(|attempts| attempts.first())
@@ -2208,6 +2350,9 @@ async fn typed_daemon_errors_add_metadata_without_removing_legacy_error_string()
     assert_eq!(response.payload["message"].as_str(), Some("conflict: cursor_stale"));
     assert_eq!(response.payload["kind"].as_str(), Some("conflict"));
     assert_eq!(response.payload["code"].as_str(), Some("cursor_stale"));
+    let typed_error: IpcError = rmpv::ext::from_value(response.payload["typed_error"].clone())
+        .expect("typed conflict error");
+    assert_eq!(typed_error, IpcError::Conflict { message: "cursor_stale".into() });
     server.stop().await;
 }
 

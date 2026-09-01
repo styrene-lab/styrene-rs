@@ -13,6 +13,7 @@ pub mod lxmf_stamps;
 pub mod mobile;
 mod mobile_diagnostics;
 pub mod receipt_bridge;
+pub mod rnode_firmware;
 pub mod rns_crypto;
 pub mod rpc;
 pub mod services;

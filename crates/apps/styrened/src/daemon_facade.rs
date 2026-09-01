@@ -163,6 +163,59 @@ fn standard_propagation_outcome(
     }
 }
 
+fn standard_propagation_trigger_source(
+    trigger: crate::workers::standard_propagation::StandardPropagationSyncTriggerKind,
+) -> StandardPropagationTriggerSource {
+    use crate::workers::standard_propagation::StandardPropagationSyncTriggerKind;
+
+    match trigger {
+        StandardPropagationSyncTriggerKind::InitialConnection => {
+            StandardPropagationTriggerSource::InitialConnection
+        }
+        StandardPropagationSyncTriggerKind::Reconnect => {
+            StandardPropagationTriggerSource::Reconnect
+        }
+        StandardPropagationSyncTriggerKind::ForegroundOpportunity => {
+            StandardPropagationTriggerSource::ForegroundOpportunity
+        }
+        StandardPropagationSyncTriggerKind::BackgroundOpportunity => {
+            StandardPropagationTriggerSource::GrantedBackgroundOpportunity
+        }
+        StandardPropagationSyncTriggerKind::Manual => StandardPropagationTriggerSource::Manual,
+    }
+}
+
+fn standard_propagation_terminal_outcome(
+    outcome: crate::workers::standard_propagation::StandardPropagationSyncTerminalOutcome,
+) -> StandardPropagationSyncTerminalOutcome {
+    use crate::workers::standard_propagation::StandardPropagationSyncTerminalOutcome as WorkerOutcome;
+
+    match outcome {
+        WorkerOutcome::Succeeded => StandardPropagationSyncTerminalOutcome::Succeeded,
+        WorkerOutcome::Failed => StandardPropagationSyncTerminalOutcome::Failed,
+        WorkerOutcome::TimedOut => StandardPropagationSyncTerminalOutcome::TimedOut,
+        WorkerOutcome::Cancelled => StandardPropagationSyncTerminalOutcome::Cancelled,
+    }
+}
+
+fn standard_propagation_selection_readiness(
+    active: bool,
+    selection: Option<&crate::storage::standard_propagation::StandardPropagationSelection>,
+    peers: &[crate::storage::standard_propagation::StandardPropagationPeerObservation],
+) -> StandardPropagationSelectionReadiness {
+    let Some(selected_peer) = selection.and_then(|selection| selection.peer) else {
+        return StandardPropagationSelectionReadiness::NoSelection;
+    };
+    let Some(peer) = peers.iter().find(|peer| peer.identity_hash == selected_peer) else {
+        return StandardPropagationSelectionReadiness::Unavailable;
+    };
+    if active && peer.enabled && peer.propagation_destination.is_some() {
+        StandardPropagationSelectionReadiness::Ready
+    } else {
+        StandardPropagationSelectionReadiness::Unavailable
+    }
+}
+
 fn path_observation(
     snapshot: rns_core::transport::core_transport::path_table::PathSnapshot,
 ) -> ObservationMetadata {
@@ -389,10 +442,22 @@ impl DaemonFacade {
         let lifecycle = self.ctx.messaging().outbound_lifecycle(message_id).map_err(internal)?;
         let canonical = self.ctx.messaging().canonical_inbound(message_id).map_err(internal)?;
         let mut info = record_to_message_info(message, lifecycle, canonical);
+        self.hydrate_retry_eligibility(&mut info)?;
         self.hydrate_attachments(&mut info)?;
         self.hydrate_propagation_correlations(&mut info)?;
         self.hydrate_delivery_evidence(&mut info)?;
         Ok(Some(info))
+    }
+
+    fn hydrate_retry_eligibility(&self, message: &mut MessageInfo) -> Result<(), IpcError> {
+        let Some((eligible, reason)) =
+            self.ctx.messaging().retry_eligibility(&message.id).map_err(internal)?
+        else {
+            return Ok(());
+        };
+        message.retry_eligible = Some(eligible);
+        message.retry_ineligibility_reason = reason;
+        Ok(())
     }
 
     fn hydrate_delivery_evidence(&self, message: &mut MessageInfo) -> Result<(), IpcError> {
@@ -598,6 +663,28 @@ impl DaemonIdentity for DaemonFacade {
         info.short_name = svc.short_name();
         info.custody = svc.custody();
         Ok(info)
+    }
+
+    async fn query_identity_backup_metadata(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupMetadata, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        self.ctx.identity().identity_backup_metadata()
+    }
+
+    async fn export_identity_backup(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupExport, IpcError> {
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
+        self.ctx.identity().export_identity_backup()
+    }
+
+    async fn restore_identity_backup(
+        &self,
+        backup: styrene_ipc::types::IdentityBackupImport,
+    ) -> Result<styrene_ipc::types::IdentityRestoreOutcome, IpcError> {
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
+        self.ctx.identity().restore_identity_backup(backup)
     }
 
     async fn set_identity(
@@ -1054,6 +1141,7 @@ impl DaemonMessaging for DaemonFacade {
                     snapshot.lifecycle,
                     snapshot.canonical,
                 );
+                self.hydrate_retry_eligibility(&mut info)?;
                 self.hydrate_attachments(&mut info)?;
                 self.hydrate_propagation_correlations(&mut info)?;
                 self.hydrate_delivery_evidence(&mut info)?;
@@ -1094,6 +1182,7 @@ impl DaemonMessaging for DaemonFacade {
                     snapshot.lifecycle,
                     snapshot.canonical,
                 );
+                self.hydrate_retry_eligibility(&mut info)?;
                 self.hydrate_attachments(&mut info)?;
                 self.hydrate_propagation_correlations(&mut info)?;
                 self.hydrate_delivery_evidence(&mut info)?;
@@ -1134,6 +1223,7 @@ impl DaemonMessaging for DaemonFacade {
                     snapshot.lifecycle,
                     snapshot.canonical,
                 );
+                self.hydrate_retry_eligibility(&mut info)?;
                 self.hydrate_attachments(&mut info)?;
                 self.hydrate_propagation_correlations(&mut info)?;
                 self.hydrate_delivery_evidence(&mut info)?;
@@ -1494,10 +1584,13 @@ impl DaemonStatus for DaemonFacade {
         self.require(Capability::RPC_STATUS)?;
         let mut snapshot = StandardPropagationSnapshot::default();
         snapshot.version = STANDARD_PROPAGATION_SNAPSHOT_VERSION;
+        snapshot.selection_readiness = StandardPropagationSelectionReadiness::Unavailable;
+        snapshot.sync_readiness = StandardPropagationSyncReadiness::Unavailable;
         let Some(runtime) = self.ctx.standard_propagation() else {
             return Ok(snapshot);
         };
         snapshot.registered = runtime.is_registered();
+        snapshot.selection_readiness = StandardPropagationSelectionReadiness::NoSelection;
         let runtime_policy = runtime.policy();
         let storage_policy = crate::storage::standard_propagation::StandardPropagationPolicy {
             queue_max_count: runtime_policy.queue_max_count,
@@ -1538,6 +1631,11 @@ impl DaemonStatus for DaemonFacade {
         snapshot.queue.expired_count = observation.queue.expired_count as u64;
         snapshot.queue.terminal_count =
             snapshot.queue.acknowledged_count.saturating_add(snapshot.queue.expired_count);
+        snapshot.selection_readiness = standard_propagation_selection_readiness(
+            snapshot.active,
+            observation.selection.as_ref(),
+            &observation.peers,
+        );
         snapshot.selection = observation.selection.map(|selection| {
             let mut info = StandardPropagationSelectionInfo::default();
             info.peer_hash = selection.peer.map(hex::encode);
@@ -1545,6 +1643,81 @@ impl DaemonStatus for DaemonFacade {
             info.selected_at = selection.selected_at;
             info
         });
+        if let Some(sync) = self.ctx.standard_propagation_sync() {
+            let sync_policy = sync.policy();
+            let sync_telemetry = sync.telemetry();
+            snapshot.automatic_sync_enabled = Some(sync_policy.automatic);
+            snapshot.automatic_sync_cooldown_secs = Some(sync_policy.cooldown.as_secs());
+            snapshot.sync_deadline_secs = Some(sync_policy.deadline.as_secs());
+            snapshot.trigger_capabilities = [
+                (
+                    StandardPropagationTriggerSource::InitialConnection,
+                    StandardPropagationPlatformCapability::AutomaticForeground,
+                    StandardPropagationOpportunityState::Available,
+                ),
+                (
+                    StandardPropagationTriggerSource::Reconnect,
+                    StandardPropagationPlatformCapability::AutomaticForeground,
+                    StandardPropagationOpportunityState::Available,
+                ),
+                (
+                    StandardPropagationTriggerSource::ForegroundOpportunity,
+                    StandardPropagationPlatformCapability::AutomaticForeground,
+                    StandardPropagationOpportunityState::Available,
+                ),
+                (
+                    StandardPropagationTriggerSource::GrantedBackgroundOpportunity,
+                    StandardPropagationPlatformCapability::AutomaticBackground,
+                    if sync_policy.automatic {
+                        StandardPropagationOpportunityState::Available
+                    } else {
+                        StandardPropagationOpportunityState::Denied
+                    },
+                ),
+                (
+                    StandardPropagationTriggerSource::Manual,
+                    StandardPropagationPlatformCapability::Manual,
+                    StandardPropagationOpportunityState::Available,
+                ),
+            ]
+            .into_iter()
+            .map(|(source, platform_capability, opportunity)| {
+                let mut info = StandardPropagationTriggerCapabilityInfo::default();
+                info.source = source;
+                info.platform_capability = platform_capability;
+                info.opportunity = opportunity;
+                info
+            })
+            .collect();
+            snapshot.active_sync = sync_telemetry.active.map(|active| {
+                let mut info = StandardPropagationActiveSyncInfo::default();
+                info.trigger = standard_propagation_trigger_source(active.trigger);
+                info.started_at = active.started_at;
+                info
+            });
+            snapshot.last_synchronization = sync_telemetry.last_completed.map(|completed| {
+                let mut info = StandardPropagationLastSynchronizationInfo::default();
+                info.trigger = standard_propagation_trigger_source(completed.trigger);
+                info.started_at = completed.started_at;
+                info.finished_at = completed.finished_at;
+                info.outcome = standard_propagation_terminal_outcome(completed.outcome);
+                info.new_messages = u32::try_from(completed.new_messages).unwrap_or(u32::MAX);
+                info
+            });
+            snapshot.cooldown_remaining_secs =
+                Some(sync_telemetry.cooldown_remaining.as_secs().saturating_add(u64::from(
+                    sync_telemetry.cooldown_remaining.subsec_nanos() > 0,
+                )));
+            snapshot.sync_readiness = if snapshot.active_sync.is_some() {
+                StandardPropagationSyncReadiness::InFlight
+            } else if snapshot.cooldown_remaining_secs.unwrap_or(0) > 0 {
+                StandardPropagationSyncReadiness::CoolingDown
+            } else if snapshot.selection_readiness == StandardPropagationSelectionReadiness::Ready {
+                StandardPropagationSyncReadiness::Ready
+            } else {
+                StandardPropagationSyncReadiness::Unavailable
+            };
+        }
         snapshot.peers = observation
             .peers
             .into_iter()
@@ -2796,6 +2969,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn complete_message_projection_uses_backend_retry_eligibility_not_status_text() {
+        let facade =
+            make_facade_for_role(styrene_rbac::Role::Admin, Arc::new(NullTransport::new()));
+        let record = MessageRecord {
+            id: "inbound-retry-projection".into(),
+            source: "12".repeat(16),
+            destination: "34".repeat(16),
+            title: String::new(),
+            content: "not retryable".into(),
+            timestamp: 1,
+            direction: "in".into(),
+            fields: None,
+            receipt_status: Some("failed: display-only text".into()),
+            read: false,
+        };
+        assert!(facade.ctx.messaging().accept_inbound_record(&record).unwrap());
+
+        let projected = facade.query_message(&record.id).await.unwrap().unwrap();
+
+        assert!(projected.projection_complete);
+        assert_eq!(projected.status, "failed: display-only text");
+        assert_eq!(projected.retry_eligible, Some(false));
+        assert_eq!(
+            projected.retry_ineligibility_reason,
+            Some(styrene_ipc::types::MessageRetryIneligibilityReason::Inbound)
+        );
+    }
+
+    #[tokio::test]
     async fn drafts_round_trip_idempotently_and_require_messaging_manage() {
         let facade =
             make_facade_for_role(styrene_rbac::Role::Admin, Arc::new(NullTransport::new()));
@@ -3057,6 +3259,69 @@ mod tests {
         }
     }
 
+    #[test]
+    fn propagation_selection_requires_an_active_usable_selected_peer() {
+        use crate::storage::standard_propagation::{
+            StandardPropagationPeerObservation, StandardPropagationSelection,
+        };
+
+        let identity = [1; 16];
+        let selection = StandardPropagationSelection {
+            peer: Some(identity),
+            mode: "manual".into(),
+            selected_at: 1,
+        };
+        let mut peer = StandardPropagationPeerObservation {
+            identity_hash: identity,
+            propagation_destination: Some([2; 16]),
+            configured: true,
+            enabled: true,
+            transfer_limit_kb: Some(256),
+            sync_limit_kb: Some(4_000),
+            stamp_cost: Some(16),
+            stamp_flexibility: Some(3),
+            peering_cost: Some(18),
+            first_seen_at: 1,
+            last_seen_at: 1,
+            retry_at: None,
+            backoff_count: 0,
+            offered_count: 0,
+            wanted_count: 0,
+            accepted_count: 0,
+            accepted_bytes: 0,
+            failure_count: 0,
+        };
+
+        assert_eq!(
+            standard_propagation_selection_readiness(true, None, &[]),
+            StandardPropagationSelectionReadiness::NoSelection
+        );
+        assert_eq!(
+            standard_propagation_selection_readiness(true, Some(&selection), &[]),
+            StandardPropagationSelectionReadiness::Unavailable
+        );
+        assert_eq!(
+            standard_propagation_selection_readiness(false, Some(&selection), &[peer.clone()]),
+            StandardPropagationSelectionReadiness::Unavailable
+        );
+        peer.enabled = false;
+        assert_eq!(
+            standard_propagation_selection_readiness(true, Some(&selection), &[peer.clone()]),
+            StandardPropagationSelectionReadiness::Unavailable
+        );
+        peer.enabled = true;
+        peer.propagation_destination = None;
+        assert_eq!(
+            standard_propagation_selection_readiness(true, Some(&selection), &[peer.clone()]),
+            StandardPropagationSelectionReadiness::Unavailable
+        );
+        peer.propagation_destination = Some([2; 16]);
+        assert_eq!(
+            standard_propagation_selection_readiness(true, Some(&selection), &[peer]),
+            StandardPropagationSelectionReadiness::Ready
+        );
+    }
+
     #[tokio::test]
     async fn standard_propagation_query_distinguishes_absent_client_and_host_runtime() {
         let facade =
@@ -3065,6 +3330,9 @@ mod tests {
         assert_eq!(absent.version, STANDARD_PROPAGATION_SNAPSHOT_VERSION);
         assert!(!absent.registered);
         assert!(!absent.active);
+        assert_eq!(absent.selection_readiness, StandardPropagationSelectionReadiness::Unavailable);
+        assert_eq!(absent.sync_readiness, StandardPropagationSyncReadiness::Unavailable);
+        assert_eq!(absent.automatic_sync_enabled, None);
         assert!(absent.policy.is_none());
         assert!(absent.peers.is_empty());
         assert!(absent.attempts.is_empty());
@@ -3075,6 +3343,10 @@ mod tests {
         let client = facade.query_standard_propagation().await.unwrap();
         assert!(!client.registered);
         assert!(client.active);
+        assert_eq!(client.selection_readiness, StandardPropagationSelectionReadiness::NoSelection);
+        assert_eq!(client.sync_readiness, StandardPropagationSyncReadiness::Unavailable);
+        assert_eq!(client.automatic_sync_enabled, None);
+        assert_eq!(client.last_synchronization, None);
         assert!(client.policy.is_none());
         assert!(client.observed_at.is_some());
 
@@ -3086,6 +3358,10 @@ mod tests {
         let present = facade.query_standard_propagation().await.unwrap();
         assert!(present.registered);
         assert!(!present.active);
+        assert_eq!(present.selection_readiness, StandardPropagationSelectionReadiness::NoSelection);
+        assert_eq!(present.sync_readiness, StandardPropagationSyncReadiness::Unavailable);
+        assert_eq!(present.automatic_sync_enabled, None);
+        assert_eq!(present.cooldown_remaining_secs, None);
         let policy = present.policy.unwrap();
         assert_eq!(policy.target_cost, 16);
         assert_eq!(policy.flexibility, 3);

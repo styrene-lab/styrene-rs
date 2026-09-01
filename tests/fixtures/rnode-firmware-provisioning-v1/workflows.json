@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "corpus": "styrene-rnode-firmware-workflows-v1",
+  "evidence_scope": "synthetic_contract",
+  "cases": [
+    {
+      "id": "workflow.plan-is-nondestructive",
+      "host": "desktop",
+      "operation": "plan",
+      "executor": "read_only_serial",
+      "actions": ["inspect", "admit_artifact", "create_plan"],
+      "destructive_started": false,
+      "post_verified": false,
+      "expected": {"terminal": "planned", "recovery_required": false}
+    },
+    {
+      "id": "workflow.confirmation-plan-mismatch",
+      "host": "desktop",
+      "operation": "upgrade",
+      "executor": "host_serial_esp",
+      "actions": ["inspect", "create_plan", "confirm_other_digest"],
+      "destructive_started": false,
+      "post_verified": false,
+      "expected": {"terminal": "rejected", "recovery_required": false}
+    },
+    {
+      "id": "workflow.target-generation-changed",
+      "host": "desktop",
+      "operation": "upgrade",
+      "executor": "host_serial_esp",
+      "actions": ["inspect", "create_plan", "confirm", "replace_target"],
+      "destructive_started": false,
+      "post_verified": false,
+      "expected": {"terminal": "rejected", "recovery_required": false}
+    },
+    {
+      "id": "workflow.cancel-before-write",
+      "host": "ios_mobile",
+      "operation": "upgrade",
+      "executor": "ios_nrf_ble_dfu",
+      "actions": ["inspect_nus", "create_plan", "confirm", "close_nus", "discover_dfu", "cancel"],
+      "destructive_started": false,
+      "post_verified": false,
+      "expected": {"terminal": "cancelled", "recovery_required": false}
+    },
+    {
+      "id": "workflow.ios-disconnect-during-write",
+      "host": "ios_mobile",
+      "operation": "upgrade",
+      "executor": "ios_nrf_ble_dfu",
+      "actions": ["inspect_nus", "create_plan", "confirm", "close_nus", "discover_dfu", "begin_write", "disconnect"],
+      "destructive_started": true,
+      "post_verified": false,
+      "expected": {"terminal": "failed", "recovery_required": true}
+    },
+    {
+      "id": "workflow.desktop-power-loss-during-write",
+      "host": "desktop",
+      "operation": "upgrade",
+      "executor": "host_serial_esp",
+      "actions": ["inspect", "create_plan", "confirm", "begin_write", "power_loss"],
+      "destructive_started": true,
+      "post_verified": false,
+      "expected": {"terminal": "failed", "recovery_required": true}
+    },
+    {
+      "id": "workflow.transfer-complete-hash-mismatch",
+      "host": "desktop",
+      "operation": "upgrade",
+      "executor": "host_serial_esp",
+      "actions": ["inspect", "create_plan", "confirm", "begin_write", "complete_write", "reopen", "observe_hash_mismatch"],
+      "destructive_started": true,
+      "post_verified": false,
+      "expected": {"terminal": "verification_failed", "recovery_required": true}
+    },
+    {
+      "id": "workflow.mobile-upgrade-verified",
+      "host": "ios_mobile",
+      "operation": "upgrade",
+      "executor": "ios_nrf_ble_dfu",
+      "actions": ["inspect_nus", "create_plan", "confirm", "close_nus", "discover_dfu", "begin_write", "complete_write", "reconnect_nus", "verify_model_version_hash"],
+      "destructive_started": true,
+      "post_verified": true,
+      "expected": {"terminal": "succeeded", "recovery_required": false}
+    },
+    {
+      "id": "workflow.desktop-upgrade-verified",
+      "host": "desktop",
+      "operation": "upgrade",
+      "executor": "host_serial_esp",
+      "actions": ["inspect", "create_plan", "confirm", "begin_write", "complete_write", "reopen", "verify_model_version_hash"],
+      "destructive_started": true,
+      "post_verified": true,
+      "expected": {"terminal": "succeeded", "recovery_required": false}
+    },
+    {
+      "id": "workflow.stale-mobile-completion",
+      "host": "ios_mobile",
+      "operation": "upgrade",
+      "executor": "ios_nrf_ble_dfu",
+      "actions": ["inspect_nus", "create_plan", "confirm", "replace_generation", "receive_stale_completion"],
+      "destructive_started": false,
+      "post_verified": false,
+      "expected": {"terminal": "stale_event_rejected", "recovery_required": false}
+    },
+    {
+      "id": "workflow.fresh-install-incomplete-provisioning",
+      "host": "desktop",
+      "operation": "fresh_install",
+      "executor": "host_serial_esp",
+      "actions": ["inspect_bootloader", "create_plan", "confirm", "begin_write", "complete_write", "omit_provisioning", "reopen"],
+      "destructive_started": true,
+      "post_verified": false,
+      "expected": {"terminal": "provisioning_incomplete", "recovery_required": true}
+    },
+    {
+      "id": "workflow.recovery-requires-new-confirmation",
+      "host": "desktop",
+      "operation": "recovery",
+      "executor": "host_serial_esp",
+      "actions": ["observe_failed_upgrade", "create_recovery_plan", "missing_confirmation"],
+      "destructive_started": false,
+      "post_verified": false,
+      "expected": {"terminal": "rejected", "recovery_required": true}
+    }
+  ]
+}

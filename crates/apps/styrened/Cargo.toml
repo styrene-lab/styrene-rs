@@ -21,6 +21,7 @@ styrene-tunnel = { path = "../../libs/styrene-tunnel", version = "0.1.0", featur
 styrene-content = { path = "../../libs/styrene-content", version = "0.1.0", features = ["alloc", "std"] }
 styrene-micron = { workspace = true }
 styrene-rbac = { path = "../../libs/styrene-rbac", version = "0.1.0", features = ["config", "signing"] }
+styrene-rnode-firmware.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 ciborium = "0.2"
@@ -51,6 +52,7 @@ zeroize.workspace = true
 tempfile.workspace = true
 styrene-identity = { path = "../../libs/styrene-identity", optional = true }
 dirs = "6.0.0"
+fs2 = "0.4"
 portable-pty = { version = "0.9", optional = true }
 log = { workspace = true }
 
@@ -68,9 +70,9 @@ wireguard = ["dep:styrene-tunnel"]
 ## I2P HTTP proxy support
 i2p-proxy = ["dep:reqwest"]
 ## Device-bound Keychain identity for mobile (iOS/macOS first unlock)
-mobile-keychain = ["dep:styrene-identity", "styrene-identity/keychain", "styrene-identity/signing"]
+mobile-keychain = ["dep:styrene-identity", "styrene-identity/keychain", "styrene-identity/file-signer", "styrene-identity/signing"]
 ## Android Keystore-wrapped identity for mobile
-mobile-android-keystore = ["dep:styrene-identity", "styrene-identity/android-keystore", "styrene-identity/signing"]
+mobile-android-keystore = ["dep:styrene-identity", "styrene-identity/android-keystore", "styrene-identity/file-signer", "styrene-identity/signing"]
 ## File-based identity for mobile (Android/fallback)
 mobile-identity = ["dep:styrene-identity", "styrene-identity/file-signer"]
 ## Bundle SQLite for cross-compilation (Android/iOS — no system libsqlite3)

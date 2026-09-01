@@ -69,6 +69,13 @@ pub async fn dispatch_for_connection(
             dispatch_cancel_attachment_transfer(daemon, &payload).await
         }
         MessageType::QueryIdentity => dispatch_query_identity(daemon).await,
+        MessageType::QueryIdentityBackupMetadata => {
+            dispatch_query_identity_backup_metadata(daemon).await
+        }
+        MessageType::CmdExportIdentityBackup => dispatch_export_identity_backup(daemon).await,
+        MessageType::CmdRestoreIdentityBackup => {
+            dispatch_restore_identity_backup(daemon, &payload).await
+        }
         MessageType::QueryDevices => dispatch_query_devices(daemon, &payload).await,
         MessageType::QueryAutoReply => dispatch_query_auto_reply(daemon).await,
         MessageType::CmdAnnounce => dispatch_announce(daemon).await,
@@ -919,6 +926,98 @@ fn standard_outcome_name(value: styrene_ipc::types::StandardPropagationOutcome) 
     }
 }
 
+fn standard_trigger_source_name(
+    value: styrene_ipc::types::StandardPropagationTriggerSource,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationTriggerSource;
+
+    match value {
+        StandardPropagationTriggerSource::InitialConnection => "initial_connection",
+        StandardPropagationTriggerSource::Reconnect => "reconnect",
+        StandardPropagationTriggerSource::ForegroundOpportunity => "foreground_opportunity",
+        StandardPropagationTriggerSource::GrantedBackgroundOpportunity => {
+            "granted_background_opportunity"
+        }
+        StandardPropagationTriggerSource::Manual => "manual",
+        StandardPropagationTriggerSource::Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
+fn standard_platform_capability_name(
+    value: styrene_ipc::types::StandardPropagationPlatformCapability,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationPlatformCapability;
+
+    match value {
+        StandardPropagationPlatformCapability::AutomaticForeground => "automatic_foreground",
+        StandardPropagationPlatformCapability::AutomaticBackground => "automatic_background",
+        StandardPropagationPlatformCapability::Manual => "manual",
+        StandardPropagationPlatformCapability::Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
+fn standard_opportunity_state_name(
+    value: styrene_ipc::types::StandardPropagationOpportunityState,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationOpportunityState;
+
+    match value {
+        StandardPropagationOpportunityState::Unsupported => "unsupported",
+        StandardPropagationOpportunityState::Available => "available",
+        StandardPropagationOpportunityState::Denied => "denied",
+        StandardPropagationOpportunityState::Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
+fn standard_selection_readiness_name(
+    value: styrene_ipc::types::StandardPropagationSelectionReadiness,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationSelectionReadiness;
+
+    match value {
+        StandardPropagationSelectionReadiness::Ready => "ready",
+        StandardPropagationSelectionReadiness::NoSelection => "no_selection",
+        StandardPropagationSelectionReadiness::Unavailable => "unavailable",
+        StandardPropagationSelectionReadiness::Unknown => "unknown",
+        StandardPropagationSelectionReadiness::Other => "other",
+        _ => "other",
+    }
+}
+
+fn standard_sync_readiness_name(
+    value: styrene_ipc::types::StandardPropagationSyncReadiness,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationSyncReadiness;
+
+    match value {
+        StandardPropagationSyncReadiness::Ready => "ready",
+        StandardPropagationSyncReadiness::InFlight => "in_flight",
+        StandardPropagationSyncReadiness::CoolingDown => "cooling_down",
+        StandardPropagationSyncReadiness::Unavailable => "unavailable",
+        StandardPropagationSyncReadiness::Unknown => "unknown",
+        StandardPropagationSyncReadiness::Other => "other",
+        _ => "other",
+    }
+}
+
+fn standard_terminal_outcome_name(
+    value: styrene_ipc::types::StandardPropagationSyncTerminalOutcome,
+) -> &'static str {
+    use styrene_ipc::types::StandardPropagationSyncTerminalOutcome;
+
+    match value {
+        StandardPropagationSyncTerminalOutcome::Succeeded => "succeeded",
+        StandardPropagationSyncTerminalOutcome::Failed => "failed",
+        StandardPropagationSyncTerminalOutcome::TimedOut => "timed_out",
+        StandardPropagationSyncTerminalOutcome::Cancelled => "cancelled",
+        StandardPropagationSyncTerminalOutcome::Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
 fn optional_value(value: Option<impl Into<rmpv::Value>>) -> rmpv::Value {
     value.map(Into::into).unwrap_or(rmpv::Value::Nil)
 }
@@ -956,6 +1055,35 @@ async fn dispatch_query_standard_propagation(
             ("peer_hash", optional_value(selection.peer_hash)),
             ("mode", selection.mode.into()),
             ("selected_at", selection.selected_at.into()),
+        ])
+    });
+    let trigger_capabilities = snapshot
+        .trigger_capabilities
+        .into_iter()
+        .map(|capability| {
+            string_map([
+                ("source", standard_trigger_source_name(capability.source).into()),
+                (
+                    "platform_capability",
+                    standard_platform_capability_name(capability.platform_capability).into(),
+                ),
+                ("opportunity", standard_opportunity_state_name(capability.opportunity).into()),
+            ])
+        })
+        .collect();
+    let active_sync = snapshot.active_sync.map(|active| {
+        string_map([
+            ("trigger", standard_trigger_source_name(active.trigger).into()),
+            ("started_at", active.started_at.into()),
+        ])
+    });
+    let last_synchronization = snapshot.last_synchronization.map(|sync| {
+        string_map([
+            ("trigger", standard_trigger_source_name(sync.trigger).into()),
+            ("started_at", sync.started_at.into()),
+            ("finished_at", sync.finished_at.into()),
+            ("outcome", standard_terminal_outcome_name(sync.outcome).into()),
+            ("new_messages", sync.new_messages.into()),
         ])
     });
     let peers = snapshot
@@ -1050,6 +1178,21 @@ async fn dispatch_query_standard_propagation(
         ("policy".into(), policy.unwrap_or(rmpv::Value::Nil)),
         ("queue".into(), queue),
         ("selection".into(), selection.unwrap_or(rmpv::Value::Nil)),
+        (
+            "selection_readiness".into(),
+            standard_selection_readiness_name(snapshot.selection_readiness).into(),
+        ),
+        ("sync_readiness".into(), standard_sync_readiness_name(snapshot.sync_readiness).into()),
+        ("automatic_sync_enabled".into(), optional_value(snapshot.automatic_sync_enabled)),
+        (
+            "automatic_sync_cooldown_secs".into(),
+            optional_value(snapshot.automatic_sync_cooldown_secs),
+        ),
+        ("sync_deadline_secs".into(), optional_value(snapshot.sync_deadline_secs)),
+        ("trigger_capabilities".into(), rmpv::Value::Array(trigger_capabilities)),
+        ("active_sync".into(), active_sync.unwrap_or(rmpv::Value::Nil)),
+        ("last_synchronization".into(), last_synchronization.unwrap_or(rmpv::Value::Nil)),
+        ("cooldown_remaining_secs".into(), optional_value(snapshot.cooldown_remaining_secs)),
         ("peers".into(), rmpv::Value::Array(peers)),
         ("attempts".into(), rmpv::Value::Array(attempts)),
         ("checkpoints".into(), rmpv::Value::Array(checkpoints)),
@@ -1083,6 +1226,74 @@ async fn dispatch_query_identity(daemon: &Arc<dyn Daemon>) -> Result<Payload, St
         p.insert("custody".into(), identity_custody_value(custody));
     }
     ok_payload(p)
+}
+
+async fn dispatch_query_identity_backup_metadata(
+    daemon: &Arc<dyn Daemon>,
+) -> Result<Payload, String> {
+    let metadata = daemon.query_identity_backup_metadata().await.map_err(typed_ipc_error)?;
+    Ok(HashMap::from([
+        ("contract_version".into(), metadata.contract_version.into()),
+        ("format".into(), identity_backup_format_value(metadata.format)),
+        ("encrypted_size".into(), metadata.encrypted_size.into()),
+    ]))
+}
+
+async fn dispatch_export_identity_backup(daemon: &Arc<dyn Daemon>) -> Result<Payload, String> {
+    let backup = daemon.export_identity_backup().await.map_err(typed_ipc_error)?;
+    Ok(HashMap::from([
+        ("metadata".into(), identity_backup_metadata_value(backup.metadata)),
+        ("encrypted_bytes".into(), rmpv::Value::Binary(backup.encrypted_bytes)),
+    ]))
+}
+
+async fn dispatch_restore_identity_backup(
+    daemon: &Arc<dyn Daemon>,
+    payload: &Payload,
+) -> Result<Payload, String> {
+    let encrypted_bytes = payload
+        .get("encrypted_bytes")
+        .and_then(rmpv::Value::as_slice)
+        .ok_or_else(|| "encrypted_bytes must be binary".to_string())?
+        .to_vec();
+    let mut backup = styrene_ipc::types::IdentityBackupImport::default();
+    backup.encrypted_bytes = encrypted_bytes;
+    let outcome = daemon.restore_identity_backup(backup).await.map_err(typed_ipc_error)?;
+    Ok(HashMap::from([("outcome".into(), identity_restore_outcome_value(outcome))]))
+}
+
+fn identity_backup_format_value(format: styrene_ipc::types::IdentityBackupFormat) -> rmpv::Value {
+    use styrene_ipc::types::IdentityBackupFormat;
+
+    match format {
+        IdentityBackupFormat::LegacyV0 => "legacy_v0".into(),
+        IdentityBackupFormat::StidV1 => "stid_v1".into(),
+        IdentityBackupFormat::Unknown => "unknown".into(),
+        _ => "unknown".into(),
+    }
+}
+
+fn identity_backup_metadata_value(
+    metadata: styrene_ipc::types::IdentityBackupMetadata,
+) -> rmpv::Value {
+    rmpv::Value::Map(vec![
+        ("contract_version".into(), metadata.contract_version.into()),
+        ("format".into(), identity_backup_format_value(metadata.format)),
+        ("encrypted_size".into(), metadata.encrypted_size.into()),
+    ])
+}
+
+fn identity_restore_outcome_value(
+    outcome: styrene_ipc::types::IdentityRestoreOutcome,
+) -> rmpv::Value {
+    use styrene_ipc::types::IdentityRestoreOutcome;
+
+    match outcome {
+        IdentityRestoreOutcome::Restored => "restored".into(),
+        IdentityRestoreOutcome::AlreadyPresent => "already_present".into(),
+        IdentityRestoreOutcome::Unknown => "unknown".into(),
+        _ => "unknown".into(),
+    }
 }
 
 fn identity_custody_value(info: &styrene_ipc::types::IdentityCustodyInfo) -> rmpv::Value {
@@ -1347,6 +1558,16 @@ pub(crate) fn message_info_value(message: &styrene_ipc::types::MessageInfo) -> r
             rmpv::Value::from("terminal_detail"),
             message.terminal_detail.as_deref().map_or(rmpv::Value::Nil, rmpv::Value::from),
         ),
+        (
+            rmpv::Value::from("retry_eligible"),
+            message.retry_eligible.map_or(rmpv::Value::Nil, rmpv::Value::from),
+        ),
+        (
+            rmpv::Value::from("retry_ineligibility_reason"),
+            message.retry_ineligibility_reason.map_or(rmpv::Value::Nil, |reason| {
+                rmpv::Value::from(message_retry_ineligibility_reason_name(reason))
+            }),
+        ),
     ];
     for (key, value) in [
         ("delivery_method", message.delivery_method.as_deref()),
@@ -1571,6 +1792,21 @@ fn message_lifecycle_state_name(state: styrene_ipc::types::MessageLifecycleState
     }
 }
 
+fn message_retry_ineligibility_reason_name(
+    reason: styrene_ipc::types::MessageRetryIneligibilityReason,
+) -> &'static str {
+    use styrene_ipc::types::MessageRetryIneligibilityReason::*;
+    match reason {
+        Inbound => "inbound",
+        MissingOutboundRoute => "missing_outbound_route",
+        LifecycleState => "lifecycle_state",
+        CanonicalWireUnavailable => "canonical_wire_unavailable",
+        AttemptLimitReached => "attempt_limit_reached",
+        Unknown => "unknown",
+        _ => "unknown",
+    }
+}
+
 fn delivery_evidence_value(
     evidence: &styrene_ipc::types::MessageDeliveryEvidenceInfo,
 ) -> rmpv::Value {
@@ -1715,7 +1951,7 @@ async fn dispatch_query_messages(
         (daemon.query_messages(peer_hash, limit, before_ts).await.map_err(|e| e.to_string())?, None)
     } else {
         let page =
-            daemon.query_message_page(peer_hash, limit, cursor).await.map_err(|e| e.to_string())?;
+            daemon.query_message_page(peer_hash, limit, cursor).await.map_err(typed_ipc_error)?;
         (page.messages, page.next_cursor)
     };
     let list: Vec<rmpv::Value> = msgs.iter().map(message_info_value).collect();

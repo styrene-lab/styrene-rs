@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "corpus": "styrene-rnode-firmware-capabilities-v1",
+  "evidence_scope": "synthetic_contract",
+  "operations": ["inspect", "plan", "upgrade", "fresh_install", "provision", "recovery"],
+  "targets": [
+    {
+      "id": "attached-espressif-unknown",
+      "mcu_family": "esp32s3",
+      "board": null,
+      "radio_variant": null,
+      "hardware_revision": null,
+      "bootloader": "esp_rom_serial",
+      "bootloader_revision": null,
+      "configured": "unknown",
+      "physical_acceptance": false
+    },
+    {
+      "id": "synthetic-esp32s3-exact",
+      "mcu_family": "esp32s3",
+      "board": "synthetic_exact_board",
+      "radio_variant": "synthetic_sx1262",
+      "hardware_revision": "synthetic-rev-a",
+      "bootloader": "esp_rom_serial",
+      "bootloader_revision": null,
+      "configured": "yes",
+      "physical_acceptance": false
+    },
+    {
+      "id": "synthetic-rak4631-accepted",
+      "mcu_family": "nrf52840",
+      "board": "rak4631",
+      "radio_variant": "synthetic-sx1262",
+      "hardware_revision": "synthetic-rev-a",
+      "bootloader": "adafruit_legacy_ble_dfu",
+      "bootloader_revision": "0.4.3",
+      "configured": "yes",
+      "physical_acceptance": true
+    },
+    {
+      "id": "synthetic-rak4631-factory-dfu",
+      "mcu_family": "nrf52840",
+      "board": "rak4631",
+      "radio_variant": "synthetic-sx1262",
+      "hardware_revision": "synthetic-rev-a",
+      "bootloader": "adafruit_legacy_ble_dfu",
+      "bootloader_revision": "0.4.3",
+      "configured": "no",
+      "physical_acceptance": false
+    },
+    {
+      "id": "synthetic-rak4631-bootloader-revision-unknown",
+      "mcu_family": "nrf52840",
+      "board": "rak4631",
+      "radio_variant": "synthetic-sx1262",
+      "hardware_revision": "synthetic-rev-a",
+      "bootloader": "adafruit_legacy_ble_dfu",
+      "bootloader_revision": null,
+      "configured": "yes",
+      "physical_acceptance": true
+    }
+  ],
+  "cases": [
+    {
+      "id": "capability.desktop.unknown.inspect",
+      "host": "desktop",
+      "target": "attached-espressif-unknown",
+      "operation": "inspect",
+      "executor": "read_only_serial",
+      "expected": {"decision": "allow", "reason": "read_only_inspection"}
+    },
+    {
+      "id": "capability.desktop.unknown.inspect-destructive-executor",
+      "host": "desktop",
+      "target": "attached-espressif-unknown",
+      "operation": "inspect",
+      "executor": "host_serial_esp",
+      "expected": {"decision": "deny", "reason": "executor_mismatch"}
+    },
+    {
+      "id": "capability.desktop.unknown.plan",
+      "host": "desktop",
+      "target": "attached-espressif-unknown",
+      "operation": "plan",
+      "executor": null,
+      "expected": {"decision": "deny", "reason": "exact_target_unknown"}
+    },
+    {
+      "id": "capability.desktop.exact-esp.upgrade-unverified",
+      "host": "desktop",
+      "target": "synthetic-esp32s3-exact",
+      "operation": "upgrade",
+      "executor": "host_serial_esp",
+      "expected": {"decision": "deny", "reason": "physical_evidence_missing"}
+    },
+    {
+      "id": "capability.desktop.exact-esp.upgrade-wrong-executor",
+      "host": "desktop",
+      "target": "synthetic-esp32s3-exact",
+      "operation": "upgrade",
+      "executor": "host_serial_avr",
+      "expected": {"decision": "deny", "reason": "executor_mismatch"}
+    },
+    {
+      "id": "capability.desktop.exact-esp.fresh-install-unverified",
+      "host": "desktop",
+      "target": "synthetic-esp32s3-exact",
+      "operation": "fresh_install",
+      "executor": "host_serial_esp",
+      "expected": {"decision": "deny", "reason": "physical_evidence_missing"}
+    },
+    {
+      "id": "capability.ios.accepted-rak.upgrade",
+      "host": "ios_mobile",
+      "target": "synthetic-rak4631-accepted",
+      "operation": "upgrade",
+      "executor": "ios_nrf_ble_dfu",
+      "expected": {"decision": "allow", "reason": "accepted_exact_target"}
+    },
+    {
+      "id": "capability.ios.accepted-rak.inspect",
+      "host": "ios_mobile",
+      "target": "synthetic-rak4631-accepted",
+      "operation": "inspect",
+      "executor": "ble_nus_inspect",
+      "expected": {"decision": "allow", "reason": "read_only_inspection"}
+    },
+    {
+      "id": "capability.ios.rak.bootloader-revision-unknown",
+      "host": "ios_mobile",
+      "target": "synthetic-rak4631-bootloader-revision-unknown",
+      "operation": "upgrade",
+      "executor": "ios_nrf_ble_dfu",
+      "expected": {"decision": "deny", "reason": "exact_target_unknown"}
+    },
+    {
+      "id": "capability.ios.accepted-rak.fresh-install",
+      "host": "ios_mobile",
+      "target": "synthetic-rak4631-accepted",
+      "operation": "fresh_install",
+      "executor": null,
+      "expected": {"decision": "deny", "reason": "operation_not_mobile_supported"}
+    },
+    {
+      "id": "capability.ios.factory-rak.fresh-install",
+      "host": "ios_mobile",
+      "target": "synthetic-rak4631-factory-dfu",
+      "operation": "fresh_install",
+      "executor": "ios_nrf_ble_dfu",
+      "expected": {"decision": "deny", "reason": "physical_evidence_missing"}
+    },
+    {
+      "id": "capability.ios.factory-rak.provision",
+      "host": "ios_mobile",
+      "target": "synthetic-rak4631-factory-dfu",
+      "operation": "provision",
+      "executor": null,
+      "expected": {"decision": "deny", "reason": "operation_not_mobile_supported"}
+    },
+    {
+      "id": "capability.ios.rak.recovery",
+      "host": "ios_mobile",
+      "target": "synthetic-rak4631-accepted",
+      "operation": "recovery",
+      "executor": null,
+      "expected": {"decision": "deny", "reason": "operation_not_mobile_supported"}
+    },
+    {
+      "id": "capability.ios.esp.upgrade",
+      "host": "ios_mobile",
+      "target": "synthetic-esp32s3-exact",
+      "operation": "upgrade",
+      "executor": null,
+      "expected": {"decision": "deny", "reason": "mobile_executor_unavailable"}
+    },
+    {
+      "id": "capability.ios.unknown.plan",
+      "host": "ios_mobile",
+      "target": "attached-espressif-unknown",
+      "operation": "plan",
+      "executor": null,
+      "expected": {"decision": "deny", "reason": "exact_target_unknown"}
+    }
+  ]
+}

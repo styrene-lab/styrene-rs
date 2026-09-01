@@ -6,6 +6,9 @@ The Android and iOS hosts use Bluetooth Low Energy as the preferred RNode bearer
 
 The mobile hosts target the Nordic UART Service in canonical RNode Firmware 1.86. The source reference is commit [`d39339f8ecd5145b248c18bac7b6ea0f82faf85a`](https://github.com/markqvist/RNode_Firmware/commit/d39339f8ecd5145b248c18bac7b6ea0f82faf85a).
 
+See `docs/rnode-firmware-distribution.md` before Styrene hosts, bundles,
+downloads, or writes a firmware artifact.
+
 ## Firmware Contract
 
 The host uses these GATT identifiers:

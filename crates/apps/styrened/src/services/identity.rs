@@ -26,6 +26,16 @@ struct PublicIdentityState {
     path: Option<PathBuf>,
 }
 
+pub(crate) trait IdentityBackupCustody: Send + Sync {
+    fn metadata(&self)
+    -> Result<styrene_ipc::types::IdentityBackupMetadata, styrene_ipc::IpcError>;
+    fn export(&self) -> Result<styrene_ipc::types::IdentityBackupExport, styrene_ipc::IpcError>;
+    fn restore(
+        &self,
+        backup: styrene_ipc::types::IdentityBackupImport,
+    ) -> Result<styrene_ipc::types::IdentityRestoreOutcome, styrene_ipc::IpcError>;
+}
+
 /// Manages the daemon's own identity and resolves peer identities.
 pub struct IdentityService {
     /// Our operator identity hash (hex string for IPC compat).
@@ -37,6 +47,7 @@ pub struct IdentityService {
     /// Public fields and their persistence target share one serialized state.
     public_identity: std::sync::Mutex<PublicIdentityState>,
     custody: std::sync::Mutex<Option<styrene_ipc::types::IdentityCustodyInfo>>,
+    backup_custody: std::sync::Mutex<Option<Arc<dyn IdentityBackupCustody>>>,
 }
 
 impl IdentityService {
@@ -48,6 +59,7 @@ impl IdentityService {
             transport,
             public_identity: std::sync::Mutex::new(PublicIdentityState::default()),
             custody: std::sync::Mutex::new(None),
+            backup_custody: std::sync::Mutex::new(None),
         }
     }
 
@@ -59,6 +71,7 @@ impl IdentityService {
             transport: Arc::new(crate::transport::null_transport::NullTransport::new()),
             public_identity: std::sync::Mutex::new(PublicIdentityState::default()),
             custody: std::sync::Mutex::new(None),
+            backup_custody: std::sync::Mutex::new(None),
         }
     }
 
@@ -111,10 +124,52 @@ impl IdentityService {
         metadata_path: PathBuf,
         metadata: PublicIdentityMetadata,
         custody: styrene_ipc::types::IdentityCustodyInfo,
+        backup_custody: Option<Arc<dyn IdentityBackupCustody>>,
     ) {
         *self.public_identity.lock().unwrap() =
             PublicIdentityState { metadata, path: Some(metadata_path) };
         *self.custody.lock().unwrap() = Some(custody);
+        *self.backup_custody.lock().unwrap() = backup_custody;
+    }
+
+    pub fn identity_backup_metadata(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupMetadata, styrene_ipc::IpcError> {
+        self.backup_custody
+            .lock()
+            .unwrap()
+            .as_ref()
+            .ok_or_else(|| styrene_ipc::IpcError::Unavailable {
+                reason: "identity backup custody unavailable".into(),
+            })?
+            .metadata()
+    }
+
+    pub fn export_identity_backup(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupExport, styrene_ipc::IpcError> {
+        self.backup_custody
+            .lock()
+            .unwrap()
+            .as_ref()
+            .ok_or_else(|| styrene_ipc::IpcError::Unavailable {
+                reason: "identity backup custody unavailable".into(),
+            })?
+            .export()
+    }
+
+    pub fn restore_identity_backup(
+        &self,
+        backup: styrene_ipc::types::IdentityBackupImport,
+    ) -> Result<styrene_ipc::types::IdentityRestoreOutcome, styrene_ipc::IpcError> {
+        self.backup_custody
+            .lock()
+            .unwrap()
+            .as_ref()
+            .ok_or_else(|| styrene_ipc::IpcError::Unavailable {
+                reason: "identity backup custody unavailable".into(),
+            })?
+            .restore(backup)
     }
 
     pub fn set_identity_validated(

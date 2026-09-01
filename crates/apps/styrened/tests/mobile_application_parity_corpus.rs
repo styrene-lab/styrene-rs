@@ -21,6 +21,7 @@ const REQUIRED_REFERENCES: &[&str] = &[
     "sideband-2.1.0-build-20251128",
     "reticulum-meshchat-2.4.0",
     "skywave-1.0-build-5",
+    "skywave-1.0-build-9-ios-beta",
     "python-rns-1.4.2",
     "python-lxmf-795fdaa2",
     "nomadnet-1.2.8",
@@ -574,7 +575,12 @@ mod mutation_tests {
         assert!(revision.contains("full commit"));
 
         let conflict = validation_error(|value| {
-            value["references"][4]["version"] = Value::String("1.1.1".into());
+            let references = value["references"].as_array_mut().expect("references");
+            let lxmf = references
+                .iter_mut()
+                .find(|reference| reference["id"] == "python-lxmf-795fdaa2")
+                .expect("Python LXMF reference");
+            lxmf["version"] = Value::String("1.1.1".into());
         });
         assert!(conflict.contains("cannot select a version"));
     }

@@ -287,6 +287,10 @@ The concrete schema should reuse existing SDK capability identifiers where they 
 - stream/tier conformance tests;
 - payload metadata describing what must be installed and enabled.
 
+For an RNode product operation, Styrene also owns exact target admission, signed
+firmware manifests, immutable plans, RNode provisioning semantics, product
+confirmation, and authoritative product-level verification.
+
 ### Nex owns
 
 - hardware inventory and hardware-purpose profiles;
@@ -296,6 +300,10 @@ The concrete schema should reuse existing SDK capability identifiers where they 
 - artifact checks and build evidence;
 - delivery targets such as file output, USB, SD card, removable block device, or supported programmer;
 - destructive-write safety, target-device validation, confirmation, and post-write verification.
+
+For RNode provisioning, the last item means low-level device safety and typed
+delivery evidence. Styrene remains responsible for product authorization,
+plan-bound operator confirmation, and the decision that an RNode is verified.
 
 ### Shared contract
 
@@ -318,6 +326,27 @@ materialize artifact → validate artifact → deliver artifact → validate har
 ```
 
 Building an SD image is deterministic materialization. Writing it to `/dev/...` is a separate, destructive delivery action. Booting an R36S and proving controls, display, suspend, networking, and audio is hardware validation and cannot be inferred from a successful image build.
+
+### Exact RNode Provisioning Contract
+
+RNode firmware provisioning is a narrow product exception to the general Forge
+delivery split. Styrene can retain an exact bounded executor adapter until Nex
+provides a versioned provisioning API. The adapter must accept only a
+Styrene-admitted immutable plan for one declared target and executor class. It
+must not expose arbitrary commands, device paths, images, offsets, erase ranges,
+reset sequences, or programmer options.
+
+The long-term handoff is typed and bidirectional:
+
+```text
+Styrene admitted plan -> Nex bounded provisioning API -> typed execution evidence
+```
+
+Nex owns generic discovery, bootloader entry, reset and programmer control, byte
+delivery, and low-level reads. Styrene owns artifact selection, writable-region
+policy, product confirmation, RNode metadata semantics, recovery presentation,
+and verified product success. Normal RNode serial/KISS and BLE NUS runtime
+clients remain separate from provisioning sessions.
 
 ## Candidate Compositions
 
@@ -398,7 +427,7 @@ Product documentation must not collapse these into a single “supported” flag
 2. Select one board/RTOS or embedded-Linux boundary as the first target.
 3. Add static budget and manual-tick conformance tests.
 4. Define firmware materialization separately from Linux disk-image materialization.
-5. Add board-specific flashing only through a safe Nex delivery backend.
+5. Add generic board flashing only through a safe Nex delivery backend. Keep the exact RNode product exception constrained by its contract above.
 
 ## Open Questions
 

@@ -17,6 +17,7 @@ selected_targets = [
   "styrene-tunnel:*",
   "styrene-micron:*",
   "styrene-rbac:*",
+  "styrene-rnode-firmware:*",
   "styrene-secrets:*",
   "styrene-services:*",
   "styrene-a2a:*",
@@ -55,6 +56,8 @@ selected_targets = [
 ]
 
 safe_sensitive_tests = [
+  "crates/apps/styrene/src/ipc_client.rs#rejects_removed_tcp_endpoints",
+  "crates/apps/styrene/src/ipc_client.rs#reports_missing_local_socket_before_connecting",
   "crates/apps/styrened/src/daemon.rs#canonical_hub_recovers_standard_queue_before_active_composition",
   "crates/apps/styrened/src/mobile.rs#post_composition_boot_failure_releases_workers_listener_and_store_before_retry",
   "crates/apps/styrened/src/services/pages.rs#registered_content_and_allowed_policy_cannot_be_replaced_with_symlink_escape",

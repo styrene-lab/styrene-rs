@@ -25,6 +25,7 @@ use crate::standard_propagation::StandardPropagationRuntimeObservation;
 use crate::startup_contract::StartupContract;
 use crate::storage::messages::MessagesStore;
 use crate::transport::mesh_transport::MeshTransport;
+use crate::workers::standard_propagation::StandardPropagationSyncObservation;
 use rns_core::identity::PrivateIdentity;
 use styrene_services::node_store::NodeStore;
 
@@ -58,6 +59,7 @@ pub struct AppContext {
     terminal: Arc<TerminalService>,
     startup_contract: RwLock<Option<StartupContract>>,
     standard_propagation: RwLock<Option<StandardPropagationRuntimeObservation>>,
+    standard_propagation_sync: RwLock<Option<StandardPropagationSyncObservation>>,
 }
 
 impl AppContext {
@@ -189,6 +191,7 @@ impl AppContext {
             terminal,
             startup_contract: RwLock::new(None),
             standard_propagation: RwLock::new(None),
+            standard_propagation_sync: RwLock::new(None),
         }
     }
 
@@ -206,6 +209,17 @@ impl AppContext {
 
     pub fn standard_propagation(&self) -> Option<StandardPropagationRuntimeObservation> {
         self.standard_propagation.read().unwrap().clone()
+    }
+
+    pub fn publish_standard_propagation_sync(
+        &self,
+        observation: StandardPropagationSyncObservation,
+    ) {
+        *self.standard_propagation_sync.write().unwrap() = Some(observation);
+    }
+
+    pub fn standard_propagation_sync(&self) -> Option<StandardPropagationSyncObservation> {
+        self.standard_propagation_sync.read().unwrap().clone()
     }
 
     /// Wire a signing identity into services that need outbound delivery.
