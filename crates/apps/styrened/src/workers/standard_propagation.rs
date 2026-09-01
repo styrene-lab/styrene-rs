@@ -1,4 +1,4 @@
-use crate::services::MessagingService;
+use crate::services::{EventService, MessagingService};
 use crate::transport::mesh_transport::{TransportError, TransportLifecycleEvent};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -316,20 +316,39 @@ pub fn spawn_standard_propagation_sync_worker(
     messaging: Arc<MessagingService>,
     lifecycle: broadcast::Receiver<TransportLifecycleEvent>,
     initially_connected: bool,
+    events: Arc<EventService>,
 ) -> StandardPropagationSyncWorker {
-    spawn_standard_propagation_sync_worker_with_policy(
+    spawn_standard_propagation_sync_worker_with_policy_and_events(
         messaging,
         lifecycle,
         initially_connected,
         StandardPropagationSyncPolicy::default(),
+        Some(events),
     )
 }
 
+#[cfg(test)]
 fn spawn_standard_propagation_sync_worker_with_policy(
+    messaging: Arc<MessagingService>,
+    lifecycle: broadcast::Receiver<TransportLifecycleEvent>,
+    initially_connected: bool,
+    policy: StandardPropagationSyncPolicy,
+) -> StandardPropagationSyncWorker {
+    spawn_standard_propagation_sync_worker_with_policy_and_events(
+        messaging,
+        lifecycle,
+        initially_connected,
+        policy,
+        None,
+    )
+}
+
+fn spawn_standard_propagation_sync_worker_with_policy_and_events(
     messaging: Arc<MessagingService>,
     mut lifecycle: broadcast::Receiver<TransportLifecycleEvent>,
     initially_connected: bool,
     policy: StandardPropagationSyncPolicy,
+    events: Option<Arc<EventService>>,
 ) -> StandardPropagationSyncWorker {
     let cancellation = CancellationToken::new();
     let worker_cancellation = cancellation.clone();
@@ -390,17 +409,25 @@ fn spawn_standard_propagation_sync_worker_with_policy(
                 continue;
             };
             let deadline = command.deadline.unwrap_or(policy_deadline).min(policy.deadline);
+            let started_at = rns_core::transport::time::now_epoch_secs_i64();
             worker_telemetry.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).start(
                 command.trigger,
                 started,
-                rns_core::transport::time::now_epoch_secs_i64(),
+                started_at,
             );
+            if let Some(events) = &events {
+                events.emit_standard_propagation_changed(started_at);
+            }
             let result = run_sync(&messaging, deadline, worker_cancellation.clone()).await;
             state.finish();
+            let finished_at = rns_core::transport::time::now_epoch_secs_i64();
             worker_telemetry
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .finish(&result, rns_core::transport::time::now_epoch_secs_i64());
+                .finish(&result, finished_at);
+            if let Some(events) = &events {
+                events.emit_standard_propagation_changed(finished_at);
+            }
             if let Some(response) = command.response {
                 let _ = response.send(result);
             }
@@ -661,6 +688,35 @@ mod tests {
             completed_trigger(&worker).await,
             StandardPropagationSyncTriggerKind::InitialConnection
         );
+        worker.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn sync_start_and_completion_notify_mobile_observers() {
+        let (messaging, transport, _) = scheduler_fixture();
+        let events = Arc::new(EventService::new());
+        let mut receiver = events.subscribe_daemon_events();
+        let mut worker = spawn_standard_propagation_sync_worker_with_policy_and_events(
+            messaging,
+            transport.subscribe_lifecycle(),
+            true,
+            policy(),
+            Some(events),
+        );
+
+        assert_eq!(
+            completed_trigger(&worker).await,
+            StandardPropagationSyncTriggerKind::InitialConnection
+        );
+        for expected_phase in ["start", "completion"] {
+            assert!(
+                matches!(
+                    receiver.try_recv(),
+                    Ok(styrene_ipc::types::DaemonEvent::StandardPropagationChanged { .. })
+                ),
+                "missing propagation {expected_phase} notification"
+            );
+        }
         worker.shutdown().await;
     }
 
