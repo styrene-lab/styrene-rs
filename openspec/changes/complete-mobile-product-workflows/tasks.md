@@ -23,7 +23,7 @@
 - [x] 3.1 `[styrene-ui]` Replace the discovered-peer dead end with an action that invokes the backend idempotent conversation-shell operation and opens the resulting conversation
 - [x] 3.2 `[styrene-ui]` Add a first-class New Message entry with peer search and bounded direct LXMF destination entry using the same backend validation path
 - [x] 3.3 `[styrene-ui]` Define bounded generation-tagged Rust platform-service contracts and deterministic mocks for clipboard read and QR scanning, including denied, restricted, unavailable, oversized, malformed, cancelled, and successful outcomes
-- [ ] 3.4 `[styrene-ui]` Implement iOS and Android clipboard and QR adapters behind the typed destination-ingress contracts without moving destination validation into platform code
+- [x] 3.4 `[styrene-ui]` Implement iOS and Android clipboard and QR adapters behind the typed destination-ingress contracts without moving destination validation into platform code
 - [x] 3.5 `[styrene-ui]` Gate Direct and Propagated methods independently from backend capability and current selected-node readiness; preserve destination, draft revision, and method when readiness changes
 - [ ] 3.6 `[cross-repo]` Verify discovered, direct-entry, paste, and scan paths create one canonical conversation and never create state from invalid input
 
@@ -39,11 +39,11 @@
 <!-- specs: mobile-platform-workflows -->
 
 - [x] 5.1 `[styrene-ui]` Implement display-name edit and correct public LXMF destination labeling using existing typed metadata and durable edit operations
-- [ ] 5.2 `[styrene-ui]` Implement Copy and Show QR through Rust platform services and ensure clipboard, QR, accessibility, fixtures, and logs contain only explicitly public identity material
+- [x] 5.2 `[styrene-ui]` Implement Copy and Show QR through Rust platform services and ensure clipboard, QR, accessibility, fixtures, and logs contain only explicitly public identity material
 - [x] 5.3 `[styrene-rs]` Define and test opaque encrypted identity backup metadata, authenticated export, non-destructive restore, compatibility, wrong-protection, corruption, custody-unavailable, and identity-conflict outcomes
 - [x] 5.4 `[styrene-rs]` Expose typed backup and restore operations that never return private key bytes or protection input through presentation DTOs, diagnostics, or generic debug output
-- [ ] 5.5 `[styrene-ui]` Implement encrypted Backup and preboot Restore surfaces with typed progress, explicit create-or-restore choice, confirmation, cancellation, and failure states
-- [ ] 5.6 `[styrene-ui]` Implement Rust file/share adapters for opaque backup artifacts without retaining protection input or private material
+- [x] 5.5 `[styrene-ui]` Implement encrypted Backup and preboot Restore surfaces with typed progress, explicit create-or-restore choice, confirmation, cancellation, and failure states
+- [x] 5.6 `[styrene-ui]` Implement Rust file/share adapters for opaque backup artifacts without retaining protection input or private material
 - [ ] 5.7 `[cross-repo]` Run migration, restart, wrong-backup, interrupted-export, interrupted-restore, custody continuity, and unchanged-identity tests before enabling recovery claims
 
 ## 6. Permissions And Propagation Lifecycle
