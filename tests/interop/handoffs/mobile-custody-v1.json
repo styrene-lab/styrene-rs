@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "corpus": "styrene-mobile-custody-handoff-v1",
+  "registered": false,
+  "claim_status": "unevidenced",
+  "authority": {
+    "backend_contract_revision": "899da81302c5f4e92f60a2fdaf396c26e813ba76",
+    "integration_corpus": "tests/fixtures/mobile-integration-v1/corpus.json",
+    "integration_case": "mobile.identity.device-custody",
+    "openspec_task": "openspec/changes/complete-mobile-p0-backend-contracts/tasks.md#3.5",
+    "frontend_repository": "https://github.com/styrene-lab/styrene-ui.git",
+    "frontend_handoff_revision": "a98c5c42db89818f2206bb8498c1c3632d638fdc"
+  },
+  "reset_requires_explicit_approval": true,
+  "prohibited_metadata": [
+    "device_identifier",
+    "development_team_identifier",
+    "hardware_udid",
+    "private_identity_material",
+    "provisioning_profile",
+    "signing_identity"
+  ],
+  "scenarios": [
+    {
+      "id": "mobile-custody-ios-device",
+      "host": "Chriss-MacBook-Pro",
+      "platform": "ios_device",
+      "execution_state": "handoff_only",
+      "runner": {
+        "path": "tests/xcui/StyreneMobileUITests.swift",
+        "tests": [
+          "testPhysicalIdentityCustodySurvivesTerminationAndRestart",
+          "testPhysicalRestoredIdentityCustody"
+        ]
+      },
+      "host_orchestration": [
+        "approved_clean_reset",
+        "install_baseline_package",
+        "launch_baseline_package",
+        "restart_application",
+        "force_terminate_application",
+        "relaunch_after_forced_termination",
+        "install_upgrade_in_place",
+        "relaunch_after_upgrade"
+      ],
+      "lifecycle": [
+        "approved_clean_reset",
+        "first_launch",
+        "graceful_restart",
+        "forced_termination",
+        "relaunch",
+        "in_place_upgrade",
+        "post_upgrade_relaunch"
+      ],
+      "expected_custody": {
+        "requested_backend": "keychain",
+        "active_backend": "keychain",
+        "protection": "platform_protected",
+        "authentication": "device_authentication",
+        "availability": "available",
+        "downgrade": "none"
+      },
+      "assertion_ids": [
+        "custody_matches_expected",
+        "identity_stable",
+        "upgrade_preserves_identity"
+      ],
+      "forbidden_outcome_ids": [
+        "false_secure_claim",
+        "identity_rotation",
+        "plaintext_fallback",
+        "secret_artifact"
+      ],
+      "required_artifacts": [
+        "application_sha256",
+        "backend_revision",
+        "custody_snapshot",
+        "frontend_revision",
+        "host_attestation",
+        "os_version",
+        "package_versions",
+        "public_identity_comparison",
+        "screenshots",
+        "test_result"
+      ],
+      "blocker_ids": [
+        "first_unlock_policy_packaged",
+        "physical_ios_execution"
+      ],
+      "evidence": [],
+      "limits": {
+        "timeout_secs": 300,
+        "max_artifacts": 24,
+        "max_artifact_bytes": 8388608
+      }
+    },
+    {
+      "id": "mobile-custody-android-device",
+      "host": "nucleus",
+      "platform": "android_device",
+      "execution_state": "handoff_only",
+      "runner": null,
+      "host_orchestration": [
+        "approved_clean_reset",
+        "install_baseline_package",
+        "launch_baseline_package",
+        "restart_application",
+        "force_terminate_application",
+        "relaunch_after_forced_termination",
+        "install_upgrade_in_place",
+        "relaunch_after_upgrade"
+      ],
+      "lifecycle": [
+        "approved_clean_reset",
+        "first_launch",
+        "graceful_restart",
+        "forced_termination",
+        "relaunch",
+        "in_place_upgrade",
+        "post_upgrade_relaunch"
+      ],
+      "expected_custody": {
+        "requested_backend": "android_keystore",
+        "active_backend": "android_keystore",
+        "protection": "platform_protected",
+        "authentication": "none",
+        "availability": "available",
+        "downgrade": "none"
+      },
+      "assertion_ids": [
+        "custody_matches_expected",
+        "identity_stable",
+        "upgrade_preserves_identity"
+      ],
+      "forbidden_outcome_ids": [
+        "false_secure_claim",
+        "identity_rotation",
+        "plaintext_fallback",
+        "secret_artifact"
+      ],
+      "required_artifacts": [
+        "application_sha256",
+        "backend_revision",
+        "custody_snapshot",
+        "frontend_revision",
+        "host_attestation",
+        "os_version",
+        "package_versions",
+        "public_identity_comparison",
+        "screenshots",
+        "test_result"
+      ],
+      "blocker_ids": [
+        "android_packaged_runner",
+        "physical_android_execution"
+      ],
+      "evidence": [],
+      "limits": {
+        "timeout_secs": 300,
+        "max_artifacts": 24,
+        "max_artifact_bytes": 8388608
+      }
+    }
+  ]
+}
