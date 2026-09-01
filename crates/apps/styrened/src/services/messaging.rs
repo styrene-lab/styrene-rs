@@ -708,6 +708,27 @@ impl MessagingService {
         let _ = self.events.set(events);
     }
 
+    pub(crate) fn standard_propagation_sync_telemetry(
+        &self,
+    ) -> Result<Option<serde_json::Value>, String> {
+        self.store
+            .lock()
+            .map_err(|_| "standard propagation store lock poisoned".to_string())?
+            .get_standard_propagation_sync_telemetry()
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn retain_standard_propagation_sync_telemetry(
+        &self,
+        telemetry: &serde_json::Value,
+    ) -> Result<(), String> {
+        self.store
+            .lock()
+            .map_err(|_| "standard propagation store lock poisoned".to_string())?
+            .put_standard_propagation_sync_telemetry(telemetry)
+            .map_err(|error| error.to_string())
+    }
+
     pub async fn sync_standard_propagation_once(
         &self,
         deadline: std::time::Instant,

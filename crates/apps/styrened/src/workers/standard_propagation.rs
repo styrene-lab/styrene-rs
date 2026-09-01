@@ -1,12 +1,14 @@
 use crate::services::{EventService, MessagingService};
 use crate::transport::mesh_transport::{TransportError, TransportLifecycleEvent};
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinHandle};
 use tokio_util::sync::CancellationToken;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StandardPropagationSyncTriggerKind {
     InitialConnection,
     Reconnect,
@@ -15,7 +17,8 @@ pub enum StandardPropagationSyncTriggerKind {
     Manual,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StandardPropagationSyncTerminalOutcome {
     Succeeded,
     Failed,
@@ -29,7 +32,7 @@ pub struct StandardPropagationSyncActivity {
     pub started_at: i64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StandardPropagationSyncCompletion {
     pub trigger: StandardPropagationSyncTriggerKind,
     pub started_at: i64,
@@ -352,7 +355,24 @@ fn spawn_standard_propagation_sync_worker_with_policy_and_events(
 ) -> StandardPropagationSyncWorker {
     let cancellation = CancellationToken::new();
     let worker_cancellation = cancellation.clone();
-    let telemetry = Arc::new(Mutex::new(SyncTelemetryState::default()));
+    let retained_completion = match messaging.standard_propagation_sync_telemetry() {
+        Ok(Some(value)) => match serde_json::from_value(value) {
+            Ok(completion) => Some(completion),
+            Err(error) => {
+                eprintln!("[standard-propagation] invalid retained sync telemetry: {error}");
+                None
+            }
+        },
+        Ok(None) => None,
+        Err(error) => {
+            eprintln!("[standard-propagation] load retained sync telemetry failed: {error}");
+            None
+        }
+    };
+    let telemetry = Arc::new(Mutex::new(SyncTelemetryState {
+        last_completed: retained_completion,
+        ..SyncTelemetryState::default()
+    }));
     let worker_telemetry = telemetry.clone();
     let (command_tx, mut command_rx) = mpsc::channel::<SyncCommand>(8);
     if initially_connected {
@@ -421,10 +441,28 @@ fn spawn_standard_propagation_sync_worker_with_policy_and_events(
             let result = run_sync(&messaging, deadline, worker_cancellation.clone()).await;
             state.finish();
             let finished_at = rns_core::transport::time::now_epoch_secs_i64();
-            worker_telemetry
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .finish(&result, finished_at);
+            let completed = {
+                let mut telemetry =
+                    worker_telemetry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                telemetry.finish(&result, finished_at);
+                telemetry.last_completed
+            };
+            if let Some(completed) = completed {
+                match serde_json::to_value(completed) {
+                    Ok(value) => {
+                        if let Err(error) =
+                            messaging.retain_standard_propagation_sync_telemetry(&value)
+                        {
+                            eprintln!(
+                                "[standard-propagation] retain sync telemetry failed: {error}"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("[standard-propagation] encode sync telemetry failed: {error}");
+                    }
+                }
+            }
             if let Some(events) = &events {
                 events.emit_standard_propagation_changed(finished_at);
             }
@@ -873,7 +911,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_restart_resets_in_memory_cooldown() {
+    async fn process_restart_retains_last_completion_but_resets_cooldown() {
         let (messaging, transport, _) = scheduler_fixture();
         let mut first = spawn_standard_propagation_sync_worker_with_policy(
             messaging.clone(),
@@ -882,15 +920,24 @@ mod tests {
             StandardPropagationSyncPolicy { cooldown: Duration::MAX, ..policy() },
         );
         transport.wait_for_calls(1, |call| matches!(call, MockCall::ResolveIdentity { .. })).await;
+        assert_eq!(
+            completed_trigger(&first).await,
+            StandardPropagationSyncTriggerKind::InitialConnection
+        );
+        let retained = first.telemetry().last_completed.expect("completed first sync");
         first.shutdown().await;
         transport.clear_calls();
 
         let mut restarted = spawn_standard_propagation_sync_worker_with_policy(
             messaging,
             transport.subscribe_lifecycle(),
-            true,
+            false,
             StandardPropagationSyncPolicy { cooldown: Duration::MAX, ..policy() },
         );
+        assert_eq!(restarted.telemetry().last_completed, Some(retained));
+        assert_eq!(restarted.telemetry().cooldown_remaining, Duration::ZERO);
+
+        assert!(restarted.trigger().foreground_opportunity());
         transport.wait_for_calls(1, |call| matches!(call, MockCall::ResolveIdentity { .. })).await;
 
         assert_eq!(
