@@ -51,9 +51,9 @@
 
 - [x] 6.1 `[styrene-rs]` Remove or disable free-running mobile propagation polling so automatic synchronization starts only from connection, reconnection, foreground, or platform-granted background opportunities under single-flight cooldown and deadlines
 - [x] 6.2 `[styrene-rs]` Expose trigger source, capability, readiness, last synchronization, progress, cooldown, and terminal outcome without claiming guaranteed background execution
-- [ ] 6.3 `[styrene-ui]` Present independent camera, Bluetooth, notification, and secure-storage states plus supported system-settings recovery; do not request location permission in the P0 product
+- [x] 6.3 `[styrene-ui]` Present independent camera, Bluetooth, notification, and secure-storage states plus supported system-settings recovery; do not request location permission in the P0 product
 - [x] 6.4 `[styrene-ui]` Replace unconditional automatic-sync copy with selected-node readiness, manual airtime disclosure, best-effort lifecycle disclosure, disabled Sync reason, and progress or failure
-- [ ] 6.5 `[styrene-ui]` Render the backend-owned last synchronization trigger source without inferring it from lifecycle or elapsed time
+- [x] 6.5 `[styrene-ui]` Render the backend-owned last synchronization trigger source without inferring it from lifecycle or elapsed time
 - [x] 6.6 `[cross-repo]` Test no-op wall-clock passage, initial connection, reconnect, foreground opportunity, denied background opportunity, cooldown, overlap, cancellation, and process restart
 
 ## 7. Adaptive UX And Accessibility
