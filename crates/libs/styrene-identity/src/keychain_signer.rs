@@ -1,12 +1,13 @@
-//! Tier B: Keychain signer — biometric-protected root secret on macOS/iOS.
+//! Tier B: Keychain signer — device-protected root secret on macOS/iOS.
 //!
 //! Stores the 32-byte root secret in the system Keychain with
-//! `kSecAccessControlBiometryCurrentSet`, requiring Face ID or Touch ID
-//! to access. The Secure Enclave protects the Keychain entry — the root
-//! secret never leaves the device.
+//! `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. The device passcode gates
+//! access after a restart, while later app launches and background reconnects do
+//! not require repeated Face ID or Touch ID prompts. The item cannot migrate to
+//! another device.
 //!
 //! HKDF derivation happens in software (same as Tier D) after the OS
-//! releases the root secret following biometric authentication.
+//! releases the root secret after the device's first unlock.
 //!
 //! # Feature
 //!
@@ -15,21 +16,22 @@
 use rand_core::{OsRng, RngCore};
 use zeroize::Zeroizing;
 
+use security_framework::access_control::{ProtectionMode, SecAccessControl};
 use security_framework::item::{ItemClass, ItemSearchOptions};
 use security_framework::passwords::{
     PasswordOptions, delete_generic_password, generic_password, set_generic_password_options,
 };
-use security_framework::passwords_options::AccessControlOptions;
 
 use crate::signer::{IdentitySigner, RootSecret, SignerError, SignerTier};
 
 /// Default Keychain service identifier.
 pub const SERVICE: &str = "io.styrene.identity";
 /// Default Keychain account name.
-pub const ACCOUNT: &str = "root-secret";
+pub const ACCOUNT: &str = "root-secret-v2";
+/// Account used by the former per-access biometric policy.
+pub const LEGACY_BIOMETRIC_ACCOUNT: &str = "root-secret";
 
-/// Tier B signer — reads the root secret from the macOS/iOS Keychain
-/// with biometric authentication (Face ID / Touch ID).
+/// Tier B signer — reads a device-bound root secret from the macOS/iOS Keychain.
 pub struct KeychainSigner {
     service: String,
     account: String,
@@ -47,7 +49,7 @@ impl KeychainSigner {
         Self { service: service.into(), account: account.into() }
     }
 
-    /// Check if a biometric-protected identity exists without reading its secret.
+    /// Check if a protected identity exists without reading its secret.
     pub fn exists(&self) -> bool {
         ItemSearchOptions::new()
             .class(ItemClass::generic_password())
@@ -58,30 +60,46 @@ impl KeychainSigner {
             .is_ok_and(|items| !items.is_empty())
     }
 
-    /// Generate a new random root secret and store it in the Keychain
-    /// with biometric protection.
-    ///
-    /// The biometric prompt appears immediately to confirm storage.
+    /// Generate a new random root secret and store it in the Keychain.
     pub fn create(&self) -> Result<(), SignerError> {
+        self.create_root_secret().map(drop)
+    }
+
+    /// Generate, persist, and return a new root secret without reading it back.
+    pub fn create_root_secret(&self) -> Result<RootSecret, SignerError> {
         if self.exists() {
             return Err(SignerError::Unavailable(
                 "Identity already exists in Keychain. Delete it first.".into(),
             ));
         }
 
-        // Generate 32 random bytes
         let mut secret = Zeroizing::new([0u8; 32]);
         OsRng.fill_bytes(&mut *secret);
+        let root = RootSecret::new(*secret);
+        self.create_from_root_secret(&root)?;
+        Ok(root)
+    }
 
-        // Store with biometric protection
+    /// Persist existing root material under this signer's account.
+    ///
+    /// This is used to migrate the former biometric item to the first-unlock
+    /// policy without deleting the only durable copy first.
+    pub fn create_from_root_secret(&self, root: &RootSecret) -> Result<(), SignerError> {
+        if self.exists() {
+            return Err(SignerError::Unavailable(
+                "Identity already exists in Keychain. Delete it first.".into(),
+            ));
+        }
+
         let mut opts = PasswordOptions::new_generic_password(&self.service, &self.account);
-        opts.set_access_control_options(
-            AccessControlOptions::BIOMETRY_CURRENT_SET
-                | AccessControlOptions::OR
-                | AccessControlOptions::DEVICE_PASSCODE,
-        );
+        let access_control = SecAccessControl::create_with_protection(
+            Some(ProtectionMode::AccessibleAfterFirstUnlockThisDeviceOnly),
+            0,
+        )
+        .map_err(|e| SignerError::SigningFailed(format!("Keychain access policy failed: {e}")))?;
+        opts.set_access_control(access_control);
 
-        set_generic_password_options(&*secret, opts)
+        set_generic_password_options(root.as_bytes(), opts)
             .map_err(|e| SignerError::SigningFailed(format!("Keychain store failed: {e}")))?;
 
         Ok(())
@@ -102,7 +120,7 @@ impl IdentitySigner for KeychainSigner {
     }
 
     fn label(&self) -> &str {
-        "Keychain (biometric)"
+        "Keychain (after first unlock)"
     }
 
     fn is_available(&self) -> bool {
@@ -110,19 +128,15 @@ impl IdentitySigner for KeychainSigner {
     }
 
     async fn root_secret(&self) -> Result<RootSecret, SignerError> {
-        // This triggers the biometric prompt on macOS/iOS
         let data =
             generic_password(PasswordOptions::new_generic_password(&self.service, &self.account))
                 .map_err(|e| {
                 let code = e.code();
                 if code == -25293 || code == -128 {
-                    // User cancelled biometric prompt
-                    SignerError::AuthRequired("Biometric authentication cancelled".into())
+                    SignerError::AuthRequired("Device authentication cancelled".into())
                 } else if code == -25308 {
-                    // Interaction not allowed (e.g. device locked, no UI context)
                     SignerError::AuthRequired(
-                        "Biometric authentication required but not available in this context"
-                            .into(),
+                        "Unlock the device once after restart to access the identity".into(),
                     )
                 } else if code == -25300 {
                     // Item not found
@@ -160,7 +174,8 @@ mod tests {
     fn default_signer_has_correct_service() {
         let signer = KeychainSigner::default();
         assert_eq!(signer.service, "io.styrene.identity");
-        assert_eq!(signer.account, "root-secret");
+        assert_eq!(signer.account, "root-secret-v2");
+        assert_eq!(LEGACY_BIOMETRIC_ACCOUNT, "root-secret");
     }
 
     #[test]
@@ -170,7 +185,6 @@ mod tests {
         assert_eq!(signer.account, "custom-key");
     }
 
-    // Note: full integration tests require a physical device with biometrics.
-    // The Keychain biometric APIs don't work in the iOS simulator or in CI.
+    // Note: full integration tests require a physical device Keychain.
     // Run manually: cargo test -p styrene-identity --features keychain -- keychain
 }
