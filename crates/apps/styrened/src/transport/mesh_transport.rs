@@ -12,7 +12,7 @@ use rns_core::hash::AddressHash;
 use rns_core::identity::Identity;
 use rns_core::identity::PrivateIdentity;
 use rns_core::transport::core_transport::{
-    AnnounceEvent, ReceivedData, SendPacketOutcome, path_table::RouteEvent,
+    AnnounceEvent, ReceivedData, SendPacketOutcome, SendPacketTrace, path_table::RouteEvent,
 };
 use rns_core::transport::delivery::LinkSendResult;
 use rns_core::transport::destination_ext::link::LinkCloseReason;
@@ -245,6 +245,26 @@ pub trait MeshTransport: Send + Sync {
         dest: AddressHash,
         data: &[u8],
     ) -> Result<SendPacketOutcome, TransportError>;
+
+    /// Opportunistic send that also reports the transmitted packet hash.
+    ///
+    /// Reticulum delivery proofs identify the proved packet by this hash, so
+    /// callers that want delivery evidence must correlate on it. The default
+    /// preserves `send_raw` behavior without a hash.
+    async fn send_raw_traced(
+        &self,
+        dest: AddressHash,
+        data: &[u8],
+    ) -> Result<SendPacketTrace, TransportError> {
+        let outcome = self.send_raw(dest, data).await?;
+        Ok(SendPacketTrace {
+            outcome,
+            direct_iface: None,
+            broadcast: false,
+            dispatch: rns_core::transport::iface::TxDispatchTrace::default(),
+            packet_hash: None,
+        })
+    }
 
     /// Link-based reliable send (with resource fallback for large payloads).
     /// Caller must provide a fully-resolved `DestinationDesc` (includes peer Identity).

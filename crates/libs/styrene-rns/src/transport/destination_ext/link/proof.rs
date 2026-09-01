@@ -65,6 +65,55 @@ pub(crate) fn validate_link_request_proof_packet(
     Ok((identity, signalling))
 }
 
+#[cfg(test)]
+mod canonical_context_tests {
+    use super::*;
+    use crate::identity::PrivateIdentity;
+    use crate::packet::{Header, PacketDataBuffer};
+    use rand_core::OsRng;
+
+    fn link_proof(id: &LinkId, context: PacketContext, data: &[u8]) -> Packet {
+        Packet {
+            header: Header {
+                packet_type: PacketType::Proof,
+                destination_type: DestinationType::Link,
+                ..Default::default()
+            },
+            destination: *id,
+            context,
+            data: PacketDataBuffer::new_from_slice(data),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn link_packet_proofs_accept_canonical_and_local_contexts() {
+        let peer = PrivateIdentity::new_from_rand(OsRng);
+        let id = LinkId::new_from_rand(OsRng);
+        let packet_hash = [0x3cu8; HASH_SIZE];
+        let mut data = Vec::from(packet_hash);
+        data.extend_from_slice(&peer.sign(&packet_hash).to_bytes());
+
+        for context in [PacketContext::None, PacketContext::LinkProof] {
+            let proof = link_proof(&id, context, &data);
+            let validated = validate_link_packet_proof(peer.as_identity(), &id, &proof)
+                .unwrap_or_else(|error| panic!("{context:?} rejected: {error:?}"));
+            assert_eq!(validated.to_bytes(), packet_hash);
+        }
+
+        let wrong_context = link_proof(&id, PacketContext::LinkRequestProof, &data);
+        assert!(validate_link_packet_proof(peer.as_identity(), &id, &wrong_context).is_err());
+        let other_link = LinkId::new_from_rand(OsRng);
+        let wrong_link = link_proof(&other_link, PacketContext::None, &data);
+        assert!(validate_link_packet_proof(peer.as_identity(), &id, &wrong_link).is_err());
+        let stranger = PrivateIdentity::new_from_rand(OsRng);
+        let mut forged = Vec::from(packet_hash);
+        forged.extend_from_slice(&stranger.sign(&packet_hash).to_bytes());
+        let forged = link_proof(&id, PacketContext::None, &forged);
+        assert!(validate_link_packet_proof(peer.as_identity(), &id, &forged).is_err());
+    }
+}
+
 pub(crate) fn validate_link_packet_proof(
     identity: &Identity,
     id: &LinkId,
@@ -72,7 +121,7 @@ pub(crate) fn validate_link_packet_proof(
 ) -> Result<Hash, RnsError> {
     if packet.header.packet_type != PacketType::Proof
         || packet.header.destination_type != DestinationType::Link
-        || packet.context != PacketContext::LinkProof
+        || !matches!(packet.context, PacketContext::LinkProof | PacketContext::None)
     {
         return Err(RnsError::PacketError);
     }

@@ -43,6 +43,13 @@ impl PinnedScenarioId {
             Self::PropagatedResourceLxm => "propagated_resource_lxm",
         }
     }
+
+    /// Direct and Opportunistic gates exercise both endpoints: Python sends to
+    /// Rust, then Rust sends to the same Python peer. The propagated scenario
+    /// proves Python-to-Rust propagation intake only.
+    pub const fn is_bidirectional(self) -> bool {
+        matches!(self, Self::Direct | Self::Opportunistic)
+    }
 }
 
 impl std::fmt::Display for PinnedScenarioId {
@@ -460,6 +467,7 @@ pub fn python_lxmf_scenario(
     timeout: Duration,
     python_bin: &str,
 ) -> LiveScenario {
+    let bidirectional = scenario_id.is_bidirectional();
     let scenario_id = scenario_id.as_str();
     let correlation_id = format!(
         "interop-{scenario_id}-{}-{}",
@@ -526,25 +534,48 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
             ("REMOTE_STATUS_TIMEOUT_SECS".to_string(), remote_status_timeout_secs.to_string()),
         ]),
         timeout,
-        required_milestones: vec![
-            "topology-configured".to_string(),
-            "rust-ready".to_string(),
-            "python-ready".to_string(),
-            "python-message-sent".to_string(),
-            "rust-message-persisted".to_string(),
-            "child-cleanup-complete".to_string(),
-        ],
-        required_assertions: vec![if scenario_id == "propagated_resource_lxm" {
-            "python-to-rust-propagation-item".to_string()
+        required_milestones: if bidirectional {
+            vec![
+                "topology-configured".to_string(),
+                "rust-ready".to_string(),
+                "python-ready".to_string(),
+                "python-message-sent".to_string(),
+                "rust-message-persisted".to_string(),
+                "rust-message-sent".to_string(),
+                "python-message-received".to_string(),
+                "child-cleanup-complete".to_string(),
+            ]
         } else {
-            "python-to-rust-content".to_string()
-        }],
-        required_artifacts: vec![
-            "scenario-report".to_string(),
-            "datastore-proof".to_string(),
-            "rust-daemon-log".to_string(),
-            "python-daemon-log".to_string(),
-        ],
+            vec![
+                "topology-configured".to_string(),
+                "rust-ready".to_string(),
+                "python-ready".to_string(),
+                "python-message-sent".to_string(),
+                "rust-message-persisted".to_string(),
+                "child-cleanup-complete".to_string(),
+            ]
+        },
+        required_assertions: if bidirectional {
+            vec!["python-to-rust-content".to_string(), "rust-to-python-content".to_string()]
+        } else {
+            vec!["python-to-rust-propagation-item".to_string()]
+        },
+        required_artifacts: if bidirectional {
+            vec![
+                "scenario-report".to_string(),
+                "datastore-proof".to_string(),
+                "rust-outbound-proof".to_string(),
+                "rust-daemon-log".to_string(),
+                "python-daemon-log".to_string(),
+            ]
+        } else {
+            vec![
+                "scenario-report".to_string(),
+                "datastore-proof".to_string(),
+                "rust-daemon-log".to_string(),
+                "python-daemon-log".to_string(),
+            ]
+        },
         max_log_bytes: 64 * 1024,
         max_artifact_bytes: 2 * 1024 * 1024,
         max_artifacts: 16,
@@ -968,7 +999,49 @@ fn validate_protocol_artifacts(
                 == json_string_field(report_proof, "python_to_rust_inbound_content")
             && json_string_field(selected, "direction") == "in"
     };
-    (!matches).then(|| "retained datastore proof row does not match expected values".to_string())
+    if !matches {
+        return Some("retained datastore proof row does not match expected values".to_string());
+    }
+    let scenario_id = pinned_scenario(&scenario.id).map(|definition| definition.id)?;
+    if !scenario_id.is_bidirectional() {
+        return None;
+    }
+    let outbound = match load("rust-outbound-proof") {
+        Ok(outbound) => outbound,
+        Err(error) => return Some(error),
+    };
+    if json_string_field(&outbound, "scenario") != scenario.id
+        || json_string_field(&outbound, "correlation_id") != scenario.correlation_id
+    {
+        return Some("retained Rust outbound proof does not match this run".to_string());
+    }
+    let expected = &outbound["expected_hashes"];
+    let selected = &outbound["selected_row"];
+    let receipt = &outbound["python_receipt"];
+    let route = &outbound["route"];
+    let message_id = json_string_field(expected, "message_id");
+    let content = json_string_field(&outbound, "expected_content");
+    let route_state = json_string_field(route, "state");
+    // The Python peer proves both direct and opportunistic deliveries, so the
+    // Rust route must be delivered for every bidirectional scenario.
+    let route_accepted = route_state == "delivered";
+    let matches = !message_id.is_empty()
+        && !content.is_empty()
+        && json_string_field(expected, "destination") == json_string_field(selected, "destination")
+        && json_string_field(expected, "source") == json_string_field(selected, "source")
+        && message_id == json_string_field(selected, "id")
+        && content == json_string_field(selected, "content")
+        && json_string_field(selected, "direction") == "out"
+        && json_string_field(receipt, "content") == content
+        && json_string_field(receipt, "message_id") == message_id
+        && json_string_field(receipt, "source") == json_string_field(expected, "source")
+        && json_string_field(receipt, "destination") == json_string_field(expected, "destination")
+        && receipt.get("signature_validated").and_then(serde_json::Value::as_bool) == Some(true)
+        && json_string_field(report_proof, "rust_message_id") == message_id
+        && json_string_field(report_proof, "rust_to_python_outbound_content") == content
+        && json_string_field(report_proof, "rust_outbound_state") == route_state
+        && route_accepted;
+    (!matches).then(|| "retained Rust outbound proof does not match expected values".to_string())
 }
 
 fn json_string_field<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
@@ -1524,9 +1597,15 @@ fn pid_exists(pid: u32) -> bool {
         .is_ok_and(|status| status.success())
 }
 
+/// Signal every process in a group.
+///
+/// The negative group id follows `--`: BSD `kill` accepts it either way, but
+/// procps `kill` on Linux misparses a bare `-PGID` as an option, so the plain
+/// form silently fails to signal and misreports liveness.
 fn signal_process_group(process_group: u32, signal: &str) -> io::Result<()> {
     let status = Command::new("kill")
         .arg(signal)
+        .arg("--")
         .arg(format!("-{process_group}"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1541,6 +1620,7 @@ fn signal_process_group(process_group: u32, signal: &str) -> io::Result<()> {
 fn process_group_exists(process_group: u32) -> io::Result<bool> {
     Ok(Command::new("kill")
         .arg("-0")
+        .arg("--")
         .arg(format!("-{process_group}"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1617,6 +1697,34 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Guards the process-group primitives against platform `kill` parsing
+    /// differences: a live group must read as alive, a terminated group and a
+    /// nonexistent group as gone, on every supported host.
+    #[cfg(unix)]
+    #[test]
+    fn process_group_liveness_matches_reality_on_this_platform() {
+        use std::os::unix::process::CommandExt;
+
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn sleep in its own process group");
+        let group = child.id();
+        assert!(process_group_exists(group).unwrap(), "live process group reported missing");
+        assert!(!process_group_exists(999_999_999).unwrap(), "nonexistent group reported alive");
+
+        signal_process_group(group, "-KILL").expect("signal process group");
+        let _ = child.wait();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while process_group_exists(group).unwrap() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!process_group_exists(group).unwrap(), "terminated group reported alive");
+    }
+
     fn direct_scenario() -> LiveScenario {
         LiveScenario {
             id: PinnedScenarioId::Direct.as_str().to_string(),
@@ -1642,13 +1750,82 @@ mod tests {
         report: &serde_json::Value,
         proof: &serde_json::Value,
     ) -> Vec<ArtifactEvidence> {
+        semantic_artifacts_with_outbound(directory, report, proof, &direct_outbound_proof())
+    }
+
+    fn direct_report() -> serde_json::Value {
+        json!({
+            "status": "pass",
+            "scenario": "direct",
+            "correlation_id": "correlation-1",
+            "proof": {
+                "python_message_id": "message-1",
+                "python_to_rust_inbound_content": "content-1",
+                "rust_message_id": "message-2",
+                "rust_to_python_outbound_content": "content-2",
+                "rust_outbound_state": "delivered"
+            }
+        })
+    }
+
+    fn direct_outbound_proof() -> serde_json::Value {
+        json!({
+            "scenario": "direct",
+            "correlation_id": "correlation-1",
+            "expected_content": "content-2",
+            "expected_hashes": {
+                "destination": "source-1",
+                "source": "destination-1",
+                "message_id": "message-2"
+            },
+            "expected_method": "direct",
+            "python_receipt": {
+                "content": "content-2",
+                "destination": "source-1",
+                "message_id": "message-2",
+                "method": 1,
+                "signature_validated": true,
+                "source": "destination-1",
+                "title": ""
+            },
+            "route": {
+                "actual_method": "direct",
+                "requested_method": "direct",
+                "state": "delivered"
+            },
+            "selected_row": {
+                "content": "content-2",
+                "destination": "source-1",
+                "direction": "out",
+                "id": "message-2",
+                "source": "destination-1"
+            }
+        })
+    }
+
+    fn semantic_artifacts_with_outbound(
+        directory: &Path,
+        report: &serde_json::Value,
+        proof: &serde_json::Value,
+        outbound: &serde_json::Value,
+    ) -> Vec<ArtifactEvidence> {
         let report_path = directory.join("report.json");
         let proof_path = directory.join("proof.json");
+        let outbound_path = directory.join("outbound.json");
         fs::write(&report_path, serde_json::to_vec(report).expect("serialize report"))
             .expect("write report");
         fs::write(&proof_path, serde_json::to_vec(proof).expect("serialize proof"))
             .expect("write proof");
+        fs::write(&outbound_path, serde_json::to_vec(outbound).expect("serialize outbound"))
+            .expect("write outbound proof");
         vec![
+            ArtifactEvidence {
+                name: "rust-outbound-proof".to_string(),
+                source_path: "outbound.json".to_string(),
+                retained_path: outbound_path.to_string_lossy().into_owned(),
+                bytes: 0,
+                sha256: String::new(),
+            },
             ArtifactEvidence {
                 name: "scenario-report".to_string(),
                 source_path: "report.json".to_string(),
@@ -1669,15 +1846,7 @@ mod tests {
     #[test]
     fn semantic_validation_cross_checks_direct_message_id() {
         let directory = tempfile::tempdir().expect("temp directory");
-        let report = json!({
-            "status": "pass",
-            "scenario": "direct",
-            "correlation_id": "correlation-1",
-            "proof": {
-                "python_message_id": "message-1",
-                "python_to_rust_inbound_content": "content-1"
-            }
-        });
+        let report = direct_report();
         let proof = json!({
             "scenario": "direct",
             "correlation_id": "correlation-1",

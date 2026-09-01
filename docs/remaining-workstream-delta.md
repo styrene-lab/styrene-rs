@@ -45,7 +45,7 @@ authorization.
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
 | Shared frontend session | 9/29 | Negotiation, event/reconnect behavior, TUI migration, common sessions, desktop migration, and revision-pair verification |
-| Reticulum/LXMF/NomadNet parity | 75/85 | Canonical NomadNet fixtures and enabled bidirectional live gates |
+| Reticulum/LXMF/NomadNet parity | 76/85 | Canonical NomadNet fixtures, resource-backed and propagation gates, and NomadNet gates |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
@@ -136,10 +136,22 @@ Authority:
 
 ### Live interoperability
 
-Rust behavior and handoff descriptions are not live parity evidence. Remaining
-gates require enabled, non-ignored, revision-pinned Python/Rust runs for routed
-RNS, Direct and Opportunistic LXMF, resource-backed LXMF, standard propagation,
-and native NomadNet.
+The Direct and Opportunistic LXMF gates are bidirectional. One dispatch of the
+live workflow runs every pinned scenario. Each run retains proof that both
+implementations sent, received, and confirmed delivery of a canonical message.
+
+Enabling those gates exposed four defects, all fixed. Reopening the message
+store released the process's SQLite locks, so an external reader could delete
+the write-ahead log and later commits were lost. The transport rejected
+canonical Python delivery proofs, both plain-context link proofs and implicit
+proofs addressed to the truncated packet hash. Opportunistic sends tracked an
+empty packet hash, so no proof could ever correlate. The live runner signalled
+process groups in a form that Linux `kill` misparses, so no hosted scenario had
+ever passed its revision probe.
+
+Remaining gates require pinned Python/Rust runs for routed RNS, resource-backed
+LXMF, standard propagation, and native NomadNet. Repository policy keeps live
+Python runs manual and scheduled workflows fixture-only.
 
 Authority:
 
