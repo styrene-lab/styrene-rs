@@ -58,6 +58,18 @@ pub struct EncryptedIdentityBackup {
 }
 
 impl EncryptedIdentityBackup {
+    /// Protect a root secret as a portable Argon2id-encrypted backup artifact.
+    pub fn protect_root_secret(
+        root_secret: &RootSecret,
+        passphrase: &[u8],
+    ) -> Result<Self, VaultError> {
+        if passphrase.is_empty() {
+            return Err(VaultError::ProtectionRequired);
+        }
+        let encrypted_bytes = FileSigner::encrypt_root_secret(root_secret.as_bytes(), passphrase)?;
+        Self::from_encrypted_bytes(encrypted_bytes)
+    }
+
     /// Parse structurally valid encrypted identity bytes without decrypting them.
     /// Authentication is performed by [`IdentityVault::restore_encrypted_backup`].
     pub fn from_encrypted_bytes(encrypted_bytes: Vec<u8>) -> Result<Self, VaultError> {
@@ -82,6 +94,15 @@ impl EncryptedIdentityBackup {
     /// Opaque authenticated-encryption bytes for storage or transfer.
     pub fn encrypted_bytes(&self) -> &[u8] {
         &self.encrypted_bytes
+    }
+
+    /// Authenticate and decrypt this artifact using its portable protection input.
+    pub fn decrypt_root_secret(&self, passphrase: &[u8]) -> Result<RootSecret, VaultError> {
+        if passphrase.is_empty() {
+            return Err(VaultError::ProtectionRequired);
+        }
+        FileSigner::decrypt(self.encrypted_bytes(), passphrase)
+            .map_err(|_| VaultError::BackupAuthenticationFailed)
     }
 }
 
@@ -137,6 +158,10 @@ pub enum VaultError {
     /// Backup bytes do not identify a supported encrypted identity format.
     #[error("invalid or unsupported encrypted identity backup")]
     InvalidBackup,
+
+    /// Portable backup protection input was empty.
+    #[error("encrypted identity backup protection is required")]
+    ProtectionRequired,
 
     /// Backup authentication failed. Wrong protection and corruption are intentionally
     /// indistinguishable because authenticated encryption cannot safely classify them.
@@ -608,5 +633,25 @@ mod tests {
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains(&hex::encode(backup.encrypted_bytes())));
         assert!(!debug.contains("test-passphrase"));
+    }
+
+    #[tokio::test]
+    async fn portable_backup_reencrypts_root_for_user_passphrase() {
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = test_vault(source_dir.path());
+        source.init(b"test-passphrase").unwrap();
+        let root = source.unlock().await.unwrap();
+
+        let backup =
+            EncryptedIdentityBackup::protect_root_secret(&root, b"portable-passphrase").unwrap();
+        assert_eq!(backup.metadata().format, EncryptedIdentityBackupFormat::StidV1);
+        assert_eq!(
+            backup.decrypt_root_secret(b"portable-passphrase").unwrap().as_bytes(),
+            root.as_bytes()
+        );
+        assert!(matches!(
+            backup.decrypt_root_secret(b"wrong-passphrase"),
+            Err(VaultError::BackupAuthenticationFailed)
+        ));
     }
 }

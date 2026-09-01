@@ -173,38 +173,56 @@ impl FileSigner {
     ) -> Result<(), SignerError> {
         let file_data = self.encrypt(root_secret, passphrase)?;
 
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
+        let parent = self.path.parent().unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let mut suffix = [0u8; 8];
+        OsRng.fill_bytes(&mut suffix);
+        let file_name = self.path.file_name().and_then(|name| name.to_str()).unwrap_or("identity");
+        let staging = parent.join(format!(".{file_name}.{}.tmp", hex::encode(suffix)));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
         #[cfg(unix)]
         {
-            use std::io::Write;
             use std::os::unix::fs::OpenOptionsExt;
-            let mut f = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true) // O_EXCL — atomic overwrite protection
-                .mode(0o600)
-                .open(&self.path)?;
-            f.write_all(&file_data)?;
-            f.sync_all()?;
+            options.mode(0o600);
         }
-        #[cfg(not(unix))]
-        {
-            // create_new is available on all platforms via std
-            let mut f =
-                std::fs::OpenOptions::new().write(true).create_new(true).open(&self.path)?;
+        let mut file = options.open(&staging)?;
+        let staged = (|| -> std::io::Result<()> {
             use std::io::Write;
-            f.write_all(&file_data)?;
-            f.sync_all()?;
+            file.write_all(&file_data)?;
+            file.sync_all()
+        })();
+        drop(file);
+        if let Err(error) = staged {
+            let _ = std::fs::remove_file(&staging);
+            return Err(error.into());
         }
-
+        let installed = std::fs::hard_link(&staging, &self.path);
+        let _ = std::fs::remove_file(&staging);
+        installed?;
+        #[cfg(unix)]
+        std::fs::File::open(parent)?.sync_all()?;
         Ok(())
+    }
+
+    /// Install an existing root secret under this signer's passphrase.
+    ///
+    /// Uses exclusive creation and therefore never replaces existing custody.
+    pub fn restore_root_secret(&self, root_secret: &RootSecret) -> Result<(), SignerError> {
+        let passphrase = zeroize::Zeroizing::new(self.passphrase_provider.get_passphrase()?);
+        self.save_exclusive(root_secret.as_bytes(), &passphrase)
     }
 
     /// Encrypt a root secret into the wire format bytes.
     fn encrypt(
         &self,
+        root_secret: &[u8; SECRET_LEN],
+        passphrase: &[u8],
+    ) -> Result<Vec<u8>, SignerError> {
+        Self::encrypt_root_secret(root_secret, passphrase)
+    }
+
+    pub(crate) fn encrypt_root_secret(
         root_secret: &[u8; SECRET_LEN],
         passphrase: &[u8],
     ) -> Result<Vec<u8>, SignerError> {
@@ -252,7 +270,7 @@ impl FileSigner {
         Self::decrypt(file_data, &passphrase)
     }
 
-    fn decrypt(file_data: &[u8], passphrase: &[u8]) -> Result<RootSecret, SignerError> {
+    pub(crate) fn decrypt(file_data: &[u8], passphrase: &[u8]) -> Result<RootSecret, SignerError> {
         // Determine format: versioned (has STID header) or legacy (no header).
         let payload = if file_data.len() == FILE_LEN && file_data.starts_with(MAGIC) {
             let version = file_data[MAGIC.len()];
