@@ -11,7 +11,7 @@ use rand_core::OsRng;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Mutex as StdMutex;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::time;
 use tokio_util::sync::CancellationToken;
 
@@ -244,6 +244,23 @@ pub struct AnnounceEvent {
     pub interface: Vec<u8>,
 }
 
+const PENDING_PACKET_RECEIPT_CAPACITY: usize = 4096;
+const PENDING_PACKET_RECEIPT_TTL: Duration = Duration::from_secs(600);
+
+/// Outbound single packet whose delivery proof may still arrive.
+///
+/// Canonical Reticulum proofs are addressed to the truncated hash of the proved
+/// packet and are implicit (signature only) by default, so the transport must
+/// remember the full hash and destination of packets it transmitted in order
+/// to validate them. Entries expire and the registry is bounded.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PendingPacketReceipt {
+    pub(crate) truncated: AddressHash,
+    pub(crate) packet_hash: [u8; HASH_SIZE],
+    pub(crate) destination: AddressHash,
+    registered_at: Instant,
+}
+
 pub(crate) struct TransportHandler {
     config: TransportConfig,
     iface_manager: Arc<Mutex<InterfaceManager>>,
@@ -281,9 +298,47 @@ pub(crate) struct TransportHandler {
     cancel: CancellationToken,
     receipt_handler: Option<Arc<dyn ReceiptHandler>>,
     terminal_receipt_history: VecDeque<[u8; HASH_SIZE]>,
+    pending_packet_receipts: VecDeque<PendingPacketReceipt>,
 }
 
 impl TransportHandler {
+    /// Remember a transmitted single packet so a later proof addressed to its
+    /// truncated hash can be validated against the destination identity.
+    pub(super) fn register_pending_packet_receipt(
+        &mut self,
+        packet_hash: [u8; HASH_SIZE],
+        destination: AddressHash,
+    ) {
+        let now = Instant::now();
+        self.pending_packet_receipts.retain(|pending| {
+            now.duration_since(pending.registered_at) < PENDING_PACKET_RECEIPT_TTL
+        });
+        if self.pending_packet_receipts.len() >= PENDING_PACKET_RECEIPT_CAPACITY {
+            self.pending_packet_receipts.pop_front();
+        }
+        self.pending_packet_receipts.push_back(PendingPacketReceipt {
+            truncated: AddressHash::new_from_hash(&Hash::new(packet_hash)),
+            packet_hash,
+            destination,
+            registered_at: now,
+        });
+    }
+
+    pub(super) fn pending_packet_receipt(
+        &self,
+        truncated: &AddressHash,
+    ) -> Option<PendingPacketReceipt> {
+        let now = Instant::now();
+        self.pending_packet_receipts
+            .iter()
+            .rev()
+            .find(|pending| {
+                pending.truncated == *truncated
+                    && now.duration_since(pending.registered_at) < PENDING_PACKET_RECEIPT_TTL
+            })
+            .copied()
+    }
+
     fn conclude_receipt(
         &mut self,
         message_id: [u8; HASH_SIZE],
@@ -291,6 +346,7 @@ impl TransportHandler {
         if self.terminal_receipt_history.contains(&message_id) {
             return None;
         }
+        self.pending_packet_receipts.retain(|pending| pending.packet_hash != message_id);
         if self.terminal_receipt_history.len() >= TERMINAL_RECEIPT_HISTORY_CAPACITY {
             self.terminal_receipt_history.pop_front();
         }
@@ -335,6 +391,9 @@ pub struct SendPacketTrace {
     pub direct_iface: Option<AddressHash>,
     pub broadcast: bool,
     pub dispatch: TxDispatchTrace,
+    /// Hash of the transmitted packet when it was a single data packet that
+    /// can be proved by its receiver; `None` for other packets or drops.
+    pub packet_hash: Option<[u8; HASH_SIZE]>,
 }
 
 // Transport internals are decomposed by concern for testability and bounded change sets.

@@ -60,8 +60,10 @@ pub(super) async fn validated_receipt_hash(
         return None;
     }
 
+    // Canonical Reticulum link proofs carry the default context; this
+    // implementation also emits `LinkProof`. Accept both for link receipts.
     if packet.header.destination_type == DestinationType::Link
-        && packet.context == PacketContext::LinkProof
+        && matches!(packet.context, PacketContext::LinkProof | PacketContext::None)
     {
         let mut link = handler
             .in_links
@@ -100,7 +102,48 @@ pub(super) async fn validated_receipt_hash(
         }
     }
 
+    // Canonical single-packet proofs are addressed to the truncated hash of the
+    // proved packet and are implicit by default. Resolve the transmitted packet
+    // and validate against the destination identity that received it.
+    if let Some(pending) = handler.pending_packet_receipt(&packet.destination)
+        && let Some(destination) =
+            handler.single_out_destinations.get(&pending.destination).cloned()
+    {
+        let identity = destination.lock().await.identity;
+        if let Ok(hash) = validate_pending_packet_proof(&identity, pending.packet_hash, packet) {
+            return Some(hash.to_bytes());
+        }
+    }
+
     None
+}
+
+/// Validate an implicit (signature only) or explicit (hash and signature)
+/// delivery proof for a packet this transport sent.
+fn validate_pending_packet_proof(
+    identity: &Identity,
+    expected: [u8; HASH_SIZE],
+    packet: &Packet,
+) -> Result<Hash, RnsError> {
+    if packet.header.packet_type != PacketType::Proof
+        || packet.context == PacketContext::LinkRequestProof
+    {
+        return Err(RnsError::PacketError);
+    }
+    let data = packet.data.as_slice();
+    let signature_bytes = match data.len() {
+        SIGNATURE_LENGTH => data,
+        len if len >= HASH_SIZE + SIGNATURE_LENGTH => {
+            if data[..HASH_SIZE] != expected {
+                return Err(RnsError::IncorrectHash);
+            }
+            &data[HASH_SIZE..HASH_SIZE + SIGNATURE_LENGTH]
+        }
+        _ => return Err(RnsError::PacketError),
+    };
+    let signature = Signature::from_slice(signature_bytes).map_err(|_| RnsError::CryptoError)?;
+    identity.verify(&expected, &signature)?;
+    Ok(Hash::new(expected))
 }
 
 async fn should_forward_link_request_proof(

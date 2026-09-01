@@ -1568,18 +1568,21 @@ impl MessagingService {
                 }
                 match tokio::time::timeout(
                     remaining,
-                    transport.send_raw(dest_hash, opportunistic_payload),
+                    transport.send_raw_traced(dest_hash, opportunistic_payload),
                 )
                 .await
                 {
                     Err(_) => Err(TransportError::SendFailed("router deadline expired".into())),
-                    Ok(Ok(outcome))
-                        if rns_core::transport::delivery::send_outcome_is_sent(outcome) =>
+                    Ok(Ok(trace))
+                        if rns_core::transport::delivery::send_outcome_is_sent(trace.outcome) =>
                     {
-                        Ok((String::new(), WireRepresentation::Packet))
+                        Ok((
+                            trace.packet_hash.map(hex::encode).unwrap_or_default(),
+                            WireRepresentation::Packet,
+                        ))
                     }
-                    Ok(Ok(outcome)) => Err(TransportError::SendFailed(
-                        rns_core::transport::delivery::send_outcome_label(outcome).into(),
+                    Ok(Ok(trace)) => Err(TransportError::SendFailed(
+                        rns_core::transport::delivery::send_outcome_label(trace.outcome).into(),
                     )),
                     Ok(Err(error)) => Err(error),
                 }
@@ -1602,18 +1605,21 @@ impl MessagingService {
                 let remaining = self.router.remaining(fallback.deadline)?;
                 delivery_result = match tokio::time::timeout(
                     remaining,
-                    transport.send_raw(dest_hash, opportunistic_payload),
+                    transport.send_raw_traced(dest_hash, opportunistic_payload),
                 )
                 .await
                 {
                     Err(_) => Err(TransportError::SendFailed("router deadline expired".into())),
-                    Ok(Ok(outcome))
-                        if rns_core::transport::delivery::send_outcome_is_sent(outcome) =>
+                    Ok(Ok(trace))
+                        if rns_core::transport::delivery::send_outcome_is_sent(trace.outcome) =>
                     {
-                        Ok((String::new(), WireRepresentation::Packet))
+                        Ok((
+                            trace.packet_hash.map(hex::encode).unwrap_or_default(),
+                            WireRepresentation::Packet,
+                        ))
                     }
-                    Ok(Ok(outcome)) => Err(TransportError::SendFailed(
-                        rns_core::transport::delivery::send_outcome_label(outcome).into(),
+                    Ok(Ok(trace)) => Err(TransportError::SendFailed(
+                        rns_core::transport::delivery::send_outcome_label(trace.outcome).into(),
                     )),
                     Ok(Err(error)) => Err(error),
                 };
@@ -2542,18 +2548,23 @@ impl MessagingService {
                         .map_err(std::io::Error::other)?;
                     match tokio::time::timeout(
                         remaining,
-                        transport.send_raw(dest_hash, opportunistic_payload),
+                        transport.send_raw_traced(dest_hash, opportunistic_payload),
                     )
                     .await
                     {
                         Err(_) => Err(TransportError::SendFailed("router deadline expired".into())),
-                        Ok(Ok(outcome))
-                            if rns_core::transport::delivery::send_outcome_is_sent(outcome) =>
+                        Ok(Ok(trace))
+                            if rns_core::transport::delivery::send_outcome_is_sent(
+                                trace.outcome,
+                            ) =>
                         {
-                            Ok((String::new(), WireRepresentation::Packet))
+                            Ok((
+                                trace.packet_hash.map(hex::encode).unwrap_or_default(),
+                                WireRepresentation::Packet,
+                            ))
                         }
-                        Ok(Ok(outcome)) => Err(TransportError::SendFailed(
-                            rns_core::transport::delivery::send_outcome_label(outcome).into(),
+                        Ok(Ok(trace)) => Err(TransportError::SendFailed(
+                            rns_core::transport::delivery::send_outcome_label(trace.outcome).into(),
                         )),
                         Ok(Err(error)) => Err(error),
                     }
@@ -2578,18 +2589,23 @@ impl MessagingService {
                     let remaining = self.router.remaining(fallback.deadline)?;
                     delivery_result = match tokio::time::timeout(
                         remaining,
-                        transport.send_raw(dest_hash, opportunistic_payload),
+                        transport.send_raw_traced(dest_hash, opportunistic_payload),
                     )
                     .await
                     {
                         Err(_) => Err(TransportError::SendFailed("router deadline expired".into())),
-                        Ok(Ok(outcome))
-                            if rns_core::transport::delivery::send_outcome_is_sent(outcome) =>
+                        Ok(Ok(trace))
+                            if rns_core::transport::delivery::send_outcome_is_sent(
+                                trace.outcome,
+                            ) =>
                         {
-                            Ok((String::new(), WireRepresentation::Packet))
+                            Ok((
+                                trace.packet_hash.map(hex::encode).unwrap_or_default(),
+                                WireRepresentation::Packet,
+                            ))
                         }
-                        Ok(Ok(outcome)) => Err(TransportError::SendFailed(
-                            rns_core::transport::delivery::send_outcome_label(outcome).into(),
+                        Ok(Ok(trace)) => Err(TransportError::SendFailed(
+                            rns_core::transport::delivery::send_outcome_label(trace.outcome).into(),
                         )),
                         Ok(Err(error)) => Err(error),
                     };
