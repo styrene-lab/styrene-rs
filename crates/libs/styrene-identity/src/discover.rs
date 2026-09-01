@@ -33,7 +33,7 @@ impl DiscoveredIdentity {
 /// Probe the machine for an existing Styrene identity.
 ///
 /// Discovery order:
-///   0. macOS/iOS Keychain with biometric protection (Tier B)
+///   0. Device-bound macOS/iOS Keychain (Tier B)
 ///   1. `~/.config/styrene/identity.key` — default encrypted file location
 ///   2. `STYRENE_IDENTITY_PATH` env var — custom file path
 ///   3. `STYRENE_IDENTITY_HASH` env var — hash-only mode (CI attribution)
@@ -41,15 +41,18 @@ impl DiscoveredIdentity {
 /// Returns `None` if no identity is found. Does not require a passphrase —
 /// only checks file existence and env var presence.
 pub fn discover() -> Option<DiscoveredIdentity> {
-    // 0. Keychain with biometric protection (macOS/iOS)
+    // 0. Device-bound Keychain (macOS/iOS), including the legacy biometric item.
     #[cfg(all(feature = "keychain", any(target_os = "macos", target_os = "ios")))]
     {
-        let ks = crate::keychain_signer::KeychainSigner::default();
-        if ks.exists() {
+        use crate::keychain_signer::{KeychainSigner, LEGACY_BIOMETRIC_ACCOUNT, SERVICE};
+
+        let keychain = KeychainSigner::default();
+        let legacy = KeychainSigner::new(SERVICE, LEGACY_BIOMETRIC_ACCOUNT);
+        if keychain.exists() || legacy.exists() {
             return Some(DiscoveredIdentity {
                 path: PathBuf::from("(Keychain)"),
                 tier: SignerTier::DeviceHsm,
-                label: "Keychain (biometric)".to_string(),
+                label: "Keychain (after first unlock)".to_string(),
             });
         }
     }
