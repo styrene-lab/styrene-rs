@@ -37,6 +37,7 @@ selected_targets = [
   "styrened:test/mobile_application_parity_corpus",
   "styrened:test/mobile_backend_p0_corpus",
   "styrened:test/mobile_corpus",
+  "styrened:test/mobile_destination_convergence",
   "styrened:test/mobile_forced_termination",
   "styrened:test/mobile_minimum_corpus",
   "styrened:test/mobile_p0_backend",
