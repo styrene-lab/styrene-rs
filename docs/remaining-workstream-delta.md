@@ -14,12 +14,12 @@ summary if the change affects priorities or release boundaries.
 
 This assessment uses these canonical revisions:
 
-- `styrene-rs`: `dee1bb9d9950c2740cb415b8422041bcf6402095`
-- `styrene-ui`: `bc3e433b10b7895df5b34cd0f7337ecaa9f946cb`
+- `styrene-rs`: `2e9500192e55a234e1fe6bbcd1aaf2186ead2874`
+- `styrene-ui`: `902a8d91fb182142262cdb17ae2514a901893c82`
 
-The backend revision includes PR #29, which reconciled active backend and
-cross-repository OpenSpecs. The UI revision includes PR #13, which added the iOS
-App Lock TDD contract and reassessed desktop network workflow polish.
+The backend revision includes PR #31, which added the destination convergence
+corpus. The UI revision includes PR #15, which extracted the deterministic iOS
+App Lock policy behind a tested controller.
 
 ## Current Position
 
@@ -41,7 +41,7 @@ authorization.
 | Complete mobile product workflows | 37/49 | Recovery, accessibility, packages, physical runs, and claims |
 | Deliver mobile messaging minimum | 51/77 | Corpus provenance, Android BLE GATT, package and physical evidence, and RNode claims |
 | Shared Dioxus mobile UI | 31/55 | Android BLE, packaged corpus replay, physical acceptance, assistive technology, and release verification |
-| iOS App Lock policy | 2/17 | Pure policy tests, persistence, failure ordering, reboot semantics, presentation coverage, and complete physical matrix |
+| iOS App Lock policy | 15/17 | Physical iPhone matrix and separate App Lock versus Keychain prompt observations |
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
 | Shared frontend session | 9/29 | Negotiation, event/reconnect behavior, TUI migration, common sessions, desktop migration, and revision-pair verification |
@@ -116,9 +116,14 @@ Authority:
 
 ### iOS App Lock
 
-The initial policy implementation is merged. It lacks deterministic coverage for
-policy decisions, persisted state, setup completion, exactly-once launch prompts,
-post-reboot behavior, negative authentication outcomes, and startup ordering.
+Policy decisions now live in a pure controller. Deterministic tests cover
+persisted values, the decision matrix, exactly-once launch prompts, post-reboot
+behavior, negative authentication outcomes, setup exemption, and startup
+ordering. The startup owner permits an explicit retry after a closed outcome.
+
+Physical evidence remains open. An iPhone must still show same-process retry,
+post-reboot once-per-boot, `Off`, cancellation, unavailable authentication, and
+failed authentication, with App Lock and Keychain prompts recorded separately.
 
 App Lock controls entry to the application session. Keychain custody controls
 identity material. Evidence for one boundary does not satisfy the other.
@@ -230,18 +235,17 @@ and evidence records satisfy the same closure review.
 ## Recommended Execution Order
 
 1. Implement and test Android BLE GATT before any Android Bluetooth claim.
-2. Complete deterministic App Lock policy and failure tests.
-3. Run clean simulator, emulator, and packaged mobile workflow matrices.
-4. Execute physical custody, RNode, QR, lifecycle, and accessibility matrices on their assigned hosts.
-5. Enable and retain pinned live RNS, LXMF, propagation, and NomadNet gates.
-6. Complete exact firmware executors and physical recovery evidence.
-7. Finish frontend-session migration before building operator profiles on duplicated lifecycle code.
-8. Implement operation-scoped authorization before consumers add more local policy tables.
-9. Publish signing vectors and run compatibility lanes.
-10. Archive verified changes only after OpenSpec archive dry runs pass.
+2. Run clean simulator, emulator, and packaged mobile workflow matrices.
+3. Execute physical custody, App Lock, RNode, QR, lifecycle, and accessibility matrices on their assigned hosts.
+4. Enable and retain pinned live RNS, LXMF, propagation, and NomadNet gates.
+5. Complete exact firmware executors and physical recovery evidence.
+6. Finish frontend-session migration before building operator profiles on duplicated lifecycle code.
+7. Implement operation-scoped authorization before consumers add more local policy tables.
+8. Publish signing vectors and run compatibility lanes.
+9. Archive verified changes only after OpenSpec archive dry runs pass.
 
-The cross-repository destination convergence test from the original order is
-complete and recorded in the mobile product delta above.
+The cross-repository destination convergence test and the deterministic App
+Lock policy tests from the original order are complete and recorded above.
 
 ## Evidence Rules
 
