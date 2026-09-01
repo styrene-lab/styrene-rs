@@ -854,6 +854,7 @@ async fn bootstrap_with_transport_override(
                 app_context.messaging_arc(),
                 app_context.transport().subscribe_lifecycle(),
                 app_context.transport().is_connected(),
+                app_context.events_arc(),
             )
         });
     if let Some(worker) = &standard_propagation_sync {
