@@ -1597,9 +1597,15 @@ fn pid_exists(pid: u32) -> bool {
         .is_ok_and(|status| status.success())
 }
 
+/// Signal every process in a group.
+///
+/// The negative group id follows `--`: BSD `kill` accepts it either way, but
+/// procps `kill` on Linux misparses a bare `-PGID` as an option, so the plain
+/// form silently fails to signal and misreports liveness.
 fn signal_process_group(process_group: u32, signal: &str) -> io::Result<()> {
     let status = Command::new("kill")
         .arg(signal)
+        .arg("--")
         .arg(format!("-{process_group}"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1614,6 +1620,7 @@ fn signal_process_group(process_group: u32, signal: &str) -> io::Result<()> {
 fn process_group_exists(process_group: u32) -> io::Result<bool> {
     Ok(Command::new("kill")
         .arg("-0")
+        .arg("--")
         .arg(format!("-{process_group}"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1689,6 +1696,34 @@ fn exit_description(status: ExitStatus) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Guards the process-group primitives against platform `kill` parsing
+    /// differences: a live group must read as alive, a terminated group and a
+    /// nonexistent group as gone, on every supported host.
+    #[cfg(unix)]
+    #[test]
+    fn process_group_liveness_matches_reality_on_this_platform() {
+        use std::os::unix::process::CommandExt;
+
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn sleep in its own process group");
+        let group = child.id();
+        assert!(process_group_exists(group).unwrap(), "live process group reported missing");
+        assert!(!process_group_exists(999_999_999).unwrap(), "nonexistent group reported alive");
+
+        signal_process_group(group, "-KILL").expect("signal process group");
+        let _ = child.wait();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while process_group_exists(group).unwrap() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!process_group_exists(group).unwrap(), "terminated group reported alive");
+    }
 
     fn direct_scenario() -> LiveScenario {
         LiveScenario {
