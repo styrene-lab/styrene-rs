@@ -210,7 +210,7 @@ let root = chain.root_secret().await?;
 | `repository-signing` | no | repository authority bindings and strict Ed25519 verification |
 | `pki` | no | identity-bound X.509 CA/client/server certificates (rcgen) |
 | `yubikey` | no | `YubiKeySigner` (FIDO2 hmac-secret) |
-| `keychain` | no | biometric-protected Apple Keychain signer |
+| `keychain` | no | device-bound Apple Keychain signer, available after first unlock |
 | `android-keystore` | no | Android Keystore-wrapped root secret |
 | `ssh-agent` | no | `StyreneAgent` SSH agent protocol |
 
