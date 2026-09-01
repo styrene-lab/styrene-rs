@@ -85,7 +85,7 @@ use tokio_util::sync::CancellationToken;
 /// How to store the identity private keys.
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub enum IdentityBackend {
-    /// Platform keychain with biometric protection (iOS Keychain / macOS Keychain).
+    /// Device-bound platform Keychain, available after the first unlock following restart.
     /// Root secret stored in Secure Enclave, RNS keys derived via HKDF.
     /// Requires `mobile-keychain` feature.
     #[default]
@@ -4306,35 +4306,45 @@ fn private_identity_from_root(
 
 /// Keychain backend: root secret in platform keychain → HKDF → RNS keys.
 ///
-/// On iOS: Face ID / Touch ID protects access. Zero-interaction on create.
-/// On macOS: Keychain Access with biometric. Same behavior.
+/// On iOS: the device's first passcode unlock after restart gates access.
+/// On macOS: the login Keychain provides the equivalent device protection.
 async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<LoadedMobileIdentity> {
     #[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
     {
         use styrene_identity::IdentitySigner;
-        use styrene_identity::keychain_signer::KeychainSigner;
+        use styrene_identity::keychain_signer::{
+            KeychainSigner, LEGACY_BIOMETRIC_ACCOUNT, SERVICE,
+        };
 
         let signer = KeychainSigner::default();
-
-        // Create if needed — generates random 32-byte root secret in Keychain.
-        // No passphrase prompt, no user interaction. Biometric required on read.
-        let created = {
+        let root = {
             let _guard = lock_mobile_identity_custody(_paths)
                 .map_err(|_| anyhow::anyhow!("Keychain custody lock unavailable"))?;
             if signer.presence().map_err(|e| anyhow::anyhow!("keychain lookup: {e}"))? {
-                false
+                signer.root_secret().await.map_err(|e| anyhow::anyhow!("keychain access: {e}"))?
             } else {
-                signer.create().map_err(|e| anyhow::anyhow!("keychain create: {e}"))?;
-                true
+                let legacy = KeychainSigner::new(SERVICE, LEGACY_BIOMETRIC_ACCOUNT);
+                if legacy.presence().map_err(|e| anyhow::anyhow!("legacy keychain lookup: {e}"))? {
+                    let root = legacy
+                        .root_secret()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("legacy keychain access: {e}"))?;
+                    signer
+                        .create_from_root_secret(&root)
+                        .map_err(|e| anyhow::anyhow!("keychain migration: {e}"))?;
+                    crate::daemon_diagnostic!(
+                        "[mobile] migrated identity to first-unlock keychain policy"
+                    );
+                    root
+                } else {
+                    let root = signer
+                        .create_root_secret()
+                        .map_err(|e| anyhow::anyhow!("keychain create: {e}"))?;
+                    crate::daemon_diagnostic!("[mobile] created new identity in platform keychain");
+                    root
+                }
             }
         };
-        if created {
-            crate::daemon_diagnostic!("[mobile] created new identity in platform keychain");
-        }
-
-        // Retrieve root secret (triggers biometric on iOS)
-        let root =
-            signer.root_secret().await.map_err(|e| anyhow::anyhow!("keychain access: {e}"))?;
 
         let identity = private_identity_from_root(&root)?;
         let expected_identity_hash = hex::encode(identity.address_hash().as_slice());
@@ -4584,6 +4594,19 @@ mod tests {
         assert_eq!(custody.active_backend, Some(IdentityCustodyBackend::AndroidKeystore));
         assert_eq!(custody.protection, Some(IdentityCustodyProtection::PlatformProtected));
         assert_eq!(custody.authentication, IdentityCustodyAuthentication::None);
+    }
+
+    #[test]
+    fn keychain_custody_reports_device_authentication() {
+        use styrene_ipc::types::{
+            IdentityCustodyAuthentication, IdentityCustodyBackend, IdentityCustodyProtection,
+        };
+
+        let custody = active_custody(IdentityBackend::Keychain);
+
+        assert_eq!(custody.active_backend, Some(IdentityCustodyBackend::Keychain));
+        assert_eq!(custody.protection, Some(IdentityCustodyProtection::PlatformProtected));
+        assert_eq!(custody.authentication, IdentityCustodyAuthentication::DeviceAuthentication);
     }
 
     #[test]

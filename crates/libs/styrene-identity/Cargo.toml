@@ -49,7 +49,7 @@ base64 = { version = "0.22", optional = true }
 # age Bech32 encoding
 bech32 = { version = "0.11", optional = true }
 
-# Tier B: Keychain (macOS/iOS biometric)
+# Tier B: device-bound Keychain (macOS/iOS first unlock)
 security-framework = { version = "3.7", optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
