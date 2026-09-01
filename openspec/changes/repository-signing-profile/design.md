@@ -1,5 +1,16 @@
 # Repository Signing Identity Profile Design
 
+## Reassessment
+
+The positive and negative vector files remain candidates, not published immutable
+downstream vectors. Their `provenance.toml` status must change only in the
+publication commit. Latest, previous-supported, and Identity-main compatibility
+lanes also lack retained aggregate evidence.
+
+The implemented file name `provenance.toml` replaces the earlier proposed
+`manifest.toml` name. This naming reconciliation does not alter the vector or
+publication contract. Tasks 7.1 and 7.3 remain open.
+
 ## Ownership
 
 `styrene-identity` owns principals, key-family separation, binding attribution, canonical

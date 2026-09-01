@@ -94,7 +94,7 @@
 - [x] 9.3 Serve packet-sized content as responses and larger pages/files as verified resources
 - [x] 9.4 Announce `nomadnetwork.node` only after native handlers are active
 - [x] 9.5 Implement identified-link and `.allowed` access policy
-- [ ] 9.6 Implement bounded dynamic page execution, request environment, submitted fields, and secret redaction
+- [x] 9.6 Implement bounded dynamic page execution, request environment, submitted fields, and secret redaction
 - [ ] 9.7 Add Python NomadNet-to-Rust static, dynamic, authorized, denied, and file scenarios
 
 ## 10. Native NomadNet Client

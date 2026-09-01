@@ -436,7 +436,7 @@ id = "lxmf.propagation"
 level = "unsupported"
 required_gates = ["lxmf-python-propagation"]
 evidence_gates = ["lxmf-styrene-propagation", "lxmf-python-propagation"]
-reason = "Hub composition owns the standard destination and inactive metadata only; no standard offer/get handler or interoperability gate exists."
+reason = "Standard propagation handlers and persistence exist, but no enabled pinned Python/Rust discovery, offer, fetch, offline-delivery, expiry, capacity, and restart gate exists."
 
 [[parity_claims]]
 id = "micron.rendering"

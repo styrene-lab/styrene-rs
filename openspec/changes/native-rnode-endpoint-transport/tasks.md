@@ -20,5 +20,5 @@
 <!-- specs: native-rnode-transport -->
 
 - [x] 3.1 Run focused RNode, daemon config, and transport tests with the serial feature
-- [ ] 3.2 Run default and mobile-minimal feature checks, formatting, warning-denied Clippy, and offline policy validation
+- [x] 3.2 Run default and mobile-minimal feature checks, formatting, warning-denied Clippy, and offline policy validation
 - [x] 3.3 Validate OpenSpec and record physical Station G2 acceptance as deployment evidence rather than a committed identifier
