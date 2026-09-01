@@ -219,6 +219,25 @@ pub struct StandardPropagationSyncWorker {
     task: JoinHandle<()>,
 }
 
+#[derive(Clone)]
+pub struct StandardPropagationSyncObservation {
+    policy: StandardPropagationSyncPolicy,
+    telemetry: Arc<Mutex<SyncTelemetryState>>,
+}
+
+impl StandardPropagationSyncObservation {
+    pub fn policy(&self) -> StandardPropagationSyncPolicy {
+        self.policy
+    }
+
+    pub fn telemetry(&self) -> StandardPropagationSyncTelemetry {
+        self.telemetry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .snapshot(Instant::now(), self.policy)
+    }
+}
+
 impl StandardPropagationSyncWorker {
     pub fn trigger(&self) -> StandardPropagationSyncTrigger {
         self.trigger.clone()
@@ -233,6 +252,13 @@ impl StandardPropagationSyncWorker {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .snapshot(Instant::now(), self.policy)
+    }
+
+    pub fn observation(&self) -> StandardPropagationSyncObservation {
+        StandardPropagationSyncObservation {
+            policy: self.policy,
+            telemetry: Arc::clone(&self.telemetry),
+        }
     }
 
     pub fn abort(&self) {

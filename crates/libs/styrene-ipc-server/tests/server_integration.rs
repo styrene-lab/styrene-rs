@@ -259,26 +259,26 @@ impl DaemonStatus for TestDaemon {
         snapshot.automatic_sync_cooldown_secs = Some(30);
         snapshot.sync_deadline_secs = Some(32);
         snapshot.cooldown_remaining_secs = Some(17);
-        snapshot.trigger_capabilities = vec![StandardPropagationTriggerCapabilityInfo {
-            source: StandardPropagationTriggerSource::ForegroundOpportunity,
-            platform_capability: StandardPropagationPlatformCapability::AutomaticForeground,
-            opportunity: StandardPropagationOpportunityState::Available,
-        }, StandardPropagationTriggerCapabilityInfo {
-            source: StandardPropagationTriggerSource::GrantedBackgroundOpportunity,
-            platform_capability: StandardPropagationPlatformCapability::AutomaticBackground,
-            opportunity: StandardPropagationOpportunityState::Denied,
-        }];
-        snapshot.active_sync = Some(StandardPropagationActiveSyncInfo {
-            trigger: StandardPropagationTriggerSource::ForegroundOpportunity,
-            started_at: 90,
-        });
-        snapshot.last_synchronization = Some(StandardPropagationLastSynchronizationInfo {
-            trigger: StandardPropagationTriggerSource::Manual,
-            started_at: 40,
-            finished_at: 45,
-            outcome: StandardPropagationSyncTerminalOutcome::Failed,
-            new_messages: 0,
-        });
+        let mut foreground = StandardPropagationTriggerCapabilityInfo::default();
+        foreground.source = StandardPropagationTriggerSource::ForegroundOpportunity;
+        foreground.platform_capability = StandardPropagationPlatformCapability::AutomaticForeground;
+        foreground.opportunity = StandardPropagationOpportunityState::Available;
+        let mut background = StandardPropagationTriggerCapabilityInfo::default();
+        background.source = StandardPropagationTriggerSource::GrantedBackgroundOpportunity;
+        background.platform_capability = StandardPropagationPlatformCapability::AutomaticBackground;
+        background.opportunity = StandardPropagationOpportunityState::Denied;
+        snapshot.trigger_capabilities = vec![foreground, background];
+        let mut active_sync = StandardPropagationActiveSyncInfo::default();
+        active_sync.trigger = StandardPropagationTriggerSource::ForegroundOpportunity;
+        active_sync.started_at = 90;
+        snapshot.active_sync = Some(active_sync);
+        let mut last_synchronization = StandardPropagationLastSynchronizationInfo::default();
+        last_synchronization.trigger = StandardPropagationTriggerSource::Manual;
+        last_synchronization.started_at = 40;
+        last_synchronization.finished_at = 45;
+        last_synchronization.outcome = StandardPropagationSyncTerminalOutcome::Failed;
+        last_synchronization.new_messages = 0;
+        snapshot.last_synchronization = Some(last_synchronization);
         let mut policy = StandardPropagationPolicyInfo::default();
         policy.target_cost = 16;
         policy.flexibility = 3;

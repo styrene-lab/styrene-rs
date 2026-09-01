@@ -856,6 +856,9 @@ async fn bootstrap_with_transport_override(
                 app_context.transport().is_connected(),
             )
         });
+    if let Some(worker) = &standard_propagation_sync {
+        app_context.publish_standard_propagation_sync(worker.observation());
+    }
     let service_announce = styrened::workers::announce::spawn_announce_worker(
         app_context.transport_arc(),
         app_context.discovery_arc(),

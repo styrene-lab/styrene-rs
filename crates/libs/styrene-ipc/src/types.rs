@@ -2895,7 +2895,8 @@ mod capability_tests {
             failures_truncated: false,
         };
 
-        let encoded = serde_json::to_string(&snapshot).expect("serialize standard propagation snapshot");
+        let encoded =
+            serde_json::to_string(&snapshot).expect("serialize standard propagation snapshot");
         let decoded: StandardPropagationSnapshot =
             serde_json::from_str(&encoded).expect("deserialize standard propagation snapshot");
 
