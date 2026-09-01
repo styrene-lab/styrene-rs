@@ -9,6 +9,8 @@ use styrene_ipc::types::{
 
 const HANDOFF: &str =
     include_str!("../../../../tests/fixtures/mobile-product-handoff-v1/message.json");
+const REVISION_PAIR: &str =
+    include_str!("../../../../tests/fixtures/mobile-product-handoff-v1/revision-pair.json");
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +28,17 @@ struct Authority {
     repository: String,
     source_revision: String,
     source_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RevisionPair {
+    schema_version: u32,
+    backend_revision: String,
+    ui_revision: String,
+    fixture_sha256: String,
+    evidence_class: String,
+    verification: Vec<String>,
 }
 
 fn validate(value: &Value) -> Result<HandoffFixture, String> {
@@ -81,6 +94,23 @@ fn backend_owned_handoff_deserializes_with_immutable_authority() {
         fixture.message.delivery_evidence[0].correlation_id.as_deref(),
         Some("correlation-1")
     );
+}
+
+#[test]
+fn handoff_declares_the_verified_cross_repository_revision_pair() {
+    let pair: RevisionPair =
+        serde_json::from_str(REVISION_PAIR).expect("revision pair must be strict JSON");
+
+    assert_eq!(pair.schema_version, 1);
+    assert_eq!(pair.backend_revision, "f0359c92ba9f6d63ce248bc97617fc3115a0f3c3");
+    assert_eq!(pair.ui_revision, "45e3d20103faf5e1aa9006fb46497c69ea67cff5");
+    assert_eq!(
+        pair.fixture_sha256,
+        "96b6ea4456b88826099bf7b3fff55724f6dd6fe366db2bc751df4e5c4005c61f"
+    );
+    assert_eq!(pair.evidence_class, "component_and_reducer");
+    assert_eq!(pair.verification.len(), 4);
+    assert!(pair.verification.iter().all(|command| command.starts_with("cargo test ")));
 }
 
 #[test]
