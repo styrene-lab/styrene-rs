@@ -1659,6 +1659,9 @@ async fn compose_mobile_node(
             app_context.transport().is_connected(),
         )
     });
+    if let Some(worker) = &standard_propagation_sync {
+        app_context.publish_standard_propagation_sync(worker.observation());
+    }
     let mut workers = MobileWorkers {
         inbound,
         announce,

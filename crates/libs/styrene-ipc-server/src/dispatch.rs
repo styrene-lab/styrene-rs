@@ -1183,10 +1183,7 @@ async fn dispatch_query_standard_propagation(
             standard_selection_readiness_name(snapshot.selection_readiness).into(),
         ),
         ("sync_readiness".into(), standard_sync_readiness_name(snapshot.sync_readiness).into()),
-        (
-            "automatic_sync_enabled".into(),
-            optional_value(snapshot.automatic_sync_enabled),
-        ),
+        ("automatic_sync_enabled".into(), optional_value(snapshot.automatic_sync_enabled)),
         (
             "automatic_sync_cooldown_secs".into(),
             optional_value(snapshot.automatic_sync_cooldown_secs),
@@ -1194,14 +1191,8 @@ async fn dispatch_query_standard_propagation(
         ("sync_deadline_secs".into(), optional_value(snapshot.sync_deadline_secs)),
         ("trigger_capabilities".into(), rmpv::Value::Array(trigger_capabilities)),
         ("active_sync".into(), active_sync.unwrap_or(rmpv::Value::Nil)),
-        (
-            "last_synchronization".into(),
-            last_synchronization.unwrap_or(rmpv::Value::Nil),
-        ),
-        (
-            "cooldown_remaining_secs".into(),
-            optional_value(snapshot.cooldown_remaining_secs),
-        ),
+        ("last_synchronization".into(), last_synchronization.unwrap_or(rmpv::Value::Nil)),
+        ("cooldown_remaining_secs".into(), optional_value(snapshot.cooldown_remaining_secs)),
         ("peers".into(), rmpv::Value::Array(peers)),
         ("attempts".into(), rmpv::Value::Array(attempts)),
         ("checkpoints".into(), rmpv::Value::Array(checkpoints)),

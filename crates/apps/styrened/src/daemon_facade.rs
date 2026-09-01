@@ -172,7 +172,9 @@ fn standard_propagation_trigger_source(
         StandardPropagationSyncTriggerKind::InitialConnection => {
             StandardPropagationTriggerSource::InitialConnection
         }
-        StandardPropagationSyncTriggerKind::Reconnect => StandardPropagationTriggerSource::Reconnect,
+        StandardPropagationSyncTriggerKind::Reconnect => {
+            StandardPropagationTriggerSource::Reconnect
+        }
         StandardPropagationSyncTriggerKind::ForegroundOpportunity => {
             StandardPropagationTriggerSource::ForegroundOpportunity
         }
@@ -1572,8 +1574,6 @@ impl DaemonStatus for DaemonFacade {
         snapshot.registered = runtime.is_registered();
         snapshot.selection_readiness = StandardPropagationSelectionReadiness::NoSelection;
         let runtime_policy = runtime.policy();
-        let sync_policy = runtime.sync_policy();
-        let sync_telemetry = runtime.sync_telemetry();
         let storage_policy = crate::storage::standard_propagation::StandardPropagationPolicy {
             queue_max_count: runtime_policy.queue_max_count,
             queue_max_bytes: runtime_policy.queue_max_bytes,
@@ -1587,40 +1587,6 @@ impl DaemonStatus for DaemonFacade {
             .map_err(|error| IpcError::Internal { message: error.to_string() })?;
         drop(store);
         snapshot.active = runtime.active();
-        snapshot.automatic_sync_enabled = Some(sync_policy.automatic);
-        snapshot.automatic_sync_cooldown_secs = Some(sync_policy.cooldown.as_secs());
-        snapshot.sync_deadline_secs = Some(sync_policy.deadline.as_secs());
-        snapshot.trigger_capabilities = vec![
-            StandardPropagationTriggerCapabilityInfo {
-                source: StandardPropagationTriggerSource::InitialConnection,
-                platform_capability: StandardPropagationPlatformCapability::AutomaticForeground,
-                opportunity: StandardPropagationOpportunityState::Available,
-            },
-            StandardPropagationTriggerCapabilityInfo {
-                source: StandardPropagationTriggerSource::Reconnect,
-                platform_capability: StandardPropagationPlatformCapability::AutomaticForeground,
-                opportunity: StandardPropagationOpportunityState::Available,
-            },
-            StandardPropagationTriggerCapabilityInfo {
-                source: StandardPropagationTriggerSource::ForegroundOpportunity,
-                platform_capability: StandardPropagationPlatformCapability::AutomaticForeground,
-                opportunity: StandardPropagationOpportunityState::Available,
-            },
-            StandardPropagationTriggerCapabilityInfo {
-                source: StandardPropagationTriggerSource::GrantedBackgroundOpportunity,
-                platform_capability: StandardPropagationPlatformCapability::AutomaticBackground,
-                opportunity: if sync_policy.automatic {
-                    StandardPropagationOpportunityState::Available
-                } else {
-                    StandardPropagationOpportunityState::Denied
-                },
-            },
-            StandardPropagationTriggerCapabilityInfo {
-                source: StandardPropagationTriggerSource::Manual,
-                platform_capability: StandardPropagationPlatformCapability::Manual,
-                opportunity: StandardPropagationOpportunityState::Available,
-            },
-        ];
 
         let mut policy = StandardPropagationPolicyInfo::default();
         policy.target_cost = runtime_policy.target_cost;
@@ -1661,33 +1627,81 @@ impl DaemonStatus for DaemonFacade {
                 StandardPropagationSelectionReadiness::Unavailable
             };
         }
-        snapshot.active_sync = sync_telemetry.active.map(|active| StandardPropagationActiveSyncInfo {
-            trigger: standard_propagation_trigger_source(active.trigger),
-            started_at: active.started_at,
-        });
-        snapshot.last_synchronization =
-            sync_telemetry.last_completed.map(|completed| StandardPropagationLastSynchronizationInfo {
-                trigger: standard_propagation_trigger_source(completed.trigger),
-                started_at: completed.started_at,
-                finished_at: completed.finished_at,
-                outcome: standard_propagation_terminal_outcome(completed.outcome),
-                new_messages: u32::try_from(completed.new_messages).unwrap_or(u32::MAX),
+        if let Some(sync) = self.ctx.standard_propagation_sync() {
+            let sync_policy = sync.policy();
+            let sync_telemetry = sync.telemetry();
+            snapshot.automatic_sync_enabled = Some(sync_policy.automatic);
+            snapshot.automatic_sync_cooldown_secs = Some(sync_policy.cooldown.as_secs());
+            snapshot.sync_deadline_secs = Some(sync_policy.deadline.as_secs());
+            snapshot.trigger_capabilities = [
+                (
+                    StandardPropagationTriggerSource::InitialConnection,
+                    StandardPropagationPlatformCapability::AutomaticForeground,
+                    StandardPropagationOpportunityState::Available,
+                ),
+                (
+                    StandardPropagationTriggerSource::Reconnect,
+                    StandardPropagationPlatformCapability::AutomaticForeground,
+                    StandardPropagationOpportunityState::Available,
+                ),
+                (
+                    StandardPropagationTriggerSource::ForegroundOpportunity,
+                    StandardPropagationPlatformCapability::AutomaticForeground,
+                    StandardPropagationOpportunityState::Available,
+                ),
+                (
+                    StandardPropagationTriggerSource::GrantedBackgroundOpportunity,
+                    StandardPropagationPlatformCapability::AutomaticBackground,
+                    if sync_policy.automatic {
+                        StandardPropagationOpportunityState::Available
+                    } else {
+                        StandardPropagationOpportunityState::Denied
+                    },
+                ),
+                (
+                    StandardPropagationTriggerSource::Manual,
+                    StandardPropagationPlatformCapability::Manual,
+                    StandardPropagationOpportunityState::Available,
+                ),
+            ]
+            .into_iter()
+            .map(|(source, platform_capability, opportunity)| {
+                let mut info = StandardPropagationTriggerCapabilityInfo::default();
+                info.source = source;
+                info.platform_capability = platform_capability;
+                info.opportunity = opportunity;
+                info
+            })
+            .collect();
+            snapshot.active_sync = sync_telemetry.active.map(|active| {
+                let mut info = StandardPropagationActiveSyncInfo::default();
+                info.trigger = standard_propagation_trigger_source(active.trigger);
+                info.started_at = active.started_at;
+                info
             });
-        snapshot.cooldown_remaining_secs = Some(
-            sync_telemetry
-                .cooldown_remaining
-                .as_secs()
-                .saturating_add(u64::from(sync_telemetry.cooldown_remaining.subsec_nanos() > 0)),
-        );
-        snapshot.sync_readiness = if snapshot.active_sync.is_some() {
-            StandardPropagationSyncReadiness::InFlight
-        } else if snapshot.cooldown_remaining_secs.unwrap_or(0) > 0 {
-            StandardPropagationSyncReadiness::CoolingDown
-        } else if snapshot.active {
-            StandardPropagationSyncReadiness::Ready
-        } else {
-            StandardPropagationSyncReadiness::Unavailable
-        };
+            snapshot.last_synchronization = sync_telemetry.last_completed.map(|completed| {
+                let mut info = StandardPropagationLastSynchronizationInfo::default();
+                info.trigger = standard_propagation_trigger_source(completed.trigger);
+                info.started_at = completed.started_at;
+                info.finished_at = completed.finished_at;
+                info.outcome = standard_propagation_terminal_outcome(completed.outcome);
+                info.new_messages = u32::try_from(completed.new_messages).unwrap_or(u32::MAX);
+                info
+            });
+            snapshot.cooldown_remaining_secs =
+                Some(sync_telemetry.cooldown_remaining.as_secs().saturating_add(u64::from(
+                    sync_telemetry.cooldown_remaining.subsec_nanos() > 0,
+                )));
+            snapshot.sync_readiness = if snapshot.active_sync.is_some() {
+                StandardPropagationSyncReadiness::InFlight
+            } else if snapshot.cooldown_remaining_secs.unwrap_or(0) > 0 {
+                StandardPropagationSyncReadiness::CoolingDown
+            } else if snapshot.active {
+                StandardPropagationSyncReadiness::Ready
+            } else {
+                StandardPropagationSyncReadiness::Unavailable
+            };
+        }
         snapshot.peers = observation
             .peers
             .into_iter()
@@ -3251,8 +3265,8 @@ mod tests {
         assert!(!client.registered);
         assert!(client.active);
         assert_eq!(client.selection_readiness, StandardPropagationSelectionReadiness::NoSelection);
-        assert_eq!(client.sync_readiness, StandardPropagationSyncReadiness::Ready);
-        assert_eq!(client.automatic_sync_enabled, Some(true));
+        assert_eq!(client.sync_readiness, StandardPropagationSyncReadiness::Unavailable);
+        assert_eq!(client.automatic_sync_enabled, None);
         assert_eq!(client.last_synchronization, None);
         assert!(client.policy.is_none());
         assert!(client.observed_at.is_some());
@@ -3267,8 +3281,8 @@ mod tests {
         assert!(!present.active);
         assert_eq!(present.selection_readiness, StandardPropagationSelectionReadiness::NoSelection);
         assert_eq!(present.sync_readiness, StandardPropagationSyncReadiness::Unavailable);
-        assert_eq!(present.automatic_sync_enabled, Some(true));
-        assert_eq!(present.cooldown_remaining_secs, Some(0));
+        assert_eq!(present.automatic_sync_enabled, None);
+        assert_eq!(present.cooldown_remaining_secs, None);
         let policy = present.policy.unwrap();
         assert_eq!(policy.target_cost, 16);
         assert_eq!(policy.flexibility, 3);
