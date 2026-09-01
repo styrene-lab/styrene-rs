@@ -15,11 +15,15 @@
 use rand_core::{OsRng, RngCore};
 use zeroize::Zeroizing;
 
+use core_foundation::base::TCFType;
+use core_foundation::data::CFData;
+use core_foundation::dictionary::CFDictionary;
+use core_foundation::string::CFString;
 use security_framework::item::{ItemClass, ItemSearchOptions};
-use security_framework::passwords::{
-    PasswordOptions, delete_generic_password, generic_password, set_generic_password_options,
-};
+use security_framework::passwords::{PasswordOptions, delete_generic_password, generic_password};
 use security_framework::passwords_options::AccessControlOptions;
+use security_framework_sys::item::kSecValueData;
+use security_framework_sys::keychain_item::SecItemAdd;
 
 use crate::signer::{IdentitySigner, RootSecret, SignerError, SignerTier};
 
@@ -49,13 +53,25 @@ impl KeychainSigner {
 
     /// Check if a biometric-protected identity exists without reading its secret.
     pub fn exists(&self) -> bool {
+        self.presence().unwrap_or(false)
+    }
+
+    /// Check custody presence while preserving platform lookup failures.
+    pub fn presence(&self) -> Result<bool, SignerError> {
         ItemSearchOptions::new()
             .class(ItemClass::generic_password())
             .service(&self.service)
             .account(&self.account)
             .load_attributes(true)
             .search()
-            .is_ok_and(|items| !items.is_empty())
+            .map(|items| !items.is_empty())
+            .or_else(|error| {
+                if error.code() == -25300 {
+                    Ok(false)
+                } else {
+                    Err(SignerError::Unavailable(format!("Keychain lookup failed: {error}")))
+                }
+            })
     }
 
     /// Generate a new random root secret and store it in the Keychain
@@ -63,16 +79,19 @@ impl KeychainSigner {
     ///
     /// The biometric prompt appears immediately to confirm storage.
     pub fn create(&self) -> Result<(), SignerError> {
-        if self.exists() {
-            return Err(SignerError::Unavailable(
-                "Identity already exists in Keychain. Delete it first.".into(),
-            ));
-        }
-
         // Generate 32 random bytes
         let mut secret = Zeroizing::new([0u8; 32]);
         OsRng.fill_bytes(&mut *secret);
 
+        self.store_exclusive(&secret)
+    }
+
+    /// Install a recovered root secret without replacing existing Keychain custody.
+    pub fn restore_root_secret(&self, secret: &RootSecret) -> Result<(), SignerError> {
+        self.store_exclusive(secret.as_bytes())
+    }
+
+    fn store_exclusive(&self, secret: &[u8; 32]) -> Result<(), SignerError> {
         // Store with biometric protection
         let mut opts = PasswordOptions::new_generic_password(&self.service, &self.account);
         opts.set_access_control_options(
@@ -81,8 +100,24 @@ impl KeychainSigner {
                 | AccessControlOptions::DEVICE_PASSCODE,
         );
 
-        set_generic_password_options(&*secret, opts)
-            .map_err(|e| SignerError::SigningFailed(format!("Keychain store failed: {e}")))?;
+        #[allow(deprecated)]
+        opts.query.push((
+            // SAFETY: kSecValueData is a process-lifetime Security Framework CFString constant.
+            unsafe { CFString::wrap_under_get_rule(kSecValueData) },
+            CFData::from_buffer(secret).into_CFType(),
+        ));
+        #[allow(deprecated)]
+        let params = CFDictionary::from_CFType_pairs(&opts.query);
+        // SAFETY: params is an owned, valid SecItemAdd dictionary and no result pointer is requested.
+        let status = unsafe { SecItemAdd(params.as_concrete_TypeRef(), std::ptr::null_mut()) };
+        if status != 0 {
+            let error = security_framework::base::Error::from_code(status);
+            return Err(if status == -25299 {
+                SignerError::Unavailable("Identity already exists in Keychain".into())
+            } else {
+                SignerError::SigningFailed(format!("Keychain store failed: {error}"))
+            });
+        }
 
         Ok(())
     }
