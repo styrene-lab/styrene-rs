@@ -970,71 +970,102 @@ fn open_regular_file_no_follow(
     Ok(file)
 }
 
+/// Identity of the database file that a connection is expected to open.
+///
+/// The identity is captured without keeping a descriptor open. Closing any
+/// descriptor on a file releases every POSIX record lock this process holds on
+/// it, including the WAL and shared-memory locks of `MessagesStore` connections
+/// that are already open. A released lock lets an unrelated reader believe it
+/// is the last connection, checkpoint, and delete the WAL while this process
+/// keeps writing into the unlinked file.
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DatabaseFileIdentity {
+    dev: u64,
+    ino: u64,
+}
+
+#[cfg(unix)]
+fn database_file_identity(metadata: &std::fs::Metadata) -> DatabaseFileIdentity {
+    use std::os::unix::fs::MetadataExt;
+
+    DatabaseFileIdentity { dev: metadata.dev(), ino: metadata.ino() }
+}
+
+#[cfg(unix)]
+fn metadata_error(error: std::io::Error) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+}
+
 #[cfg(unix)]
 fn securely_create_database_file(
     path: &std::path::Path,
-) -> rusqlite::Result<(std::path::PathBuf, std::fs::File)> {
+) -> rusqlite::Result<(std::path::PathBuf, DatabaseFileIdentity)> {
+    use std::os::unix::fs::PermissionsExt;
+
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = path.file_name().ok_or_else(|| rusqlite::Error::InvalidPath(path.into()))?;
     let secured_path = parent
         .canonicalize()
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?
         .join(file_name);
+    // A fresh database has no connection yet, so creating it through a
+    // descriptor and closing that descriptor cannot release any lock.
     match open_regular_file_no_follow(&secured_path, true) {
-        Ok(file) => Ok((secured_path, file)),
+        Ok(file) => {
+            let metadata = file.metadata().map_err(metadata_error)?;
+            return Ok((secured_path, database_file_identity(&metadata)));
+        }
         Err(rusqlite::Error::ToSqlConversionFailure(error))
             if error
                 .downcast_ref::<std::io::Error>()
-                .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) =>
-        {
-            open_regular_file_no_follow(&secured_path, false).map(|file| (secured_path, file))
-        }
-        Err(error) => Err(error),
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists) => {}
+        Err(error) => return Err(error),
     }
+    // An existing database may already be open in this process. Inspect it
+    // through metadata only; open a descriptor solely to correct drifted
+    // permissions, which is the rare path.
+    let metadata = std::fs::symlink_metadata(&secured_path).map_err(metadata_error)?;
+    if !metadata.is_file() {
+        return Err(rusqlite::Error::InvalidPath(secured_path));
+    }
+    if metadata.permissions().mode() & 0o777 != 0o600 {
+        let file = open_regular_file_no_follow(&secured_path, false)?;
+        let metadata = file.metadata().map_err(metadata_error)?;
+        return Ok((secured_path, database_file_identity(&metadata)));
+    }
+    Ok((secured_path, database_file_identity(&metadata)))
 }
+
+#[cfg(not(unix))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DatabaseFileIdentity;
 
 #[cfg(not(unix))]
 fn securely_create_database_file(
     path: &std::path::Path,
-) -> rusqlite::Result<(std::path::PathBuf, std::fs::File)> {
-    let file = match std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(path)
-    {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(path)
-                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?
-        }
+) -> rusqlite::Result<(std::path::PathBuf, DatabaseFileIdentity)> {
+    match std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(path) {
+        Ok(_created) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(error))),
-    };
-    if !file
-        .metadata()
+    }
+    if !std::fs::symlink_metadata(path)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?
         .is_file()
     {
         return Err(rusqlite::Error::InvalidPath(path.to_path_buf()));
     }
-    Ok((path.to_path_buf(), file))
+    Ok((path.to_path_buf(), DatabaseFileIdentity))
 }
 
 #[cfg(unix)]
 fn guarded_file_matches_path(
     path: &std::path::Path,
-    guarded: &std::fs::File,
+    guarded: DatabaseFileIdentity,
 ) -> rusqlite::Result<()> {
-    use std::os::unix::fs::MetadataExt;
-
-    let guarded_metadata = guarded
-        .metadata()
-        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    let path_metadata = std::fs::symlink_metadata(path)
-        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    if !path_metadata.is_file()
-        || guarded_metadata.dev() != path_metadata.dev()
-        || guarded_metadata.ino() != path_metadata.ino()
-    {
+    let path_metadata = std::fs::symlink_metadata(path).map_err(metadata_error)?;
+    if !path_metadata.is_file() || database_file_identity(&path_metadata) != guarded {
         return Err(rusqlite::Error::InvalidPath(path.to_path_buf()));
     }
     Ok(())
@@ -1043,7 +1074,7 @@ fn guarded_file_matches_path(
 #[cfg(not(unix))]
 fn guarded_file_matches_path(
     path: &std::path::Path,
-    _guarded: &std::fs::File,
+    _guarded: DatabaseFileIdentity,
 ) -> rusqlite::Result<()> {
     if std::fs::symlink_metadata(path)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?
@@ -1057,7 +1088,7 @@ fn guarded_file_matches_path(
 
 fn open_guarded_connection(
     path: &std::path::Path,
-    guarded: &std::fs::File,
+    guarded: DatabaseFileIdentity,
 ) -> rusqlite::Result<Connection> {
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_NO_MUTEX
@@ -1068,19 +1099,30 @@ fn open_guarded_connection(
     Ok(connection)
 }
 
+/// Keep WAL sidecars private without opening descriptors on them.
+///
+/// SQLite creates `-wal` and `-shm` with the database file's permissions, so
+/// a private database normally needs no correction. Opening a sidecar only to
+/// close it again would release this process's WAL locks; see
+/// [`DatabaseFileIdentity`].
 #[cfg(unix)]
 fn set_sqlite_sidecar_permissions(path: &std::path::Path) -> rusqlite::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
     for suffix in ["-wal", "-shm"] {
         let mut sidecar = path.as_os_str().to_os_string();
         sidecar.push(suffix);
         let sidecar = std::path::PathBuf::from(sidecar);
-        match open_regular_file_no_follow(&sidecar, false) {
-            Ok(_) => {}
-            Err(rusqlite::Error::ToSqlConversionFailure(error))
-                if error
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
-            Err(error) => return Err(error),
+        let metadata = match std::fs::symlink_metadata(&sidecar) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(metadata_error(error)),
+        };
+        if !metadata.is_file() {
+            return Err(rusqlite::Error::InvalidPath(sidecar));
+        }
+        if metadata.permissions().mode() & 0o777 != 0o600 {
+            open_regular_file_no_follow(&sidecar, false)?;
         }
     }
     Ok(())
@@ -2527,7 +2569,7 @@ impl MessagesStore {
 
     pub fn open(path: &std::path::Path) -> rusqlite::Result<Self> {
         let (secured_path, guarded) = securely_create_database_file(path)?;
-        let conn = open_guarded_connection(&secured_path, &guarded)?;
+        let conn = open_guarded_connection(&secured_path, guarded)?;
         // WAL permits concurrent readers while the busy timeout absorbs brief
         // writer contention between daemon workers and compatibility paths.
         Self::configure_connection(&conn)?;
@@ -2545,7 +2587,7 @@ impl MessagesStore {
         };
         store.init_schema()?;
         store.register_storage_owner(secured_path.clone())?;
-        guarded_file_matches_path(&secured_path, &guarded)?;
+        guarded_file_matches_path(&secured_path, guarded)?;
         set_sqlite_sidecar_permissions(&secured_path)?;
         Ok(store)
     }
@@ -6963,7 +7005,70 @@ mod tests {
         std::fs::rename(&secured_path, &displaced).unwrap();
         std::fs::write(&secured_path, []).unwrap();
 
-        assert!(open_guarded_connection(&secured_path, &guarded).is_err());
+        assert!(open_guarded_connection(&secured_path, guarded).is_err());
+    }
+
+    /// Regression: opening additional stores on a database that is already
+    /// open in this process must not release the earlier connections' WAL
+    /// locks. When it did, any external reader closing its connection deleted
+    /// the WAL and every later daemon commit was lost at shutdown.
+    #[cfg(unix)]
+    #[test]
+    fn reopening_a_store_keeps_wal_locks_against_external_readers() {
+        const CHILD: &str = "STYRENE_STORAGE_EXTERNAL_READER";
+
+        if let Some(path) = std::env::var_os(CHILD) {
+            let connection = Connection::open(std::path::PathBuf::from(path)).unwrap();
+            let count: i64 = connection
+                .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))
+                .unwrap();
+            drop(connection);
+            println!("external-reader-count={count}");
+            return;
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("messages.db");
+        let mut wal = path.as_os_str().to_os_string();
+        wal.push("-wal");
+        let wal = std::path::PathBuf::from(wal);
+        let external_reader = |expected: i64| {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("--exact")
+                .arg(
+                    "storage::messages::tests::reopening_a_store_keeps_wal_locks_against_external_readers",
+                )
+                .arg("--nocapture")
+                .env(CHILD, &path)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains(&format!("external-reader-count={expected}")),
+                "external reader saw an unexpected row count: {stdout}"
+            );
+        };
+
+        let first = MessagesStore::open(&path).unwrap();
+        let second = MessagesStore::open(&path).unwrap();
+        let third = MessagesStore::open(&path).unwrap();
+        first.insert_message(&outbound_message("one", 1, None)).unwrap();
+        assert!(wal.exists(), "WAL must exist after the first committed write");
+
+        external_reader(1);
+        assert!(wal.exists(), "an external reader deleted the WAL of an open database");
+
+        second.insert_message(&outbound_message("two", 2, None)).unwrap();
+        external_reader(2);
+
+        drop(first);
+        drop(second);
+        drop(third);
+        let reopened = Connection::open(&path).unwrap();
+        let count: i64 =
+            reopened.query_row("SELECT count(*) FROM messages", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 2, "a commit written after the external reader closed was lost");
     }
 
     #[test]
