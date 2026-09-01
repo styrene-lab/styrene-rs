@@ -140,12 +140,14 @@ The Direct and Opportunistic LXMF gates are bidirectional. One dispatch of the
 live workflow runs every pinned scenario. Each run retains proof that both
 implementations sent, received, and confirmed delivery of a canonical message.
 
-Enabling those gates exposed three Rust defects, all fixed. Reopening the message
+Enabling those gates exposed four defects, all fixed. Reopening the message
 store released the process's SQLite locks, so an external reader could delete
 the write-ahead log and later commits were lost. The transport rejected
 canonical Python delivery proofs, both plain-context link proofs and implicit
 proofs addressed to the truncated packet hash. Opportunistic sends tracked an
-empty packet hash, so no proof could ever correlate.
+empty packet hash, so no proof could ever correlate. The live runner signalled
+process groups in a form that Linux `kill` misparses, so no hosted scenario had
+ever passed its revision probe.
 
 Remaining gates require pinned Python/Rust runs for routed RNS, resource-backed
 LXMF, standard propagation, and native NomadNet. Repository policy keeps live
