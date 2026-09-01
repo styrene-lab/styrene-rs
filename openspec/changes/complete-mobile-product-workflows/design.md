@@ -98,6 +98,37 @@ Denial or restriction leaves unaffected workflows operational and provides a
 typed route to settings only when the platform supports one. QR scanning is the
 only P0 camera consumer. Location sharing remains absent.
 
+## QR Ingress Decision
+
+The P0 scanner uses an operating-system camera or image-picker capture followed
+by bounded decoding in Rust. The Dioxus file event supplies one encoded image to
+the platform-service boundary. The decoder accepts only JPEG or PNG, enforces
+compressed-byte and decoded-pixel limits before QR detection, and returns one
+generation-tagged candidate. The backend remains the only destination validator.
+
+The selected decoder is `quircs` with a narrowly configured `image` decoder.
+`quircs` is pure Rust and accepts an 8-bit grayscale buffer. The `image` crate
+must disable default formats and enable only JPEG and PNG. Tests generate QR
+images in memory. Scanned frames are not retained in fixtures, diagnostics, or
+failure values.
+
+The following alternatives remain available:
+
+| Option | Fit | Decision |
+|---|---|---|
+| System capture plus Rust `quircs` decoding | Uses maintained Dioxus file events and no generated native product source; provides capture-then-decode rather than continuous preview | **Selected for P0** |
+| Native iOS AVFoundation and Android CameraX with ML Kit or ZXing | Best continuous-scanning UX; iOS dependencies already exist, but the pinned Dioxus Android package has no reviewed Gradle dependency or generated-source ownership seam | Defer until both native integrations are maintainable |
+| Web `getUserMedia` plus a Rust or WebAssembly decoder | Cross-platform in principle, but moves camera lifecycle and frame transfer into WebView script and requires more cancellation, privacy, and performance evidence | Defer |
+| Web `BarcodeDetector` | Small Android implementation, but WebKit does not provide a dependable enabled implementation for the supported iOS baseline | Reject as a cross-platform requirement |
+| External scanner application or deep link | Avoids an embedded decoder, but no standard iOS and Android result contract preserves generation, cancellation, and payload bounds | Reject |
+| Paste or manual entry only | Existing safe fallback | Retain, but it does not satisfy QR ingress |
+
+The P0 capture is single-shot and user initiated. It permits camera capture or
+selection of an existing image. Cancellation, permission denial, unsupported
+capture, no QR code, multiple QR codes, malformed text, oversized input, stale
+generation, and decode exhaustion are distinct typed outcomes. A failed scan
+does not clear manual or pasted input.
+
 ## Propagation Scheduling
 
 The standard propagation coordinator owns synchronization. Automatic triggers
