@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "backend_revision": "21dec9ffd4a97e9647c951b52e3b4dfdd84e91f2",
+  "ui_revision": "e5d744ddee05f7247eef08bfc8cec9e43e8ba005",
+  "fixture_sha256": "533845aebb0e7b04b39d5957fa94856e113388b66d73903d919cc5a0ef37165f",
+  "evidence_class": "backend_and_session_component",
+  "verification": [
+    "cargo test -p styrened --test mobile_destination_convergence",
+    "cargo test -p styrene-ui-state --test destination_convergence",
+    "cargo test -p styrene-mobile --lib destination_convergence"
+  ]
+}

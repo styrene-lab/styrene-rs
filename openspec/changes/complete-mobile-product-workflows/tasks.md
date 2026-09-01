@@ -25,7 +25,7 @@
 - [x] 3.3 `[styrene-ui]` Define bounded generation-tagged Rust platform-service contracts and deterministic mocks for clipboard read and QR scanning, including denied, restricted, unavailable, oversized, malformed, cancelled, and successful outcomes
 - [x] 3.4 `[styrene-ui]` Implement iOS and Android clipboard and QR adapters behind the typed destination-ingress contracts without moving destination validation into platform code
 - [x] 3.5 `[styrene-ui]` Gate Direct and Propagated methods independently from backend capability and current selected-node readiness; preserve destination, draft revision, and method when readiness changes
-- [ ] 3.6 `[cross-repo]` Verify discovered, direct-entry, paste, and scan paths create one canonical conversation and never create state from invalid input
+- [x] 3.6 `[cross-repo]` Verify discovered, direct-entry, paste, and scan paths create one canonical conversation and never create state from invalid input
 
 ## 4. Status, People, And Network Truth
 <!-- specs: mobile-product-projection -->
@@ -83,4 +83,4 @@
 - [x] 9.4 `[styrene-ui]` Compose one generation-aware Dioxus file capture with the existing `QrDestinationScanner` contract while preserving current manual and pasted input
 - [ ] 9.5 `[nucleus]` Build and install the Android package, then retain E87 evidence for camera grant, denial, cancellation, gallery selection, canonical success, malformed input, ambiguous input, rotation, process interruption, and stale completion
 - [ ] 9.6 `[Chriss-MacBook-Pro]` Build and install the iOS package, then retain equivalent camera and image-picker evidence without using Android results as Apple evidence
-- [ ] 9.7 `[cross-repo]` Complete task 3.6 with manual, discovered, pasted, and scanned candidates; do not treat the implemented UI convergence as proof of one durable backend operation
+- [x] 9.7 `[cross-repo]` Complete task 3.6 with manual, discovered, pasted, and scanned candidates; do not treat the implemented UI convergence as proof of one durable backend operation

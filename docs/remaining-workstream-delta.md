@@ -25,8 +25,8 @@ App Lock TDD contract and reassessed desktop network workflow polish.
 
 Core mobile backend contracts are complete. Shared mobile product implementation
 is substantially complete. The remaining mobile work is concentrated in Android
-BLE, cross-repository convergence tests, packaged execution, physical acceptance,
-accessibility evidence, and release claims.
+BLE, packaged execution, physical acceptance, accessibility evidence, and
+release claims.
 
 Several non-mobile workstreams also remain active. These include shared frontend
 sessions, live protocol interoperability, firmware execution, repository-signing
@@ -38,7 +38,7 @@ authorization.
 | Workstream | Status | Remaining delta |
 | --- | ---: | --- |
 | Complete mobile P0 backend contracts | 35/35 | Verification and archival only |
-| Complete mobile product workflows | 35/49 | Cross-repository convergence, recovery, accessibility, packages, physical runs, and claims |
+| Complete mobile product workflows | 37/49 | Recovery, accessibility, packages, physical runs, and claims |
 | Deliver mobile messaging minimum | 51/77 | Corpus provenance, Android BLE GATT, package and physical evidence, and RNode claims |
 | Shared Dioxus mobile UI | 31/55 | Android BLE, packaged corpus replay, physical acceptance, assistive technology, and release verification |
 | iOS App Lock policy | 2/17 | Pure policy tests, persistence, failure ordering, reboot semantics, presentation coverage, and complete physical matrix |
@@ -57,14 +57,21 @@ authorization.
 
 ### Destination convergence
 
-The UI implements discovered, manual, pasted, and scanned destination ingress.
-One cross-repository integration test must still prove convergence. All four
-paths must use one backend operation and create one durable conversation. They
-must create no state before validation succeeds.
+The destination convergence corpus is complete at the component and
+embedded-session level. Discovered, manual, pasted, and scanned candidates
+reach one backend operation and create one durable conversation. Rejected
+candidates create no shell or contact, even when the frontend forwards them.
+
+The corpus surfaced two defects, both fixed. The backend reported one message
+for an empty conversation shell. The frontend truncated a pasted candidate
+with leading whitespace before trimming it.
+
+Packaged proof of the same journeys remains a separate gate.
 
 Authority:
 
-- `openspec/changes/complete-mobile-product-workflows/tasks.md`, tasks 3.6 and 9.7
+- `tests/fixtures/mobile-destination-convergence-v1/revision-pair.json`
+- `openspec/changes/complete-mobile-product-workflows/tasks.md`, task 8.2
 
 ### Recovery and custody
 
@@ -212,17 +219,19 @@ and evidence records satisfy the same closure review.
 
 ## Recommended Execution Order
 
-1. Complete the cross-repository destination convergence test.
-2. Implement and test Android BLE GATT before any Android Bluetooth claim.
-3. Complete deterministic App Lock policy and failure tests.
-4. Run clean simulator, emulator, and packaged mobile workflow matrices.
-5. Execute physical custody, RNode, QR, lifecycle, and accessibility matrices on their assigned hosts.
-6. Enable and retain pinned live RNS, LXMF, propagation, and NomadNet gates.
-7. Complete exact firmware executors and physical recovery evidence.
-8. Finish frontend-session migration before building operator profiles on duplicated lifecycle code.
-9. Implement operation-scoped authorization before consumers add more local policy tables.
-10. Publish signing vectors and run compatibility lanes.
-11. Archive verified changes only after OpenSpec archive dry runs pass.
+1. Implement and test Android BLE GATT before any Android Bluetooth claim.
+2. Complete deterministic App Lock policy and failure tests.
+3. Run clean simulator, emulator, and packaged mobile workflow matrices.
+4. Execute physical custody, RNode, QR, lifecycle, and accessibility matrices on their assigned hosts.
+5. Enable and retain pinned live RNS, LXMF, propagation, and NomadNet gates.
+6. Complete exact firmware executors and physical recovery evidence.
+7. Finish frontend-session migration before building operator profiles on duplicated lifecycle code.
+8. Implement operation-scoped authorization before consumers add more local policy tables.
+9. Publish signing vectors and run compatibility lanes.
+10. Archive verified changes only after OpenSpec archive dry runs pass.
+
+The cross-repository destination convergence test from the original order is
+complete and recorded in the mobile product delta above.
 
 ## Evidence Rules
 
