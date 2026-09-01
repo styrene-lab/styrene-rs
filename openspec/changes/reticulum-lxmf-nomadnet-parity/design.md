@@ -1,5 +1,17 @@
 # Reticulum, LXMF, and NomadNet Parity Design
 
+## Reassessment
+
+Bounded native NomadNet dynamic execution, submitted fields, authorization,
+cleanup, and secret redaction are implemented. The remaining work is evidence
+driven: canonical NomadNet fixtures, bidirectional direct/resource/propagation
+gates, routed RNS, and final claim generation.
+
+Current routed and propagation handoffs remain deliberately disabled and
+unevidenced. Rust tests and prepared handoff descriptors do not satisfy the live
+Python/Rust tasks. Unsupported claim levels remain unchanged until every required
+gate is enabled, non-ignored, revision-pinned, and retained.
+
 ## Design goals
 
 1. Protocol behavior remains in `styrene-rns`, `styrene-lxmf`, and `styrened`; clients consume typed contracts.
