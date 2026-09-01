@@ -40,7 +40,8 @@ test:
         --test announce_names --test config --test identity_store \
         --test lxmf_bridge_tests --test lxmf_fidelity_storage \
         --test mobile_application_parity_corpus --test mobile_backend_p0_corpus \
-        --test mobile_corpus --test mobile_forced_termination \
+        --test mobile_corpus --test mobile_destination_convergence \
+        --test mobile_forced_termination \
         --test mobile_minimum_corpus --test mobile_p0_backend \
         --test nomadnet_pages_offline --test receipt_bridge --test receipt_mapping \
         --test rns_crypto --test transport_contract --test transport_null \
@@ -244,6 +245,7 @@ test-mobile-corpus:
         --test mobile_application_parity_corpus \
         --test mobile_backend_p0_corpus \
         --test mobile_corpus \
+        --test mobile_destination_convergence \
         --test mobile_forced_termination \
         --test mobile_minimum_corpus \
         --test mobile_p0_backend -- --test-threads=1
