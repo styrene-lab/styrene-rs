@@ -1,5 +1,18 @@
 # Deliver Mobile Messaging Minimum Design
 
+## Reassessment
+
+The shared messaging foundation is implemented. General packaged product
+acceptance now belongs to `complete-mobile-product-workflows` and must not be
+executed twice under competing ledgers.
+
+This change retains three distinct gaps. They are unresolved application-corpus
+provenance, Android BLE GATT implementation, and physical RNode acceptance.
+Channel detachment, queue bounds, fragmentation, serialization, and retained
+handoff have deterministic implementation coverage; they do not establish a
+physical support claim. The remaining acceptance tasks stay open until retained
+simulator, package, device, and interoperability evidence exists.
+
 ## Product Boundary
 
 This change delivers one Dioxus mobile product from shared Rust source. iOS and

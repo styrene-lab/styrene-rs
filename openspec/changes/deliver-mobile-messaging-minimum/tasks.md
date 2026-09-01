@@ -61,7 +61,8 @@
 
 - [x] 6.1 Add failing Rust platform-service and Dioxus tests proving TCP remains operational when Bluetooth or USB is unavailable, denied, interrupted, or unverified
 - [x] 6.2 Implement Rust-owned platform services and present TCP, Bluetooth RNode, and Android USB as independent backend-confirmed bearer states
-- [ ] 6.3 Complete Dioxus channel-detachment, approved-device, queue-bound, fragmentation, serialization, retention, and physical acceptance gates before enabling an RNode support claim
+- [x] 6.3a Complete deterministic Dioxus channel-detachment, approved-device, queue-bound, fragmentation, serialization, and retention gates
+- [ ] 6.3b Complete physical acceptance before enabling an RNode support claim
 - [x] 6.4 Preserve explicit Android USB fallback and prevent it from preempting an approved Bluetooth bearer
 
 ## 7. Cross-Platform Acceptance

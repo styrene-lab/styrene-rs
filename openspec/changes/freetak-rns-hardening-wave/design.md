@@ -1,5 +1,17 @@
 # FreeTAK RNS Hardening Wave Design
 
+## Reassessment
+
+The archived Reticulum 1.5 parity wave already owns and verifies canonical
+constant-time `Fernet` and `CachedFernet` authentication. This wave consumes that
+result and must not create another implementation or fixture schema.
+
+FreeTAK admission remains incomplete. Open groups cover secure key persistence,
+fallback classification, poisoned receipt recovery, Link mutation ordering, and
+bound-interface dispatch. Resource lifecycle, task supervision, and
+internal-interface policy also remain open. The completed shared RNode engine
+boundary does not close those groups.
+
 ## Evidence and authority
 
 The reviewed implementation-evidence repository is `https://github.com/FreeTAKTeam/LXMF-rs.git`. The immutable review range is:

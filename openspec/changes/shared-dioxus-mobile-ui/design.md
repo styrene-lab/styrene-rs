@@ -1,5 +1,19 @@
 # Shared Dioxus Mobile UI Design
 
+## Reassessment
+
+The shared shell, embedded session, renderer-neutral state, and core messaging
+are implemented in `styrene-ui`. Platform adapters, redaction, semantics, and
+adaptive layout are also implemented. The UI pins backend revision
+`23beb83dbed95165347debdaabb1a672febfdc92`.
+
+This change no longer owns general packaged acceptance. That evidence remains in
+`complete-mobile-product-workflows`. The unique engineering gap here is Android
+BLE GATT. The remaining UI-specific evidence gaps are simulator/emulator corpus
+execution, physical platform acceptance, VoiceOver and TalkBack, the WCAG matrix,
+and final clean-package verification. Source and component checks do not close
+those packaged or assistive-technology gates.
+
 ## Product Boundary
 
 The mobile application is one Dioxus product with platform-adaptive packaging.

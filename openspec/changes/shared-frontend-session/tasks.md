@@ -14,7 +14,7 @@
 - [x] 2.1 Create `styrene-ipc-client` without dependencies on Ratatui or Dioxus
 - [ ] 2.2 Move framing, opcode mapping, negotiation, request correlation, and typed decoding behind the client API
 - [ ] 2.3 Add bounded concurrency, deadlines, cancellation, event fanout, reconnect generations, and compatibility polling
-- [ ] 2.4 Add tests for overlap, out-of-order responses, timeout, cancellation, overload, disconnect, and stale generations
+- [x] 2.4 Add tests for overlap, out-of-order responses, timeout, cancellation, overload, disconnect, and stale generations
 - [ ] 2.5 Prevent frontend crates from importing `styrene-ipc-server::wire`
 
 ## 3. Frontend Sessions
@@ -39,7 +39,7 @@
 
 - [x] 5.1 Replace CLI socket framing and payload-map parsing with the shared client
 - [x] 5.2 Preserve one-shot endpoint selection, operation deadlines, typed outcomes, and exit behavior
-- [ ] 5.3 Remove the obsolete CLI client after command and failure tests pass
+- [x] 5.3 Remove the obsolete CLI client after command and failure tests pass
 
 ## 6. Cross-Repository Dioxus Migration
 <!-- specs: frontend-session/spec -->

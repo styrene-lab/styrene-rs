@@ -1,5 +1,18 @@
 # Shared Frontend Session Design
 
+## Reassessment
+
+Neutral wire framing, the bounded IPC client, its overlap and failure tests, and
+the one-shot CLI migration are complete. The TUI still imports server wire
+internals. No common `LiveSession`, `EmbeddedSession`, or `FixtureSession`
+implementation exists, and desktop migration now belongs to the independent
+`styrene-ui` repository.
+
+Residual client work covers negotiation, complete operation coverage, event
+fanout, reconnect, and compatibility polling. Session and consumer work covers
+the TUI, common lifecycle, cross-repository desktop migration, and a retained
+tested revision pair. The updated inventory records the extracted topology.
+
 ## Authority
 
 `styrene-ipc::Daemon` and its typed records remain the application contract.

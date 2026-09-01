@@ -1,5 +1,19 @@
 # Complete Mobile Product Workflows Design
 
+## Reassessment
+
+The backend and shared UI implementation merged at
+`23beb83dbed95165347debdaabb1a672febfdc92` and
+`7b9271fbfaedfd82f000e08c89145d3ba98532f5`. QR decoder tests, bounded decoder
+implementation, and Dioxus capture composition are complete.
+
+This change is now acceptance-led. One cross-repository test must still prove
+that discovered, manual, pasted, and scanned destinations converge on one durable
+backend conversation operation. Recovery, adaptive UX, assistive technology,
+clean packages, physical workflows, and final claim ledgers remain open. Source,
+component, or simulator evidence cannot substitute for the named packaged or
+physical gate.
+
 ## Ownership
 
 The canonical OpenSpec remains in `styrene-rs`, but implementation is split by

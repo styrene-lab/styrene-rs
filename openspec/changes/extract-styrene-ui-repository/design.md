@@ -1,5 +1,18 @@
 # Extract Styrene UI Repository Design
 
+## Reassessment
+
+The repository extraction and authority switch are complete. Provenance, history,
+workspace separation, immutable backend pins, generated-output exclusions, Fixture
+isolation, and Lab process bounds are present in `styrene-ui`.
+
+The remaining tasks are not extraction implementation. They cover repository
+governance, the unresolved desktop client/session boundary, the historical
+rollback condition, and retained final desktop validation runs. The original
+requirement that native mobile directories
+remain empty was superseded when the independently versioned Rust mobile hosts
+landed; only the generated-output exclusion remains authoritative.
+
 ## Repository Roles
 
 `styrene-rs` owns protocol, runtime, daemon, IPC, transports, shared client and

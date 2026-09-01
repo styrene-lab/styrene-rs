@@ -78,9 +78,9 @@
 <!-- specs: mobile-platform-workflows -->
 
 - [x] 9.1 `[cross-repo]` Select the P0 QR architecture, enumerate rejected and deferred alternatives, define resource and privacy bounds, and publish the TDD corpus
-- [ ] 9.2 `[styrene-ui]` Add failing pure-Rust tests that generate JPEG and PNG QR images in memory and cover canonical, malformed, oversized, no-code, ambiguous, and resource-exhaustion outcomes
-- [ ] 9.3 `[styrene-ui]` Implement the bounded `quircs` decoder with `image` default formats disabled and no decoded payload in `Debug`, errors, or diagnostics
-- [ ] 9.4 `[styrene-ui]` Compose one generation-aware Dioxus file capture with the existing `QrDestinationScanner` contract while preserving current manual and pasted input
+- [x] 9.2 `[styrene-ui]` Add failing pure-Rust tests that generate JPEG and PNG QR images in memory and cover canonical, malformed, oversized, no-code, ambiguous, and resource-exhaustion outcomes
+- [x] 9.3 `[styrene-ui]` Implement the bounded `quircs` decoder with `image` default formats disabled and no decoded payload in `Debug`, errors, or diagnostics
+- [x] 9.4 `[styrene-ui]` Compose one generation-aware Dioxus file capture with the existing `QrDestinationScanner` contract while preserving current manual and pasted input
 - [ ] 9.5 `[nucleus]` Build and install the Android package, then retain E87 evidence for camera grant, denial, cancellation, gallery selection, canonical success, malformed input, ambiguous input, rotation, process interruption, and stale completion
 - [ ] 9.6 `[Chriss-MacBook-Pro]` Build and install the iOS package, then retain equivalent camera and image-picker evidence without using Android results as Apple evidence
-- [ ] 9.7 `[cross-repo]` Prove manual, discovered, pasted, and scanned candidates reach one backend operation and create no conversation before validation succeeds
+- [ ] 9.7 `[cross-repo]` Complete task 3.6 with manual, discovered, pasted, and scanned candidates; do not treat the implemented UI convergence as proof of one durable backend operation

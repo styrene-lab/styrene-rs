@@ -9,14 +9,10 @@ Every behavior group uses strict test-first ordering. Do not begin its implement
 - [ ] 1.2 Record completion evidence and reconciled-tree contract locations for every required Reticulum, Beechat, and mobile ownership gate in the design table; mark blocked groups as not startable
 - [ ] 1.3 Verify the admission record uses immutable revisions, changes no refs or tracking markers, and authorizes only independently written Styrene tests and implementation
 
-## 2. Cached Fernet authentication
+## 2. Cached Fernet authentication reconciliation
 <!-- specs: rns-security-hardening -->
 
-Dependency gate: `reticulum-1-5-parity-wave` group 10 must be verified complete before task 2.1 starts.
-
-- [ ] 2.1 Add and run a failing regression proving `CachedFernet::verify` uses the constant-time MAC path while consuming, not duplicating, the canonical token vectors owned by the predecessor
-- [ ] 2.2 Replace only the cached tag comparison with the crate's constant-time MAC verification path without changing token format or errors
-- [ ] 2.3 Verify focused cached Fernet tests under default, `alloc`, and `fernet-aes128` feature combinations plus the predecessor's canonical token gate
+- [x] 2.1 Record that archived `reticulum-1-5-parity-wave` tasks 10.1-10.3 already own and verify constant-time `CachedFernet` authentication; authorize no duplicate implementation or fixture corpus in this wave
 
 ## 3. Secure key and ratchet persistence
 <!-- specs: rns-security-hardening -->

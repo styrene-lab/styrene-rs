@@ -1,5 +1,16 @@
 # RNode Firmware Provisioning Design
 
+## Reassessment
+
+The transport-neutral policy, corpus, plan, confirmation, and verification
+contracts are implemented. No attached Espressif executor or physical write and
+recovery result exists. The retained RAK4631 observation does not prove BLE DFU
+service behavior, fresh installation, interruption recovery, or post-write hash.
+
+Synthetic desktop and mobile fixtures remain policy evidence only. They cannot
+enable a board, bootloader, executor, or package claim. Tasks 3.1 and 3.3-3.6,
+4.4-4.6, 5.2-5.3, and 6.3-6.4 remain open.
+
 ## Boundary
 
 The product needs one firmware policy and multiple constrained executors. The
