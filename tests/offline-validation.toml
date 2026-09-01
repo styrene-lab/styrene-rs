@@ -62,6 +62,7 @@ safe_sensitive_tests = [
   "crates/apps/styrened/src/daemon.rs#canonical_hub_recovers_standard_queue_before_active_composition",
   "crates/apps/styrened/src/mobile.rs#post_composition_boot_failure_releases_workers_listener_and_store_before_retry",
   "crates/apps/styrened/src/services/pages.rs#registered_content_and_allowed_policy_cannot_be_replaced_with_symlink_escape",
+  "crates/apps/styrened/src/storage/messages.rs#reopening_a_store_keeps_wal_locks_against_external_readers",
   "crates/apps/styrened/tests/mobile_forced_termination.rs#committed_mobile_state_survives_process_termination",
   "crates/apps/styrened/tests/mobile_forced_termination.rs#interrupted_work_has_explicit_recovery_outcome",
   "crates/apps/styrened/tests/mobile_p0_backend.rs#interface_failures_are_typed",

@@ -17,6 +17,7 @@ SCENARIO="${SCENARIO:-direct}"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}"
 export CARGO_TARGET_DIR
 STYRENED_BIN="${STYRENED_BIN:-${CARGO_TARGET_DIR}/debug/styrened}"
+STYRENE_CLI_BIN="${STYRENE_CLI_BIN:-${CARGO_TARGET_DIR}/debug/styrene}"
 
 PORT_SEED="${PORT_SEED:-$$}"
 RUST_RPC_PORT="${RUST_RPC_PORT:-$((4243 + (PORT_SEED % 2000)))}"
@@ -247,6 +248,13 @@ RUST_LOG="${TMP_ROOT}/rust-lxmd.log"
 PY_LOG="${TMP_ROOT}/python-lxmd.log"
 PY_REMOTE_STATUS_LOG="${TMP_ROOT}/python-remote-status.log"
 PY_SEND_LOG="${TMP_ROOT}/python-send.json"
+PY_RECEIVE_LOG="${TMP_ROOT}/python-receive.json"
+RUST_SEND_LOG="${TMP_ROOT}/rust-send.log"
+RUST_OUTBOUND_PROOF_PATH="${TMP_ROOT}/rust-outbound-proof.json"
+# Unix socket paths are limited to about 100 bytes, so the IPC socket lives in
+# a short-lived directory outside the run root. Cleanup removes it.
+RUST_SOCKET_DIR="$(mktemp -d /tmp/styrene-smoke.XXXXXX)"
+RUST_SOCKET="${RUST_SOCKET_DIR}/rust.sock"
 HOOK_LOG="${HOOK_STATE_DIR}/hook.log"
 DATASTORE_PROOF_PATH="${TMP_ROOT}/datastore-proof.json"
 
@@ -266,11 +274,17 @@ cleanup_child() {
 
 cleanup() {
   local status=$?
+  if [[ -n "${PY_SENDER_PID:-}" ]]; then
+    cleanup_child "${PY_SENDER_PID}"
+  fi
   if [[ -n "${PY_PID:-}" ]]; then
     cleanup_child "${PY_PID}"
   fi
   if [[ -n "${RUST_PID:-}" ]]; then
     cleanup_child "${RUST_PID}"
+  fi
+  if [[ -n "${RUST_SOCKET_DIR:-}" ]]; then
+    rm -rf "${RUST_SOCKET_DIR}"
   fi
   if [[ ${status} -ne 0 ]]; then
     echo "[python-lxmd-rust-lxmd-smoke] failed" >&2
@@ -349,7 +363,7 @@ cat > "${PY_SENDER_RNS_DIR}/config" <<EOF
     target_port = ${RUST_TRANSPORT_PORT}
 EOF
 
-cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" --bin styrened --quiet
+cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" -p styrened -p styrene --bin styrened --bin styrene --quiet
 
 (
   LXMF_DISPLAY_NAME="Rust Smoke Node" \
@@ -359,6 +373,7 @@ cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" --bin styrened --quiet
     --db "${RUST_DB}" \
     --identity "${RUST_IDENTITY}" \
     --config "${RUST_DIR}/config.toml" \
+    --socket "${RUST_SOCKET}" \
     --transport "${RUST_TRANSPORT_ADDR}" \
     --announce-interval-secs 1 > >(bounded_log "${RUST_LOG}" "${LOG_LIMIT_BYTES}") 2>&1
 ) &
@@ -455,6 +470,11 @@ elif [[ "${SCENARIO}" == "propagated_resource_lxm" ]]; then
   PY_MESSAGE_METHOD="propagated"
   PY_MESSAGE_CONTENT="python-smoke-resource-lxm-$(date +%s)-$(head -c 8192 /dev/zero | tr '\0' 'r')"
 fi
+# The Python peer stays alive after sending so the Rust daemon can deliver a
+# message back to it. Send evidence lands in PY_SEND_LOG as soon as the
+# outbound message is delivered or sent; receive evidence lands in
+# PY_RECEIVE_LOG when the Rust message arrives.
+(
 "${PYTHON_BIN}" - <<'PY' \
   "${PY_SENDER_RNS_DIR}" \
   "${PY_SENDER_DIR}" \
@@ -463,24 +483,63 @@ fi
   "${PY_MESSAGE_CONTENT}" \
   "${PY_MESSAGE_METHOD}" \
   "${SENDER_WAIT_SECS}" \
-  "${PROPAGATION_TARGET_COST}" >"${PY_SEND_LOG}"
+  "${PROPAGATION_TARGET_COST}" \
+  "${PY_RECEIVE_LOG}" \
+  "${TIMEOUT_SECS}" >"${PY_SEND_LOG}"
 import json
 import os
 import sys
+import threading
 import time
 
 import RNS
 import LXMF
 
-rns_config, storage_dir, destination_hash_hex, propagation_hash_hex, content, message_method, sender_wait_secs, propagation_target_cost = sys.argv[1:9]
+(
+    rns_config,
+    storage_dir,
+    destination_hash_hex,
+    propagation_hash_hex,
+    content,
+    message_method,
+    sender_wait_secs,
+    propagation_target_cost,
+    receive_log_path,
+    receive_wait_secs,
+) = sys.argv[1:11]
 destination_hash = bytes.fromhex(destination_hash_hex)
 propagation_hash = bytes.fromhex(propagation_hash_hex)
 sender_wait_secs = int(sender_wait_secs)
+receive_wait_secs = int(receive_wait_secs)
 
 RNS.Reticulum(configdir=rns_config, loglevel=0)
 identity = RNS.Identity()
 router = LXMF.LXMRouter(identity=identity, storagepath=storage_dir)
 source = router.register_delivery_identity(identity, display_name="Python Smoke Sender")
+
+received = {}
+received_event = threading.Event()
+
+
+def on_delivery(message):
+    if received_event.is_set():
+        return
+    received.update(
+        {
+            "content": message.content.decode("utf-8", errors="replace"),
+            "title": message.title.decode("utf-8", errors="replace"),
+            "source": RNS.hexrep(message.source_hash, delimit=False).lower(),
+            "destination": RNS.hexrep(message.destination_hash, delimit=False).lower(),
+            "message_id": RNS.hexrep(message.hash, delimit=False).lower(),
+            "method": int(message.method) if message.method is not None else None,
+            "signature_validated": bool(message.signature_validated),
+        }
+    )
+    received_event.set()
+
+
+router.register_delivery_callback(on_delivery)
+router.announce(source.hash)
 desired_method = {
     "direct": LXMF.LXMessage.DIRECT,
     "opportunistic": LXMF.LXMessage.OPPORTUNISTIC,
@@ -531,6 +590,7 @@ if desired_method == LXMF.LXMessage.PROPAGATED:
     message.pack()
 router.handle_outbound(message)
 
+sent = False
 while time.time() < deadline:
     if message.state in (LXMF.LXMessage.DELIVERED, LXMF.LXMessage.SENT):
         print(
@@ -547,13 +607,44 @@ while time.time() < deadline:
                     ),
                     "method": message_method,
                 }
-            )
+            ),
+            flush=True,
         )
-        raise SystemExit(0)
+        sent = True
+        break
     time.sleep(0.2)
 
-raise SystemExit(f"timed out waiting for Python message delivery, state={message.state}")
+if not sent:
+    raise SystemExit(f"timed out waiting for Python message delivery, state={message.state}")
+
+if desired_method == LXMF.LXMessage.PROPAGATED:
+    raise SystemExit(0)
+
+# Rust-to-Python leg: keep announcing until the Rust daemon delivers a message
+# to this peer's delivery destination, then retain the received evidence.
+receive_deadline = time.time() + receive_wait_secs * 3
+next_announce = 0.0
+while time.time() < receive_deadline and not received_event.is_set():
+    if time.time() >= next_announce:
+        router.announce(source.hash)
+        next_announce = time.time() + 2.0
+    received_event.wait(0.2)
+
+if not received_event.is_set():
+    raise SystemExit("timed out waiting for the Rust message to reach the Python peer")
+
+with open(receive_log_path, "w", encoding="utf-8") as handle:
+    json.dump(received, handle, sort_keys=True, separators=(",", ":"))
+    handle.write("\n")
+raise SystemExit(0)
 PY
+) &
+PY_SENDER_PID=$!
+
+if ! wait_for_file_pattern "${PY_SEND_LOG}" '"message_id"' "${SENDER_WAIT_SECS}"; then
+  echo "Python peer did not report a sent message" >&2
+  exit 1
+fi
 runner_milestone "python-message-sent"
 
 PY_SENDER_SOURCE_HASH="$("${PYTHON_BIN}" - <<'PY' "${PY_SEND_LOG}"
@@ -720,6 +811,168 @@ PY
 fi
 runner_milestone "rust-message-persisted"
 
+RUST_MESSAGE_CONTENT=""
+RUST_MESSAGE_ID=""
+RUST_OUTBOUND_STATE=""
+if [[ "${SCENARIO}" != "propagated_resource_lxm" ]]; then
+  RUST_MESSAGE_CONTENT="rust-smoke-message-$(date +%s)"
+  if ! "${STYRENE_CLI_BIN}" --socket "${RUST_SOCKET}" send \
+      "${PY_SENDER_SOURCE_HASH}" \
+      "${RUST_MESSAGE_CONTENT}" \
+      --delivery-method "${PY_MESSAGE_METHOD}" >"${RUST_SEND_LOG}" 2>&1; then
+    echo "Rust daemon rejected the outbound ${PY_MESSAGE_METHOD} message" >&2
+    cat "${RUST_SEND_LOG}" >&2 || true
+    exit 1
+  fi
+  RUST_MESSAGE_ID=""
+  for _ in $(seq 1 "${TIMEOUT_SECS}"); do
+    RUST_MESSAGE_ID="$("${PYTHON_BIN}" - <<'PY' "${RUST_DB}" "${RUST_MESSAGE_CONTENT}" "${RUST_DELIVERY_HASH}" "${PY_SENDER_SOURCE_HASH}"
+import sqlite3
+import sys
+
+path, content, source, destination = sys.argv[1:5]
+with sqlite3.connect(path) as db:
+    row = db.execute(
+        "SELECT id FROM messages WHERE content = ? AND source = ? AND destination = ? "
+        "AND direction = 'out' LIMIT 1",
+        (content, source, destination),
+    ).fetchone()
+print(row[0] if row else "")
+PY
+)"
+    if [[ -n "${RUST_MESSAGE_ID}" ]]; then
+      break
+    fi
+    sleep 1
+  done
+  if [[ -z "${RUST_MESSAGE_ID}" ]]; then
+    echo "Rust daemon did not persist the outbound message" >&2
+    exit 1
+  fi
+  runner_milestone "rust-message-sent"
+
+  if ! wait_for_file_pattern "${PY_RECEIVE_LOG}" '"message_id"' "${TIMEOUT_SECS}"; then
+    echo "Python peer did not receive the Rust ${PY_MESSAGE_METHOD} message" >&2
+    exit 1
+  fi
+  if ! wait "${PY_SENDER_PID}"; then
+    echo "Python peer exited with an error after receiving the Rust message" >&2
+    exit 1
+  fi
+  PY_SENDER_PID=""
+
+  # Both Direct and Opportunistic deliveries are proved by the Python peer, so
+  # the Rust route must reach the delivered state in either scenario.
+  EXPECTED_ROUTE_STATES="delivered"
+  for _ in $(seq 1 "${TIMEOUT_SECS}"); do
+    if "${PYTHON_BIN}" - <<'PY' "${RUST_DB}" "${RUST_MESSAGE_ID}" "${EXPECTED_ROUTE_STATES}"; then
+import sqlite3
+import sys
+
+path, message_id, expected_states = sys.argv[1:4]
+with sqlite3.connect(path) as db:
+    row = db.execute(
+        "SELECT state FROM outbound_routes WHERE message_id = ? LIMIT 1",
+        (message_id,),
+    ).fetchone()
+raise SystemExit(0 if row is not None and row[0] in expected_states.split("|") else 1)
+PY
+      break
+    fi
+    sleep 1
+  done
+
+  RUST_OUTBOUND_STATE="$("${PYTHON_BIN}" - <<'PY' \
+    "${RUST_DB}" \
+    "${RUST_MESSAGE_ID}" \
+    "${RUST_MESSAGE_CONTENT}" \
+    "${RUST_DELIVERY_HASH}" \
+    "${PY_SENDER_SOURCE_HASH}" \
+    "${PY_MESSAGE_METHOD}" \
+    "${EXPECTED_ROUTE_STATES}" \
+    "${PY_RECEIVE_LOG}" \
+    "${RUST_OUTBOUND_PROOF_PATH}" \
+    "${SCENARIO}" \
+    "${STYRENE_INTEROP_CORRELATION_ID}"
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+(
+    path,
+    message_id,
+    content,
+    source,
+    destination,
+    method,
+    expected_states,
+    receive_log_path,
+    proof_path,
+    scenario,
+    correlation_id,
+) = sys.argv[1:12]
+with sqlite3.connect(path) as db:
+    row = db.execute(
+        "SELECT m.id, m.source, m.destination, m.content, m.direction, "
+        "r.requested_method, r.actual_method, r.state "
+        "FROM messages m JOIN outbound_routes r ON r.message_id = m.id "
+        "WHERE m.id = ? AND m.direction = 'out' LIMIT 1",
+        (message_id,),
+    ).fetchone()
+if row is None:
+    raise SystemExit("Rust daemon did not persist the outbound message route")
+if row[7] not in expected_states.split("|"):
+    raise SystemExit(f"Rust outbound route state {row[7]!r} is not in {expected_states!r}")
+received = json.loads(Path(receive_log_path).read_text(encoding="utf-8"))
+mismatches = [
+    name
+    for name, expected, actual in (
+        ("content", content, received.get("content")),
+        ("source", source, received.get("source")),
+        ("destination", destination, received.get("destination")),
+        ("message_id", message_id, received.get("message_id")),
+        ("signature_validated", True, received.get("signature_validated")),
+    )
+    if expected != actual
+]
+if mismatches:
+    raise SystemExit(f"Python peer evidence disagrees with the Rust daemon on {mismatches}")
+proof = {
+    "correlation_id": correlation_id,
+    "expected_content": content,
+    "expected_hashes": {
+        "destination": destination,
+        "source": source,
+        "message_id": message_id,
+    },
+    "expected_method": method,
+    "python_receipt": received,
+    "route": {
+        "actual_method": row[6],
+        "requested_method": row[5],
+        "state": row[7],
+    },
+    "scenario": scenario,
+    "selected_row": {
+        "content": row[3],
+        "destination": row[2],
+        "direction": row[4],
+        "id": row[0],
+        "source": row[1],
+    },
+    "table": "messages",
+}
+with open(proof_path, "w", encoding="utf-8") as handle:
+    json.dump(proof, handle, sort_keys=True, separators=(",", ":"))
+    handle.write("\n")
+print(row[7])
+PY
+)"
+  runner_assertion "rust-to-python-content"
+  runner_milestone "python-message-received"
+fi
+
 "${PYTHON_BIN}" - <<'PY' \
   "${REPORT_PATH}" \
   "${TMP_ROOT}" \
@@ -733,6 +986,9 @@ runner_milestone "rust-message-persisted"
     "${PY_SENDER_SOURCE_HASH}" \
     "${PY_MESSAGE_ID}" \
     "${PY_MESSAGE_TRANSIENT_ID}" \
+  "${RUST_MESSAGE_CONTENT}" \
+  "${RUST_MESSAGE_ID}" \
+  "${RUST_OUTBOUND_STATE}" \
   "${SCENARIO}" \
   "${STYRENE_INTEROP_CORRELATION_ID}"
 import json
@@ -751,9 +1007,12 @@ import sys
     py_sender_source_hash,
     py_message_id,
     py_message_transient_id,
+    rust_message_content,
+    rust_message_id,
+    rust_outbound_state,
     scenario,
     correlation_id,
-) = sys.argv[1:15]
+) = sys.argv[1:18]
 
 report = {
     "status": "pass",
@@ -764,6 +1023,9 @@ report = {
         "python_sender_source_hash": py_sender_source_hash,
         "python_message_id": py_message_id,
         "python_message_transient_id": py_message_transient_id,
+        "rust_to_python_outbound_content": rust_message_content,
+        "rust_message_id": rust_message_id,
+        "rust_outbound_state": rust_outbound_state,
     },
     "hashes": {
         "rust_delivery": rust_delivery_hash,
@@ -798,6 +1060,9 @@ fi
 
 runner_artifact "scenario-report" "${REPORT_PATH}"
 runner_artifact "datastore-proof" "${DATASTORE_PROOF_PATH}"
+if [[ "${SCENARIO}" != "propagated_resource_lxm" ]]; then
+  runner_artifact "rust-outbound-proof" "${RUST_OUTBOUND_PROOF_PATH}"
+fi
 runner_artifact "rust-daemon-log" "${RUST_LOG}"
 runner_artifact "python-daemon-log" "${PY_LOG}"
 

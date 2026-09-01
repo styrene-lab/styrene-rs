@@ -1,23 +1,24 @@
 name: Live Interoperability
 
+# Pinned Python/Rust LXMF gates. One dispatch runs every scenario and retains
+# structured evidence per scenario. Repository policy keeps live Python runs
+# manual: ordinary validation stays offline and scheduled workflows stay
+# fixture-only.
 on:
   workflow_dispatch:
-    inputs:
-      scenario:
-        description: Live scenario to execute
-        required: true
-        default: direct
-        type: choice
-        options:
-          - direct
-          - opportunistic
-          - propagated_resource_lxm
 
 jobs:
   live-interop:
-    name: Live ${{ inputs.scenario }}
+    name: Live ${{ matrix.scenario }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - direct
+          - opportunistic
+          - propagated_resource_lxm
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0
@@ -46,13 +47,13 @@ jobs:
           LXMF_PYTHON_BIN: python3
         run: >-
           cargo run -p styrene-interop-runner --bin styrene-interop --
-          "${{ inputs.scenario }}"
+          "${{ matrix.scenario }}"
           --timeout 300
-          --evidence "target/interop/live-${{ inputs.scenario }}.json"
+          --evidence "target/interop/live-${{ matrix.scenario }}.json"
       - name: Retain structured evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: live-interop-${{ inputs.scenario }}
+          name: live-interop-${{ matrix.scenario }}
           path: target/interop/
           if-no-files-found: warn

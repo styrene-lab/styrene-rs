@@ -111,6 +111,7 @@ impl Transport {
             cancel: cancel.clone(),
             receipt_handler: None,
             terminal_receipt_history: VecDeque::new(),
+            pending_packet_receipts: VecDeque::new(),
         }));
 
         let weak_handler = Arc::downgrade(&handler);

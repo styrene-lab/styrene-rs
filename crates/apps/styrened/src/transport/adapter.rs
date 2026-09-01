@@ -496,6 +496,14 @@ impl MeshTransport for TokioTransportAdapter {
         dest: AddressHash,
         data: &[u8],
     ) -> Result<SendPacketOutcome, TransportError> {
+        self.send_raw_traced(dest, data).await.map(|trace| trace.outcome)
+    }
+
+    async fn send_raw_traced(
+        &self,
+        dest: AddressHash,
+        data: &[u8],
+    ) -> Result<rns_core::transport::core_transport::SendPacketTrace, TransportError> {
         let mut packet_data = PacketDataBuffer::new();
         packet_data
             .write(data)
@@ -518,8 +526,7 @@ impl MeshTransport for TokioTransportAdapter {
             data: packet_data,
         };
 
-        let outcome = self.transport.send_packet_with_outcome(packet).await;
-        Ok(outcome)
+        Ok(self.transport.send_packet_with_trace(packet).await)
     }
 
     async fn send_via_link(
