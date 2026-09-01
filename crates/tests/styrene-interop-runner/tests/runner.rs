@@ -80,6 +80,39 @@ fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
         Some("child-cleanup-complete")
     );
     assert_eq!(scenario.revision_probes[0].program, PathBuf::from("/pinned/python"));
+    assert!(!PinnedScenarioId::PropagatedResourceLxm.is_bidirectional());
+    assert!(!scenario.required_artifacts.iter().any(|name| name == "rust-outbound-proof"));
+
+    for bidirectional in [PinnedScenarioId::Direct, PinnedScenarioId::Opportunistic] {
+        assert!(bidirectional.is_bidirectional());
+        let scenario = python_lxmf_scenario(
+            Path::new("/repo"),
+            bidirectional,
+            Duration::from_secs(300),
+            "/pinned/python",
+        );
+        assert_eq!(
+            scenario.required_assertions,
+            ["python-to-rust-content", "rust-to-python-content"]
+        );
+        let milestones: Vec<&str> =
+            scenario.required_milestones.iter().map(String::as_str).collect();
+        assert_eq!(
+            milestones,
+            [
+                "topology-configured",
+                "rust-ready",
+                "python-ready",
+                "python-message-sent",
+                "rust-message-persisted",
+                "rust-message-sent",
+                "python-message-received",
+                "child-cleanup-complete",
+            ]
+        );
+        assert!(scenario.required_artifacts.iter().any(|name| name == "rust-outbound-proof"));
+        assert!(scenario.required_artifacts.iter().any(|name| name == "datastore-proof"));
+    }
 }
 
 const SUCCESS_SCRIPT: &str = r#"
