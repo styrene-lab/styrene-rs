@@ -23,7 +23,7 @@
 - [x] 3.2 Remove implicit plaintext and empty-passphrase production paths while preserving explicit development-only `PlaintextFile`
 - [x] 3.3 Add secret-free custody DTOs and mobile query APIs for requested backend, active backend, protection, authentication, downgrade, availability, and typed failure
 - [x] 3.4 Persist normalized public identity metadata and test query, announce, restart, invalid edit, and unchanged identity hash
-- [ ] 3.5 Add physical iOS and Android custody test handoffs without marking unavailable device evidence complete
+- [x] 3.5 Add physical iOS and Android custody test handoffs without marking unavailable device evidence complete
 
 ## 4. Runtime, Interface, Capability, And Recovery
 <!-- specs: mobile-backend-runtime, mobile-backend-observability -->
