@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "corpus": "styrene-mobile-destination-convergence-v1",
+  "description": "Discovered, manual, pasted, and scanned destination candidates that must converge on one backend conversation operation",
+  "authority": {
+    "repository": "https://github.com/styrene-lab/styrene-rs.git",
+    "operation": "styrene_ipc::traits::DaemonMessaging::start_conversation",
+    "validation": "exactly 32 hexadecimal characters decoding to 16 bytes; the canonical form is lowercase",
+    "openspec_change": "openspec/changes/complete-mobile-product-workflows",
+    "tasks": ["3.6", "9.7"]
+  },
+  "canonical_peer_hash": "e01b09b22ccc4e2755d29eead962677b",
+  "ingress_paths": ["discovered", "manual", "pasted", "scanned"],
+  "ui_normalization": {
+    "discovered": "none",
+    "manual": "trimmed_then_bounded",
+    "pasted": "trimmed_then_bounded",
+    "scanned": "trimmed_then_bounded"
+  },
+  "converging_candidates": [
+    {
+      "id": "discovered.people-canonical",
+      "ingress": "discovered",
+      "raw": "e01b09b22ccc4e2755d29eead962677b",
+      "submitted": "e01b09b22ccc4e2755d29eead962677b"
+    },
+    {
+      "id": "manual.uppercase",
+      "ingress": "manual",
+      "raw": "E01B09B22CCC4E2755D29EEAD962677B",
+      "submitted": "E01B09B22CCC4E2755D29EEAD962677B"
+    },
+    {
+      "id": "pasted.whitespace-padded",
+      "ingress": "pasted",
+      "raw": "  e01b09b22ccc4e2755d29eead962677b\n",
+      "submitted": "e01b09b22ccc4e2755d29eead962677b"
+    },
+    {
+      "id": "scanned.mixed-case",
+      "ingress": "scanned",
+      "raw": "E01b09B22ccc4E2755d29eEad962677B",
+      "submitted": "E01b09B22ccc4E2755d29eEad962677B"
+    }
+  ],
+  "rejected_candidates": [
+    {
+      "id": "manual.non-hex-bounded",
+      "ingress": "manual",
+      "raw": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "ui_dispatch": "forwarded"
+    },
+    {
+      "id": "manual.empty",
+      "ingress": "manual",
+      "raw": "",
+      "ui_dispatch": "blocked_empty"
+    },
+    {
+      "id": "pasted.incomplete",
+      "ingress": "pasted",
+      "raw": "e01b09b22ccc4e2755d29eead962677",
+      "ui_dispatch": "blocked_incomplete"
+    },
+    {
+      "id": "pasted.untrimmed-whitespace",
+      "ingress": "pasted",
+      "raw": "  e01b09b22ccc4e2755d29eead962677b\n",
+      "ui_dispatch": "trimmed_before_dispatch"
+    },
+    {
+      "id": "scanned.oversized",
+      "ingress": "scanned",
+      "raw": "e01b09b22ccc4e2755d29eead962677b0",
+      "ui_dispatch": "blocked_oversized"
+    },
+    {
+      "id": "scanned.uri-wrapped",
+      "ingress": "scanned",
+      "raw": "lxmf://e01b09b22ccc4e2755d29eead962677b",
+      "ui_dispatch": "blocked_oversized"
+    },
+    {
+      "id": "manual.unicode-bounded",
+      "ingress": "manual",
+      "raw": "e01b09b22ccc4e2755d29eead96267ÿ",
+      "ui_dispatch": "forwarded"
+    }
+  ],
+  "invariants": [
+    "every converging candidate resolves to canonical_peer_hash through the single backend operation",
+    "the first converging candidate is created and every later converging candidate is unchanged",
+    "no converging or rejected candidate creates a contact",
+    "no rejected candidate creates a conversation shell, even when the frontend forwards it",
+    "exactly one conversation shell for canonical_peer_hash survives process restart"
+  ]
+}
