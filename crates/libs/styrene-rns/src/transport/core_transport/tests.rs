@@ -1444,6 +1444,134 @@ async fn handle_inbound_for_test_accepts_valid_destination_proof() {
     assert_eq!(count.load(Ordering::SeqCst), 1);
 }
 
+/// Build a remote destination announced to the transport plus a data packet
+/// addressed to it, registered as a transmitted provable packet.
+async fn pending_packet_fixture(
+    transport: &mut Transport,
+) -> (SingleInputDestination, AddressHash, [u8; HASH_SIZE], Arc<AtomicUsize>) {
+    let handler = transport.get_handler();
+    let remote_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut remote_destination =
+        SingleInputDestination::new(remote_identity, DestinationName::new("lxmf", "delivery"));
+    let announce = remote_destination.announce(OsRng, None).expect("valid announce packet");
+    handle_announce(&announce, handler.lock().await, AddressHash::new_from_rand(OsRng)).await;
+
+    let count = Arc::new(AtomicUsize::new(0));
+    transport.set_receipt_handler(Box::new(CountingReceiptHandler { count: count.clone() })).await;
+
+    let data_packet = Packet {
+        destination: announce.destination,
+        data: PacketDataBuffer::new_from_slice(b"opportunistic lxmf payload"),
+        ..Default::default()
+    };
+    let packet_hash = data_packet.hash().to_bytes();
+    handler.lock().await.register_pending_packet_receipt(packet_hash, announce.destination);
+    (remote_destination, announce.destination, packet_hash, count)
+}
+
+fn proof_addressed_to_packet(packet_hash: [u8; HASH_SIZE], data: &[u8]) -> Packet {
+    Packet {
+        header: Header { packet_type: PacketType::Proof, ..Default::default() },
+        destination: AddressHash::new_from_hash(&Hash::new(packet_hash)),
+        context: PacketContext::None,
+        data: PacketDataBuffer::new_from_slice(data),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn implicit_proof_addressed_to_transmitted_packet_hash_is_accepted() {
+    let local_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut transport = Transport::new(TransportConfig::new("test", &local_identity, true));
+    let (remote_destination, _, packet_hash, count) = pending_packet_fixture(&mut transport).await;
+
+    let signature = remote_destination.identity.sign(&packet_hash).to_bytes();
+    transport.handle_inbound_for_test(proof_addressed_to_packet(packet_hash, &signature)).await;
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+
+    // The concluded receipt is terminal: a replayed proof is ignored.
+    transport.handle_inbound_for_test(proof_addressed_to_packet(packet_hash, &signature)).await;
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn explicit_proof_addressed_to_transmitted_packet_hash_is_accepted() {
+    let local_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut transport = Transport::new(TransportConfig::new("test", &local_identity, true));
+    let (remote_destination, _, packet_hash, count) = pending_packet_fixture(&mut transport).await;
+
+    let mut data = Vec::from(packet_hash);
+    data.extend_from_slice(&remote_destination.identity.sign(&packet_hash).to_bytes());
+    transport.handle_inbound_for_test(proof_addressed_to_packet(packet_hash, &data)).await;
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn proofs_for_transmitted_packets_reject_forged_or_unknown_evidence() {
+    let local_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut transport = Transport::new(TransportConfig::new("test", &local_identity, true));
+    let (remote_destination, _, packet_hash, count) = pending_packet_fixture(&mut transport).await;
+
+    // Signed by a stranger.
+    let stranger = PrivateIdentity::new_from_rand(OsRng);
+    let forged = stranger.sign(&packet_hash).to_bytes();
+    transport.handle_inbound_for_test(proof_addressed_to_packet(packet_hash, &forged)).await;
+
+    // Explicit proof whose embedded hash disagrees with the transmitted packet.
+    let mut mismatched = Vec::from([0x11u8; HASH_SIZE]);
+    mismatched
+        .extend_from_slice(&remote_destination.identity.sign(&[0x11u8; HASH_SIZE]).to_bytes());
+    transport.handle_inbound_for_test(proof_addressed_to_packet(packet_hash, &mismatched)).await;
+
+    // Valid signature over a packet this transport never sent.
+    let unknown_hash = [0x77u8; HASH_SIZE];
+    let unknown = remote_destination.identity.sign(&unknown_hash).to_bytes();
+    transport.handle_inbound_for_test(proof_addressed_to_packet(unknown_hash, &unknown)).await;
+
+    // Malformed length.
+    transport.handle_inbound_for_test(proof_addressed_to_packet(packet_hash, &[0u8; 40])).await;
+
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn transmitted_single_packets_report_their_hash_and_register_pending_receipts() {
+    let local_identity = PrivateIdentity::new_from_rand(OsRng);
+    let transport = Transport::new(TransportConfig::new("test", &local_identity, true));
+    let handler = transport.get_handler();
+    let remote_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut remote_destination =
+        SingleInputDestination::new(remote_identity, DestinationName::new("lxmf", "delivery"));
+    let announce = remote_destination.announce(OsRng, None).expect("valid announce packet");
+    handle_announce(&announce, handler.lock().await, AddressHash::new_from_rand(OsRng)).await;
+
+    let packet = Packet {
+        destination: announce.destination,
+        data: PacketDataBuffer::new_from_slice(b"no interface is attached"),
+        ..Default::default()
+    };
+    let trace = transport.send_packet_with_trace(packet).await;
+    // Without an interface the packet is dropped, so nothing is provable.
+    assert_eq!(trace.packet_hash, None);
+    assert!(
+        handler
+            .lock()
+            .await
+            .pending_packet_receipt(&AddressHash::new_from_hash(&Hash::new([0u8; HASH_SIZE])))
+            .is_none()
+    );
+
+    let registered = [0x42u8; HASH_SIZE];
+    handler.lock().await.register_pending_packet_receipt(registered, announce.destination);
+    let pending = handler
+        .lock()
+        .await
+        .pending_packet_receipt(&AddressHash::new_from_hash(&Hash::new(registered)))
+        .expect("registered packet is pending");
+    assert_eq!(pending.packet_hash, registered);
+    assert_eq!(pending.destination, announce.destination);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn receipt_callback_reenters_send_and_duplicate_expiry_race_is_terminal() {
     let local_identity = PrivateIdentity::new_from_rand(OsRng);

@@ -24,6 +24,22 @@ impl TransportHandler {
         let _ = self.send_packet_with_trace(packet).await;
     }
 
+    /// Register a transmitted provable packet for later proof validation and
+    /// report its hash to the caller. Drops register nothing.
+    fn note_provable_send(
+        &mut self,
+        outcome: SendPacketOutcome,
+        provable_hash: Option<[u8; HASH_SIZE]>,
+        destination: AddressHash,
+    ) -> Option<[u8; HASH_SIZE]> {
+        if !matches!(outcome, SendPacketOutcome::SentDirect | SendPacketOutcome::SentBroadcast) {
+            return None;
+        }
+        let packet_hash = provable_hash?;
+        self.register_pending_packet_receipt(packet_hash, destination);
+        Some(packet_hash)
+    }
+
     pub(super) async fn send_packet_with_outcome(&mut self, packet: Packet) -> SendPacketOutcome {
         self.send_packet_with_trace(packet).await.outcome
     }
@@ -64,6 +80,7 @@ impl TransportHandler {
                     direct_iface: None,
                     broadcast: false,
                     dispatch: TxDispatchTrace::default(),
+                    packet_hash: None,
                 };
             };
             let identity = destination.lock().await.identity;
@@ -85,6 +102,7 @@ impl TransportHandler {
                             direct_iface: None,
                             broadcast: false,
                             dispatch: TxDispatchTrace::default(),
+                            packet_hash: None,
                         };
                     }
                     packet.data = buffer;
@@ -101,6 +119,7 @@ impl TransportHandler {
                         direct_iface: None,
                         broadcast: false,
                         dispatch: TxDispatchTrace::default(),
+                        packet_hash: None,
                     };
                 }
             }
@@ -132,7 +151,10 @@ impl TransportHandler {
         }
 
         let destination = packet.destination;
+        let provable = packet.header.packet_type == PacketType::Data
+            && packet.header.destination_type == DestinationType::Single;
         let (packet, maybe_iface) = self.path_table.handle_packet(&packet);
+        let provable_hash = provable.then(|| packet.hash().to_bytes());
         if let Some(iface) = maybe_iface {
             let routed = packet.header.header_type == HeaderType::Type2;
             let dispatch =
@@ -145,6 +167,7 @@ impl TransportHandler {
             } else {
                 SendPacketOutcome::DroppedNoRoute
             };
+            let packet_hash = self.note_provable_send(outcome, provable_hash, destination);
             if transport_diag_enabled() {
                 crate::transport_diagnostic!(
                     "[tp-diag] direct_send iface={} outcome={:?} matched={} sent={} failed={}",
@@ -163,7 +186,13 @@ impl TransportHandler {
                     dispatch.failed_ifaces
                 );
             }
-            SendPacketTrace { outcome, direct_iface: Some(iface), broadcast: false, dispatch }
+            SendPacketTrace {
+                outcome,
+                direct_iface: Some(iface),
+                broadcast: false,
+                dispatch,
+                packet_hash,
+            }
         } else if self.config.broadcast || packet.header.packet_type == PacketType::Announce {
             let dispatch =
                 self.send(TxMessage { tx_type: TxMessageType::Broadcast(None), packet }).await;
@@ -172,6 +201,7 @@ impl TransportHandler {
             } else {
                 SendPacketOutcome::DroppedNoRoute
             };
+            let packet_hash = self.note_provable_send(outcome, provable_hash, destination);
             if transport_diag_enabled() {
                 crate::transport_diagnostic!(
                     "[tp-diag] broadcast_send outcome={:?} matched={} sent={} failed={}",
@@ -188,7 +218,7 @@ impl TransportHandler {
                     dispatch.failed_ifaces
                 );
             }
-            SendPacketTrace { outcome, direct_iface: None, broadcast: true, dispatch }
+            SendPacketTrace { outcome, direct_iface: None, broadcast: true, dispatch, packet_hash }
         } else {
             log::trace!(
                 "tp({}): no route for outbound packet dst={}",
@@ -200,6 +230,7 @@ impl TransportHandler {
                 direct_iface: None,
                 broadcast: false,
                 dispatch: TxDispatchTrace::default(),
+                packet_hash: None,
             }
         }
     }
