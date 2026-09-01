@@ -198,6 +198,24 @@ fn standard_propagation_terminal_outcome(
     }
 }
 
+fn standard_propagation_selection_readiness(
+    active: bool,
+    selection: Option<&crate::storage::standard_propagation::StandardPropagationSelection>,
+    peers: &[crate::storage::standard_propagation::StandardPropagationPeerObservation],
+) -> StandardPropagationSelectionReadiness {
+    let Some(selected_peer) = selection.and_then(|selection| selection.peer) else {
+        return StandardPropagationSelectionReadiness::NoSelection;
+    };
+    let Some(peer) = peers.iter().find(|peer| peer.identity_hash == selected_peer) else {
+        return StandardPropagationSelectionReadiness::Unavailable;
+    };
+    if active && peer.enabled && peer.propagation_destination.is_some() {
+        StandardPropagationSelectionReadiness::Ready
+    } else {
+        StandardPropagationSelectionReadiness::Unavailable
+    }
+}
+
 fn path_observation(
     snapshot: rns_core::transport::core_transport::path_table::PathSnapshot,
 ) -> ObservationMetadata {
@@ -1613,6 +1631,11 @@ impl DaemonStatus for DaemonFacade {
         snapshot.queue.expired_count = observation.queue.expired_count as u64;
         snapshot.queue.terminal_count =
             snapshot.queue.acknowledged_count.saturating_add(snapshot.queue.expired_count);
+        snapshot.selection_readiness = standard_propagation_selection_readiness(
+            snapshot.active,
+            observation.selection.as_ref(),
+            &observation.peers,
+        );
         snapshot.selection = observation.selection.map(|selection| {
             let mut info = StandardPropagationSelectionInfo::default();
             info.peer_hash = selection.peer.map(hex::encode);
@@ -1620,13 +1643,6 @@ impl DaemonStatus for DaemonFacade {
             info.selected_at = selection.selected_at;
             info
         });
-        if snapshot.selection.is_some() {
-            snapshot.selection_readiness = if snapshot.active {
-                StandardPropagationSelectionReadiness::Ready
-            } else {
-                StandardPropagationSelectionReadiness::Unavailable
-            };
-        }
         if let Some(sync) = self.ctx.standard_propagation_sync() {
             let sync_policy = sync.policy();
             let sync_telemetry = sync.telemetry();
@@ -1696,7 +1712,7 @@ impl DaemonStatus for DaemonFacade {
                 StandardPropagationSyncReadiness::InFlight
             } else if snapshot.cooldown_remaining_secs.unwrap_or(0) > 0 {
                 StandardPropagationSyncReadiness::CoolingDown
-            } else if snapshot.active {
+            } else if snapshot.selection_readiness == StandardPropagationSelectionReadiness::Ready {
                 StandardPropagationSyncReadiness::Ready
             } else {
                 StandardPropagationSyncReadiness::Unavailable
@@ -3241,6 +3257,69 @@ mod tests {
             throttle_secs: 180,
             max_offer_links: 3,
         }
+    }
+
+    #[test]
+    fn propagation_selection_requires_an_active_usable_selected_peer() {
+        use crate::storage::standard_propagation::{
+            StandardPropagationPeerObservation, StandardPropagationSelection,
+        };
+
+        let identity = [1; 16];
+        let selection = StandardPropagationSelection {
+            peer: Some(identity),
+            mode: "manual".into(),
+            selected_at: 1,
+        };
+        let mut peer = StandardPropagationPeerObservation {
+            identity_hash: identity,
+            propagation_destination: Some([2; 16]),
+            configured: true,
+            enabled: true,
+            transfer_limit_kb: Some(256),
+            sync_limit_kb: Some(4_000),
+            stamp_cost: Some(16),
+            stamp_flexibility: Some(3),
+            peering_cost: Some(18),
+            first_seen_at: 1,
+            last_seen_at: 1,
+            retry_at: None,
+            backoff_count: 0,
+            offered_count: 0,
+            wanted_count: 0,
+            accepted_count: 0,
+            accepted_bytes: 0,
+            failure_count: 0,
+        };
+
+        assert_eq!(
+            standard_propagation_selection_readiness(true, None, &[]),
+            StandardPropagationSelectionReadiness::NoSelection
+        );
+        assert_eq!(
+            standard_propagation_selection_readiness(true, Some(&selection), &[]),
+            StandardPropagationSelectionReadiness::Unavailable
+        );
+        assert_eq!(
+            standard_propagation_selection_readiness(false, Some(&selection), &[peer.clone()]),
+            StandardPropagationSelectionReadiness::Unavailable
+        );
+        peer.enabled = false;
+        assert_eq!(
+            standard_propagation_selection_readiness(true, Some(&selection), &[peer.clone()]),
+            StandardPropagationSelectionReadiness::Unavailable
+        );
+        peer.enabled = true;
+        peer.propagation_destination = None;
+        assert_eq!(
+            standard_propagation_selection_readiness(true, Some(&selection), &[peer.clone()]),
+            StandardPropagationSelectionReadiness::Unavailable
+        );
+        peer.propagation_destination = Some([2; 16]);
+        assert_eq!(
+            standard_propagation_selection_readiness(true, Some(&selection), &[peer]),
+            StandardPropagationSelectionReadiness::Ready
+        );
     }
 
     #[tokio::test]
