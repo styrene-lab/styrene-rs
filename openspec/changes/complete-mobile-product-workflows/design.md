@@ -89,6 +89,14 @@ authenticated artifact through a platform file/share service. Restore validates
 and decrypts inside `styrene-rs`, reports typed conflicts and failures, and never
 places private key bytes in Dioxus state, logs, fixtures, or accessibility text.
 
+Portable backup export runs against the active mobile node. Portable restore is
+a preboot operation because normal mobile boot creates an identity when custody
+is absent. On an installation without identity custody, the host must inspect
+identity presence and wait for an explicit Create or Restore choice. A failed or
+cancelled restore remains before boot and cannot create replacement custody.
+The running-node encrypted-file IPC methods do not establish portable Keychain
+or Android Keystore recovery.
+
 iCloud-specific synchronization is excluded because no cross-platform recovery
 policy has been selected. The UI must not imply cloud backup from Keychain or
 Keystore custody alone.

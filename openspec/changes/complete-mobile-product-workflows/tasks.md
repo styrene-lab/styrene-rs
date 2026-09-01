@@ -42,7 +42,7 @@
 - [ ] 5.2 `[styrene-ui]` Implement Copy and Show QR through Rust platform services and ensure clipboard, QR, accessibility, fixtures, and logs contain only explicitly public identity material
 - [x] 5.3 `[styrene-rs]` Define and test opaque encrypted identity backup metadata, authenticated export, non-destructive restore, compatibility, wrong-protection, corruption, custody-unavailable, and identity-conflict outcomes
 - [x] 5.4 `[styrene-rs]` Expose typed backup and restore operations that never return private key bytes or protection input through presentation DTOs, diagnostics, or generic debug output
-- [ ] 5.5 `[styrene-ui]` Implement encrypted Backup and Restore surfaces with typed progress, confirmation, cancellation, and failure states
+- [ ] 5.5 `[styrene-ui]` Implement encrypted Backup and preboot Restore surfaces with typed progress, explicit create-or-restore choice, confirmation, cancellation, and failure states
 - [ ] 5.6 `[styrene-ui]` Implement Rust file/share adapters for opaque backup artifacts without retaining protection input or private material
 - [ ] 5.7 `[cross-repo]` Run migration, restart, wrong-backup, interrupted-export, interrupted-restore, custody continuity, and unchanged-identity tests before enabling recovery claims
 
