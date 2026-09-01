@@ -25,6 +25,7 @@ The P0 release-evidence target includes these areas:
 - Android USB RNode configuration, interruption, replay, and bidirectional RF
   correlation on the recorded hardware and firmware
 - a provenance-locked Sideband Android run as application workflow evidence
+- a provenance-locked Skywave beta run on physical iOS as application workflow evidence
 
 The P0 target does not establish a general mobile, RNode, radio, accessibility,
 notification, or application-parity claim. Each claim remains limited to the
@@ -48,6 +49,7 @@ committed corpus fixture.
 | Station radio peer | LAN-managed Station G2 RNode with an echo bot | Stable remote RF reception, echo reply, packet counters, and end-to-end correlation | Management-network reachability does not prove that a message crossed RF |
 | Controlled propagation hub | Runner-owned local Styrene hub | Deterministic upload, offline retrieval, durable-before-ACK, repeat sync, and hub restart | Does not prove public Brutus availability or public-network interoperability |
 | Reference application | SHA-256-pinned Sideband 2.1.0 Android APK | Executed application workflow floor on the physical Android device | Does not prove Styrene behavior, protocol authority, source reproducibility, or interoperability |
+| Reference application | Skywave 1.0 build 9 iOS beta | Physical iOS workflow capture candidate | Does not become a workflow floor until distribution provenance and reviewed execution artifacts are admitted |
 
 ## P0 Exclusions
 
@@ -93,6 +95,15 @@ The APK hash can identify the executed binary for application workflow evidence.
 It cannot resolve the bundled source revisions or promote Sideband to protocol
 authority. Sideband execution cannot replace packaged Styrene or Python
 interoperability evidence.
+
+The Skywave lane uses the installed `co.horsfalldesign.skywave` beta without
+extracting private application data. Run metadata, screenshots, semantic XCUITest
+snapshots, test results, and bounded process logs belong under the ignored
+`target/mobile-integration/skywave-ios/` directory. Raw CoreDevice metadata and
+logs can contain device identifiers, destinations, message text, or network
+details; review and redact them before publishing a summary or digest. An
+installed version and build do not resolve TestFlight provenance or identify the
+bundled RNS and LXMF revisions.
 
 ## Common Evidence Record
 

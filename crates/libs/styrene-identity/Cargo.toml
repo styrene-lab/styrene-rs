@@ -52,6 +52,10 @@ bech32 = { version = "0.11", optional = true }
 # Tier B: device-bound Keychain (macOS/iOS first unlock)
 security-framework = { version = "3.7", optional = true }
 
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+core-foundation = "0.10"
+security-framework-sys = { version = "2.17", default-features = false }
+
 [target.'cfg(target_os = "android")'.dependencies]
 android-keyring = { version = "0.2.0", default-features = true, optional = true }
 keyring = { version = "3.6.3", default-features = false, optional = true }

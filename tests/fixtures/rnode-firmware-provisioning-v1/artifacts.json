@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "corpus": "styrene-rnode-firmware-artifacts-v1",
+  "evidence_scope": "synthetic_contract",
+  "synthetic_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "authorities": [
+    {
+      "id": "canonical-rnode-firmware-1.86",
+      "role": "firmware_reference",
+      "repository": "https://github.com/markqvist/RNode_Firmware.git",
+      "revision": "d39339f8ecd5145b248c18bac7b6ea0f82faf85a",
+      "release": "1.86"
+    },
+    {
+      "id": "canonical-rnodeconf-2.5.0",
+      "role": "installer_behavior_reference",
+      "repository": "https://github.com/markqvist/Reticulum.git",
+      "revision": "ea98db4f53dcf0defc0e71a16e60d28b1229c4e6",
+      "release": "2.5.0"
+    }
+  ],
+  "cases": [
+    {
+      "id": "artifact.exact-signed-admitted",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": [],
+      "layout_findings": [],
+      "expected": {"decision": "allow", "reason": "artifact_admitted"}
+    },
+    {
+      "id": "artifact.unsigned-manifest",
+      "manifest_signature": "absent",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": [],
+      "layout_findings": [],
+      "expected": {"decision": "deny", "reason": "manifest_signature_required"}
+    },
+    {
+      "id": "artifact.invalid-manifest-signature",
+      "manifest_signature": "invalid",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": [],
+      "layout_findings": [],
+      "expected": {"decision": "deny", "reason": "manifest_signature_invalid"}
+    },
+    {
+      "id": "artifact.signed-malformed-manifest",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": [],
+      "layout_findings": ["manifest_invalid"],
+      "expected": {"decision": "deny", "reason": "manifest_invalid"}
+    },
+    {
+      "id": "artifact.archive-hash-mismatch",
+      "manifest_signature": "valid",
+      "archive_digest": "mismatch",
+      "target_match": "exact",
+      "archive_findings": [],
+      "layout_findings": [],
+      "expected": {"decision": "deny", "reason": "archive_digest_mismatch"}
+    },
+    {
+      "id": "artifact.model-mismatch",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "model_mismatch",
+      "archive_findings": [],
+      "layout_findings": [],
+      "expected": {"decision": "deny", "reason": "target_mismatch"}
+    },
+    {
+      "id": "artifact.radio-variant-mismatch",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "radio_mismatch",
+      "archive_findings": [],
+      "layout_findings": [],
+      "expected": {"decision": "deny", "reason": "target_mismatch"}
+    },
+    {
+      "id": "artifact.path-traversal",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": ["path_traversal"],
+      "layout_findings": [],
+      "expected": {"decision": "deny", "reason": "unsafe_archive"}
+    },
+    {
+      "id": "artifact.duplicate-member",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": ["duplicate_member"],
+      "layout_findings": [],
+      "expected": {"decision": "deny", "reason": "unsafe_archive"}
+    },
+    {
+      "id": "artifact.unexpected-member",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": ["unexpected_member"],
+      "layout_findings": [],
+      "expected": {"decision": "deny", "reason": "unsafe_archive"}
+    },
+    {
+      "id": "artifact.expansion-limit",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": ["expanded_size_exceeded"],
+      "layout_findings": [],
+      "expected": {"decision": "deny", "reason": "unsafe_archive"}
+    },
+    {
+      "id": "artifact.region-overlap",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": [],
+      "layout_findings": ["image_overlap"],
+      "expected": {"decision": "deny", "reason": "unsafe_layout"}
+    },
+    {
+      "id": "artifact.protected-region-overlap",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": [],
+      "layout_findings": ["protected_region_overlap"],
+      "expected": {"decision": "deny", "reason": "unsafe_layout"}
+    },
+    {
+      "id": "artifact.application-hash-missing",
+      "manifest_signature": "valid",
+      "archive_digest": "match",
+      "target_match": "exact",
+      "archive_findings": [],
+      "layout_findings": ["application_digest_missing"],
+      "expected": {"decision": "deny", "reason": "application_digest_required"}
+    }
+  ]
+}

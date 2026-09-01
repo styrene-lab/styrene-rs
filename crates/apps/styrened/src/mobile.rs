@@ -71,6 +71,12 @@ use rns_core::transport::iface::{
 use serde::{Deserialize, Serialize};
 use styrene_ipc::traits::{Daemon, DaemonIdentity, DaemonMessaging, DaemonStatus};
 use styrene_services::node_store::NodeStore;
+#[cfg(any(
+    feature = "mobile-identity",
+    all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")),
+    all(feature = "mobile-android-keystore", target_os = "android")
+))]
+use subtle::ConstantTimeEq;
 use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -120,6 +126,37 @@ pub enum MobileCustodyError {
     BackendUnavailable { backend: &'static str },
     #[error("encrypted-file identity backend requires nonempty host key material")]
     KeyMaterialRequired,
+}
+
+/// Maximum opaque identity artifact accepted from a platform file picker.
+pub const MAX_MOBILE_IDENTITY_BACKUP_BYTES: usize = 4096;
+/// Maximum UTF-8 protection input retained for one backup operation.
+pub const MAX_MOBILE_IDENTITY_PROTECTION_BYTES: usize = 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MobileIdentityPresence {
+    Present,
+    Absent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum MobileIdentityRecoveryError {
+    #[error("identity backup protection is required")]
+    ProtectionRequired,
+    #[error("identity backup protection exceeds the supported size")]
+    ProtectionTooLarge,
+    #[error("identity backup artifact exceeds the supported size")]
+    ArtifactTooLarge,
+    #[error("invalid or unsupported encrypted identity backup")]
+    InvalidBackup,
+    #[error("encrypted identity backup authentication failed")]
+    AuthenticationFailed,
+    #[error("identity recovery custody is unavailable")]
+    CustodyUnavailable,
+    #[error("identity restore conflicts with existing custody")]
+    IdentityConflict,
+    #[error("identity recovery is unavailable for this custody backend")]
+    UnsupportedBackend,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -915,6 +952,35 @@ pub struct MobilePropagationProgress {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum MobilePropagationTriggerSource {
+    InitialConnection,
+    Reconnect,
+    ForegroundOpportunity,
+    GrantedBackgroundOpportunity,
+    Manual,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MobilePropagationTerminalOutcome {
+    Succeeded,
+    Failed,
+    TimedOut,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobilePropagationSynchronization {
+    pub trigger: MobilePropagationTriggerSource,
+    pub started_at: i64,
+    pub finished_at: i64,
+    pub outcome: MobilePropagationTerminalOutcome,
+    pub new_messages: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MobilePropagationFailureCode {
     InvalidDestination,
     NotAnnounced,
@@ -953,6 +1019,16 @@ pub struct MobilePropagationSnapshot {
     pub automatic_sync_enabled: bool,
     pub automatic_sync_cooldown_secs: u64,
     pub sync_deadline_secs: u64,
+    #[serde(default)]
+    pub trigger_capabilities: Vec<MobilePropagationTriggerSource>,
+    #[serde(default)]
+    pub active_trigger: Option<MobilePropagationTriggerSource>,
+    #[serde(default)]
+    pub active_sync_started_at: Option<i64>,
+    #[serde(default)]
+    pub last_synchronization: Option<MobilePropagationSynchronization>,
+    #[serde(default)]
+    pub cooldown_remaining_secs: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1070,6 +1146,45 @@ fn mobile_propagation_policy(
     })
 }
 
+fn mobile_propagation_trigger_source(
+    trigger: crate::workers::standard_propagation::StandardPropagationSyncTriggerKind,
+) -> MobilePropagationTriggerSource {
+    use crate::workers::standard_propagation::StandardPropagationSyncTriggerKind;
+
+    match trigger {
+        StandardPropagationSyncTriggerKind::InitialConnection => {
+            MobilePropagationTriggerSource::InitialConnection
+        }
+        StandardPropagationSyncTriggerKind::Reconnect => MobilePropagationTriggerSource::Reconnect,
+        StandardPropagationSyncTriggerKind::ForegroundOpportunity => {
+            MobilePropagationTriggerSource::ForegroundOpportunity
+        }
+        StandardPropagationSyncTriggerKind::BackgroundOpportunity => {
+            MobilePropagationTriggerSource::GrantedBackgroundOpportunity
+        }
+        StandardPropagationSyncTriggerKind::Manual => MobilePropagationTriggerSource::Manual,
+    }
+}
+
+fn mobile_propagation_terminal_outcome(
+    outcome: crate::workers::standard_propagation::StandardPropagationSyncTerminalOutcome,
+) -> MobilePropagationTerminalOutcome {
+    use crate::workers::standard_propagation::StandardPropagationSyncTerminalOutcome;
+
+    match outcome {
+        StandardPropagationSyncTerminalOutcome::Succeeded => {
+            MobilePropagationTerminalOutcome::Succeeded
+        }
+        StandardPropagationSyncTerminalOutcome::Failed => MobilePropagationTerminalOutcome::Failed,
+        StandardPropagationSyncTerminalOutcome::TimedOut => {
+            MobilePropagationTerminalOutcome::TimedOut
+        }
+        StandardPropagationSyncTerminalOutcome::Cancelled => {
+            MobilePropagationTerminalOutcome::Cancelled
+        }
+    }
+}
+
 fn decode_mobile_hash(value: &str) -> Result<[u8; 16], String> {
     let bytes =
         hex::decode(value).map_err(|_| "destination hash must be hexadecimal".to_string())?;
@@ -1101,6 +1216,27 @@ struct PersistedMobileConfig {
 }
 
 const MOBILE_CONFIG_SCHEMA_VERSION: u32 = 1;
+
+#[cfg(any(
+    all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")),
+    all(feature = "mobile-android-keystore", target_os = "android")
+))]
+fn lock_mobile_identity_custody(paths: &PlatformPaths) -> std::io::Result<std::fs::File> {
+    use fs2::FileExt;
+
+    std::fs::create_dir_all(&paths.config_dir)?;
+    let path = paths.config_dir.join("identity-custody.lock");
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(path)?;
+    file.lock_exclusive()?;
+    Ok(file)
+}
 
 impl MobileSessionSnapshot {
     #[must_use]
@@ -1134,6 +1270,20 @@ pub struct MobileNode {
     platform_service: MobilePlatformService,
     active_conversation: Arc<tokio::sync::RwLock<Option<String>>>,
     diagnostics: Arc<crate::mobile_diagnostics::MobileDiagnostics>,
+    portable_backup_custody: Option<Arc<dyn MobilePortableBackupCustody>>,
+}
+
+#[async_trait::async_trait]
+trait MobilePortableBackupCustody: Send + Sync {
+    async fn export(
+        &self,
+        protection: zeroize::Zeroizing<Vec<u8>>,
+    ) -> Result<styrene_ipc::types::IdentityBackupExport, MobileIdentityRecoveryError>;
+}
+
+struct LoadedMobileIdentity {
+    identity: PrivateIdentity,
+    portable_backup_custody: Option<Arc<dyn MobilePortableBackupCustody>>,
 }
 
 struct MobileWorkers {
@@ -1373,6 +1523,8 @@ struct MobileIdentityRuntime {
     metadata: crate::services::identity::PublicIdentityMetadata,
     metadata_path: PathBuf,
     custody: styrene_ipc::types::IdentityCustodyInfo,
+    backup_custody: Option<Arc<dyn crate::services::identity::IdentityBackupCustody>>,
+    portable_backup_custody: Option<Arc<dyn MobilePortableBackupCustody>>,
 }
 
 #[cfg(test)]
@@ -1483,6 +1635,7 @@ async fn compose_mobile_node(
         identity_runtime.metadata_path,
         identity_runtime.metadata,
         identity_runtime.custody,
+        identity_runtime.backup_custody,
     );
     if let Some(hub_hash) = &hub_delivery_hash {
         app_context.messaging().set_propagation_hub(hub_hash.clone(), app_context.fleet_arc());
@@ -1577,8 +1730,12 @@ async fn compose_mobile_node(
             app_context.messaging_arc(),
             app_context.transport().subscribe_lifecycle(),
             app_context.transport().is_connected(),
+            app_context.events_arc(),
         )
     });
+    if let Some(worker) = &standard_propagation_sync {
+        app_context.publish_standard_propagation_sync(worker.observation());
+    }
     let mut workers = MobileWorkers {
         inbound,
         announce,
@@ -1684,6 +1841,7 @@ async fn compose_mobile_node(
         platform_service: MobilePlatformService::new(rnode_channel_enabled),
         active_conversation,
         diagnostics,
+        portable_backup_custody: identity_runtime.portable_backup_custody,
     };
     node.record_diagnostic(
         styrene_ipc::types::MobileDiagnosticSource::Runtime,
@@ -1909,6 +2067,36 @@ impl MobileNode {
         })
     }
 
+    /// Inspect configured identity custody without creating a new identity.
+    pub async fn identity_presence(
+        config: &MobileConfig,
+    ) -> Result<MobileIdentityPresence, MobileIdentityRecoveryError> {
+        identity_presence(
+            config.identity_backend,
+            &PlatformPaths::new(config.config_dir.clone(), config.data_dir.clone()),
+        )
+        .await
+    }
+
+    /// Restore passphrase-protected identity custody before normal boot can create one.
+    pub async fn restore_identity_before_boot(
+        config: &MobileConfig,
+        backup: styrene_ipc::types::IdentityBackupImport,
+        protection: &[u8],
+    ) -> Result<styrene_ipc::types::IdentityRestoreOutcome, MobileIdentityRecoveryError> {
+        restore_identity_before_boot_inner(config, backup, protection, None).await
+    }
+
+    /// Restore before boot when the active encrypted-file backend uses host-owned key material.
+    pub async fn restore_identity_before_boot_with_encrypted_file_key(
+        config: &MobileConfig,
+        backup: styrene_ipc::types::IdentityBackupImport,
+        protection: &[u8],
+        key_material: &[u8],
+    ) -> Result<styrene_ipc::types::IdentityRestoreOutcome, MobileIdentityRecoveryError> {
+        restore_identity_before_boot_inner(config, backup, protection, Some(key_material)).await
+    }
+
     /// Boot the daemon in-process for mobile use.
     ///
     /// Creates identity if needed, opens SQLite, starts transport.
@@ -1953,9 +2141,12 @@ impl MobileNode {
         }
 
         // Load or create identity via the configured backend.
-        let identity =
+        let backup_custody =
+            identity_backup_custody(config.identity_backend, &paths, encrypted_file_key_material);
+        let loaded_identity =
             load_or_create_identity(&config.identity_backend, &paths, encrypted_file_key_material)
                 .await?;
+        let LoadedMobileIdentity { identity, portable_backup_custody } = loaded_identity;
         let custody = active_custody(config.identity_backend);
 
         // Open database
@@ -2091,7 +2282,13 @@ impl MobileNode {
                 identity,
                 MobileStores { messages: store.clone(), nodes: node_store },
                 transport_runtime,
-                MobileIdentityRuntime { metadata, metadata_path, custody },
+                MobileIdentityRuntime {
+                    metadata,
+                    metadata_path,
+                    custody,
+                    backup_custody,
+                    portable_backup_custody,
+                },
                 config.hub_delivery_hash,
                 tcp_endpoint,
             )
@@ -2419,12 +2616,14 @@ impl MobileNode {
     pub async fn propagation_snapshot(
         &self,
     ) -> Result<MobilePropagationSnapshot, MobilePropagationFailure> {
-        let sync_policy = self.workers.lock().ok().and_then(|workers| {
+        let sync_worker = self.workers.lock().ok().and_then(|workers| {
             workers
                 .as_ref()
                 .and_then(|workers| workers.standard_propagation_sync.as_ref())
-                .map(crate::workers::standard_propagation::StandardPropagationSyncWorker::policy)
+                .map(|worker| (worker.policy(), worker.telemetry()))
         });
+        let sync_policy = sync_worker.map(|(policy, _)| policy);
+        let sync_telemetry = sync_worker.map(|(_, telemetry)| telemetry).unwrap_or_default();
         let observed_at = rns_core::transport::time::now_epoch_secs_i64();
         let runtime_policy =
             crate::standard_propagation::StandardPropagationRuntimeObservation::client().policy();
@@ -2484,7 +2683,7 @@ impl MobileNode {
             .iter()
             .filter(|attempt| attempt.direction == "sync")
             .max_by_key(|attempt| (attempt.updated_at, attempt.started_at));
-        let sync_state = if in_flight.is_some() {
+        let sync_state = if sync_telemetry.active.is_some() || in_flight.is_some() {
             MobilePropagationSyncState::InProgress
         } else {
             match latest_inbound.map(|attempt| attempt.state.as_str()) {
@@ -2538,6 +2737,34 @@ impl MobileNode {
             automatic_sync_enabled: sync_policy.is_some_and(|policy| policy.automatic),
             automatic_sync_cooldown_secs: sync_policy.map_or(0, |policy| policy.cooldown.as_secs()),
             sync_deadline_secs: sync_policy.map_or(0, |policy| policy.deadline.as_secs()),
+            trigger_capabilities: if sync_policy.is_some() {
+                vec![
+                    MobilePropagationTriggerSource::InitialConnection,
+                    MobilePropagationTriggerSource::Reconnect,
+                    MobilePropagationTriggerSource::ForegroundOpportunity,
+                    MobilePropagationTriggerSource::GrantedBackgroundOpportunity,
+                    MobilePropagationTriggerSource::Manual,
+                ]
+            } else {
+                vec![MobilePropagationTriggerSource::Manual]
+            },
+            active_trigger: sync_telemetry
+                .active
+                .map(|active| mobile_propagation_trigger_source(active.trigger)),
+            active_sync_started_at: sync_telemetry.active.map(|active| active.started_at),
+            last_synchronization: sync_telemetry.last_completed.map(|completed| {
+                MobilePropagationSynchronization {
+                    trigger: mobile_propagation_trigger_source(completed.trigger),
+                    started_at: completed.started_at,
+                    finished_at: completed.finished_at,
+                    outcome: mobile_propagation_terminal_outcome(completed.outcome),
+                    new_messages: u32::try_from(completed.new_messages).unwrap_or(u32::MAX),
+                }
+            }),
+            cooldown_remaining_secs: sync_telemetry
+                .cooldown_remaining
+                .as_secs()
+                .saturating_add(u64::from(sync_telemetry.cooldown_remaining.subsec_nanos() > 0)),
         })
     }
 
@@ -2690,6 +2917,18 @@ impl MobileNode {
                 )
             })
             .is_some_and(|trigger| trigger.foreground_opportunity())
+    }
+
+    pub fn propagation_background_opportunity(&self) -> bool {
+        self.workers
+            .lock()
+            .ok()
+            .and_then(|workers| {
+                workers.as_ref().and_then(|workers| workers.standard_propagation_sync.as_ref()).map(
+                    crate::workers::standard_propagation::StandardPropagationSyncWorker::trigger,
+                )
+            })
+            .is_some_and(|trigger| trigger.background_opportunity())
     }
 
     pub async fn set_draft(
@@ -2976,6 +3215,19 @@ impl MobileNode {
                 .await?;
         }
         Ok(fragment_rnode_writes(attempt.info, output.writes))
+    }
+
+    /// Return read-only RNode facts only for the current byte-attempt generation.
+    pub async fn rnode_metadata(
+        &self,
+        attempt: MobileRNodeAttempt,
+    ) -> Result<Option<rns_core::transport::iface::rnode::RNodeMetadata>, String> {
+        let rnode = self.rnode.as_ref().ok_or("RNode channel is not configured")?;
+        let attempts = rnode.attempts.lock().await;
+        if attempts.active != Some(attempt) {
+            return Ok(None);
+        }
+        Ok(Some(rnode.protocol.lock().await.metadata().clone()))
     }
 
     /// Poll and KISS-frame one outbound RNS packet as ordered bounded writes.
@@ -3436,6 +3688,39 @@ impl MobileNode {
         &self.paths
     }
 
+    pub async fn identity_backup_metadata(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupMetadata, styrene_ipc::IpcError> {
+        self.facade.query_identity_backup_metadata().await
+    }
+
+    pub async fn export_identity_backup(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupExport, styrene_ipc::IpcError> {
+        self.facade.export_identity_backup().await
+    }
+
+    /// Export the active identity as a portable Argon2id passphrase-protected artifact.
+    pub async fn export_portable_identity_backup(
+        &self,
+        protection: &[u8],
+    ) -> Result<styrene_ipc::types::IdentityBackupExport, MobileIdentityRecoveryError> {
+        validate_identity_protection(protection)?;
+        let protection = zeroize::Zeroizing::new(protection.to_vec());
+        self.portable_backup_custody
+            .as_ref()
+            .ok_or(MobileIdentityRecoveryError::UnsupportedBackend)?
+            .export(protection)
+            .await
+    }
+
+    pub async fn restore_identity_backup(
+        &self,
+        backup: styrene_ipc::types::IdentityBackupImport,
+    ) -> Result<styrene_ipc::types::IdentityRestoreOutcome, styrene_ipc::IpcError> {
+        self.facade.restore_identity_backup(backup).await
+    }
+
     /// Access the full Daemon trait for advanced operations.
     pub fn daemon(&self) -> &dyn Daemon {
         self.facade.as_ref()
@@ -3453,6 +3738,502 @@ pub struct ConversationSummary {
 
 // ── Identity Storage Backends ───────────────────────────────────────────────
 
+#[cfg(feature = "mobile-identity")]
+struct EncryptedFilePortableBackupCustody {
+    path: PathBuf,
+    key_material: zeroize::Zeroizing<Vec<u8>>,
+    expected_identity_hash: String,
+}
+
+#[cfg(feature = "mobile-identity")]
+#[async_trait::async_trait]
+impl MobilePortableBackupCustody for EncryptedFilePortableBackupCustody {
+    async fn export(
+        &self,
+        protection: zeroize::Zeroizing<Vec<u8>>,
+    ) -> Result<styrene_ipc::types::IdentityBackupExport, MobileIdentityRecoveryError> {
+        let path = self.path.clone();
+        let key_material = self.key_material.clone();
+        let expected_identity_hash = self.expected_identity_hash.clone();
+        tokio::task::spawn_blocking(move || {
+            let signer = styrene_identity::file_signer::FileSigner::with_static_passphrase(
+                path,
+                &key_material,
+            );
+            let root = signer
+                .load(&key_material)
+                .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+            portable_backup_export(&root, &protection, &expected_identity_hash)
+        })
+        .await
+        .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?
+    }
+}
+
+#[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
+struct KeychainPortableBackupCustody {
+    expected_identity_hash: String,
+}
+
+#[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
+#[async_trait::async_trait]
+impl MobilePortableBackupCustody for KeychainPortableBackupCustody {
+    async fn export(
+        &self,
+        protection: zeroize::Zeroizing<Vec<u8>>,
+    ) -> Result<styrene_ipc::types::IdentityBackupExport, MobileIdentityRecoveryError> {
+        use styrene_identity::IdentitySigner;
+
+        let expected_identity_hash = self.expected_identity_hash.clone();
+        let root = styrene_identity::keychain_signer::KeychainSigner::default()
+            .root_secret()
+            .await
+            .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+        tokio::task::spawn_blocking(move || {
+            portable_backup_export(&root, &protection, &expected_identity_hash)
+        })
+        .await
+        .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?
+    }
+}
+
+#[cfg(all(feature = "mobile-android-keystore", target_os = "android"))]
+struct AndroidPortableBackupCustody {
+    expected_identity_hash: String,
+}
+
+#[cfg(all(feature = "mobile-android-keystore", target_os = "android"))]
+#[async_trait::async_trait]
+impl MobilePortableBackupCustody for AndroidPortableBackupCustody {
+    async fn export(
+        &self,
+        protection: zeroize::Zeroizing<Vec<u8>>,
+    ) -> Result<styrene_ipc::types::IdentityBackupExport, MobileIdentityRecoveryError> {
+        let expected_identity_hash = self.expected_identity_hash.clone();
+        let signer = styrene_identity::android_keystore_signer::AndroidKeystoreSigner::new(
+            styrene_identity::android_keystore_signer::SERVICE,
+            styrene_identity::android_keystore_signer::ACCOUNT,
+        )
+        .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+        let root = signer
+            .load_root_secret()
+            .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+        tokio::task::spawn_blocking(move || {
+            portable_backup_export(&root, &protection, &expected_identity_hash)
+        })
+        .await
+        .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?
+    }
+}
+
+#[cfg(any(
+    feature = "mobile-identity",
+    all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")),
+    all(feature = "mobile-android-keystore", target_os = "android")
+))]
+fn portable_backup_export(
+    root: &styrene_identity::signer::RootSecret,
+    protection: &[u8],
+    expected_identity_hash: &str,
+) -> Result<styrene_ipc::types::IdentityBackupExport, MobileIdentityRecoveryError> {
+    let identity = private_identity_from_root(root)
+        .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+    if hex::encode(identity.address_hash().as_slice()) != expected_identity_hash {
+        return Err(MobileIdentityRecoveryError::IdentityConflict);
+    }
+    let backup =
+        styrene_identity::vault::EncryptedIdentityBackup::protect_root_secret(root, protection)
+            .map_err(map_mobile_recovery_vault_error)?;
+    let mut exported = styrene_ipc::types::IdentityBackupExport::default();
+    exported.metadata = identity_backup_metadata(backup.metadata());
+    exported.encrypted_bytes = backup.encrypted_bytes().to_vec();
+    Ok(exported)
+}
+
+fn validate_identity_protection(protection: &[u8]) -> Result<(), MobileIdentityRecoveryError> {
+    if protection.is_empty() {
+        return Err(MobileIdentityRecoveryError::ProtectionRequired);
+    }
+    if protection.len() > MAX_MOBILE_IDENTITY_PROTECTION_BYTES {
+        return Err(MobileIdentityRecoveryError::ProtectionTooLarge);
+    }
+    Ok(())
+}
+
+async fn identity_presence(
+    backend: IdentityBackend,
+    paths: &PlatformPaths,
+) -> Result<MobileIdentityPresence, MobileIdentityRecoveryError> {
+    match backend {
+        IdentityBackend::Keychain => {
+            #[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
+            {
+                let signer = styrene_identity::keychain_signer::KeychainSigner::default();
+                signer
+                    .presence()
+                    .map(|present| {
+                        if present {
+                            MobileIdentityPresence::Present
+                        } else {
+                            MobileIdentityPresence::Absent
+                        }
+                    })
+                    .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)
+            }
+            #[cfg(not(all(
+                feature = "mobile-keychain",
+                any(target_os = "macos", target_os = "ios")
+            )))]
+            Err(MobileIdentityRecoveryError::CustodyUnavailable)
+        }
+        IdentityBackend::AndroidKeystore => {
+            #[cfg(all(feature = "mobile-android-keystore", target_os = "android"))]
+            {
+                let signer = styrene_identity::android_keystore_signer::AndroidKeystoreSigner::new(
+                    styrene_identity::android_keystore_signer::SERVICE,
+                    styrene_identity::android_keystore_signer::ACCOUNT,
+                )
+                .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+                signer
+                    .exists()
+                    .map(|exists| {
+                        if exists {
+                            MobileIdentityPresence::Present
+                        } else {
+                            MobileIdentityPresence::Absent
+                        }
+                    })
+                    .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)
+            }
+            #[cfg(not(all(feature = "mobile-android-keystore", target_os = "android")))]
+            Err(MobileIdentityRecoveryError::CustodyUnavailable)
+        }
+        IdentityBackend::EncryptedFile | IdentityBackend::PlaintextFile => {
+            Ok(if paths.identity_path().exists() {
+                MobileIdentityPresence::Present
+            } else {
+                MobileIdentityPresence::Absent
+            })
+        }
+    }
+}
+
+async fn restore_identity_before_boot_inner(
+    config: &MobileConfig,
+    backup: styrene_ipc::types::IdentityBackupImport,
+    protection: &[u8],
+    _encrypted_file_key_material: Option<&[u8]>,
+) -> Result<styrene_ipc::types::IdentityRestoreOutcome, MobileIdentityRecoveryError> {
+    validate_identity_protection(protection)?;
+    if backup.encrypted_bytes.len() > MAX_MOBILE_IDENTITY_BACKUP_BYTES {
+        return Err(MobileIdentityRecoveryError::ArtifactTooLarge);
+    }
+    #[cfg(any(
+        feature = "mobile-identity",
+        all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")),
+        all(feature = "mobile-android-keystore", target_os = "android")
+    ))]
+    let recovered = {
+        let protection = zeroize::Zeroizing::new(protection.to_vec());
+        tokio::task::spawn_blocking(move || {
+            let backup = styrene_identity::vault::EncryptedIdentityBackup::from_encrypted_bytes(
+                backup.encrypted_bytes,
+            )
+            .map_err(map_mobile_recovery_vault_error)?;
+            backup.decrypt_root_secret(&protection).map_err(map_mobile_recovery_vault_error)
+        })
+        .await
+        .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)??
+    };
+    #[cfg(not(any(
+        feature = "mobile-identity",
+        all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")),
+        all(feature = "mobile-android-keystore", target_os = "android")
+    )))]
+    {
+        let _ = (config, backup, _encrypted_file_key_material);
+        Err(MobileIdentityRecoveryError::UnsupportedBackend)
+    }
+
+    #[cfg(any(
+        feature = "mobile-identity",
+        all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")),
+        all(feature = "mobile-android-keystore", target_os = "android")
+    ))]
+    {
+        match config.identity_backend {
+            IdentityBackend::Keychain => {
+                #[cfg(all(
+                    feature = "mobile-keychain",
+                    any(target_os = "macos", target_os = "ios")
+                ))]
+                {
+                    use styrene_identity::IdentitySigner;
+
+                    let signer = styrene_identity::keychain_signer::KeychainSigner::default();
+                    let installed = {
+                        let paths =
+                            PlatformPaths::new(config.config_dir.clone(), config.data_dir.clone());
+                        let _guard = lock_mobile_identity_custody(&paths)
+                            .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+                        if signer
+                            .presence()
+                            .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?
+                        {
+                            false
+                        } else {
+                            signer
+                                .restore_root_secret(&recovered)
+                                .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+                            true
+                        }
+                    };
+                    if installed {
+                        Ok(styrene_ipc::types::IdentityRestoreOutcome::Restored)
+                    } else {
+                        let existing = signer
+                            .root_secret()
+                            .await
+                            .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+                        same_recovered_identity(&existing, &recovered)
+                    }
+                }
+                #[cfg(not(all(
+                    feature = "mobile-keychain",
+                    any(target_os = "macos", target_os = "ios")
+                )))]
+                Err(MobileIdentityRecoveryError::CustodyUnavailable)
+            }
+            IdentityBackend::AndroidKeystore => {
+                #[cfg(all(feature = "mobile-android-keystore", target_os = "android"))]
+                {
+                    use styrene_identity::IdentitySigner;
+
+                    let signer =
+                        styrene_identity::android_keystore_signer::AndroidKeystoreSigner::new(
+                            styrene_identity::android_keystore_signer::SERVICE,
+                            styrene_identity::android_keystore_signer::ACCOUNT,
+                        )
+                        .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+                    let installed = {
+                        let paths =
+                            PlatformPaths::new(config.config_dir.clone(), config.data_dir.clone());
+                        let _guard = lock_mobile_identity_custody(&paths)
+                            .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+                        if signer
+                            .exists()
+                            .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?
+                        {
+                            false
+                        } else {
+                            signer
+                                .restore_root_secret(&recovered)
+                                .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+                            true
+                        }
+                    };
+                    if installed {
+                        Ok(styrene_ipc::types::IdentityRestoreOutcome::Restored)
+                    } else {
+                        let existing = signer
+                            .root_secret()
+                            .await
+                            .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+                        same_recovered_identity(&existing, &recovered)
+                    }
+                }
+                #[cfg(not(all(feature = "mobile-android-keystore", target_os = "android")))]
+                Err(MobileIdentityRecoveryError::CustodyUnavailable)
+            }
+            IdentityBackend::EncryptedFile => {
+                #[cfg(feature = "mobile-identity")]
+                {
+                    let key_material = _encrypted_file_key_material
+                        .filter(|material| !material.is_empty())
+                        .ok_or(MobileIdentityRecoveryError::CustodyUnavailable)?;
+                    let paths =
+                        PlatformPaths::new(config.config_dir.clone(), config.data_dir.clone());
+                    let path = paths.identity_path();
+                    let key_material = zeroize::Zeroizing::new(key_material.to_vec());
+                    tokio::task::spawn_blocking(move || {
+                        let signer =
+                            styrene_identity::file_signer::FileSigner::with_static_passphrase(
+                                path,
+                                &key_material,
+                            );
+                        if signer.exists() {
+                            let existing = signer
+                                .load(&key_material)
+                                .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?;
+                            return same_recovered_identity(&existing, &recovered);
+                        }
+                        signer.restore_root_secret(&recovered).map_err(|error| match error {
+                            styrene_identity::signer::SignerError::Io(io)
+                                if io.kind() == std::io::ErrorKind::AlreadyExists =>
+                            {
+                                MobileIdentityRecoveryError::IdentityConflict
+                            }
+                            _ => MobileIdentityRecoveryError::CustodyUnavailable,
+                        })?;
+                        Ok(styrene_ipc::types::IdentityRestoreOutcome::Restored)
+                    })
+                    .await
+                    .map_err(|_| MobileIdentityRecoveryError::CustodyUnavailable)?
+                }
+                #[cfg(not(feature = "mobile-identity"))]
+                Err(MobileIdentityRecoveryError::CustodyUnavailable)
+            }
+            IdentityBackend::PlaintextFile => Err(MobileIdentityRecoveryError::UnsupportedBackend),
+        }
+    }
+}
+
+#[cfg(any(
+    feature = "mobile-identity",
+    all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")),
+    all(feature = "mobile-android-keystore", target_os = "android")
+))]
+fn same_recovered_identity(
+    existing: &styrene_identity::signer::RootSecret,
+    recovered: &styrene_identity::signer::RootSecret,
+) -> Result<styrene_ipc::types::IdentityRestoreOutcome, MobileIdentityRecoveryError> {
+    if bool::from(existing.as_bytes().ct_eq(recovered.as_bytes())) {
+        Ok(styrene_ipc::types::IdentityRestoreOutcome::AlreadyPresent)
+    } else {
+        Err(MobileIdentityRecoveryError::IdentityConflict)
+    }
+}
+
+#[cfg(any(
+    feature = "mobile-identity",
+    all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")),
+    all(feature = "mobile-android-keystore", target_os = "android")
+))]
+fn map_mobile_recovery_vault_error(
+    error: styrene_identity::vault::VaultError,
+) -> MobileIdentityRecoveryError {
+    use styrene_identity::vault::VaultError;
+
+    match error {
+        VaultError::ProtectionRequired => MobileIdentityRecoveryError::ProtectionRequired,
+        VaultError::InvalidBackup => MobileIdentityRecoveryError::InvalidBackup,
+        VaultError::BackupAuthenticationFailed => MobileIdentityRecoveryError::AuthenticationFailed,
+        VaultError::IdentityConflict => MobileIdentityRecoveryError::IdentityConflict,
+        _ => MobileIdentityRecoveryError::CustodyUnavailable,
+    }
+}
+
+#[cfg(feature = "mobile-identity")]
+struct EncryptedFileBackupCustody {
+    vault: styrene_identity::vault::IdentityVault,
+}
+
+#[cfg(feature = "mobile-identity")]
+impl crate::services::identity::IdentityBackupCustody for EncryptedFileBackupCustody {
+    fn metadata(
+        &self,
+    ) -> Result<styrene_ipc::types::IdentityBackupMetadata, styrene_ipc::IpcError> {
+        self.vault
+            .encrypted_backup_metadata()
+            .map(identity_backup_metadata)
+            .map_err(identity_backup_error)
+    }
+
+    fn export(&self) -> Result<styrene_ipc::types::IdentityBackupExport, styrene_ipc::IpcError> {
+        let backup = self.vault.export_encrypted_backup().map_err(identity_backup_error)?;
+        let mut exported = styrene_ipc::types::IdentityBackupExport::default();
+        exported.metadata = identity_backup_metadata(backup.metadata());
+        exported.encrypted_bytes = backup.encrypted_bytes().to_vec();
+        Ok(exported)
+    }
+
+    fn restore(
+        &self,
+        backup: styrene_ipc::types::IdentityBackupImport,
+    ) -> Result<styrene_ipc::types::IdentityRestoreOutcome, styrene_ipc::IpcError> {
+        use styrene_identity::vault::IdentityRestoreOutcome;
+
+        let backup = styrene_identity::vault::EncryptedIdentityBackup::from_encrypted_bytes(
+            backup.encrypted_bytes,
+        )
+        .map_err(identity_backup_error)?;
+        match self.vault.restore_encrypted_backup(&backup).map_err(identity_backup_error)? {
+            IdentityRestoreOutcome::Restored => {
+                Ok(styrene_ipc::types::IdentityRestoreOutcome::Restored)
+            }
+            IdentityRestoreOutcome::AlreadyPresent => {
+                Ok(styrene_ipc::types::IdentityRestoreOutcome::AlreadyPresent)
+            }
+        }
+    }
+}
+
+fn identity_backup_custody(
+    backend: IdentityBackend,
+    paths: &PlatformPaths,
+    key_material: Option<&[u8]>,
+) -> Option<Arc<dyn crate::services::identity::IdentityBackupCustody>> {
+    #[cfg(feature = "mobile-identity")]
+    if backend == IdentityBackend::EncryptedFile {
+        let key_material = key_material.filter(|material| !material.is_empty())?;
+        return Some(Arc::new(EncryptedFileBackupCustody {
+            vault: styrene_identity::vault::IdentityVault::new(
+                paths.identity_path(),
+                Box::new(styrene_identity::file_signer::StaticPassphraseProvider::new(
+                    key_material,
+                )),
+            ),
+        }));
+    }
+    let _ = (backend, paths, key_material);
+    None
+}
+
+#[cfg(any(
+    feature = "mobile-identity",
+    all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")),
+    all(feature = "mobile-android-keystore", target_os = "android")
+))]
+fn identity_backup_metadata(
+    metadata: styrene_identity::vault::EncryptedIdentityBackupMetadata,
+) -> styrene_ipc::types::IdentityBackupMetadata {
+    use styrene_identity::vault::EncryptedIdentityBackupFormat;
+
+    let mut projected = styrene_ipc::types::IdentityBackupMetadata::default();
+    projected.contract_version = metadata.contract_version;
+    projected.format = match metadata.format {
+        EncryptedIdentityBackupFormat::LegacyV0 => {
+            styrene_ipc::types::IdentityBackupFormat::LegacyV0
+        }
+        EncryptedIdentityBackupFormat::StidV1 => styrene_ipc::types::IdentityBackupFormat::StidV1,
+    };
+    projected.encrypted_size = metadata.encrypted_size;
+    projected
+}
+
+#[cfg(feature = "mobile-identity")]
+fn identity_backup_error(error: styrene_identity::vault::VaultError) -> styrene_ipc::IpcError {
+    use styrene_identity::vault::VaultError;
+
+    match error {
+        VaultError::InvalidBackup => styrene_ipc::IpcError::invalid_request(
+            "invalid or unsupported encrypted identity backup",
+        ),
+        VaultError::BackupAuthenticationFailed => styrene_ipc::IpcError::invalid_request(
+            "encrypted identity backup authentication failed",
+        ),
+        VaultError::IdentityConflict => styrene_ipc::IpcError::Conflict {
+            message: "identity restore conflicts with existing custody".into(),
+        },
+        VaultError::CustodyUnavailable => styrene_ipc::IpcError::Unavailable {
+            reason: "identity backup custody unavailable".into(),
+        },
+        _ => styrene_ipc::IpcError::Unavailable {
+            reason: "identity backup custody unavailable".into(),
+        },
+    }
+}
+
 /// Load or create an RNS identity using the configured backend.
 ///
 /// On first launch, creates a new identity seamlessly — no passphrase prompts
@@ -3461,18 +4242,21 @@ async fn load_or_create_identity(
     backend: &IdentityBackend,
     paths: &PlatformPaths,
     encrypted_file_key_material: Option<&[u8]>,
-) -> anyhow::Result<PrivateIdentity> {
+) -> anyhow::Result<LoadedMobileIdentity> {
     match backend {
         IdentityBackend::Keychain => load_or_create_keychain(paths).await,
-        IdentityBackend::AndroidKeystore => load_or_create_android_keystore().await,
+        IdentityBackend::AndroidKeystore => load_or_create_android_keystore(paths).await,
         IdentityBackend::EncryptedFile => {
             load_or_create_encrypted_file(paths, encrypted_file_key_material).await
         }
-        IdentityBackend::PlaintextFile => load_or_create_plaintext_file(paths),
+        IdentityBackend::PlaintextFile => load_or_create_plaintext_file(paths)
+            .map(|identity| LoadedMobileIdentity { identity, portable_backup_custody: None }),
     }
 }
 
-async fn load_or_create_android_keystore() -> anyhow::Result<PrivateIdentity> {
+async fn load_or_create_android_keystore(
+    _paths: &PlatformPaths,
+) -> anyhow::Result<LoadedMobileIdentity> {
     #[cfg(all(feature = "mobile-android-keystore", target_os = "android"))]
     {
         use styrene_identity::android_keystore_signer::AndroidKeystoreSigner;
@@ -3481,8 +4265,19 @@ async fn load_or_create_android_keystore() -> anyhow::Result<PrivateIdentity> {
             styrene_identity::android_keystore_signer::SERVICE,
             styrene_identity::android_keystore_signer::ACCOUNT,
         )?;
-        let root = signer.load_or_create_root_secret()?;
-        private_identity_from_root(&root)
+        let root = {
+            let _guard = lock_mobile_identity_custody(_paths)
+                .map_err(|_| anyhow::anyhow!("Android Keystore custody lock unavailable"))?;
+            signer.load_or_create_root_secret()?
+        };
+        let identity = private_identity_from_root(&root)?;
+        let expected_identity_hash = hex::encode(identity.address_hash().as_slice());
+        Ok(LoadedMobileIdentity {
+            identity,
+            portable_backup_custody: Some(Arc::new(AndroidPortableBackupCustody {
+                expected_identity_hash,
+            })),
+        })
     }
 
     #[cfg(not(all(feature = "mobile-android-keystore", target_os = "android")))]
@@ -3490,6 +4285,7 @@ async fn load_or_create_android_keystore() -> anyhow::Result<PrivateIdentity> {
 }
 
 #[cfg(any(
+    feature = "mobile-identity",
     all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")),
     all(feature = "mobile-android-keystore", target_os = "android")
 ))]
@@ -3512,7 +4308,7 @@ fn private_identity_from_root(
 ///
 /// On iOS: the device's first passcode unlock after restart gates access.
 /// On macOS: the login Keychain provides the equivalent device protection.
-async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<PrivateIdentity> {
+async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<LoadedMobileIdentity> {
     #[cfg(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios")))]
     {
         use styrene_identity::keychain_signer::{
@@ -3521,36 +4317,47 @@ async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<Priva
         use styrene_identity::{IdentitySigner, SignerError};
 
         let signer = KeychainSigner::default();
-        let root = match signer.root_secret().await {
-            Ok(root) => root,
-            Err(SignerError::KeyNotFound(_)) => {
-                let legacy = KeychainSigner::new(SERVICE, LEGACY_BIOMETRIC_ACCOUNT);
-                match legacy.root_secret().await {
-                    Ok(root) => {
-                        signer
-                            .create_from_root_secret(&root)
-                            .map_err(|e| anyhow::anyhow!("keychain migration: {e}"))?;
-                        crate::daemon_diagnostic!(
-                            "[mobile] migrated identity to first-unlock keychain policy"
-                        );
-                        root
+        let root = {
+            let _guard = lock_mobile_identity_custody(_paths)
+                .map_err(|_| anyhow::anyhow!("Keychain custody lock unavailable"))?;
+            match signer.root_secret().await {
+                Ok(root) => root,
+                Err(SignerError::KeyNotFound(_)) => {
+                    let legacy = KeychainSigner::new(SERVICE, LEGACY_BIOMETRIC_ACCOUNT);
+                    match legacy.root_secret().await {
+                        Ok(root) => {
+                            signer
+                                .create_from_root_secret(&root)
+                                .map_err(|e| anyhow::anyhow!("keychain migration: {e}"))?;
+                            crate::daemon_diagnostic!(
+                                "[mobile] migrated identity to first-unlock keychain policy"
+                            );
+                            root
+                        }
+                        Err(SignerError::KeyNotFound(_)) => {
+                            let root = signer
+                                .create_root_secret()
+                                .map_err(|e| anyhow::anyhow!("keychain create: {e}"))?;
+                            crate::daemon_diagnostic!(
+                                "[mobile] created new identity in platform keychain"
+                            );
+                            root
+                        }
+                        Err(e) => return Err(anyhow::anyhow!("legacy keychain access: {e}")),
                     }
-                    Err(SignerError::KeyNotFound(_)) => {
-                        let root = signer
-                            .create_root_secret()
-                            .map_err(|e| anyhow::anyhow!("keychain create: {e}"))?;
-                        crate::daemon_diagnostic!(
-                            "[mobile] created new identity in platform keychain"
-                        );
-                        root
-                    }
-                    Err(e) => return Err(anyhow::anyhow!("legacy keychain access: {e}")),
                 }
+                Err(e) => return Err(anyhow::anyhow!("keychain access: {e}")),
             }
-            Err(e) => return Err(anyhow::anyhow!("keychain access: {e}")),
         };
 
-        private_identity_from_root(&root)
+        let identity = private_identity_from_root(&root)?;
+        let expected_identity_hash = hex::encode(identity.address_hash().as_slice());
+        Ok(LoadedMobileIdentity {
+            identity,
+            portable_backup_custody: Some(Arc::new(KeychainPortableBackupCustody {
+                expected_identity_hash,
+            })),
+        })
     }
 
     #[cfg(not(all(feature = "mobile-keychain", any(target_os = "macos", target_os = "ios"))))]
@@ -3564,7 +4371,7 @@ async fn load_or_create_keychain(_paths: &PlatformPaths) -> anyhow::Result<Priva
 async fn load_or_create_encrypted_file(
     paths: &PlatformPaths,
     key_material: Option<&[u8]>,
-) -> anyhow::Result<PrivateIdentity> {
+) -> anyhow::Result<LoadedMobileIdentity> {
     let key_material = key_material
         .filter(|material| !material.is_empty())
         .ok_or(MobileCustodyError::KeyMaterialRequired)?;
@@ -3607,8 +4414,17 @@ async fn load_or_create_encrypted_file(
         key_bytes[..32].copy_from_slice(&encryption_seed);
         key_bytes[32..].copy_from_slice(&signing_seed);
 
-        PrivateIdentity::from_private_key_bytes(&key_bytes)
-            .map_err(|e| anyhow::anyhow!("key derivation: {e:?}"))
+        let identity = PrivateIdentity::from_private_key_bytes(&key_bytes)
+            .map_err(|e| anyhow::anyhow!("key derivation: {e:?}"))?;
+        let expected_identity_hash = hex::encode(identity.address_hash().as_slice());
+        Ok(LoadedMobileIdentity {
+            identity,
+            portable_backup_custody: Some(Arc::new(EncryptedFilePortableBackupCustody {
+                path: identity_path,
+                key_material: zeroize::Zeroizing::new(key_material.to_vec()),
+                expected_identity_hash,
+            })),
+        })
     }
 
     #[cfg(not(feature = "mobile-identity"))]
@@ -3913,11 +4729,253 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(first.address_hash(), second.address_hash());
+        assert_eq!(first.identity.address_hash(), second.identity.address_hash());
         assert_ne!(std::fs::read(paths.identity_path()).unwrap().len(), 64);
+    }
+
+    #[cfg(feature = "mobile-identity")]
+    #[tokio::test]
+    async fn encrypted_backup_mobile_operations_survive_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = MobileConfig {
+            config_dir: temp.path().join("config"),
+            data_dir: temp.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: Some("Backup Test".into()),
+            identity_backend: IdentityBackend::EncryptedFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: false,
+        };
+
+        let first =
+            MobileNode::boot_with_encrypted_file_key(config.clone(), b"host-owned-backup-key")
+                .await
+                .unwrap();
+        let exported = first.export_identity_backup().await.unwrap();
+        assert_eq!(first.identity_backup_metadata().await.unwrap(), exported.metadata);
+        let mut imported = styrene_ipc::types::IdentityBackupImport::default();
+        imported.encrypted_bytes = exported.encrypted_bytes.clone();
+        assert_eq!(
+            first.restore_identity_backup(imported).await.unwrap(),
+            styrene_ipc::types::IdentityRestoreOutcome::AlreadyPresent
+        );
+        first.shutdown().await.unwrap();
+        drop(first);
+
+        let restarted = MobileNode::boot_with_encrypted_file_key(config, b"host-owned-backup-key")
+            .await
+            .unwrap();
+        let after_restart = restarted.export_identity_backup().await.unwrap();
+        assert_eq!(after_restart.metadata, exported.metadata);
+        assert_eq!(after_restart.encrypted_bytes, exported.encrypted_bytes);
+        restarted.shutdown().await.unwrap();
+    }
+
+    #[cfg(feature = "mobile-identity")]
+    #[tokio::test]
+    async fn portable_backup_restores_before_create_under_a_different_host_key() {
+        let source_temp = tempfile::tempdir().unwrap();
+        let target_temp = tempfile::tempdir().unwrap();
+        let config_for = |root: &std::path::Path| MobileConfig {
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: None,
+            identity_backend: IdentityBackend::EncryptedFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: false,
+        };
+        let source_config = config_for(source_temp.path());
+        let target_config = config_for(target_temp.path());
+        let source =
+            MobileNode::boot_with_encrypted_file_key(source_config, b"source-device-host-key")
+                .await
+                .unwrap();
+        let source_identity = source.app_context.identity().identity_hash().to_owned();
+        let exported = source
+            .export_portable_identity_backup(b"user-entered recovery passphrase")
+            .await
+            .unwrap();
+        let exported_bytes = exported.encrypted_bytes.clone();
+        source.shutdown().await.unwrap();
+
+        assert_eq!(
+            MobileNode::identity_presence(&target_config).await.unwrap(),
+            MobileIdentityPresence::Absent
+        );
+        let mut imported = styrene_ipc::types::IdentityBackupImport::default();
+        imported.encrypted_bytes = exported.encrypted_bytes;
+        assert_eq!(
+            MobileNode::restore_identity_before_boot_with_encrypted_file_key(
+                &target_config,
+                imported,
+                b"user-entered recovery passphrase",
+                b"different-target-host-key",
+            )
+            .await
+            .unwrap(),
+            styrene_ipc::types::IdentityRestoreOutcome::Restored
+        );
+        let mut imported = styrene_ipc::types::IdentityBackupImport::default();
+        imported.encrypted_bytes = exported_bytes;
+        assert_eq!(
+            MobileNode::restore_identity_before_boot_with_encrypted_file_key(
+                &target_config,
+                imported,
+                b"user-entered recovery passphrase",
+                b"different-target-host-key",
+            )
+            .await
+            .unwrap(),
+            styrene_ipc::types::IdentityRestoreOutcome::AlreadyPresent
+        );
+        let target =
+            MobileNode::boot_with_encrypted_file_key(target_config, b"different-target-host-key")
+                .await
+                .unwrap();
+        assert_eq!(target.app_context.identity().identity_hash(), source_identity);
+        target.shutdown().await.unwrap();
+    }
+
+    #[cfg(feature = "mobile-identity")]
+    #[tokio::test]
+    async fn failed_portable_restore_does_not_create_identity() {
+        let source_temp = tempfile::tempdir().unwrap();
+        let target_temp = tempfile::tempdir().unwrap();
+        let config_for = |root: &std::path::Path| MobileConfig {
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: None,
+            identity_backend: IdentityBackend::EncryptedFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: false,
+        };
+        let source = MobileNode::boot_with_encrypted_file_key(
+            config_for(source_temp.path()),
+            b"source-host-key",
+        )
+        .await
+        .unwrap();
+        let exported = source.export_portable_identity_backup(b"correct protection").await.unwrap();
+        source.shutdown().await.unwrap();
+        let target_config = config_for(target_temp.path());
+        let mut imported = styrene_ipc::types::IdentityBackupImport::default();
+        imported.encrypted_bytes = exported.encrypted_bytes;
+
+        assert_eq!(
+            MobileNode::restore_identity_before_boot_with_encrypted_file_key(
+                &target_config,
+                imported,
+                b"wrong protection",
+                b"target-host-key",
+            )
+            .await
+            .unwrap_err(),
+            MobileIdentityRecoveryError::AuthenticationFailed
+        );
+        assert_eq!(
+            MobileNode::identity_presence(&target_config).await.unwrap(),
+            MobileIdentityPresence::Absent
+        );
+    }
+
+    #[cfg(feature = "mobile-identity")]
+    #[tokio::test]
+    async fn portable_export_rejects_custody_changed_after_boot() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = MobileConfig {
+            config_dir: temp.path().join("config"),
+            data_dir: temp.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: None,
+            identity_backend: IdentityBackend::EncryptedFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: false,
+        };
+        let node = MobileNode::boot_with_encrypted_file_key(config, b"host-key").await.unwrap();
+        let identity_path = node.paths().identity_path();
+        std::fs::remove_file(&identity_path).unwrap();
+        styrene_identity::file_signer::FileSigner::with_static_passphrase(
+            identity_path,
+            b"host-key",
+        )
+        .generate(b"host-key")
+        .unwrap();
+
+        assert_eq!(
+            node.export_portable_identity_backup(b"user passphrase").await.unwrap_err(),
+            MobileIdentityRecoveryError::IdentityConflict
+        );
+        node.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn portable_restore_rejects_bounds_before_custody_mutation() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = MobileConfig {
+            config_dir: temp.path().join("config"),
+            data_dir: temp.path().join("data"),
+            hub_address: None,
+            hub_delivery_hash: None,
+            display_name: None,
+            identity_backend: IdentityBackend::EncryptedFile,
+            interfaces: Vec::new(),
+            enable_rnode_channel: false,
+        };
+        assert_eq!(
+            MobileNode::restore_identity_before_boot(
+                &config,
+                styrene_ipc::types::IdentityBackupImport::default(),
+                b"",
+            )
+            .await
+            .unwrap_err(),
+            MobileIdentityRecoveryError::ProtectionRequired
+        );
+        let mut oversized = styrene_ipc::types::IdentityBackupImport::default();
+        oversized.encrypted_bytes = vec![0; MAX_MOBILE_IDENTITY_BACKUP_BYTES + 1];
+        assert_eq!(
+            MobileNode::restore_identity_before_boot(&config, oversized, b"protection")
+                .await
+                .unwrap_err(),
+            MobileIdentityRecoveryError::ArtifactTooLarge
+        );
+        assert!(!PlatformPaths::new(config.config_dir, config.data_dir).identity_path().exists());
     }
     use styrene_ipc::types::DaemonEvent;
     use tokio::time::{Duration, timeout};
+
+    #[test]
+    fn propagation_snapshot_deserializes_without_additive_telemetry_fields() {
+        let snapshot: MobilePropagationSnapshot = serde_json::from_value(serde_json::json!({
+            "generation": 1,
+            "observed_at": 2,
+            "selected_destination": null,
+            "readiness": "unselected",
+            "ready": false,
+            "selected_policy": null,
+            "candidates": [],
+            "sync_state": "idle",
+            "new_messages": 0,
+            "in_flight": null,
+            "failure": null,
+            "automatic_sync_enabled": true,
+            "automatic_sync_cooldown_secs": 30,
+            "sync_deadline_secs": 32
+        }))
+        .unwrap();
+
+        assert!(snapshot.trigger_capabilities.is_empty());
+        assert_eq!(snapshot.active_trigger, None);
+        assert_eq!(snapshot.active_sync_started_at, None);
+        assert_eq!(snapshot.last_synchronization, None);
+        assert_eq!(snapshot.cooldown_remaining_secs, 0);
+    }
 
     fn test_rnode_info(bearer: MobileRNodeBearer, max_write_size: usize) -> RNodeBearerInfo {
         RNodeBearerInfo {
@@ -4008,6 +5066,8 @@ mod tests {
                 },
                 metadata_path: PathBuf::from("test-config/identity-public.json"),
                 custody: active_custody(IdentityBackend::PlaintextFile),
+                backup_custody: None,
+                portable_backup_custody: None,
             },
             None,
             None,
@@ -4041,6 +5101,8 @@ mod tests {
                 metadata,
                 metadata_path: paths.config_dir.join("identity-public.json"),
                 custody: active_custody(IdentityBackend::PlaintextFile),
+                backup_custody: None,
+                portable_backup_custody: None,
             },
             None,
             None,
@@ -4524,6 +5586,8 @@ mod tests {
                 metadata: crate::services::identity::PublicIdentityMetadata::default(),
                 metadata_path: PathBuf::from("test-config/identity-public.json"),
                 custody: active_custody(IdentityBackend::PlaintextFile),
+                backup_custody: None,
+                portable_backup_custody: None,
             },
             None,
             None,
@@ -4827,8 +5891,9 @@ mod tests {
     async fn configured_rnode_bytes_attribute_bluetooth_without_usb_fallback() {
         use rns_core::transport::iface::kiss::kiss_encode_command;
         use rns_core::transport::iface::rnode::{
-            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FREQUENCY, CMD_RADIO_STATE,
-            CMD_SPREADING_FACTOR, CMD_TX_POWER, RNodeRadioProfile,
+            CMD_BANDWIDTH, CMD_CODING_RATE, CMD_DETECT, CMD_FIRMWARE_VERSION, CMD_FREQUENCY,
+            CMD_MCU, CMD_PLATFORM, CMD_RADIO_STATE, CMD_SPREADING_FACTOR, CMD_TX_POWER,
+            RNodeFirmwareVersion, RNodeRadioProfile,
         };
 
         let root = tempfile::tempdir().unwrap();
@@ -4862,7 +5927,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(start.writes.len(), 4);
+        assert_eq!(start.writes.len(), 8);
         let connecting = node.session_snapshot().await;
         assert_eq!(
             connecting.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
@@ -4874,6 +5939,17 @@ mod tests {
         );
 
         let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
+        let metadata = [
+            kiss_encode_command(CMD_FIRMWARE_VERSION, &[1, 86]),
+            kiss_encode_command(CMD_PLATFORM, &[0x70]),
+            kiss_encode_command(CMD_MCU, &[0x71]),
+        ]
+        .concat();
+        node.submit_rnode_bytes(start.attempt, &metadata).await.unwrap();
+        let observed = node.rnode_metadata(start.attempt).await.unwrap().unwrap();
+        assert_eq!(observed.firmware_version, Some(RNodeFirmwareVersion { major: 1, minor: 86 }));
+        assert_eq!(observed.platform, Some(0x70));
+        assert_eq!(observed.mcu, Some(0x71));
         let detect = kiss_encode_command(CMD_DETECT, &[0x46]);
         assert_eq!(node.submit_rnode_bytes(start.attempt, &detect).await.unwrap().len(), 6);
         let readback = [
@@ -4907,6 +5983,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!shutdown.is_empty());
+        assert_eq!(node.rnode_metadata(start.attempt).await.unwrap(), None);
         let stopped = node.session_snapshot().await;
         assert_eq!(
             stopped.bearer(MobileBearerKind::BluetoothRnode).unwrap().state,
@@ -4960,7 +6037,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(start.writes.len(), 4);
+        assert_eq!(start.writes.len(), 8);
 
         let profile = RNodeRadioProfile::US_915_DEVELOPMENT;
         let detect = kiss_encode_command(CMD_DETECT, &[0x46]);

@@ -35,7 +35,9 @@ use sha2::Digest as _;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use styrene_ipc::types::{AttachmentInfo, AttachmentTransferInfo, MessageInfo};
+use styrene_ipc::types::{
+    AttachmentInfo, AttachmentTransferInfo, MessageInfo, MessageRetryIneligibilityReason,
+};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -704,6 +706,27 @@ impl MessagingService {
 
     pub fn set_events(&self, events: Arc<crate::services::EventService>) {
         let _ = self.events.set(events);
+    }
+
+    pub(crate) fn standard_propagation_sync_telemetry(
+        &self,
+    ) -> Result<Option<serde_json::Value>, String> {
+        self.store
+            .lock()
+            .map_err(|_| "standard propagation store lock poisoned".to_string())?
+            .get_standard_propagation_sync_telemetry()
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn retain_standard_propagation_sync_telemetry(
+        &self,
+        telemetry: &serde_json::Value,
+    ) -> Result<(), String> {
+        self.store
+            .lock()
+            .map_err(|_| "standard propagation store lock poisoned".to_string())?
+            .put_standard_propagation_sync_telemetry(telemetry)
+            .map_err(|error| error.to_string())
     }
 
     pub async fn sync_standard_propagation_once(
@@ -2307,6 +2330,43 @@ impl MessagingService {
         Ok(Some((route, attempts)))
     }
 
+    pub fn retry_eligibility(
+        &self,
+        message_id: &str,
+    ) -> Result<Option<(bool, Option<MessageRetryIneligibilityReason>)>, std::io::Error> {
+        let Some(message) = self.get_message(message_id)? else {
+            return Ok(None);
+        };
+        if message.direction != "out" {
+            return Ok(Some((false, Some(MessageRetryIneligibilityReason::Inbound))));
+        }
+        let Some(route) = self.router.route(message_id)? else {
+            return Ok(Some((false, Some(MessageRetryIneligibilityReason::MissingOutboundRoute))));
+        };
+        let attempts =
+            self.lock_store()?.outbound_attempts(message_id).map_err(std::io::Error::other)?;
+        let recovered_interruption = route.state == "queued"
+            && attempts.last().is_some_and(|attempt| attempt.state == "interrupted");
+        if !matches!(route.state.as_str(), "failed" | "expired") && !recovered_interruption {
+            return Ok(Some((false, Some(MessageRetryIneligibilityReason::LifecycleState))));
+        }
+        if self
+            .lock_store()?
+            .canonical_outbound_wire(message_id)
+            .map_err(std::io::Error::other)?
+            .is_none()
+        {
+            return Ok(Some((
+                false,
+                Some(MessageRetryIneligibilityReason::CanonicalWireUnavailable),
+            )));
+        }
+        if route.attempt_count as usize >= super::router::MAX_ATTEMPTS_PER_MESSAGE {
+            return Ok(Some((false, Some(MessageRetryIneligibilityReason::AttemptLimitReached))));
+        }
+        Ok(Some((true, None)))
+    }
+
     pub async fn retry_chat(&self, message: &MessageRecord) -> Result<String, std::io::Error> {
         match self.retry_message_outcome(&message.id).await? {
             RetryMessageOutcome::Created(id) | RetryMessageOutcome::Existing(id) => Ok(id),
@@ -2571,25 +2631,37 @@ impl MessagingService {
         message_id: &str,
     ) -> Result<RetryMessageOutcome, std::io::Error> {
         let _retry_guard = self.retry_lock.lock().await;
-        let Some(message) = self.get_message(message_id)? else {
+        let Some((eligible, reason)) = self.retry_eligibility(message_id)? else {
             return Ok(RetryMessageOutcome::NotFound);
         };
-        if message.direction != "out" {
-            return Ok(RetryMessageOutcome::TerminalConflict("inbound".into()));
+        if !eligible {
+            let state = match reason {
+                Some(MessageRetryIneligibilityReason::Inbound) => "inbound".into(),
+                Some(MessageRetryIneligibilityReason::MissingOutboundRoute) => {
+                    "nonretryable".into()
+                }
+                Some(MessageRetryIneligibilityReason::CanonicalWireUnavailable) => {
+                    "canonical_wire_unavailable".into()
+                }
+                Some(MessageRetryIneligibilityReason::AttemptLimitReached) => {
+                    return Err(std::io::Error::other("outbound LXMF attempt limit reached"));
+                }
+                Some(MessageRetryIneligibilityReason::LifecycleState) | None => self
+                    .router
+                    .route(message_id)?
+                    .map(|route| route.state)
+                    .unwrap_or_else(|| "nonretryable".into()),
+                Some(_) => "nonretryable".into(),
+            };
+            return Ok(RetryMessageOutcome::TerminalConflict(state));
         }
-        let Some(route) = self.router.route(message_id)? else {
-            return Ok(RetryMessageOutcome::TerminalConflict("nonretryable".into()));
-        };
-        let recovered_interruption = route.state == "queued"
-            && self
-                .lock_store()?
-                .outbound_attempts(message_id)
-                .map_err(std::io::Error::other)?
-                .last()
-                .is_some_and(|attempt| attempt.state == "interrupted");
-        if !matches!(route.state.as_str(), "failed" | "expired") && !recovered_interruption {
-            return Ok(RetryMessageOutcome::TerminalConflict(route.state));
-        }
+        let message = self
+            .get_message(message_id)?
+            .ok_or_else(|| std::io::Error::other("retryable message disappeared"))?;
+        let route = self
+            .router
+            .route(message_id)?
+            .ok_or_else(|| std::io::Error::other("retryable outbound route disappeared"))?;
         let payload = self
             .lock_store()?
             .canonical_outbound_wire(message_id)
@@ -3580,6 +3652,24 @@ mod tests {
             receipt_status: None,
             read: false,
         }
+    }
+
+    #[tokio::test]
+    async fn retry_projection_and_command_share_canonical_wire_requirement() {
+        let service = MessagingService::new();
+        let message =
+            make_test_record("missing-canonical-wire", &"11".repeat(16), &"22".repeat(16));
+        service.router.queue(&message, Some("opportunistic"), 1, 1, None).unwrap();
+        service.router.finish(&message.id, OutboundState::Failed, "failed").unwrap();
+
+        assert_eq!(
+            service.retry_eligibility(&message.id).unwrap(),
+            Some((false, Some(MessageRetryIneligibilityReason::CanonicalWireUnavailable)))
+        );
+        assert_eq!(
+            service.retry_message_outcome(&message.id).await.unwrap(),
+            RetryMessageOutcome::TerminalConflict("canonical_wire_unavailable".into())
+        );
     }
 
     #[tokio::test]

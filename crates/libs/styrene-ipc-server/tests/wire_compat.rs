@@ -87,6 +87,113 @@ fn reencode_frame(
 /// Fixed request ID used by the Python generator.
 const FIXED_REQUEST_ID: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
+/// Operations used by at least one current CLI, TUI, DX, or mobile-neutral
+/// daemon workflow. Mobile-only host lifecycle and bearer operations do not use
+/// the local IPC wire and are intentionally absent.
+const FRONTEND_OPERATION_CONTRACT: &[MessageType] = &[
+    MessageType::Ping,
+    MessageType::QueryDevices,
+    MessageType::QueryIdentity,
+    MessageType::QueryStatus,
+    MessageType::QueryConfig,
+    MessageType::QueryConversations,
+    MessageType::QueryMessages,
+    MessageType::QuerySearchMessages,
+    MessageType::QueryContacts,
+    MessageType::QueryResolveName,
+    MessageType::QueryAutoReply,
+    MessageType::QueryPathInfo,
+    MessageType::QueryPage,
+    MessageType::QueryAttachment,
+    MessageType::CmdExec,
+    MessageType::CmdAnnounce,
+    MessageType::CmdDeviceStatus,
+    MessageType::CmdSendChat,
+    MessageType::CmdMarkRead,
+    MessageType::CmdDeleteConversation,
+    MessageType::CmdDeleteMessage,
+    MessageType::CmdRetryMessage,
+    MessageType::CmdSetContact,
+    MessageType::CmdRemoveContact,
+    MessageType::CmdSetAutoReply,
+    MessageType::CmdPageDisconnect,
+    MessageType::CmdRebootDevice,
+    MessageType::CmdRemoteInbox,
+    MessageType::SubDevices,
+    MessageType::SubMessages,
+    MessageType::SubLinks,
+    MessageType::SubRoutes,
+    MessageType::SubRequests,
+    MessageType::SubNetworkOperations,
+    MessageType::SubResources,
+    MessageType::CmdRemoteMessages,
+    MessageType::CmdSelfUpdate,
+    MessageType::CmdSetIdentity,
+    MessageType::CmdBlockPeer,
+    MessageType::CmdUnblockPeer,
+    MessageType::QueryBlockedPeers,
+    MessageType::SaveCoreConfig,
+    MessageType::CmdTerminalOpen,
+    MessageType::CmdTerminalInput,
+    MessageType::CmdTerminalResize,
+    MessageType::CmdTerminalClose,
+    MessageType::QueryPathTable,
+    MessageType::QueryInterfaceStats,
+    MessageType::CmdCancelMessage,
+    MessageType::CmdPageNavigate,
+    MessageType::CmdFileDownloadStart,
+    MessageType::QueryFileDownload,
+    MessageType::CmdFileDownloadCancel,
+    MessageType::CmdFileDownloadSave,
+    MessageType::CmdPinConversation,
+    MessageType::CmdUnpinConversation,
+    MessageType::CmdMuteConversation,
+    MessageType::CmdUnmuteConversation,
+    MessageType::QueryTunnels,
+    MessageType::QueryTunnelStatus,
+    MessageType::CmdTunnelTeardown,
+    MessageType::CmdFleetApply,
+    MessageType::CmdFleetGrant,
+    MessageType::CmdFleetRevoke,
+    MessageType::CmdTunnelEstablish,
+    MessageType::QueryPropagation,
+    MessageType::QueryLinks,
+    MessageType::QueryRequest,
+    MessageType::QueryRequests,
+    MessageType::CmdRequestStart,
+    MessageType::CmdRequestCancel,
+    MessageType::QueryNetworkOperation,
+    MessageType::CmdNetworkOperationStart,
+    MessageType::CmdNetworkOperationCancel,
+    MessageType::QueryResources,
+    MessageType::CmdResourceCancel,
+    MessageType::QueryAttachmentTransfer,
+    MessageType::CmdAttachmentTransferCancel,
+    MessageType::QueryStandardPropagation,
+    MessageType::CmdSendChatOutcome,
+    MessageType::QueryDraft,
+    MessageType::CmdSetDraft,
+    MessageType::CmdClearDraft,
+    MessageType::QueryMessage,
+    MessageType::CmdStartConversation,
+    MessageType::QueryMobileDiagnostics,
+    MessageType::CmdExportMobileDiagnostics,
+];
+
+#[test]
+fn frontend_operation_contract_has_unique_stable_request_discriminants() {
+    let mut discriminants = std::collections::HashSet::new();
+    for operation in FRONTEND_OPERATION_CONTRACT {
+        let discriminant = *operation as u8;
+        assert!(operation.is_request(), "{operation:?} is not classified as a request");
+        assert!(discriminants.insert(discriminant), "duplicate opcode 0x{discriminant:02x}");
+        assert_eq!(
+            MessageType::from_byte(discriminant).expect("contract opcode must decode"),
+            *operation
+        );
+    }
+}
+
 // ── Individual vector tests ──────────────────────────────────────────────────
 
 macro_rules! wire_compat_test {
@@ -183,6 +290,25 @@ fn mobile_diagnostic_request_discriminants_are_stable_and_round_trip() {
         assert_eq!(encoded[4], discriminant);
         let decoded =
             styrene_ipc_server::wire::decode_frame(&encoded).expect("decode diagnostic request");
+        assert_eq!(decoded.msg_type, msg_type);
+        assert_eq!(MessageType::from_byte(discriminant).expect("known discriminant"), msg_type);
+        assert!(decoded.msg_type.is_request());
+    }
+}
+
+#[test]
+fn identity_backup_request_discriminants_are_additive_and_round_trip() {
+    for (msg_type, discriminant) in [
+        (MessageType::QueryIdentityBackupMetadata, 0xAD),
+        (MessageType::CmdExportIdentityBackup, 0xAE),
+        (MessageType::CmdRestoreIdentityBackup, 0xAF),
+    ] {
+        let encoded =
+            styrene_ipc_server::wire::encode_frame(msg_type, &FIXED_REQUEST_ID, &HashMap::new())
+                .expect("encode identity backup request");
+        assert_eq!(encoded[4], discriminant);
+        let decoded = styrene_ipc_server::wire::decode_frame(&encoded)
+            .expect("decode identity backup request");
         assert_eq!(decoded.msg_type, msg_type);
         assert_eq!(MessageType::from_byte(discriminant).expect("known discriminant"), msg_type);
         assert!(decoded.msg_type.is_request());

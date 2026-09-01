@@ -80,6 +80,32 @@
       "limitations": ["Recorded scope is public TCP connectivity and canonical lxmf.delivery announces only."]
     },
     {
+      "id": "skywave-1.0-build-9-ios-beta",
+      "classification": "candidate_rns_lxmf_application",
+      "name": "Skywave",
+      "version": "1.0",
+      "build": "9",
+      "platforms": ["ios"],
+      "protocol_versions": {"rns": "1.4.2", "lxmf": null},
+      "provenance": {
+        "status": "unresolved",
+        "kind": "binary",
+        "locator": null,
+        "revision": null,
+        "artifact_sha256": null,
+        "notes": [
+          "CoreDevice identified the installed beta as co.horsfalldesign.skywave version 1.0 build 9 on 2026-08-31.",
+          "The reviewed build 9 settings capture visibly reported Reticulum 1.4.2; this is capture-scoped application metadata, not binary or protocol provenance.",
+          "Physical iOS XCUITest captures were retained locally on 2026-08-31 and are summarized in docs/skywave-ios-build9-capture-summary.md.",
+          "The TestFlight or distribution locator, install receipt, binary digest, exact bundled RNS revision, bundled LXMF version and revision, and immutable capture publication are not yet admitted."
+        ]
+      },
+      "limitations": [
+        "Installed application metadata alone cannot establish a workflow floor.",
+        "Physical iOS capture artifacts require privacy review and immutable publication before corpus admission."
+      ]
+    },
+    {
       "id": "python-rns-1.4.2",
       "classification": "protocol_authority",
       "name": "Python Reticulum",

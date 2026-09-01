@@ -17,6 +17,7 @@
 - [x] 1.12 Record Sideband, Columba, and MeshChat as unevidenced candidates and Meshtastic and MeshCore as interaction-only references
 - [ ] 1.13 Resolve the `795fdaa2b0777c13033787d933d1afc94a2377cb` LXMF `1.1.0` versus `1.1.1` provenance conflict before admitting dependent rows
 - [ ] 1.14 Reject deleted Styrene native hosts and RNode firmware evidence as substitutes for external application-parity rows
+- [x] 1.15 Register the installed Skywave iOS beta build and add a privacy-bounded RemoteXPC and XCUITest capture lane without promoting observations
 
 ## 2. Persistent Network Session
 <!-- specs: mobile-network-session -->
@@ -75,6 +76,8 @@
 - [ ] 7.7 Verify the release candidate contains no maintained Swift or Kotlin host or adapter before publishing the product capability
 - [ ] 7.8 Replay every applicable P0 application-parity journey through the packaged Dioxus iOS and Android applications
 - [ ] 7.9 Record matched, intentionally different, deferred, unsupported, and unevidenced outcomes without substituting component or Python evidence for package execution
+- [ ] 7.10 Execute and review the Skywave iOS build 9 identity, TCP, discovery, conversation, draft, direct-send, receipt, retry, restart, propagation, and degraded-state captures before selecting any workflow floor
+- [x] 7.11 Retain read-only Skywave iOS build 9 launch, background recovery, top-level, identity, interface, propagation, and new-message entry captures with semantic snapshots and explicit gaps
 
 ## 8. Release Verification
 <!-- specs: mobile-application-parity, mobile-network-session, mobile-messaging, mobile-propagation-client, mobile-release-evidence -->

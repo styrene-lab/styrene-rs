@@ -46,6 +46,37 @@ impl AndroidKeystoreSigner {
             Err(error) => Err(map_storage_error(error)),
         }
     }
+
+    /// Load existing custody without creating a replacement when it is absent.
+    pub fn load_root_secret(&self) -> Result<RootSecret, SignerError> {
+        self.entry.get_secret().map_err(map_storage_error).and_then(decode_root_secret)
+    }
+
+    /// Whether this application's protected Android custody already exists.
+    pub fn exists(&self) -> Result<bool, SignerError> {
+        match self.entry.get_secret() {
+            Ok(_) => Ok(true),
+            Err(KeyringError::NoEntry) => Ok(false),
+            Err(error) => Err(map_storage_error(error)),
+        }
+    }
+
+    /// Install a recovered root secret without replacing existing custody.
+    pub fn restore_root_secret(&self, secret: &RootSecret) -> Result<(), SignerError> {
+        if self.exists()? {
+            return Err(SignerError::Unavailable(
+                "Identity already exists in Android Keystore".into(),
+            ));
+        }
+        self.entry.set_secret(secret.as_bytes()).map_err(map_storage_error)?;
+        let persisted = self.entry.get_secret().map_err(map_storage_error)?;
+        if !bool::from(secret.as_bytes().ct_eq(&persisted)) {
+            return Err(SignerError::DecryptionFailed(
+                "Android Keystore root secret verification failed".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]

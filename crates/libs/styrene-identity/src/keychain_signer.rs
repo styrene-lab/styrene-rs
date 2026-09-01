@@ -51,13 +51,25 @@ impl KeychainSigner {
 
     /// Check if a protected identity exists without reading its secret.
     pub fn exists(&self) -> bool {
+        self.presence().unwrap_or(false)
+    }
+
+    /// Check custody presence while preserving platform lookup failures.
+    pub fn presence(&self) -> Result<bool, SignerError> {
         ItemSearchOptions::new()
             .class(ItemClass::generic_password())
             .service(&self.service)
             .account(&self.account)
             .load_attributes(true)
             .search()
-            .is_ok_and(|items| !items.is_empty())
+            .map(|items| !items.is_empty())
+            .or_else(|error| {
+                if error.code() == -25300 {
+                    Ok(false)
+                } else {
+                    Err(SignerError::Unavailable(format!("Keychain lookup failed: {error}")))
+                }
+            })
     }
 
     /// Generate a new random root secret and store it in the Keychain.
@@ -103,6 +115,11 @@ impl KeychainSigner {
             .map_err(|e| SignerError::SigningFailed(format!("Keychain store failed: {e}")))?;
 
         Ok(())
+    }
+
+    /// Install a recovered root secret without replacing existing Keychain custody.
+    pub fn restore_root_secret(&self, secret: &RootSecret) -> Result<(), SignerError> {
+        self.create_from_root_secret(secret)
     }
 
     /// Delete the identity from the Keychain.

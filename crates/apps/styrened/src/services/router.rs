@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_OUTBOUND_MESSAGES: usize = 4096;
-const MAX_ATTEMPTS_PER_MESSAGE: usize = 32;
+pub(super) const MAX_ATTEMPTS_PER_MESSAGE: usize = 32;
 const DIRECT_DEADLINE: Duration = Duration::from_secs(32);
 const OPPORTUNISTIC_DEADLINE: Duration = Duration::from_secs(10);
 

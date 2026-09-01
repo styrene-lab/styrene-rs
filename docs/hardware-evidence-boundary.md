@@ -20,6 +20,15 @@ The canonical ownership split remains `docs/product-capability-streams.md` under
 - sanitized fixtures needed to test a Styrene runtime protocol client;
 - references from a product acceptance record to external evidence results.
 
+For RNode firmware operations, Styrene also owns the product-specific contract:
+
+- exact RNode target and operation admission;
+- signed firmware manifests and immutable plans;
+- declared writable and protected regions;
+- operator confirmation bound to the plan and target generation;
+- RNode provisioning semantics and authoritative post-write observations;
+- product UI and recovery guidance.
+
 ### External hardware tooling owns
 
 - adapter inventory and stable hardware identity;
@@ -31,10 +40,31 @@ The canonical ownership split remains `docs/product-capability-streams.md` under
 - UART/SPI/I²C/GPIO/SWD/JTAG backends;
 - logic-analyzer and oscilloscope integration;
 - reset, boot-select, programmer, and power control;
-- destructive-operation safety and operator approval;
-- hardware profiles, boot chains, system images, flashing, and post-write checks.
+- generic destructive-delivery safety and low-level operator approval;
+- hardware profiles, boot chains, system images, generic flashing, and low-level post-write checks.
 
 Nex is the intended owner of these machine/hardware concerns. This repository may retain transitional reference implementations until equivalent Nex contracts exist, but that is incubation evidence, not permanent Styrene product ownership.
+
+### RNode Provisioning Exception
+
+An RNode firmware operation is product behavior, not general image delivery. A
+Styrene host can expose this operation only through an exact bounded executor.
+The executor must accept an admitted immutable plan. It must not accept an
+arbitrary command, executable, device path, image, address, or erase range.
+
+Until a versioned Nex provisioning API exists, this repository can retain an
+exact RNode executor adapter. The adapter is transitional and must remain inside
+the RNode product boundary. It must not become a generic serial, USB, DFU, reset,
+or programmer framework.
+
+When a suitable Nex API exists, Nex owns device discovery, bootloader entry,
+reset control, programmer invocation, bounded byte delivery, and low-level
+post-write reads. Styrene supplies the admitted plan and validates the returned
+typed evidence. Nex must not select firmware, broaden writable regions, infer a
+Styrene operation, or report product success.
+
+This exception does not change the ownership of system images, removable-media
+delivery, generic embedded firmware, or non-RNode hardware provisioning.
 
 ## Runtime Client Exception
 
@@ -55,6 +85,10 @@ Styrene runtime client
 ```
 
 Styrene runtime clients may define framing, retries, health semantics, and protocol conformance. They must not grow generic adapter inventory, electrical probing, or programmer/flasher responsibilities.
+
+An exact RNode provisioning adapter is not a runtime client. It is allowed only
+under the constrained exception above and must remain separate from normal
+Reticulum serial/KISS and BLE NUS sessions.
 
 ## Evidence Result Contract
 
@@ -181,5 +215,8 @@ This repository will not introduce:
 - voltage-profile or wiring-authority management;
 - target power or programmer control;
 - unattended remote hardware writes.
+
+It will also not expose arbitrary device paths, commands, images, offsets, erase
+ranges, reset sequences, or programmer options through an RNode executor.
 
 A Styrene runtime protocol client remains valid where it directly serves product behavior. General physical hardware lifecycle tooling belongs outside Styrene.
