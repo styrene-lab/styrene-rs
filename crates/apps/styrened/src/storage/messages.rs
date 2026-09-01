@@ -2491,6 +2491,8 @@ impl MessagesStore {
     }
 
     const SDK_DOMAIN_SNAPSHOT_KEY: &'static str = "sdk_domains.v1";
+    const STANDARD_PROPAGATION_SYNC_TELEMETRY_KEY: &'static str =
+        "standard_propagation.sync_telemetry.v1";
 
     fn configure_connection(conn: &Connection) -> rusqlite::Result<()> {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -5440,22 +5442,41 @@ impl MessagesStore {
     }
 
     pub fn put_sdk_domain_snapshot(&self, snapshot: &JsonValue) -> rusqlite::Result<()> {
+        self.put_domain_snapshot(Self::SDK_DOMAIN_SNAPSHOT_KEY, snapshot)
+    }
+
+    pub fn get_sdk_domain_snapshot(&self) -> rusqlite::Result<Option<JsonValue>> {
+        self.get_domain_snapshot(Self::SDK_DOMAIN_SNAPSHOT_KEY)
+    }
+
+    pub fn put_standard_propagation_sync_telemetry(
+        &self,
+        snapshot: &JsonValue,
+    ) -> rusqlite::Result<()> {
+        self.put_domain_snapshot(Self::STANDARD_PROPAGATION_SYNC_TELEMETRY_KEY, snapshot)
+    }
+
+    pub fn get_standard_propagation_sync_telemetry(&self) -> rusqlite::Result<Option<JsonValue>> {
+        self.get_domain_snapshot(Self::STANDARD_PROPAGATION_SYNC_TELEMETRY_KEY)
+    }
+
+    fn put_domain_snapshot(&self, key: &str, snapshot: &JsonValue) -> rusqlite::Result<()> {
         let snapshot_json = serde_json::to_string(snapshot)
             .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
         self.conn.execute(
             "INSERT INTO sdk_domain_state (domain, state_json) VALUES (?1, ?2)
              ON CONFLICT(domain) DO UPDATE SET state_json = excluded.state_json",
-            params![Self::SDK_DOMAIN_SNAPSHOT_KEY, snapshot_json],
+            params![key, snapshot_json],
         )?;
         Ok(())
     }
 
-    pub fn get_sdk_domain_snapshot(&self) -> rusqlite::Result<Option<JsonValue>> {
+    fn get_domain_snapshot(&self, key: &str) -> rusqlite::Result<Option<JsonValue>> {
         let snapshot_json: Option<String> = self
             .conn
             .query_row(
                 "SELECT state_json FROM sdk_domain_state WHERE domain = ?1 LIMIT 1",
-                params![Self::SDK_DOMAIN_SNAPSHOT_KEY],
+                params![key],
                 |row| row.get(0),
             )
             .optional()?;
@@ -7163,6 +7184,27 @@ mod tests {
         store.clear_sdk_domain_snapshot().expect("clear snapshot");
         let loaded = store.get_sdk_domain_snapshot().expect("load snapshot");
         assert!(loaded.is_none(), "snapshot should be removed after clear");
+    }
+
+    #[test]
+    fn propagation_sync_telemetry_uses_an_independent_durable_domain() {
+        let store = MessagesStore::in_memory().expect("in-memory store");
+        let sdk = json!({ "topics": [{ "topic_id": "topic-1" }] });
+        let telemetry = json!({
+            "trigger": "manual",
+            "started_at": 10,
+            "finished_at": 11,
+            "outcome": "succeeded",
+            "new_messages": 2,
+        });
+
+        store.put_sdk_domain_snapshot(&sdk).expect("persist sdk domain");
+        store
+            .put_standard_propagation_sync_telemetry(&telemetry)
+            .expect("persist propagation telemetry");
+
+        assert_eq!(store.get_sdk_domain_snapshot().unwrap(), Some(sdk));
+        assert_eq!(store.get_standard_propagation_sync_telemetry().unwrap(), Some(telemetry));
     }
 
     #[test]
