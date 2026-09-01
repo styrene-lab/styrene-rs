@@ -11,9 +11,9 @@
 | `lxmf.codec` | Experimental | Codec coverage is Rust-only. |
 | `lxmf.direct` | Degraded | Direct and Opportunistic Python-to-Rust scenarios are ignored and manual. Rust-to-Python is not covered. |
 | `lxmf.resources` | Experimental | Rust resource tests exist. Bidirectional Python/Rust resource delivery is not covered. |
-| `lxmf.propagation` | Unsupported | The daemon does not expose the standard Python-compatible propagation destination. |
+| `lxmf.propagation` | Unsupported | Standard destination, offer, retrieval, policy, and persistence behavior exists, but the required enabled Python/Rust interoperability gate is absent. |
 | `micron.rendering` | Experimental | Parser coverage exists. Fixture provenance and renderer assertions are incomplete. |
-| `nomadnet.transport` | Unsupported | Remote page transport uses a Styrene-specific CBOR envelope over LXMF. It is not native NomadNet transport. |
+| `nomadnet.transport` | Unsupported | Native static and bounded dynamic host/client paths exist, but canonical Python fixtures and bidirectional pinned NomadNet gates are absent. |
 
 ## Evidence rules
 

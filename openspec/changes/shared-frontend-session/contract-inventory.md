@@ -1,6 +1,9 @@
 # Frontend Session Contract Inventory
 
-Inventory revision: `f2a5999893970fe4b9677db4bd671c8a006d4f47`
+Original inventory revision: `f2a5999893970fe4b9677db4bd671c8a006d4f47`
+
+Reassessed against backend revision `23beb83dbed95165347debdaabb1a672febfdc92`
+and UI revision `6a1143665ff2afbc3da076d6b1c3eb326f3fe527`.
 
 ## Authorities
 
@@ -9,21 +12,22 @@ the transport-neutral application contract. `styrened::DaemonFacade` is the
 authorized implementation of that contract. Frontend code must not create a
 second daemon contract from wire maps or implementation fields.
 
-`styrene-ipc-server` is a Unix-socket adapter. Its framing and opcode module is
-currently imported directly by three frontend applications. That module is a
-shared protocol implementation, not a server API, and must move behind a neutral
-wire boundary before the client migration.
+`styrene-ipc-server` is a Unix-socket adapter. Stable framing now lives in
+`styrene-ipc-wire`, and the one-shot CLI uses `styrene-ipc-client`. The TUI still
+imports server wire internals directly, and the desktop application remains in
+the independent `styrene-ui` repository with its existing broker and session
+logic. Those two consumers remain migration work.
 
 ## Current Consumers
 
 | Consumer | Access path | Request behavior | Events and generation | Main duplication |
 |---|---|---|---|---|
-| `styrene` CLI | Sequential Unix client in `crates/apps/styrene/src/ipc_client.rs` | One mutable stream, five-second default timeout, no response-ID validation | No subscriptions or reconnect | Framing, maps, identity/status/device/message parsers |
+| `styrene` CLI | Shared `styrene-ipc-client` connector in `crates/apps/styrene/src/ipc_client.rs` | Bounded typed requests through the public client | No subscriptions or reconnect required for one-shot use | Endpoint selection only |
 | `styrene-tui` | Sequential Unix client in `crates/apps/styrene-tui/src/daemon.rs` | One globally serialized command stream, fixed five-second IPC timeout | Separate event stream, ten-second polling, generation checks in presentation reducer | Framing, maps, compatibility parsing, subscriptions, reconciliation, authorization checks |
-| `styrene-dx` | `BackendSession` and broker in `crates/apps/styrene-dx/src` | Bounded concurrent broker, per-request deadlines, pending map, cancellation cleanup | Separate event and polling streams, frontend and daemon generations | Framing, maps, typed decoding, profile lifecycle, duplicated daemon records |
+| `styrene-dx` | `BackendSession` and broker in `styrene-ui/apps/desktop/src` | Bounded concurrent broker, per-request deadlines, pending map, cancellation cleanup | Separate event and polling streams, frontend and daemon generations | Framing, typed decoding, profile lifecycle, duplicated daemon records |
 | Dioxus mobile | `styrened::mobile::MobileNode` through `apps/mobile/src/session.rs` in `styrene-ui` | In-process typed calls on a bounded worker | Backend, UI-session, and platform generations | Specialized mobile DTOs and one direct `DaemonFacade` field access |
 
-Live and Embedded DX profiles already use the same `IpcBackend` operations.
+Live and Embedded DX profiles in `styrene-ui` already use the same `IpcBackend` operations.
 Their intended difference is ownership: Live owns client tasks, while Embedded
 also owns the daemon runtime and temporary resources. Fixture implements a
 limited deterministic operation set and opens no daemon or external interface.
@@ -51,11 +55,10 @@ tests must record these as explicit exclusions until opcodes and dispatch exist.
 
 ## Duplicate Mechanics
 
-The CLI, TUI, and DX each generate 16-byte request identifiers, encode
-MessagePack maps, map operation types to wire opcodes, decode daemon errors, and
-project response maps. Their behavior differs materially:
+The TUI and DX still own overlapping request, compatibility, subscription, and
+projection mechanics. The CLI migration removed its duplicate framing and typed
+response parser. Remaining behavior differs materially:
 
-- CLI does not validate the response request identifier or response frame type.
 - TUI serializes all calls behind one mutex. A slow operation blocks polling and
   later commands, and a late timed-out response leaves the stream ambiguous.
 - DX has the strongest implementation: a capacity-32 concurrent broker,
@@ -65,9 +68,9 @@ project response maps. Their behavior differs materially:
 - TUI and DX each open independent command and event connections and implement
   their own subscription setup, polling, gap reconciliation, and generation
   filtering.
-- CLI, TUI, and DX independently parse identity, status, capabilities, devices,
-  conversations, messages, and errors. Compatibility behavior has already
-  drifted between them.
+- TUI and DX independently parse identity, status, capabilities, devices,
+  conversations, messages, and errors. Compatibility behavior can drift between
+  the repositories.
 
 The reusable client must preserve the DX broker guarantees rather than adopting
 the sequential CLI or TUI transport as its foundation.
@@ -98,7 +101,7 @@ styrene-ipc --------+--------------------+
                     |                    |
 styrene-ipc-wire ---+-> styrene-ipc-client -> styrene-session
                     |                           |
-                    +-> styrene-ipc-server      +-> styrene / styrene-tui / styrene-dx
+                    +-> styrene-ipc-server      +-> styrene / styrene-tui / styrene-ui desktop
 
 styrene-ipc <-- styrened::DaemonFacade <-- styrened::mobile::MobileNode
                                               ^
@@ -154,11 +157,11 @@ disabled-reason presentation remain in each frontend.
    discriminants.
 3. Create `styrene-ipc-client` from the DX broker and move typed operation
    codecs behind it.
-4. Migrate the one-shot CLI and TUI, then remove their raw-wire imports and
-   duplicate parsers.
+4. The one-shot CLI migration is complete. Migrate the TUI, then remove its
+   raw-wire imports and duplicate parsers.
 5. Add common Live, Embedded, and Fixture session lifecycle contracts with
    explicit task ownership and idempotent shutdown.
-6. Migrate in-tree DX stores to canonical records and shared session events.
+6. Migrate `styrene-ui` desktop stores to canonical records and shared session events.
 7. Replace mobile UI facade access with an explicit mobile-host method and adapt
    common capability and generation facts without moving mobile-only behavior
    into UI code.
