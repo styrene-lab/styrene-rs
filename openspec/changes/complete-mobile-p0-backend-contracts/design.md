@@ -63,6 +63,14 @@ access, credentials, or export operation. Public display metadata is persisted
 separately from private identity material and restored before announce data is
 constructed.
 
+The physical custody handoff is a closed, unevidenced execution descriptor. It
+assigns Apple execution to `Chriss-MacBook-Pro` and Android execution to
+`nucleus`. It requires explicit approval before destructive reset operations and
+requires first-launch, restart, forced-termination, and upgrade comparisons. A
+handoff cannot contain pass evidence, device identifiers, signing identifiers,
+provisioning data, or private identity material. Physical acceptance remains
+open until the assigned host retains every required artifact.
+
 ## Runtime And Generation
 
 Runtime readiness and transport connectivity are independent facts. A composed
