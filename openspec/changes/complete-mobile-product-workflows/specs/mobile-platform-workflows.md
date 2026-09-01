@@ -55,6 +55,42 @@ When the result reaches the platform-service boundary
 Then the service rejects it before backend mutation
 And raw frame or payload content is not logged
 
+#### Scenario: User captures one QR image
+Given the packaged application can invoke the operating-system camera or image picker
+When the user chooses one JPEG or PNG image containing one QR symbol
+Then the Rust decoder returns one generation-tagged bounded candidate
+And the application submits that candidate through the same backend validation path as manual entry and paste
+
+#### Scenario: Captured image exceeds a resource bound
+Given a selected image exceeds the compressed-byte, dimension, or decoded-pixel limit
+When the image reaches the QR decoder boundary
+Then decoding stops with a typed oversized failure
+And no image buffer, decoded payload, contact, or conversation is retained
+
+#### Scenario: Captured image contains no unambiguous candidate
+Given a selected image contains no QR symbol or more than one decodable QR symbol
+When the Rust decoder examines the image
+Then it returns a typed no-code or ambiguous failure
+And the existing destination field and unrelated workflows remain unchanged
+
+#### Scenario: Scan completion belongs to an old generation
+Given a camera or image-picker request remains open while the mobile session generation changes
+When the old request completes
+Then the application rejects the completion as stale
+And the completion cannot replace a newer candidate or failure state
+
+#### Scenario: User cancels image capture
+Given a QR capture request is active
+When the user cancels the operating-system camera or image picker
+Then the platform service returns a typed cancelled outcome
+And manual entry and paste remain available without an error claim
+
+#### Scenario: Scan diagnostics remain payload-free
+Given QR capture or decoding fails at any supported stage
+When diagnostics, fixtures, and generic debug output are inspected
+Then they contain only stable failure codes and bounded metadata
+And they contain no encoded image bytes, grayscale frame, or decoded payload text
+
 ### Requirement: Protected capability state is visible and isolated
 
 The mobile product must present typed availability, authorization, restriction,

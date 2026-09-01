@@ -73,3 +73,14 @@
 - [ ] 8.4 `[cross-repo]` Execute identity rename, public copy and QR, encrypted backup, corrupt and wrong-protection restore, successful restore, custody continuity, and private-material redaction scenarios on applicable physical devices
 - [ ] 8.5 `[cross-repo]` Reconcile backend, integration, application-parity, accessibility, and release ledgers from retained evidence while preserving Calls, Map, location sharing, groups, iCloud sync, propagation hosting, and guaranteed background execution as exclusions
 - [ ] 8.6 `[cross-repo]` Run formatting, warning-denied Clippy, focused backend, reducer, component, migration, restart, corpus, OpenSpec, clean package, and fatal-log checks in both repositories
+
+## 9. QR Ingress Handoff
+<!-- specs: mobile-platform-workflows -->
+
+- [x] 9.1 `[cross-repo]` Select the P0 QR architecture, enumerate rejected and deferred alternatives, define resource and privacy bounds, and publish the TDD corpus
+- [ ] 9.2 `[styrene-ui]` Add failing pure-Rust tests that generate JPEG and PNG QR images in memory and cover canonical, malformed, oversized, no-code, ambiguous, and resource-exhaustion outcomes
+- [ ] 9.3 `[styrene-ui]` Implement the bounded `quircs` decoder with `image` default formats disabled and no decoded payload in `Debug`, errors, or diagnostics
+- [ ] 9.4 `[styrene-ui]` Compose one generation-aware Dioxus file capture with the existing `QrDestinationScanner` contract while preserving current manual and pasted input
+- [ ] 9.5 `[nucleus]` Build and install the Android package, then retain E87 evidence for camera grant, denial, cancellation, gallery selection, canonical success, malformed input, ambiguous input, rotation, process interruption, and stale completion
+- [ ] 9.6 `[Chriss-MacBook-Pro]` Build and install the iOS package, then retain equivalent camera and image-picker evidence without using Android results as Apple evidence
+- [ ] 9.7 `[cross-repo]` Prove manual, discovered, pasted, and scanned candidates reach one backend operation and create no conversation before validation succeeds
