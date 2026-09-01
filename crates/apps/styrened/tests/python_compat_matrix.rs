@@ -27,7 +27,7 @@ fn python_compat_opportunistic() {
 }
 
 #[test]
-#[ignore = "pending remaining propagation, resource, and .lxm parity work"]
+#[ignore = "requires live Python compatibility harness environment"]
 fn python_compat_propagated_resource_lxm() {
     run_case("propagated_resource_lxm");
 }
