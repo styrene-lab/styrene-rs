@@ -552,17 +552,18 @@ impl Link {
             PacketContext::LinkRTT => {
                 let mut buffer = [0u8; PACKET_DATA_CAPACITY];
                 if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
-                    let mut cursor = std::io::Cursor::new(plain_text);
-                    if let Ok(peer_rtt) = rmp::decode::read_f32(&mut cursor) {
-                        let measured_rtt = self.request_time.elapsed().as_secs_f32();
-                        self.rtt = Duration::from_secs_f32(measured_rtt.max(peer_rtt));
-                        self.update_keepalive_timing();
-                        self.refresh_channel_flow_control();
-                        if self.activated_at.is_none() {
-                            self.activated_at = Some(Instant::now());
-                        }
-                        self.post_event(LinkEvent::RttUpdated);
+                    let Some(peer_rtt) = decode_link_rtt(plain_text) else {
+                        log::warn!("link({}): rejecting invalid LinkRTT payload", self.id);
+                        return LinkHandleResult::None;
+                    };
+                    let measured_rtt = self.request_time.elapsed();
+                    self.rtt = measured_rtt.max(peer_rtt);
+                    self.update_keepalive_timing();
+                    self.refresh_channel_flow_control();
+                    if self.activated_at.is_none() {
+                        self.activated_at = Some(Instant::now());
                     }
+                    self.post_event(LinkEvent::RttUpdated);
                 }
             }
             _ => {}
@@ -1117,13 +1118,14 @@ impl Link {
         self.remote_identity.as_ref()
     }
 
+    /// Measured round-trip time of this link.
+    pub fn rtt(&self) -> Duration {
+        self.rtt
+    }
+
     pub fn create_rtt(&self) -> Packet {
-        let rtt = self.rtt.as_secs_f32();
-        let mut buf = Vec::new();
-        {
-            buf.reserve(4);
-            rmp::encode::write_f32(&mut buf, rtt).expect("encode RTT");
-        }
+        let rtt = self.rtt.as_secs_f64();
+        let buf = encode_link_rtt(rtt);
 
         let mut packet_data = PacketDataBuffer::new();
 
@@ -1427,6 +1429,39 @@ impl Link {
 }
 
 include!("link/proof.rs");
+
+/// Encode a LinkRTT payload the way canonical Reticulum does: one MessagePack
+/// 64-bit float holding the round-trip time in seconds.
+pub(crate) fn encode_link_rtt(seconds: f64) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(9);
+    rmp::encode::write_f64(&mut buf, seconds).expect("encode RTT into a vector");
+    buf
+}
+
+/// Decode a LinkRTT payload into a duration.
+///
+/// Canonical Reticulum packs the value as a 64-bit float. A 32-bit float is
+/// still accepted so that Styrene nodes written before this correction keep
+/// interoperating during a rolling upgrade. Anything else is rejected: another
+/// MessagePack type, a truncated or trailing payload, a negative value, or a
+/// non-finite value. A rejected payload never touches link state.
+pub(crate) fn decode_link_rtt(payload: &[u8]) -> Option<Duration> {
+    let (seconds, width) = match payload.first() {
+        Some(0xca) => {
+            let bytes: [u8; 4] = payload.get(1..5)?.try_into().ok()?;
+            (f64::from(f32::from_be_bytes(bytes)), 5)
+        }
+        Some(0xcb) => {
+            let bytes: [u8; 8] = payload.get(1..9)?.try_into().ok()?;
+            (f64::from_be_bytes(bytes), 9)
+        }
+        _ => return None,
+    };
+    if payload.len() != width || !seconds.is_finite() || seconds.is_sign_negative() {
+        return None;
+    }
+    Duration::try_from_secs_f64(seconds).ok()
+}
 
 #[cfg(test)]
 mod tests {
@@ -2583,5 +2618,93 @@ mod tests {
 
         assert_eq!(link.check_watchdog(true), LinkWatchdogAction::SendKeepAlive);
         assert_eq!(link.status, LinkStatus::Active);
+    }
+
+    #[test]
+    fn link_rtt_codec_emits_f64_and_accepts_only_finite_non_negative_floats() {
+        let encoded = encode_link_rtt(0.1875);
+        assert_eq!(encoded, [0xcb, 0x3f, 0xc8, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(decode_link_rtt(&encoded), Some(Duration::from_secs_f64(0.1875)));
+        assert_eq!(
+            decode_link_rtt(&[0xca, 0x3e, 0x40, 0, 0]),
+            Some(Duration::from_secs_f64(0.1875)),
+            "a 32-bit float from an older Styrene node is still accepted"
+        );
+        assert_eq!(decode_link_rtt(&encode_link_rtt(0.0)), Some(Duration::ZERO));
+        for (case, payload) in [
+            ("negative", encode_link_rtt(-0.5)),
+            ("nan", encode_link_rtt(f64::NAN)),
+            ("infinity", encode_link_rtt(f64::INFINITY)),
+            ("negative zero", encode_link_rtt(-0.0)),
+            ("trailing byte", [encode_link_rtt(0.25), vec![0]].concat()),
+            ("truncated", encode_link_rtt(0.25)[..8].to_vec()),
+            ("integer marker", vec![0x01]),
+            ("string marker", b"\xa40.25".to_vec()),
+            ("empty", Vec::new()),
+        ] {
+            assert_eq!(decode_link_rtt(&payload), None, "{case}");
+        }
+    }
+
+    #[test]
+    fn invalid_link_rtt_payload_does_not_activate_or_refresh_the_link() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", "rtt"),
+        };
+        let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+        let mut outbound = Link::new(destination, tx.clone());
+        let request = outbound.request();
+        let mut inbound =
+            Link::new_from_request(&request, signer.sign_key().clone(), destination, tx)
+                .expect("link request should parse");
+        let iface = AddressHash::new_from_rand(OsRng);
+        assert!(matches!(
+            outbound.handle_packet(&inbound.prove(), iface),
+            LinkHandleResult::Activated
+        ));
+        inbound.set_ingress_iface(iface);
+        while rx.try_recv().is_ok() {}
+        let before = inbound.rtt();
+        let activated_before = inbound.activated_at;
+
+        let rtt_packet = |link: &Link, payload: &[u8]| {
+            let mut data = PacketDataBuffer::new();
+            let len = link.encrypt(payload, data.accuire_buf_max()).expect("encrypt").len();
+            data.resize(len);
+            Packet {
+                header: Header { destination_type: DestinationType::Link, ..Default::default() },
+                destination: *link.id(),
+                context: PacketContext::LinkRTT,
+                data,
+                ..Default::default()
+            }
+        };
+
+        for payload in [encode_link_rtt(-1.0), vec![0x01], Vec::new()] {
+            assert!(matches!(
+                inbound.handle_packet(&rtt_packet(&outbound, &payload), iface),
+                LinkHandleResult::None
+            ));
+            assert_eq!(inbound.rtt(), before, "rejected payload keeps the RTT");
+            assert_eq!(inbound.activated_at, activated_before);
+            let mut rtt_events = 0;
+            while let Ok(event) = rx.try_recv() {
+                rtt_events += usize::from(matches!(event.event, LinkEvent::RttUpdated));
+            }
+            assert_eq!(rtt_events, 0, "no RttUpdated event for a rejected payload");
+        }
+
+        let packet = rtt_packet(&outbound, &encode_link_rtt(5.0));
+        assert!(matches!(inbound.handle_packet(&packet, iface), LinkHandleResult::None));
+        assert_eq!(inbound.rtt(), Duration::from_secs(5), "peer RTT wins when larger");
+        let mut rtt_events = 0;
+        while let Ok(event) = rx.try_recv() {
+            rtt_events += usize::from(matches!(event.event, LinkEvent::RttUpdated));
+        }
+        assert_eq!(rtt_events, 1);
     }
 }
