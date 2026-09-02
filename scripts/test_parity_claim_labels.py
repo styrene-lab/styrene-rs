@@ -27,9 +27,17 @@ class ParityClaimLabelTests(unittest.TestCase):
             for gate_id in claims[claim_id]["required_gates"]:
                 gate = gates[gate_id]
                 self.assertEqual(gate["protocol"], "native", gate_id)
+                self.assertEqual(gate["kind"], "fixture", gate_id)
                 self.assertFalse(gate["ignored"], gate_id)
-                if gate["kind"] == "live":
-                    self.assertIn("tests/interop/handoffs/pinned-live-evidence.json", gate["evidence"], gate_id)
+            evidence_gates = [gates[g] for g in claims[claim_id]["evidence_gates"] if gates[g]["kind"] == "live"]
+            self.assertTrue(evidence_gates, claim_id)
+            for gate in evidence_gates:
+                self.assertTrue(gate["ignored"], gate["id"])
+                self.assertIn("tests/interop/handoffs/pinned-live-evidence.json", gate["evidence"], gate["id"])
+        for gate in gates.values():
+            if gate["kind"] == "live":
+                self.assertFalse(gate["enabled"], gate["id"])
+                self.assertIn("--ignored", gate["command"], gate["id"])
         self.assertEqual(claims["rns.operations"]["level"], "degraded")
         self.assertIn("channel", claims["rns.operations"]["reason"])
 
