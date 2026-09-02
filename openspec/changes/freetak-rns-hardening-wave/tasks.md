@@ -120,6 +120,6 @@ Ownership gate: this group is limited to `styrene-rns`. `shared-dioxus-mobile-ui
 ## 16. Clean-room and aggregate verification
 <!-- specs: rns-security-hardening, rns-link-transport-hardening, rns-resource-hardening, rns-interface-policy -->
 
-- [ ] 16.1 Reconcile final implementation evidence with the initial immutable admission record and record any independently derived behavioral clarification without changing the admitted range
+- [x] 16.1 Reconcile final implementation evidence with the initial immutable admission record and record any independently derived behavioral clarification without changing the admitted range
 - [ ] 16.2 Run `cargo fmt --all -- --check`, `cargo test -p styrene-rns --all-features`, warning-denied all-target/all-feature Clippy for `styrene-rns`, and every required predecessor regression gate
-- [ ] 16.3 Validate `freetak-rns-hardening-wave`, confirm existing OpenSpecs, refs, and tracking markers are unchanged, and audit that no evidence-repository source, fixtures, names, comments, or structure entered the diff
+- [x] 16.3 Validate `freetak-rns-hardening-wave`, confirm existing OpenSpecs, refs, and tracking markers are unchanged, and audit that no evidence-repository source, fixtures, names, comments, or structure entered the diff
