@@ -43,6 +43,13 @@ impl OperationCompletion {
     }
 }
 
+/// Announces the native NomadNet node destination on operator request. The
+/// host installs it once the node's request handlers are active, so an
+/// operator announce covers delivery, propagation, and the NomadNet node the
+/// way a Python NomadNet node re-announces itself.
+pub type NativeNodeAnnounce =
+    Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+
 pub struct NetworkOperationService {
     transport: Arc<dyn MeshTransport>,
     events: Arc<EventService>,
@@ -50,6 +57,7 @@ pub struct NetworkOperationService {
     order: Mutex<VecDeque<String>>,
     probe_locks: Mutex<BTreeMap<AddressHash, Weak<tokio::sync::Mutex<()>>>>,
     propagation_announce: Mutex<Option<StandardPropagationAnnounceTrigger>>,
+    nomadnet_announce: Mutex<Option<NativeNodeAnnounce>>,
     capacity: usize,
 }
 
@@ -70,8 +78,27 @@ impl NetworkOperationService {
             order: Mutex::new(VecDeque::new()),
             probe_locks: Mutex::new(BTreeMap::new()),
             propagation_announce: Mutex::new(None),
+            nomadnet_announce: Mutex::new(None),
             capacity,
         })
+    }
+
+    pub fn set_nomadnet_announce(&self, announce: NativeNodeAnnounce) {
+        *self.nomadnet_announce.lock().unwrap() = Some(announce);
+    }
+
+    /// Announce the native NomadNet node if one is hosted. Returns `false`
+    /// when this daemon hosts no node.
+    pub async fn announce_nomadnet_node(
+        &self,
+        deadline: tokio::time::Instant,
+    ) -> Result<bool, TransportError> {
+        let announce = self.nomadnet_announce.lock().unwrap().clone();
+        let Some(announce) = announce else { return Ok(false) };
+        tokio::time::timeout_at(deadline, announce())
+            .await
+            .map_err(|_| TransportError::TimedOut)?;
+        Ok(true)
     }
 
     pub fn set_propagation_announce_trigger(&self, trigger: StandardPropagationAnnounceTrigger) {

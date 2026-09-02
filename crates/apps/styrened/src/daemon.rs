@@ -548,6 +548,17 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         .map_err(|error| anyhow::anyhow!("native NomadNet path registration failed: {error:?}"))?;
         startup.record(startup_component::NATIVE_NOMADNET_REQUEST_HANDLER);
         transport.send_announce(&destination, display_name.as_deref().map(str::as_bytes)).await;
+        let node_app_data = display_name.as_deref().map(|name| name.as_bytes().to_vec());
+        let announce_transport = Arc::clone(&transport);
+        let announce_destination = destination.clone();
+        app_context.network_operations().set_nomadnet_announce(Arc::new(move || {
+            let transport = Arc::clone(&announce_transport);
+            let destination = announce_destination.clone();
+            let app_data = node_app_data.clone();
+            Box::pin(async move {
+                transport.send_announce(&destination, app_data.as_deref()).await;
+            })
+        }));
         startup.record(startup_component::NOMADNET_NODE_ANNOUNCE);
         startup.advertise(startup_capability::NATIVE_NOMADNET_HOST).map_err(anyhow::Error::msg)?;
     }
