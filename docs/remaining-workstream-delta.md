@@ -49,7 +49,7 @@ authorization.
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
-| Operator profile lifecycle | 16/19 | Launcher packaging checks, removal of the remaining unmanaged runtime path, and packaging validation |
+| Operator profile lifecycle | 17/19 | Signed launcher packaging checks and packaging validation, which need launcher packaging that this repository does not contain |
 | Operation-scoped authorization | 18/18 | Archive after closure review |
 | Native RNode endpoint transport | 11/11 | Archived on 2026-09-02 |
 
@@ -390,9 +390,10 @@ It renders ownership, persistence, custody, and network policy from the
 daemon's record.
 
 A parity test shows a managed session and a Connected session report
-identical profile records. The TUI's Standard mode still composes an
-unmanaged runtime on the legacy paths, so the duplicate lifecycle removal
-stays open.
+identical profile records. The TUI's Standard mode now opens a managed Local
+profile under its data directory. It adopts a legacy layout once, read-only.
+No frontend composes an unmanaged runtime any more. The two open tasks both
+need signed launcher packaging, which this repository does not contain.
 
 The profile lifecycle covers coherent Quick and Local roots, atomic promotion,
 and coherent snapshots. It also covers verified custody recovery, encrypted
