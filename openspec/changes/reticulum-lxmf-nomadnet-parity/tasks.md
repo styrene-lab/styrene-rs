@@ -49,7 +49,7 @@
 - [x] 5.4 Integrate resource retries, cancellation, timeout, progress, and cleanup into the same scheduler
 - [x] 5.5 Replace diagnostic resource E2E behavior with assertive completion and integrity checks
 - [x] 5.6 Add deterministic A-to-B-to-C path, delivery, proof, route-loss, and rediscovery tests
-- [ ] 5.7 Add pinned live routed link, request, channel, and resource evidence
+- [x] 5.7 Add pinned live routed link, request, channel, and resource evidence
 
 ## 6. Authoritative LXMF Router
 <!-- specs: lxmf-messaging, production-composition -->

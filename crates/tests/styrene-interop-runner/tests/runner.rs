@@ -57,7 +57,7 @@ fn fake_scenario(script: &str, evidence_dir: &Path) -> LiveScenario {
 
 #[test]
 fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
-    assert_eq!(PINNED_SCENARIOS.len(), 12);
+    assert_eq!(PINNED_SCENARIOS.len(), 13);
     assert_eq!("direct".parse(), Ok(PinnedScenarioId::Direct));
     assert_eq!("nomadnet_client".parse(), Ok(PinnedScenarioId::NomadnetClient));
     assert_eq!("nomadnet_pages".parse(), Ok(PinnedScenarioId::NomadnetPages));
@@ -86,6 +86,22 @@ fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
         "resource"
     );
     assert_eq!(PinnedScenarioId::RoutedDirect.expected_python_state(), "8");
+    assert_eq!("routed_channel".parse(), Ok(PinnedScenarioId::RoutedChannel));
+    assert!(PinnedScenarioId::RoutedChannel.is_routed());
+    assert!(PinnedScenarioId::RoutedChannel.is_channel());
+    assert!(!PinnedScenarioId::RoutedChannel.is_nomadnet());
+    assert!(!PinnedScenarioId::RoutedChannel.is_bidirectional());
+    let channel = python_lxmf_scenario(
+        Path::new("/repo"),
+        PinnedScenarioId::RoutedChannel,
+        Duration::from_secs(300),
+        "/pinned/python",
+    );
+    assert!(channel.args[0].ends_with("scripts/rust-channel-hop-smoke.sh"));
+    assert_eq!(channel.args[1..], ["--scenario", "routed_channel"]);
+    assert_eq!(channel.required_assertions, ["rust-to-rust-routed-channel"]);
+    assert!(channel.required_artifacts.iter().any(|name| name == "routed-channel-proof"));
+    assert!(channel.required_milestones.iter().any(|name| name == "channel-echoed"));
     assert_eq!("direct_resource".parse(), Ok(PinnedScenarioId::DirectResource));
     assert!("unknown".parse::<PinnedScenarioId>().is_err());
     assert_eq!(pinned_scenario("opportunistic").unwrap().id, PinnedScenarioId::Opportunistic);

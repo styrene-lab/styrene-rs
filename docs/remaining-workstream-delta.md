@@ -45,7 +45,7 @@ authorization.
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
 | Shared frontend session | 9/29 | Negotiation, event/reconnect behavior, TUI migration, common sessions, desktop migration, and revision-pair verification |
-| Reticulum/LXMF/NomadNet parity | 84/85 | Routed channel evidence |
+| Reticulum/LXMF/NomadNet parity | 85/85 | Hosted routed channel evidence and the Reticulum operations claim |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
@@ -241,12 +241,27 @@ On that evidence the LXMF direct, resource, and propagation claims and the
 NomadNet transport claim are verified. Reticulum operations stay degraded
 until routed channel evidence exists.
 
-The remaining live evidence is a routed channel exchange. No pinned Python
-application speaks a channel protocol the Rust daemon exposes, so that
-evidence needs a Rust-to-Rust channel across a pinned transport hop.
+The routed channel gate closes the last live gap. No pinned Python application
+speaks a channel protocol the daemon exposes. Two Rust nodes therefore reach
+each other only through a pinned Python transport instance. They open a link
+and a reliable channel across it and exchange echoed messages both ways. The proof
+records both routes, the hop's transport identity as the next hop, the link,
+and every message sent, proved, echoed, and proved back intact.
+
+Enabling it exposed two more transport defects, both fixed. The link proved
+received packets with the link request proof context. Python transports never
+forward that context on an established link and Python endpoints ignore it,
+so a Rust proof could not cross a hop. Proofs now carry the plain context
+Python uses, and the initiator accepts both.
+
+The transport also delivered link proofs only to initiator links. The destination side of a link never
+learned that its own channel packets were proved and tore the link down after
+retries. Proofs now reach inbound links as well.
+
 Repository policy keeps live Python runs manual and scheduled workflows
 fixture-only, so each hosted dispatch is an operator action recorded in the
-evidence file.
+evidence file. The Reticulum operations claim moves to verified once a hosted
+dispatch records the routed channel scenario.
 
 Authority:
 

@@ -431,6 +431,11 @@ impl Link {
         }
     }
 
+    /// Prove a packet received on this link the way Python `Link.prove_packet`
+    /// does: an explicit hash-and-signature proof addressed to the link id with
+    /// a plain context. Transport nodes forward link-bound packets of any
+    /// context except the link-request proof, so a proof carrying that context
+    /// never crosses a hop.
     pub fn prove_packet(&self, packet: &Packet) -> Packet {
         let hash = packet.hash().to_bytes();
         let signature = self.priv_identity.sign(&hash).to_bytes();
@@ -448,7 +453,7 @@ impl Link {
             ifac: None,
             destination: self.id,
             transport: None,
-            context: PacketContext::LinkProof,
+            context: PacketContext::None,
             data: packet_data,
         }
     }
@@ -593,17 +598,35 @@ impl Link {
         match packet.header.packet_type {
             PacketType::Data => return self.handle_data_packet(packet),
             PacketType::Proof => {
+                // Python peers and this implementation prove link packets with a
+                // plain context; older Rust nodes used the link proof context.
                 if self.status == LinkStatus::Active
-                    && packet.context == PacketContext::LinkProof
-                    && let Ok(hash) = self.validate_packet_proof(packet)
+                    && matches!(packet.context, PacketContext::None | PacketContext::LinkProof)
                 {
-                    self.note_inbound(packet.context);
-                    if let Some(pending) = self.channel_pending.remove(&hash) {
-                        self.channel_states
-                            .insert(pending.sequence, ChannelMessageState::Delivered);
-                        self.note_channel_delivery();
+                    match self.validate_packet_proof(packet) {
+                        Ok(hash) => {
+                            self.note_inbound(packet.context);
+                            let pending = self.channel_pending.remove(&hash);
+                            crate::transport_diagnostic!(
+                                "[tp] link_packet_proof link={} valid=true pending={}",
+                                self.id,
+                                pending.is_some()
+                            );
+                            if let Some(pending) = pending {
+                                self.channel_states
+                                    .insert(pending.sequence, ChannelMessageState::Delivered);
+                                self.note_channel_delivery();
+                            }
+                            return LinkHandleResult::None;
+                        }
+                        Err(error) => {
+                            crate::transport_diagnostic!(
+                                "[tp] link_packet_proof link={} valid=false error={:?}",
+                                self.id,
+                                error
+                            );
+                        }
                     }
-                    return LinkHandleResult::None;
                 }
                 if self.status == LinkStatus::Pending
                     && packet.context == PacketContext::LinkRequestProof
@@ -1657,10 +1680,52 @@ mod tests {
         match outbound.handle_packet(&payload, bound_iface) {
             LinkHandleResult::Ingress { payload, proof } => {
                 assert_eq!(payload.as_slice(), b"hello over the right iface");
-                assert_eq!(proof.context, PacketContext::LinkProof);
+                // Link packet proofs carry the plain context so transport
+                // nodes forward them; the link-request proof context would
+                // be dropped by a Python hop.
+                assert_eq!(proof.context, PacketContext::None);
+                assert_eq!(proof.header.destination_type, DestinationType::Link);
+                assert_eq!(proof.destination, *inbound.id());
             }
             _ => panic!("ordinary data must defer observation and proof to ingress authority"),
         }
+    }
+
+    #[test]
+    fn destination_side_channel_message_is_delivered_by_the_initiator_proof() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", "delivery"),
+        };
+        let (tx, _) = tokio::sync::broadcast::channel(8);
+        let mut outbound = Link::new(destination, tx.clone());
+        let request = outbound.request();
+        let mut inbound =
+            Link::new_from_request(&request, signer.sign_key().clone(), destination, tx)
+                .expect("link request should parse");
+        let iface = AddressHash::new_from_rand(OsRng);
+        assert!(matches!(
+            outbound.handle_packet(&inbound.prove(), iface),
+            LinkHandleResult::Activated
+        ));
+        inbound.set_ingress_iface(iface);
+        outbound.open_channel();
+        inbound.open_channel();
+
+        // The destination sends a channel message; the initiator proves it
+        // with the plain context, and the destination records delivery.
+        let (sequence, packet) =
+            inbound.send_channel_message(0x0201, b"from the destination".to_vec()).expect("send");
+        assert_eq!(inbound.channel_state(sequence), ChannelMessageState::Sent);
+        let LinkHandleResult::Proof(proof) = outbound.handle_packet(&packet, iface) else {
+            panic!("initiator must prove channel packets from the destination");
+        };
+        assert_eq!(proof.context, PacketContext::None);
+        assert!(matches!(inbound.handle_packet(&proof, iface), LinkHandleResult::None));
+        assert_eq!(inbound.channel_state(sequence), ChannelMessageState::Delivered);
     }
 
     #[test]
