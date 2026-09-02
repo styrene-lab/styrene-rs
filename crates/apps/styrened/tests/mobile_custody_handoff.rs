@@ -202,7 +202,7 @@ fn validate(corpus: &Corpus) -> Result<(), String> {
         || corpus.authority.frontend_repository != "https://github.com/styrene-lab/styrene-ui.git"
         || corpus.authority.integration_case != "mobile.identity.device-custody"
         || corpus.authority.openspec_task
-            != "openspec/changes/complete-mobile-p0-backend-contracts/tasks.md#3.5"
+            != "openspec/archive/2026-09-02-complete-mobile-p0-backend-contracts/tasks.md#3.5"
     {
         return Err("invalid custody handoff authority".into());
     }
