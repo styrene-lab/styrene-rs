@@ -337,6 +337,15 @@ ROUTED=false
 case "${SCENARIO}" in
   routed_direct|routed_direct_resource) ROUTED=true ;;
 esac
+# Direct scenarios announce every second so a Python peer that connects
+# straight to the Rust node learns it at once. A pinned Python transport hop
+# permits about one announce per hour per destination and cancels a pending
+# path response whenever another announce for that destination arrives, so
+# routed scenarios announce rarely and trigger one announce once the hop is up.
+RUST_ANNOUNCE_INTERVAL_SECS="${RUST_ANNOUNCE_INTERVAL_SECS:-1}"
+if [[ "${ROUTED}" == "true" ]]; then
+  RUST_ANNOUNCE_INTERVAL_SECS=120
+fi
 
 RUST_ROLE="full_node"
 case "${SCENARIO}" in
@@ -429,7 +438,7 @@ start_rust_daemon() {
       --config "${RUST_DIR}/config.toml" \
       --socket "${RUST_SOCKET}" \
       --transport "${RUST_TRANSPORT_ADDR}" \
-      --announce-interval-secs 1 > >(bounded_log "${log_path}" "${LOG_LIMIT_BYTES}") 2>&1
+      --announce-interval-secs "${RUST_ANNOUNCE_INTERVAL_SECS}" > >(bounded_log "${log_path}" "${LOG_LIMIT_BYTES}") 2>&1
   ) &
   RUST_PID=$!
 }
@@ -469,7 +478,7 @@ loglevel = 4
 EOF
 
 (
-  "${PYTHON_BIN}" -m LXMF.Utilities.lxmd \
+  exec "${PYTHON_BIN}" -m LXMF.Utilities.lxmd \
     --config "${PY_DIR}" \
     --rnsconfig "${PY_RNS_DIR}" \
     --propagation-node > >(bounded_log "${PY_LOG}" "${LOG_LIMIT_BYTES}") 2>&1
@@ -488,6 +497,17 @@ if [[ ! -f "${PY_DIR}/identity" ]] || ! kill -0 "${PY_PID}" >/dev/null 2>&1; the
   exit 1
 fi
 runner_milestone "python-ready"
+
+if [[ "${ROUTED}" == "true" ]]; then
+  # The hop connected after the Rust node's startup announce. One operator
+  # announce now lets the hop learn the Rust destinations and answer the
+  # sender's path requests; a second covers a late hop connection.
+  for _ in 1 2; do
+    "${STYRENE_CLI_BIN}" --socket "${RUST_SOCKET}" announce >/dev/null 2>&1 || true
+    sleep 3
+  done
+  runner_milestone "rust-announced-through-hop"
+fi
 
 PY_DELIVERY_HASH="$(destination_hash_from_identity "${PY_DIR}/identity" "lxmf" "delivery")"
 PY_PROPAGATION_HASH="$(destination_hash_from_identity "${PY_DIR}/identity" "lxmf" "propagation")"
@@ -598,7 +618,7 @@ fi
 # outbound message is delivered or sent; receive evidence lands in
 # PY_RECEIVE_LOG when the Rust message arrives.
 (
-"${PYTHON_BIN}" - <<'PY' \
+exec "${PYTHON_BIN}" - <<'PY' \
   "${PY_SENDER_RNS_DIR}" \
   "${PY_SENDER_DIR}" \
   "${RUST_DELIVERY_HASH}" \
@@ -713,7 +733,10 @@ if desired_method == LXMF.LXMessage.PROPAGATED:
         if RNS.Transport.has_path(propagation_hash) and RNS.Identity.recall(propagation_hash):
             break
         RNS.Transport.request_path(propagation_hash)
-        time.sleep(0.5)
+        # A transport node answers a path request after a short grace period
+        # and re-arms that timer on every repeated request, so ask at a
+        # client's pace.
+        time.sleep(2.5)
     else:
         raise SystemExit("timed out waiting for the Rust propagation node path")
 
@@ -724,7 +747,7 @@ else:
         if RNS.Transport.has_path(destination_hash):
             break
         RNS.Transport.request_path(destination_hash)
-        time.sleep(0.5)
+        time.sleep(2.5)
     else:
         raise SystemExit("timed out waiting for Rust delivery path")
 

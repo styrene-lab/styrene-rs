@@ -215,6 +215,19 @@ request. The host now re-announces the node with every delivery announce and
 on operator-triggered announces, as a Python NomadNet node does on its
 announce interval.
 
+The hosted routed runs then failed while the local runs passed. A pinned
+Python transport permits about one announce per hour per destination and
+cancels a pending path response whenever another announce for that
+destination arrives. The harness had the Rust node announcing every second,
+so the hop never answered the sender's path requests. The routed scenarios
+now announce rarely and trigger one announce once the hop is connected. This
+is a harness cadence rather than a protocol defect. It still shows that a Rust
+node announcing far above Python's rate target is silenced by Python
+transports.
+
+The same hop re-arms its path response timer on every repeated path request.
+The harness clients now ask at a real client's pace instead of twice a second.
+
 The remaining live evidence is a routed channel exchange. No pinned Python
 application speaks a channel protocol the Rust daemon exposes, so that
 evidence needs a Rust-to-Rust channel across a pinned transport hop.
