@@ -32,7 +32,7 @@ PY_INSTANCE_CONTROL_PORT="${PY_INSTANCE_CONTROL_PORT:-$((PY_SHARED_INSTANCE_PORT
 
 usage() {
   cat <<'EOF'
-Usage: python-lxmd-rust-lxmd-smoke.sh [--scenario direct|direct_resource|opportunistic|propagated_resource_lxm] [--timeout SECONDS]
+Usage: python-lxmd-rust-lxmd-smoke.sh [--scenario direct|direct_resource|opportunistic|propagated_resource_lxm|propagated_retrieval] [--timeout SECONDS]
 EOF
 }
 
@@ -70,7 +70,7 @@ parse_args() {
   done
 
   case "${SCENARIO}" in
-    direct|direct_resource|opportunistic|propagated_resource_lxm) ;;
+    direct|direct_resource|opportunistic|propagated_resource_lxm|propagated_retrieval) ;;
     *)
       echo "unsupported scenario: ${SCENARIO}" >&2
       usage >&2
@@ -251,6 +251,10 @@ PY_SEND_LOG="${TMP_ROOT}/python-send.json"
 PY_RECEIVE_LOG="${TMP_ROOT}/python-receive.json"
 RUST_SEND_LOG="${TMP_ROOT}/rust-send.log"
 RUST_OUTBOUND_PROOF_PATH="${TMP_ROOT}/rust-outbound-proof.json"
+RUST_RESTART_LOG="${TMP_ROOT}/rust-lxmd-restart.log"
+RUST_RETRIEVAL_PROOF_PATH="${TMP_ROOT}/rust-retrieval-proof.json"
+PY_RETRIEVE_LOG="${TMP_ROOT}/python-retrieve.json"
+RETRIEVE_SIGNAL="${TMP_ROOT}/retrieve.go"
 # Unix socket paths are limited to about 100 bytes, so the IPC socket lives in
 # a short-lived directory outside the run root. Cleanup removes it.
 RUST_SOCKET_DIR="$(mktemp -d /tmp/styrene-smoke.XXXXXX)"
@@ -315,9 +319,9 @@ RUST_DB="${RUST_DIR}/messages.db"
 RUST_IDENTITY="${RUST_DIR}/identity"
 
 RUST_ROLE="full_node"
-if [[ "${SCENARIO}" == "propagated_resource_lxm" ]]; then
-  RUST_ROLE="hub"
-fi
+case "${SCENARIO}" in
+  propagated_resource_lxm|propagated_retrieval) RUST_ROLE="hub" ;;
+esac
 
 cat > "${RUST_DIR}/config.toml" <<EOF
 role = "${RUST_ROLE}"
@@ -365,21 +369,32 @@ EOF
 
 cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" -p styrened -p styrene --bin styrened --bin styrene --quiet
 
-(
-  LXMF_DISPLAY_NAME="Rust Smoke Node" \
-  STYRENE_PROPAGATION_CONTROL_ALLOWED_IDENTITIES="${PY_CONTROL_IDENTITY_HASH}" \
-    "${STYRENED_BIN}" \
-    --rpc "${RUST_RPC_ADDR}" \
-    --db "${RUST_DB}" \
-    --identity "${RUST_IDENTITY}" \
-    --config "${RUST_DIR}/config.toml" \
-    --socket "${RUST_SOCKET}" \
-    --transport "${RUST_TRANSPORT_ADDR}" \
-    --announce-interval-secs 1 > >(bounded_log "${RUST_LOG}" "${LOG_LIMIT_BYTES}") 2>&1
-) &
-RUST_PID=$!
+# Start the Rust daemon with its log at $1. The same database, identity, and
+# addresses are reused, so a restart proves persisted propagation state.
+start_rust_daemon() {
+  local log_path="$1"
+  (
+    LXMF_DISPLAY_NAME="Rust Smoke Node" \
+    STYRENE_PROPAGATION_CONTROL_ALLOWED_IDENTITIES="${PY_CONTROL_IDENTITY_HASH}" \
+      "${STYRENED_BIN}" \
+      --rpc "${RUST_RPC_ADDR}" \
+      --db "${RUST_DB}" \
+      --identity "${RUST_IDENTITY}" \
+      --config "${RUST_DIR}/config.toml" \
+      --socket "${RUST_SOCKET}" \
+      --transport "${RUST_TRANSPORT_ADDR}" \
+      --announce-interval-secs 1 > >(bounded_log "${log_path}" "${LOG_LIMIT_BYTES}") 2>&1
+  ) &
+  RUST_PID=$!
+}
 
-if ! wait_for_file_pattern "${RUST_LOG}" "listening on http://|delivery destination hash=" "${TIMEOUT_SECS}"; then
+wait_rust_daemon_ready() {
+  wait_for_file_pattern "$1" "listening on http://|delivery destination hash=" "${TIMEOUT_SECS}"
+}
+
+start_rust_daemon "${RUST_LOG}"
+
+if ! wait_rust_daemon_ready "${RUST_LOG}"; then
   echo "Rust lxmd did not become ready" >&2
   exit 1
 fi
@@ -431,9 +446,12 @@ runner_milestone "python-ready"
 PY_DELIVERY_HASH="$(destination_hash_from_identity "${PY_DIR}/identity" "lxmf" "delivery")"
 PY_PROPAGATION_HASH="$(destination_hash_from_identity "${PY_DIR}/identity" "lxmf" "propagation")"
 
-if [[ "${SCENARIO}" == "propagated_resource_lxm" ]]; then
+# Wait until the Python lxmd control client can query the Rust propagation
+# node's status; $1 bounds the wait in seconds.
+wait_rust_propagation_ready() {
+  local budget="$1"
   rust_propagation_ready=false
-  status_deadline=$((SECONDS + TIMEOUT_SECS))
+  status_deadline=$((SECONDS + budget))
   while (( SECONDS < status_deadline )); do
     status_remaining=$((status_deadline - SECONDS))
     status_attempt_timeout="${REMOTE_STATUS_TIMEOUT_SECS}"
@@ -454,10 +472,13 @@ if [[ "${SCENARIO}" == "propagated_resource_lxm" ]]; then
     fi
     sleep 1
   done
+  [[ "${rust_propagation_ready}" == "true" ]]
+}
 
-  if [[ "${rust_propagation_ready}" != "true" ]]; then
+if [[ "${RUST_ROLE}" == "hub" ]]; then
+  if ! wait_rust_propagation_ready "${TIMEOUT_SECS}"; then
     echo "Rust styrened does not expose a Python-compatible lxmf.propagation control destination" >&2
-    echo "propagated resource/.lxm parity remains unsupported; see ${PY_REMOTE_STATUS_LOG}" >&2
+    echo "propagated parity remains unsupported; see ${PY_REMOTE_STATUS_LOG}" >&2
     exit 1
   fi
 fi
@@ -473,6 +494,11 @@ elif [[ "${SCENARIO}" == "direct_resource" ]]; then
 elif [[ "${SCENARIO}" == "propagated_resource_lxm" ]]; then
   PY_MESSAGE_METHOD="propagated"
   PY_MESSAGE_CONTENT="python-smoke-resource-lxm-$(date +%s)-$(head -c 8192 /dev/zero | tr '\0' 'r')"
+elif [[ "${SCENARIO}" == "propagated_retrieval" ]]; then
+  # Packet-sized content queued for a second Python identity and retrieved
+  # from the Rust node after it restarts.
+  PY_MESSAGE_METHOD="propagated"
+  PY_MESSAGE_CONTENT="python-smoke-retrieval-$(date +%s)"
 fi
 # The Python peer stays alive after sending so the Rust daemon can deliver a
 # message back to it. Send evidence lands in PY_SEND_LOG as soon as the
@@ -489,7 +515,10 @@ fi
   "${SENDER_WAIT_SECS}" \
   "${PROPAGATION_TARGET_COST}" \
   "${PY_RECEIVE_LOG}" \
-  "${TIMEOUT_SECS}" >"${PY_SEND_LOG}"
+  "${TIMEOUT_SECS}" \
+  "${SCENARIO}" \
+  "${RETRIEVE_SIGNAL}" \
+  "${PY_RETRIEVE_LOG}" >"${PY_SEND_LOG}"
 import json
 import os
 import sys
@@ -510,7 +539,10 @@ import LXMF
     propagation_target_cost,
     receive_log_path,
     receive_wait_secs,
-) = sys.argv[1:11]
+    scenario,
+    retrieve_signal_path,
+    retrieve_log_path,
+) = sys.argv[1:14]
 destination_hash = bytes.fromhex(destination_hash_hex)
 propagation_hash = bytes.fromhex(propagation_hash_hex)
 sender_wait_secs = int(sender_wait_secs)
@@ -526,6 +558,25 @@ RNS.Reticulum(configdir=rns_config, loglevel=sender_loglevel)
 identity = RNS.Identity()
 router = LXMF.LXMRouter(identity=identity, storagepath=storage_dir)
 source = router.register_delivery_identity(identity, display_name="Python Smoke Sender")
+
+# The retrieval scenario queues the message for a second local identity and
+# later retrieves it from the Rust node with that identity. The pinned LXMF
+# router supports one delivery identity, so the recipient gets its own router
+# on the same Reticulum instance.
+recipient_identity = None
+recipient_router = None
+if scenario == "propagated_retrieval":
+    recipient_identity = RNS.Identity()
+    recipient_router = LXMF.LXMRouter(
+        identity=recipient_identity, storagepath=os.path.join(storage_dir, "recipient")
+    )
+    recipient = recipient_router.register_delivery_identity(
+        recipient_identity, display_name="Python Smoke Recipient"
+    )
+    if recipient is None:
+        raise SystemExit("recipient router did not register a delivery identity")
+    destination_hash = recipient.hash
+    destination_hash_hex = RNS.hexrep(destination_hash, delimit=False).lower()
 
 received = {}
 received_event = threading.Event()
@@ -549,6 +600,9 @@ def on_delivery(message):
 
 
 router.register_delivery_callback(on_delivery)
+if recipient_router is not None:
+    recipient_router.register_delivery_callback(on_delivery)
+    recipient_router.set_outbound_propagation_node(propagation_hash)
 router.announce(source.hash)
 desired_method = {
     "direct": LXMF.LXMessage.DIRECT,
@@ -561,23 +615,35 @@ if desired_method == LXMF.LXMessage.PROPAGATED:
     router.set_outbound_propagation_node(propagation_hash)
 
 deadline = time.time() + sender_wait_secs
-while time.time() < deadline:
-    if RNS.Transport.has_path(destination_hash):
-        break
-    RNS.Transport.request_path(destination_hash)
-    time.sleep(0.5)
+if desired_method == LXMF.LXMessage.PROPAGATED:
+    while time.time() < deadline:
+        if RNS.Transport.has_path(propagation_hash) and RNS.Identity.recall(propagation_hash):
+            break
+        RNS.Transport.request_path(propagation_hash)
+        time.sleep(0.5)
+    else:
+        raise SystemExit("timed out waiting for the Rust propagation node path")
+
+if recipient_identity is not None:
+    remote_identity = recipient_identity
 else:
-    raise SystemExit("timed out waiting for Rust delivery path")
+    while time.time() < deadline:
+        if RNS.Transport.has_path(destination_hash):
+            break
+        RNS.Transport.request_path(destination_hash)
+        time.sleep(0.5)
+    else:
+        raise SystemExit("timed out waiting for Rust delivery path")
 
-remote_identity = None
-while time.time() < deadline:
-    remote_identity = RNS.Identity.recall(destination_hash)
-    if remote_identity is not None:
-        break
-    time.sleep(0.2)
+    remote_identity = None
+    while time.time() < deadline:
+        remote_identity = RNS.Identity.recall(destination_hash)
+        if remote_identity is not None:
+            break
+        time.sleep(0.2)
 
-if remote_identity is None:
-    raise SystemExit("timed out recalling Rust delivery identity")
+    if remote_identity is None:
+        raise SystemExit("timed out recalling Rust delivery identity")
 
 destination = RNS.Destination(
     remote_identity,
@@ -630,6 +696,41 @@ while time.time() < deadline:
 if not sent:
     raise SystemExit(f"timed out waiting for Python message delivery, state={message.state}")
 
+if scenario == "propagated_retrieval":
+    # Wait for the harness to restart the Rust node, then retrieve the queued
+    # message with the recipient identity and let LXMF acknowledge it.
+    signal_deadline = time.time() + receive_wait_secs * 4
+    while time.time() < signal_deadline and not os.path.exists(retrieve_signal_path):
+        time.sleep(0.2)
+    if not os.path.exists(retrieve_signal_path):
+        raise SystemExit("timed out waiting for the retrieval signal")
+
+    retrieve_deadline = time.time() + receive_wait_secs * 3
+    next_request = 0.0
+    while time.time() < retrieve_deadline and not received_event.is_set():
+        state = recipient_router.propagation_transfer_state
+        idle = state == LXMF.LXMRouter.PR_IDLE or state >= LXMF.LXMRouter.PR_NO_PATH
+        if idle and time.time() >= next_request:
+            recipient_router.request_messages_from_propagation_node(recipient_identity)
+            next_request = time.time() + 5.0
+        received_event.wait(0.2)
+    if not received_event.is_set():
+        raise SystemExit(
+            "timed out retrieving from the Rust node, "
+            f"state={recipient_router.propagation_transfer_state}"
+        )
+    ack_deadline = time.time() + 15.0
+    while (
+        time.time() < ack_deadline
+        and recipient_router.propagation_transfer_state != LXMF.LXMRouter.PR_COMPLETE
+    ):
+        time.sleep(0.2)
+    received["transfer_state"] = int(recipient_router.propagation_transfer_state)
+    with open(retrieve_log_path, "w", encoding="utf-8") as handle:
+        json.dump(received, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+    raise SystemExit(0)
+
 if desired_method == LXMF.LXMessage.PROPAGATED:
     raise SystemExit(0)
 
@@ -680,6 +781,16 @@ print(payload["message_id"])
 PY
 )"
 
+PY_MESSAGE_DESTINATION="$("${PYTHON_BIN}" - <<'PY' "${PY_SEND_LOG}"
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(payload["destination"])
+PY
+)"
+
 PY_MESSAGE_TRANSIENT_ID="$("${PYTHON_BIN}" - <<'PY' "${PY_SEND_LOG}"
 import json
 import sys
@@ -710,9 +821,9 @@ if [[ "${PY_MESSAGE_REPRESENTATION}" != "${EXPECTED_PY_REPRESENTATION}" ]]; then
   exit 1
 fi
 
-if [[ "${SCENARIO}" == "propagated_resource_lxm" ]]; then
+if [[ "${RUST_ROLE}" == "hub" ]]; then
   for _ in $(seq 1 "${TIMEOUT_SECS}"); do
-    if "${PYTHON_BIN}" - <<'PY' "${RUST_DB}" "${PY_MESSAGE_TRANSIENT_ID}" "${RUST_DELIVERY_HASH}"; then
+    if "${PYTHON_BIN}" - <<'PY' "${RUST_DB}" "${PY_MESSAGE_TRANSIENT_ID}" "${PY_MESSAGE_DESTINATION}"; then
 import sqlite3
 import sys
 
@@ -734,7 +845,7 @@ PY
   "${PYTHON_BIN}" - <<'PY' \
     "${RUST_DB}" \
     "${PY_MESSAGE_TRANSIENT_ID}" \
-    "${RUST_DELIVERY_HASH}" \
+    "${PY_MESSAGE_DESTINATION}" \
     "${PY_SENDER_SOURCE_HASH}" \
     "${DATASTORE_PROOF_PATH}" \
     "${SCENARIO}" \
@@ -844,10 +955,15 @@ PY
 fi
 runner_milestone "rust-message-persisted"
 
+BIDIRECTIONAL=false
+case "${SCENARIO}" in
+  direct|direct_resource|opportunistic) BIDIRECTIONAL=true ;;
+esac
+
 RUST_MESSAGE_CONTENT=""
 RUST_MESSAGE_ID=""
 RUST_OUTBOUND_STATE=""
-if [[ "${SCENARIO}" != "propagated_resource_lxm" ]]; then
+if [[ "${BIDIRECTIONAL}" == "true" ]]; then
   RUST_MESSAGE_CONTENT="rust-smoke-message-$(date +%s)"
   if [[ "${SCENARIO}" == "direct_resource" ]]; then
     RUST_MESSAGE_CONTENT="rust-smoke-resource-$(date +%s)-$(head -c 4096 /dev/zero | tr '\0' 'q')"
@@ -1010,6 +1126,144 @@ PY
   runner_milestone "python-message-received"
 fi
 
+PY_RETRIEVAL_TRANSFER_STATE=""
+RUST_ITEM_STATE=""
+if [[ "${SCENARIO}" == "propagated_retrieval" ]]; then
+  # Offline delivery must survive a node restart: stop the Rust node while the
+  # message is queued, start it again on the same database, and only then let
+  # the recipient identity retrieve.
+  runner_milestone "rust-restart-requested"
+  cleanup_child "${RUST_PID}"
+  RUST_PID=""
+  start_rust_daemon "${RUST_RESTART_LOG}"
+  if ! wait_rust_daemon_ready "${RUST_RESTART_LOG}"; then
+    echo "Rust lxmd did not become ready after restart" >&2
+    exit 1
+  fi
+  runner_milestone "rust-restarted"
+  if ! wait_rust_propagation_ready "$((TIMEOUT_SECS * 2))"; then
+    echo "Rust propagation node was not reachable after restart; see ${PY_REMOTE_STATUS_LOG}" >&2
+    exit 1
+  fi
+  : > "${RETRIEVE_SIGNAL}"
+  runner_milestone "python-retrieval-requested"
+  if ! wait_for_file_pattern "${PY_RETRIEVE_LOG}" '"message_id"' "$((TIMEOUT_SECS * 2))"; then
+    echo "Python recipient did not retrieve the queued message from the Rust node" >&2
+    exit 1
+  fi
+  if ! wait "${PY_SENDER_PID}"; then
+    echo "Python peer exited with an error after retrieval" >&2
+    exit 1
+  fi
+  PY_SENDER_PID=""
+
+  for _ in $(seq 1 "${TIMEOUT_SECS}"); do
+    if "${PYTHON_BIN}" - <<'PY' "${RUST_DB}" "${PY_MESSAGE_TRANSIENT_ID}"; then
+import sqlite3
+import sys
+
+path, transient_id = sys.argv[1:3]
+with sqlite3.connect(path) as db:
+    row = db.execute(
+        "SELECT state FROM standard_lxmf_propagation_items WHERE transient_id = ? LIMIT 1",
+        (bytes.fromhex(transient_id),),
+    ).fetchone()
+raise SystemExit(0 if row is not None and row[0] == "acknowledged" else 1)
+PY
+      break
+    fi
+    sleep 1
+  done
+
+  RUST_ITEM_STATE="$("${PYTHON_BIN}" - <<'PY' \
+    "${RUST_DB}" \
+    "${PY_MESSAGE_TRANSIENT_ID}" \
+    "${PY_MESSAGE_CONTENT}" \
+    "${PY_SENDER_SOURCE_HASH}" \
+    "${PY_MESSAGE_DESTINATION}" \
+    "${PY_MESSAGE_ID}" \
+    "${PY_RETRIEVE_LOG}" \
+    "${RUST_RETRIEVAL_PROOF_PATH}" \
+    "${SCENARIO}" \
+    "${STYRENE_INTEROP_CORRELATION_ID}"
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+(
+    path,
+    transient_id,
+    content,
+    source,
+    destination,
+    message_id,
+    retrieve_log_path,
+    proof_path,
+    scenario,
+    correlation_id,
+) = sys.argv[1:11]
+with sqlite3.connect(path) as db:
+    row = db.execute(
+        "SELECT hex(transient_id), hex(destination), state FROM standard_lxmf_propagation_items "
+        "WHERE transient_id = ? LIMIT 1",
+        (bytes.fromhex(transient_id),),
+    ).fetchone()
+if row is None:
+    raise SystemExit("Rust node lost the propagation item across restart")
+if row[2] != "acknowledged":
+    raise SystemExit(f"Rust propagation item state is {row[2]!r}, expected acknowledged")
+received = json.loads(Path(retrieve_log_path).read_text(encoding="utf-8"))
+mismatches = [
+    name
+    for name, expected, actual in (
+        ("content", content, received.get("content")),
+        ("source", source, received.get("source")),
+        ("destination", destination, received.get("destination")),
+        ("message_id", message_id, received.get("message_id")),
+        ("signature_validated", True, received.get("signature_validated")),
+        ("transfer_state", 7, received.get("transfer_state")),
+    )
+    if expected != actual
+]
+if mismatches:
+    raise SystemExit(f"Python retrieval evidence disagrees with the Rust node on {mismatches}")
+proof = {
+    "correlation_id": correlation_id,
+    "expected_content": content,
+    "expected_hashes": {
+        "destination": destination,
+        "source": source,
+        "message_id": message_id,
+        "transient_id": transient_id,
+    },
+    "item": {
+        "destination": row[1].lower(),
+        "state": row[2],
+        "transient_id": row[0].lower(),
+    },
+    "python_receipt": received,
+    "scenario": scenario,
+    "table": "standard_lxmf_propagation_items",
+}
+with open(proof_path, "w", encoding="utf-8") as handle:
+    json.dump(proof, handle, sort_keys=True, separators=(",", ":"))
+    handle.write("\n")
+print(row[2])
+PY
+)"
+  PY_RETRIEVAL_TRANSFER_STATE="$("${PYTHON_BIN}" - <<'PY' "${PY_RETRIEVE_LOG}"
+import json
+import sys
+from pathlib import Path
+
+print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("transfer_state"))
+PY
+)"
+  runner_assertion "rust-to-python-retrieval"
+  runner_milestone "python-message-retrieved"
+fi
+
 "${PYTHON_BIN}" - <<'PY' \
   "${REPORT_PATH}" \
   "${TMP_ROOT}" \
@@ -1027,6 +1281,8 @@ fi
   "${RUST_MESSAGE_CONTENT}" \
   "${RUST_MESSAGE_ID}" \
   "${RUST_OUTBOUND_STATE}" \
+  "${PY_RETRIEVAL_TRANSFER_STATE}" \
+  "${RUST_ITEM_STATE}" \
   "${SCENARIO}" \
   "${STYRENE_INTEROP_CORRELATION_ID}"
 import json
@@ -1049,9 +1305,11 @@ import sys
     rust_message_content,
     rust_message_id,
     rust_outbound_state,
+    python_retrieval_transfer_state,
+    rust_item_state,
     scenario,
     correlation_id,
-) = sys.argv[1:19]
+) = sys.argv[1:21]
 
 report = {
     "status": "pass",
@@ -1066,6 +1324,8 @@ report = {
         "rust_to_python_outbound_content": rust_message_content,
         "rust_message_id": rust_message_id,
         "rust_outbound_state": rust_outbound_state,
+        "python_retrieval_transfer_state": python_retrieval_transfer_state,
+        "rust_item_state": rust_item_state,
     },
     "hashes": {
         "rust_delivery": rust_delivery_hash,
@@ -1085,7 +1345,7 @@ with open(report_path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
-if [[ "${SCENARIO}" == "propagated_resource_lxm" ]]; then
+if [[ "${RUST_ROLE}" == "hub" ]]; then
   "${PYTHON_BIN}" - <<'PY' "${REPORT_PATH}" "${RUST_PROPAGATION_HASH}"
 import json
 import sys
@@ -1100,8 +1360,12 @@ fi
 
 runner_artifact "scenario-report" "${REPORT_PATH}"
 runner_artifact "datastore-proof" "${DATASTORE_PROOF_PATH}"
-if [[ "${SCENARIO}" != "propagated_resource_lxm" ]]; then
+if [[ "${BIDIRECTIONAL}" == "true" ]]; then
   runner_artifact "rust-outbound-proof" "${RUST_OUTBOUND_PROOF_PATH}"
+fi
+if [[ "${SCENARIO}" == "propagated_retrieval" ]]; then
+  runner_artifact "rust-retrieval-proof" "${RUST_RETRIEVAL_PROOF_PATH}"
+  runner_artifact "rust-daemon-restart-log" "${RUST_RESTART_LOG}"
 fi
 runner_artifact "rust-daemon-log" "${RUST_LOG}"
 runner_artifact "python-daemon-log" "${PY_LOG}"

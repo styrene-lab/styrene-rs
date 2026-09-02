@@ -8,8 +8,9 @@ use styrene_interop_runner::{
 
 #[test]
 fn compatibility_matrix_covers_first_slice() {
-    assert_eq!(PINNED_SCENARIOS.len(), 4);
+    assert_eq!(PINNED_SCENARIOS.len(), 5);
     assert_case_present("direct");
+    assert_case_present("propagated_retrieval");
     assert_case_present("direct_resource");
     assert_case_present("opportunistic");
     assert_case_present("propagated_resource_lxm");
@@ -37,6 +38,12 @@ fn python_compat_opportunistic() {
 #[ignore = "requires live Python compatibility harness environment"]
 fn python_compat_propagated_resource_lxm() {
     run_case("propagated_resource_lxm");
+}
+
+#[test]
+#[ignore = "requires live Python compatibility harness environment"]
+fn python_compat_propagated_retrieval() {
+    run_case("propagated_retrieval");
 }
 
 fn run_case(case_id: &str) {

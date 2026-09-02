@@ -20,6 +20,7 @@ jobs:
           - direct_resource
           - opportunistic
           - propagated_resource_lxm
+          - propagated_retrieval
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0

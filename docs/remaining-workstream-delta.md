@@ -156,8 +156,11 @@ into a fixed 2 KB buffer. A link-MTU resource part whose escaped ciphertext
 exceeded that size was dropped without any signal. Resource transfers to Python
 failed at random until the buffer covered a fully escaped frame.
 
-Remaining gates require pinned Python/Rust runs for routed RNS, standard
-propagation, and native NomadNet. Repository policy keeps live
+The propagation retrieval gate queues a Python message on the Rust
+propagation node, restarts the node, and has the recipient identity retrieve
+and acknowledge it. Remaining propagation gates cover expiry and capacity
+policy. Remaining live gates also require pinned runs for routed RNS and native
+NomadNet. Repository policy keeps live
 Python runs manual and scheduled workflows fixture-only.
 
 Authority:

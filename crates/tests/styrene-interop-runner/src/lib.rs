@@ -34,6 +34,7 @@ pub enum PinnedScenarioId {
     DirectResource,
     Opportunistic,
     PropagatedResourceLxm,
+    PropagatedRetrieval,
 }
 
 impl PinnedScenarioId {
@@ -43,7 +44,20 @@ impl PinnedScenarioId {
             Self::DirectResource => "direct_resource",
             Self::Opportunistic => "opportunistic",
             Self::PropagatedResourceLxm => "propagated_resource_lxm",
+            Self::PropagatedRetrieval => "propagated_retrieval",
         }
+    }
+
+    /// The Rust node acts as the propagation store: Python queues a message
+    /// for a second Python identity, the Rust node restarts, and the recipient
+    /// retrieves and acknowledges it.
+    pub const fn is_retrieval(self) -> bool {
+        matches!(self, Self::PropagatedRetrieval)
+    }
+
+    /// Scenarios where the Rust node is the propagation store.
+    pub const fn rust_is_propagation_node(self) -> bool {
+        matches!(self, Self::PropagatedResourceLxm | Self::PropagatedRetrieval)
     }
 
     /// Direct, resource-backed Direct, and Opportunistic gates exercise both
@@ -59,7 +73,10 @@ impl PinnedScenarioId {
     pub const fn expected_outbound_representation(self) -> &'static str {
         match self {
             Self::DirectResource => "resource",
-            Self::Direct | Self::Opportunistic | Self::PropagatedResourceLxm => "packet",
+            Self::Direct
+            | Self::Opportunistic
+            | Self::PropagatedResourceLxm
+            | Self::PropagatedRetrieval => "packet",
         }
     }
 
@@ -68,7 +85,7 @@ impl PinnedScenarioId {
     pub const fn expected_python_representation(self) -> &'static str {
         match self {
             Self::DirectResource | Self::PropagatedResourceLxm => "2",
-            Self::Direct | Self::Opportunistic => "1",
+            Self::Direct | Self::Opportunistic | Self::PropagatedRetrieval => "1",
         }
     }
 }
@@ -123,6 +140,12 @@ pub const PINNED_SCENARIOS: &[PinnedScenarioDefinition] = &[
         title: "Pinned Propagated Resource Interop",
         description: "Runs the shared propagated resource-backed LXMF harness.",
         controls: &["announce", "send-resource", "cancel"],
+    },
+    PinnedScenarioDefinition {
+        id: PinnedScenarioId::PropagatedRetrieval,
+        title: "Pinned Propagation Retrieval Interop",
+        description: "Queues a Python message on the Rust propagation node, restarts the node, and retrieves it with the recipient identity.",
+        controls: &["announce", "send-message", "restart", "cancel"],
     },
 ];
 
@@ -495,6 +518,7 @@ pub fn python_lxmf_scenario(
     python_bin: &str,
 ) -> LiveScenario {
     let bidirectional = scenario_id.is_bidirectional();
+    let retrieval = scenario_id.is_retrieval();
     let scenario_id = scenario_id.as_str();
     let correlation_id = format!(
         "interop-{scenario_id}-{}-{}",
@@ -572,6 +596,19 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
                 "python-message-received".to_string(),
                 "child-cleanup-complete".to_string(),
             ]
+        } else if retrieval {
+            vec![
+                "topology-configured".to_string(),
+                "rust-ready".to_string(),
+                "python-ready".to_string(),
+                "python-message-sent".to_string(),
+                "rust-message-persisted".to_string(),
+                "rust-restart-requested".to_string(),
+                "rust-restarted".to_string(),
+                "python-retrieval-requested".to_string(),
+                "python-message-retrieved".to_string(),
+                "child-cleanup-complete".to_string(),
+            ]
         } else {
             vec![
                 "topology-configured".to_string(),
@@ -584,6 +621,11 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
         },
         required_assertions: if bidirectional {
             vec!["python-to-rust-content".to_string(), "rust-to-python-content".to_string()]
+        } else if retrieval {
+            vec![
+                "python-to-rust-propagation-item".to_string(),
+                "rust-to-python-retrieval".to_string(),
+            ]
         } else {
             vec!["python-to-rust-propagation-item".to_string()]
         },
@@ -593,6 +635,15 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
                 "datastore-proof".to_string(),
                 "rust-outbound-proof".to_string(),
                 "rust-daemon-log".to_string(),
+                "python-daemon-log".to_string(),
+            ]
+        } else if retrieval {
+            vec![
+                "scenario-report".to_string(),
+                "datastore-proof".to_string(),
+                "rust-retrieval-proof".to_string(),
+                "rust-daemon-log".to_string(),
+                "rust-daemon-restart-log".to_string(),
                 "python-daemon-log".to_string(),
             ]
         } else {
@@ -1011,7 +1062,9 @@ fn validate_protocol_artifacts(
     let expected = &proof["expected_hashes"];
     let selected = &proof["selected_row"];
     let report_proof = &report["proof"];
-    let matches = if scenario.id == PinnedScenarioId::PropagatedResourceLxm.as_str() {
+    let node_scenario = pinned_scenario(&scenario.id)
+        .is_some_and(|definition| definition.id.rust_is_propagation_node());
+    let matches = if node_scenario {
         json_string_field(expected, "destination") == json_string_field(selected, "destination")
             && json_string_field(expected, "transient_id")
                 == json_string_field(selected, "transient_id")
@@ -1038,6 +1091,9 @@ fn validate_protocol_artifacts(
         return Some("retained datastore proof row does not match expected values".to_string());
     }
     let scenario_id = pinned_scenario(&scenario.id).map(|definition| definition.id)?;
+    if scenario_id.is_retrieval() {
+        return validate_retrieval_proof(scenario, &load, report_proof);
+    }
     if !scenario_id.is_bidirectional() {
         return None;
     }
@@ -1080,6 +1136,47 @@ fn validate_protocol_artifacts(
         && json_string_field(report_proof, "rust_outbound_state") == route_state
         && route_accepted;
     (!matches).then(|| "retained Rust outbound proof does not match expected values".to_string())
+}
+
+/// The retrieval proof must show the queued item acknowledged on the Rust node
+/// after restart and the Python recipient holding the exact message.
+fn validate_retrieval_proof(
+    scenario: &LiveScenario,
+    load: &dyn Fn(&str) -> Result<serde_json::Value, String>,
+    report_proof: &serde_json::Value,
+) -> Option<String> {
+    let proof = match load("rust-retrieval-proof") {
+        Ok(proof) => proof,
+        Err(error) => return Some(error),
+    };
+    if json_string_field(&proof, "scenario") != scenario.id
+        || json_string_field(&proof, "correlation_id") != scenario.correlation_id
+    {
+        return Some("retained Rust retrieval proof does not match this run".to_string());
+    }
+    let expected = &proof["expected_hashes"];
+    let item = &proof["item"];
+    let receipt = &proof["python_receipt"];
+    let transient_id = json_string_field(expected, "transient_id");
+    let message_id = json_string_field(expected, "message_id");
+    let content = json_string_field(&proof, "expected_content");
+    let matches = !transient_id.is_empty()
+        && !message_id.is_empty()
+        && !content.is_empty()
+        && json_string_field(item, "state") == "acknowledged"
+        && json_string_field(item, "transient_id") == transient_id
+        && json_string_field(item, "destination") == json_string_field(expected, "destination")
+        && json_string_field(report_proof, "python_message_transient_id") == transient_id
+        && json_string_field(report_proof, "python_message_id") == message_id
+        && json_string_field(report_proof, "rust_item_state") == "acknowledged"
+        && json_string_field(report_proof, "python_retrieval_transfer_state") == "7"
+        && json_string_field(receipt, "content") == content
+        && json_string_field(receipt, "message_id") == message_id
+        && json_string_field(receipt, "source") == json_string_field(expected, "source")
+        && json_string_field(receipt, "destination") == json_string_field(expected, "destination")
+        && receipt.get("signature_validated").and_then(serde_json::Value::as_bool) == Some(true)
+        && receipt.get("transfer_state").and_then(serde_json::Value::as_i64) == Some(7);
+    (!matches).then(|| "retained Rust retrieval proof does not match expected values".to_string())
 }
 
 fn json_string_field<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
