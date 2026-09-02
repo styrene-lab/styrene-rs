@@ -45,7 +45,7 @@ authorization.
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
 | Shared frontend session | 9/29 | Negotiation, event/reconnect behavior, TUI migration, common sessions, desktop migration, and revision-pair verification |
-| Reticulum/LXMF/NomadNet parity | 81/85 | Routed RNS gates and final support claims |
+| Reticulum/LXMF/NomadNet parity | 83/85 | Routed channel evidence and final support claims |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
@@ -199,8 +199,26 @@ Enabling these gates exposed one more defect. A capacity rejection of a direct
 client upload recorded no failure observation, so operators could not see why a
 message was refused.
 
-Remaining live gates require pinned runs for routed RNS request and resource
-paths. Repository policy keeps live Python runs manual and scheduled workflows
+The routed gates place a pinned Python transport hop between the Python
+endpoint and the Rust node. The direct and resource-backed direct gates run
+both legs across the hop. Both nodes must report a two hop route and name the
+same transport identity as the next hop. The Rust route record also names its
+interface. The routed NomadNet gate fetches every host path through the hop
+and proves the client saw two hops. Request packet and resource
+interoperability is covered by the NomadNet gates in both directions together
+with the canonical fixtures.
+
+Enabling the routed NomadNet gate exposed one more defect. The Rust host
+announced its NomadNet destination once at startup. A transport node that
+joined later never learned the path and could not answer a client's path
+request. The host now re-announces the node with every delivery announce and
+on operator-triggered announces, as a Python NomadNet node does on its
+announce interval.
+
+The remaining live evidence is a routed channel exchange. No pinned Python
+application speaks a channel protocol the Rust daemon exposes, so that
+evidence needs a Rust-to-Rust channel across a pinned transport hop.
+Repository policy keeps live Python runs manual and scheduled workflows
 fixture-only.
 
 Authority:
