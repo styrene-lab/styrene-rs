@@ -1331,11 +1331,11 @@ fn rns_parity_policy_rejects_unsafe_validation_and_claim_promotion() {
     );
     for (path, authority_ids) in [
         (
-            "openspec/changes/beechat-rns-corrections-wave/specs/rns-wire-corrections.md",
+            "openspec/archive/2026-09-02-beechat-rns-corrections-wave/specs/rns-wire-corrections.md",
             ["rns-1.5.1", "rns-1.5.1"],
         ),
         (
-            "openspec/changes/freetak-rns-hardening-wave/specs/rns-security-hardening.md",
+            "openspec/archive/2026-09-02-freetak-rns-hardening-wave/specs/rns-security-hardening.md",
             ["rns-1.5.1", "rns-1.5.1"],
         ),
         (

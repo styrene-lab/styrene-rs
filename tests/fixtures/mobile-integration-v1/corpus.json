@@ -142,7 +142,7 @@
       "ui_surfaces": ["more.identity", "messages.status"],
       "actions": ["select-unavailable-secure-backend", "boot", "inspect-storage", "query-custody"],
       "assertions": [
-        {"source": "daemon", "claim": "Boot returns a typed custody failure before writing plaintext identity material", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-identity.md"}
+        {"source": "daemon", "claim": "Boot returns a typed custody failure before writing plaintext identity material", "oracle": "openspec/archive/2026-09-02-complete-mobile-p0-backend-contracts/specs/mobile-backend-identity.md"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#production_custody_backends_fail_closed", "crates/apps/styrened/tests/mobile_p0_backend.rs#plaintext_backend_requires_explicit_selection", "crates/apps/styrened/tests/mobile_p0_backend.rs#custody_projection_is_authoritative_and_secret_free"],
       "missing_capabilities": [],
@@ -161,7 +161,7 @@
       "ui_surfaces": ["more.identity"],
       "actions": ["boot", "edit-public-identity", "shutdown", "restart", "query-identity"],
       "assertions": [
-        {"source": "durable_store", "claim": "Normalized display metadata is restored while identity and delivery hashes remain unchanged", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-identity.md"}
+        {"source": "durable_store", "claim": "Normalized display metadata is restored while identity and delivery hashes remain unchanged", "oracle": "openspec/archive/2026-09-02-complete-mobile-p0-backend-contracts/specs/mobile-backend-identity.md"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#public_identity_edits_survive_restart", "crates/apps/styrened/tests/mobile_p0_backend.rs#invalid_identity_edit_is_atomic"],
       "missing_capabilities": ["Dioxus identity edit and restart acceptance test"],
@@ -391,7 +391,7 @@
       "ui_surfaces": ["messages.inbox"],
       "actions": ["persist-unicode-message", "build-bounded-preview", "query-conversations"],
       "assertions": [
-        {"source": "daemon", "claim": "Preview generation is bounded, returns valid UTF-8, and cannot panic at a multibyte boundary", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
+        {"source": "daemon", "claim": "Preview generation is bounded, returns valid UTF-8, and cannot panic at a multibyte boundary", "oracle": "openspec/archive/2026-09-02-complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#unicode_previews_are_bounded_and_panic_free"],
       "missing_capabilities": ["Dioxus preview rendering acceptance test"],
@@ -659,7 +659,7 @@
       "ui_surfaces": ["people.person", "messages.inbox", "messages.thread"],
       "actions": ["seed-canonical-peer", "start-conversation", "start-conversation", "restart", "query-conversations"],
       "assertions": [
-        {"source": "durable_store", "claim": "Exactly one conversation shell survives restart without a fabricated message, preview, unread count, route, or online state", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
+        {"source": "durable_store", "claim": "Exactly one conversation shell survives restart without a fabricated message, preview, unread count, route, or online state", "oracle": "openspec/archive/2026-09-02-complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#canonical_peer_starts_one_durable_empty_conversation", "crates/apps/styrened/tests/mobile_p0_backend.rs#empty_conversation_survives_restart_without_preview"],
       "missing_capabilities": ["Dioxus conversation creation acceptance test"],
@@ -793,7 +793,7 @@
       "ui_surfaces": ["more.propagation", "messages.inbox"],
       "actions": ["queue-mixed-results", "poll-hub", "inspect-acknowledgements", "repeat-poll"],
       "assertions": [
-        {"source": "daemon", "claim": "Rejected and storage-failed transient identifiers are not acknowledged, while accepted and verified duplicate results are explicit", "oracle": "openspec/changes/complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
+        {"source": "daemon", "claim": "Rejected and storage-failed transient identifiers are not acknowledged, while accepted and verified duplicate results are explicit", "oracle": "openspec/archive/2026-09-02-complete-mobile-p0-backend-contracts/specs/mobile-backend-messaging.md"}
       ],
       "existing_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#legacy_poll_acknowledges_only_durable_results", "crates/apps/styrened/tests/mobile_p0_backend.rs#legacy_poll_reports_partial_acknowledgement_failure"],
       "missing_capabilities": [],
