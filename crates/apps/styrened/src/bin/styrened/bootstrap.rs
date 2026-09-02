@@ -900,6 +900,17 @@ async fn bootstrap_with_transport_override(
         transport
             .send_announce(&destination, local_display_name.as_deref().map(str::as_bytes))
             .await;
+        let node_app_data = local_display_name.as_deref().map(|name| name.as_bytes().to_vec());
+        let announce_transport = Arc::clone(&transport);
+        let announce_destination = destination.clone();
+        app_context.network_operations().set_nomadnet_announce(Arc::new(move || {
+            let transport = Arc::clone(&announce_transport);
+            let destination = announce_destination.clone();
+            let app_data = node_app_data.clone();
+            Box::pin(async move {
+                transport.send_announce(&destination, app_data.as_deref()).await;
+            })
+        }));
         startup.record(startup_component::NOMADNET_NODE_ANNOUNCE);
         startup.advertise(startup_capability::NATIVE_NOMADNET_HOST).unwrap_or_else(|error| {
             panic!("invalid standalone NomadNet startup contract: {error}")
