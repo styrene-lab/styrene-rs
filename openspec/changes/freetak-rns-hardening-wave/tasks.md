@@ -5,9 +5,9 @@ Every behavior group uses strict test-first ordering. Do not begin its implement
 ## 1. Immutable provenance and dependency admission
 <!-- specs: rns-security-hardening, rns-link-transport-hardening, rns-resource-hardening, rns-interface-policy -->
 
-- [ ] 1.1 Before any test or implementation work, record the immutable FreeTAKTeam repository URL and range, EPL-2.0/GPL-2.0-or-later evidence role, RNS authority revisions, observation date, applicable evidence commits, and an explicit `no source or fixture copied` admission
-- [ ] 1.2 Record completion evidence and reconciled-tree contract locations for every required Reticulum, Beechat, and mobile ownership gate in the design table; mark blocked groups as not startable
-- [ ] 1.3 Verify the admission record uses immutable revisions, changes no refs or tracking markers, and authorizes only independently written Styrene tests and implementation
+- [x] 1.1 Before any test or implementation work, record the immutable FreeTAKTeam repository URL and range, EPL-2.0/GPL-2.0-or-later evidence role, RNS authority revisions, observation date, applicable evidence commits, and an explicit `no source or fixture copied` admission
+- [x] 1.2 Record completion evidence and reconciled-tree contract locations for every required Reticulum, Beechat, and mobile ownership gate in the design table; mark blocked groups as not startable
+- [x] 1.3 Verify the admission record uses immutable revisions, changes no refs or tracking markers, and authorizes only independently written Styrene tests and implementation
 
 ## 2. Cached Fernet authentication reconciliation
 <!-- specs: rns-security-hardening -->
@@ -17,23 +17,23 @@ Every behavior group uses strict test-first ordering. Do not begin its implement
 ## 3. Secure key and ratchet persistence
 <!-- specs: rns-security-hardening -->
 
-- [ ] 3.1 Add and run failing Unix permission, predictable-temp-symlink, replacement-preservation, temp-cleanup, round-trip, and `StoredKey` debug-redaction tests for file keys, destination ratchets, and transport ratchets
-- [ ] 3.2 Add one minimal Styrene-owned private atomic-write primitive and route all raw key and ratchet persistence through it without changing persisted encodings
-- [ ] 3.3 Verify focused persistence tests on Unix and available cross-platform CI, then inspect failure logs and debug output for secret material
+- [x] 3.1 Add and run failing Unix permission, predictable-temp-symlink, replacement-preservation, temp-cleanup, round-trip, and `StoredKey` debug-redaction tests for file keys, destination ratchets, and transport ratchets
+- [x] 3.2 Add one minimal Styrene-owned private atomic-write primitive and route all raw key and ratchet persistence through it without changing persisted encodings
+- [x] 3.3 Verify focused persistence tests on Unix and available cross-platform CI, then inspect failure logs and debug output for secret material
 
 ## 4. Key-manager fallback classification
 <!-- specs: rns-security-hardening -->
 
-- [ ] 4.1 Add and run failing table-driven tests for get, put, and list behavior across not-found, backend-unavailable, invalid-argument, decode/integrity, and unclassified primary outcomes
-- [ ] 4.2 Implement the minimal availability classifier so only missing reads and classified availability failures use the secondary and non-availability writes never do
-- [ ] 4.3 Verify the focused fallback matrix and existing key-manager round trips, including proof that rejected primary writes leave the secondary unchanged
+- [x] 4.1 Add and run failing table-driven tests for get, put, and list behavior across not-found, backend-unavailable, invalid-argument, decode/integrity, and unclassified primary outcomes
+- [x] 4.2 Implement the minimal availability classifier so only missing reads and classified availability failures use the secondary and non-availability writes never do
+- [x] 4.3 Verify the focused fallback matrix and existing key-manager round trips, including proof that rejected primary writes leave the secondary unchanged
 
 ## 5. Poisoned receipt recovery
 <!-- specs: rns-security-hardening -->
 
-- [ ] 5.1 Add and run failing tests that poison the receipt mutex and then exercise track, lookup, resolve, and prune while preserving pre-poison entries
-- [ ] 5.2 Add the minimal shared lock-recovery path that accepts the independent-entry map, clears poison, and resumes all receipt operations
-- [ ] 5.3 Verify focused poison tests, ordinary receipt correlation, one-time non-secret diagnostics, and direct post-recovery lock acquisition
+- [x] 5.1 Add and run failing tests that poison the receipt mutex and then exercise track, lookup, resolve, and prune while preserving pre-poison entries
+- [x] 5.2 Add the minimal shared lock-recovery path that accepts the independent-entry map, clears poison, and resumes all receipt operations
+- [x] 5.3 Verify focused poison tests, ordinary receipt correlation, one-time non-secret diagnostics, and direct post-recovery lock acquisition
 
 ## 6. Adversarial non-RTT Link state mutation
 <!-- specs: rns-link-transport-hardening -->
