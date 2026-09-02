@@ -12,6 +12,7 @@ pub mod lxmf_bridge;
 pub mod lxmf_stamps;
 pub mod mobile;
 mod mobile_diagnostics;
+pub mod operator_profile;
 pub mod receipt_bridge;
 pub mod rnode_firmware;
 pub mod rns_crypto;

@@ -3,15 +3,15 @@
 ## 1. Profile roots and ownership
 <!-- specs: operator-profile-lifecycle -->
 
-- [ ] Port failing Quick and Local root, path derivation, private-permission, path-escape, and no-global-fallback tests from the old candidate onto current `main`
-- [ ] Implement versioned manifests, coherent durable paths, host-private runtime paths, and explicit managed-daemon composition
-- [ ] Add failing lease tests for active owner, stale owner, process mismatch, and idempotent release before implementing exclusive ownership
+- [x] Port failing Quick and Local root, path derivation, private-permission, path-escape, and no-global-fallback tests from the old candidate onto current `main`
+- [x] Implement versioned manifests, coherent durable paths, host-private runtime paths, and explicit managed-daemon composition
+- [x] Add failing lease tests for active owner, stale owner, process mismatch, and idempotent release before implementing exclusive ownership
 
 ## 2. Promotion and snapshots
 <!-- specs: operator-profile-lifecycle -->
 
-- [ ] Add failing promotion tests for identity continuity, complete bounded state, destination collision, and pre-commit cleanup
-- [ ] Implement stopped-profile Quick-to-Local promotion through a validated staged sibling and atomic commit
+- [x] Add failing promotion tests for identity continuity, complete bounded state, destination collision, and pre-commit cleanup
+- [x] Implement stopped-profile Quick-to-Local promotion through a validated staged sibling and atomic commit
 - [ ] Add failing stopped and running snapshot tests for hashes, immutable generations, live-owner coordination, and restore-as-new-generation
 - [ ] Implement coherent snapshots with authoritative SQLite online backup for running profiles
 

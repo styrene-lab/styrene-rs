@@ -49,7 +49,7 @@ authorization.
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
-| Operator profile lifecycle | 0/19 | Current-main implementation from tests through frontend migration |
+| Operator profile lifecycle | 5/19 | Snapshots, identity custody, Portable operation, typed IPC, and frontend migration |
 | Operation-scoped authorization | 18/18 | Archive after closure review |
 | Native RNode endpoint transport | 11/11 | Archived on 2026-09-02 |
 
@@ -347,9 +347,13 @@ Authority:
 
 ### Operator profiles
 
-An old branch contains a partial prototype, but it is not implementation
-authority. Work must restart on current `main` by porting failing tests before
-production code.
+An old branch contained a partial prototype that was not implementation
+authority. Its Quick and Local root, lease, path-escape, private-permission,
+managed-daemon, and promotion tests now pass on current `main`. The daemon
+composes a managed profile from explicit paths for configuration, identity,
+database, nodes, pages, files, and the socket, with no global fallback. A
+stopped Quick profile promotes to Local through a staged sibling and one
+atomic rename.
 
 The profile lifecycle covers coherent Quick and Local roots, atomic promotion,
 and coherent snapshots. It also covers verified custody recovery, encrypted
