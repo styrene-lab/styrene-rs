@@ -118,6 +118,30 @@ pub(super) async fn validated_receipt_hash(
     None
 }
 
+/// Build the canonical implicit delivery proof for a received single packet:
+/// addressed to the truncated packet hash, carrying only the destination
+/// identity's signature over the full hash, with the default context. This is
+/// the form Python Reticulum emits by default and validates against every
+/// outstanding receipt.
+pub(crate) fn build_implicit_packet_proof(
+    identity: &crate::identity::PrivateIdentity,
+    packet_hash: [u8; HASH_SIZE],
+) -> Packet {
+    let signature = identity.sign(&packet_hash).to_bytes();
+    Packet {
+        header: crate::packet::Header {
+            packet_type: PacketType::Proof,
+            destination_type: DestinationType::Single,
+            ..Default::default()
+        },
+        ifac: None,
+        destination: AddressHash::new_from_hash(&Hash::new(packet_hash)),
+        transport: None,
+        context: PacketContext::None,
+        data: PacketDataBuffer::new_from_slice(&signature),
+    }
+}
+
 /// Validate an implicit (signature only) or explicit (hash and signature)
 /// delivery proof for a packet this transport sent.
 fn validate_pending_packet_proof(
@@ -616,6 +640,8 @@ pub(super) async fn handle_data<'a>(
                     },
                     hops: Some(packet.header.hops),
                     interface: packet.transport.map(|value| value.as_slice().to_vec()),
+                    packet_hash: Some(packet.hash().to_bytes()),
+                    receiving_iface: Some(iface),
                 })
                 .ok();
         } else {

@@ -529,6 +529,15 @@ impl MeshTransport for TokioTransportAdapter {
         Ok(self.transport.send_packet_with_trace(packet).await)
     }
 
+    async fn prove_received_packet(
+        &self,
+        destination: AddressHash,
+        packet_hash: [u8; 32],
+        receiving_iface: Option<AddressHash>,
+    ) -> bool {
+        self.transport.prove_received_packet(destination, packet_hash, receiving_iface).await
+    }
+
     async fn send_via_link(
         &self,
         dest: DestinationDesc,

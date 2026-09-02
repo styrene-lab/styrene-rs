@@ -1535,6 +1535,67 @@ async fn proofs_for_transmitted_packets_reject_forged_or_unknown_evidence() {
 }
 
 #[tokio::test]
+async fn implicit_proof_built_for_a_received_packet_is_accepted_by_the_sender_side() {
+    // Receiver side: the destination that got the packet builds the proof.
+    let receiver_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut receiver_destination =
+        SingleInputDestination::new(receiver_identity, DestinationName::new("lxmf", "delivery"));
+    let announce = receiver_destination.announce(OsRng, None).expect("valid announce packet");
+
+    // Sender side: a transport that transmitted a packet to that destination.
+    let local_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut sender = Transport::new(TransportConfig::new("sender", &local_identity, true));
+    let handler = sender.get_handler();
+    handle_announce(&announce, handler.lock().await, AddressHash::new_from_rand(OsRng)).await;
+    let count = Arc::new(AtomicUsize::new(0));
+    sender.set_receipt_handler(Box::new(CountingReceiptHandler { count: count.clone() })).await;
+    let packet = Packet {
+        destination: announce.destination,
+        data: PacketDataBuffer::new_from_slice(b"opportunistic lxmf payload"),
+        ..Default::default()
+    };
+    let packet_hash = packet.hash().to_bytes();
+    handler.lock().await.register_pending_packet_receipt(packet_hash, announce.destination);
+
+    let proof =
+        super::wire::build_implicit_packet_proof(&receiver_destination.identity, packet_hash);
+    assert_eq!(proof.header.packet_type, PacketType::Proof);
+    assert_eq!(proof.context, PacketContext::None);
+    assert_eq!(proof.destination, AddressHash::new_from_hash(&Hash::new(packet_hash)));
+    assert_eq!(
+        proof.data.len(),
+        ed25519_dalek::SIGNATURE_LENGTH,
+        "implicit proofs carry only a signature"
+    );
+
+    sender.handle_inbound_for_test(proof).await;
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+
+    // A proof for the same packet signed by another destination is rejected.
+    let stranger = PrivateIdentity::new_from_rand(OsRng);
+    handler.lock().await.register_pending_packet_receipt([0x66; HASH_SIZE], announce.destination);
+    sender
+        .handle_inbound_for_test(super::wire::build_implicit_packet_proof(
+            &stranger,
+            [0x66; HASH_SIZE],
+        ))
+        .await;
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn prove_received_packet_requires_a_local_input_destination() {
+    let local_identity = PrivateIdentity::new_from_rand(OsRng);
+    let transport = Transport::new(TransportConfig::new("receiver", &local_identity, true));
+    assert!(
+        !transport
+            .prove_received_packet(AddressHash::new_from_rand(OsRng), [0x11; HASH_SIZE], None)
+            .await,
+        "unknown destinations must not be proved"
+    );
+}
+
+#[tokio::test]
 async fn transmitted_single_packets_report_their_hash_and_register_pending_receipts() {
     let local_identity = PrivateIdentity::new_from_rand(OsRng);
     let transport = Transport::new(TransportConfig::new("test", &local_identity, true));

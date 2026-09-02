@@ -5658,6 +5658,8 @@ mod tests {
             request_id: None,
             hops: None,
             interface: None,
+            packet_hash: None,
+            receiving_iface: None,
         });
 
         let event = timeout(Duration::from_secs(1), events.recv()).await.unwrap().unwrap();

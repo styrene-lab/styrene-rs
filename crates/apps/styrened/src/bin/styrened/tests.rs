@@ -403,6 +403,8 @@ async fn production_bootstrap_has_one_canonical_inbound_persistence_owner() {
         request_id: None,
         hops: None,
         interface: None,
+        packet_hash: None,
+        receiving_iface: None,
     });
 
     let legacy_observation = tokio::time::timeout(std::time::Duration::from_secs(2), async {
