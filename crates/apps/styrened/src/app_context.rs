@@ -91,6 +91,22 @@ impl AppContext {
         ctx
     }
 
+    /// Construct with an explicit NodeStore, page storage, and RBAC policy,
+    /// for managed profiles whose every path is supplied explicitly.
+    pub fn with_policy_and_pages(
+        transport: Arc<dyn MeshTransport>,
+        identity_hash: String,
+        store: Arc<Mutex<MessagesStore>>,
+        node_store: Arc<NodeStore>,
+        pages: PageService,
+        policy: PolicyService,
+    ) -> Self {
+        let mut ctx =
+            Self::with_node_store_and_pages(transport, identity_hash, store, node_store, pages);
+        ctx.policy = Arc::new(policy);
+        ctx
+    }
+
     /// Construct with an explicit NodeStore (e.g., file-backed for production).
     pub fn with_node_store(
         transport: Arc<dyn MeshTransport>,

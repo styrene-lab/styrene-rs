@@ -41,6 +41,20 @@ pub struct DaemonConfig2 {
     pub ephemeral: bool,
 }
 
+/// Every path a managed operator profile supplies to its daemon. Nothing
+/// here falls back to a global Styrene path.
+#[derive(Clone, Debug)]
+pub(crate) struct ManagedDaemonPaths {
+    pub db: PathBuf,
+    pub nodes: PathBuf,
+    pub config: PathBuf,
+    pub identity: PathBuf,
+    pub socket: PathBuf,
+    pub pages: PathBuf,
+    pub files: PathBuf,
+    pub display_name: String,
+}
+
 /// Handle to a running daemon.
 pub struct DaemonHandle {
     pub app_context: Arc<AppContext>,
@@ -152,6 +166,26 @@ impl DaemonHandle {
 /// Returns a handle that keeps the daemon alive. The daemon runs
 /// until the handle is dropped or the process is interrupted.
 pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
+    start_inner(cfg, None).await
+}
+
+/// Start a daemon whose every path comes from a managed operator profile.
+pub(crate) async fn start_managed(paths: ManagedDaemonPaths) -> anyhow::Result<DaemonHandle> {
+    let cfg = DaemonConfig2 {
+        db: Some(paths.db.clone()),
+        config: Some(paths.config.clone()),
+        identity: Some(paths.identity.clone()),
+        socket: Some(paths.socket.clone()),
+        ephemeral: false,
+    };
+    start_inner(cfg, Some(paths)).await
+}
+
+async fn start_inner(
+    cfg: DaemonConfig2,
+    managed_paths: Option<ManagedDaemonPaths>,
+) -> anyhow::Result<DaemonHandle> {
+    let conservative_network_defaults = cfg.ephemeral || managed_paths.is_some();
     let mut startup = StartupContractBuilder::production(RuntimeKind::Canonical);
     // --- Identity ---
     let identity = if cfg.ephemeral {
@@ -164,8 +198,11 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         load_or_create_identity(&identity_path)?
     };
     let identity_hash = hex::encode(identity.address_hash().as_slice());
-    let display_name =
-        std::env::var("LXMF_DISPLAY_NAME").ok().and_then(|v| normalize_display_name(&v));
+    let display_name = if let Some(paths) = managed_paths.as_ref() {
+        normalize_display_name(&paths.display_name)
+    } else {
+        std::env::var("LXMF_DISPLAY_NAME").ok().and_then(|v| normalize_display_name(&v))
+    };
 
     // --- Config ---
     let config_service_path = (!cfg.ephemeral)
@@ -177,7 +214,17 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         let default = crate::config::default_config_path();
         default.exists().then_some(default)
     });
-    let daemon_config = config_path.as_ref().and_then(|p| DaemonConfig::from_path(p).ok());
+    // A managed profile's config is authoritative: it must parse or the
+    // daemon does not start. Unmanaged daemons keep tolerating a bad file.
+    let daemon_config = match config_path.as_ref() {
+        Some(path) if managed_paths.is_some() => {
+            Some(DaemonConfig::from_path(path).map_err(|error| {
+                anyhow::anyhow!("load managed daemon config {}: {error}", path.display())
+            })?)
+        }
+        Some(path) => DaemonConfig::from_path(path).ok(),
+        None => None,
+    };
     let rnode_interfaces = daemon_config
         .as_ref()
         .map(DaemonConfig::rnode_interfaces)
@@ -197,7 +244,9 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    std::fs::create_dir_all(crate::config::default_config_dir()).ok();
+    if managed_paths.is_none() {
+        std::fs::create_dir_all(crate::config::default_config_dir()).ok();
+    }
     let store = Arc::new(Mutex::new(MessagesStore::open(&db_path)?));
 
     // --- Transport ---
@@ -235,7 +284,7 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
         startup.record(startup_component::SERVICE_RECEIPT_BRIDGE);
 
         // TCP server on default or configured address
-        let bind_addr = tcp_server_bind_addr(daemon_config.as_ref(), cfg.ephemeral);
+        let bind_addr = tcp_server_bind_addr(daemon_config.as_ref(), conservative_network_defaults);
 
         let iface_manager = transport_instance.iface_manager();
         #[cfg(feature = "native-serial")]
@@ -326,10 +375,14 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     };
 
     // Node store
-    let node_store_path = db_path.with_file_name("nodes.db");
-    let node_store = Arc::new(styrene_services::node_store::NodeStore::open(
-        node_store_path.to_str().unwrap_or("nodes.db"),
-    )?);
+    let node_store_path = managed_paths
+        .as_ref()
+        .map(|paths| paths.nodes.clone())
+        .unwrap_or_else(|| db_path.with_file_name("nodes.db"));
+    let node_store_path = node_store_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("node store path is not valid UTF-8"))?;
+    let node_store = Arc::new(styrene_services::node_store::NodeStore::open(node_store_path)?);
 
     // --- RBAC policy: config → DB overlay → normalize ---
     let rbac_policy = {
@@ -416,13 +469,28 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     let transport_active = !delivery_hash.is_empty();
 
     // --- AppContext ---
-    let app_context = Arc::new(AppContext::with_policy(
-        mesh_transport,
-        identity_hash.clone(),
-        store,
-        node_store,
-        crate::services::PolicyService::new(rbac_policy),
-    ));
+    let policy_service = crate::services::PolicyService::new(rbac_policy);
+    let app_context = Arc::new(if let Some(paths) = managed_paths.as_ref() {
+        AppContext::with_policy_and_pages(
+            mesh_transport,
+            identity_hash.clone(),
+            store,
+            node_store,
+            crate::services::PageService::with_storage_dirs(
+                paths.pages.clone(),
+                paths.files.clone(),
+            ),
+            policy_service,
+        )
+    } else {
+        AppContext::with_policy(
+            mesh_transport,
+            identity_hash.clone(),
+            store,
+            node_store,
+            policy_service,
+        )
+    });
     if let Some(config) = daemon_config.as_ref() {
         app_context.auto_reply().set_config((&config.auto_reply).into());
     }
@@ -443,6 +511,9 @@ pub async fn start(cfg: DaemonConfig2) -> anyhow::Result<DaemonHandle> {
     if let Some(config_path) = config_service_path.as_ref()
         && let Err(e) = app_context.config().load_or_default(config_path)
     {
+        if managed_paths.is_some() {
+            anyhow::bail!("load managed config service {}: {e}", config_path.display());
+        }
         crate::daemon_diagnostic!("[styrene] config load error: {e}");
     }
 

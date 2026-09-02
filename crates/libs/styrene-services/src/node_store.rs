@@ -147,6 +147,24 @@ impl NodeStore {
     }
 
     /// Get a node by identity hash.
+    /// Copy the committed node state into a fresh database file through
+    /// SQLite's online backup API, holding the connection for the duration.
+    pub fn backup_to(&self, destination: &std::path::Path) -> Result<(), ServiceError> {
+        let conn = self.conn.lock().map_err(|e| ServiceError::Storage(e.to_string()))?;
+        let mut target =
+            Connection::open(destination).map_err(|e| ServiceError::Storage(e.to_string()))?;
+        let backup = rusqlite::backup::Backup::new(&conn, &mut target)
+            .map_err(|e| ServiceError::Storage(e.to_string()))?;
+        backup
+            .run_to_completion(64, std::time::Duration::from_millis(5), None)
+            .map_err(|e| ServiceError::Storage(e.to_string()))?;
+        drop(backup);
+        target
+            .pragma_update(None, "journal_mode", "delete")
+            .map_err(|e| ServiceError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn get(&self, identity_hash: &str) -> Result<Option<Node>, ServiceError> {
         let conn = self.conn.lock().map_err(|e| ServiceError::Storage(e.to_string()))?;
         conn.query_row(
