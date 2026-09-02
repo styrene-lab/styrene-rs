@@ -43,8 +43,8 @@ authorization.
 | Shared Dioxus mobile UI | 31/55 | Android BLE, packaged corpus replay, physical acceptance, assistive technology, and release verification |
 | iOS App Lock policy | 15/17 | Physical iPhone matrix and separate App Lock versus Keychain prompt observations |
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
-| Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
-| Shared frontend session | 20/29 | TUI smoke checks, desktop migration, and revision-pair verification |
+| Extract Styrene UI repository | 21/23 | Governance confirmation and the desktop acceptance and rollback definition |
+| Shared frontend session | 29/29 | Archive after closure review |
 | Reticulum/LXMF/NomadNet parity | 85/85 | Archive after closure review |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
@@ -322,8 +322,13 @@ the NomadNet host discovered capability did not match the wire spelling. No
 typed consumer could decode a device that advertised it. The contract now pins
 the wire spelling and tolerates unknown capabilities.
 
-The remaining sequence is TUI smoke checks, cross-repository desktop
-migration, and aggregate verification against one immutable backend/UI pair.
+The TUI smoke checks run without a terminal: a headless render across every
+workspace, a Live-failure unit test, and an embedded runtime e2e test. The
+`styrene-ui` desktop now pins `styrene-rs` at `be869620` and runs on the shared
+client and sessions. Its request broker, daemon bridge, and parsers are gone,
+conversations use the canonical record, and its live scenario catalog mirrors
+every pinned runner scenario. The tested revision pair is recorded in the
+change's design document. The ledger is complete and awaits closure review.
 
 The loopback network suite (`just test-network`, `network-tests.yml`) does not
 pass on `main`. Hosted runs 33639376197 (`main`) and 33638808709 stop at the
