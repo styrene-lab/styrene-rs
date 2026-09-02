@@ -105,6 +105,6 @@ fn packet_and_resource_responses_from_wrong_link_are_rejected() {
     assert_eq!(tracker.get(&[1; 16]).expect("pending resource").status, RequestStatus::Pending);
     assert!(tracker.resource_advertised(expected_link, [1; 16], hash, 32, 32));
     assert!(!tracker.resource_progress(wrong_link, hash, 16, 32));
-    assert!(!tracker.resource_complete(wrong_link, hash, b"wrong".to_vec(), 32));
+    assert!(!tracker.resource_complete(wrong_link, hash, b"wrong".to_vec(), None, 32));
     assert_eq!(tracker.get(&[1; 16]).expect("receiving").status, RequestStatus::Receiving);
 }

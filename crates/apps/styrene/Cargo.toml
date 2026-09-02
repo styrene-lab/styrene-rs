@@ -22,6 +22,9 @@ anyhow.workspace = true
 # IPC client
 styrene-ipc = { path = "../../libs/styrene-ipc", version = "0.1.0" }
 styrene-ipc-client = { path = "../../libs/styrene-ipc-client", version = "0.1.0" }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 toml = { workspace = true }
 
 # Async runtime

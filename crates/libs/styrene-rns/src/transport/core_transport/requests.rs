@@ -5,7 +5,9 @@ use rmpv::Value;
 use super::*;
 use crate::destination::RequestLinkContext;
 use crate::transport::destination_ext::link::LinkPayload;
-use crate::transport::request::{decode_response_envelope, encode_response_envelope};
+use crate::transport::request::{
+    decode_response_envelope, encode_raw_response, encode_response_envelope,
+};
 use crate::transport::resource::{ResourceAdvertisement, ResourceEvent, ResourceEventKind};
 
 struct DecodedRequest<'a> {
@@ -127,7 +129,20 @@ impl TransportHandler {
                     if complete.is_response {
                         let expected_id =
                             self.request_tracker.response_resource_request_id(event.hash);
-                        match decode_response_envelope(&complete.data) {
+                        // Python `Link.response_resource_concluded`: a response
+                        // resource that carries metadata is a file response whose
+                        // data is the raw file, not a `[request_id, response]`
+                        // envelope. Everything else must decode the envelope.
+                        let decoded = if complete.metadata.is_some() {
+                            match (complete.request_id, encode_raw_response(&complete.data)) {
+                                (Some(request_id), Some(response)) => Ok((request_id, response)),
+                                (request_id, None) => Err(request_id),
+                                (None, Some(_)) => Err(None),
+                            }
+                        } else {
+                            decode_response_envelope(&complete.data)
+                        };
+                        match decoded {
                             Ok((request_id, response))
                                 if expected_id == Some(request_id)
                                     && complete.request_id == Some(request_id) =>
@@ -136,6 +151,7 @@ impl TransportHandler {
                                     event.link_id,
                                     event.hash,
                                     response.clone(),
+                                    complete.metadata.clone(),
                                     complete.transfer_size,
                                 );
                                 if let ResourceEventKind::Complete(complete) = &mut event.kind {
@@ -954,5 +970,49 @@ mod tests {
             assert_eq!(receipt.status, crate::transport::request::RequestStatus::Succeeded);
         }
         assert!(matches!(generic_resources.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+    }
+
+    #[tokio::test]
+    async fn metadata_response_resource_completes_with_raw_bytes_as_binary() {
+        let server = linked_server().await;
+        let link_id = *server.outbound.id();
+        let request_id = [0x32; 16];
+        let hash = Hash::new([0x42; 32]);
+        let file = vec![0x5a; 3000];
+        let metadata = vec![0x81, 0xa4, b'n', b'a', b'm', b'e', 0xc4, 0x01, b'f'];
+        {
+            let mut handler = server.transport.handler.lock().await;
+            handler
+                .request_tracker
+                .start(request_id, [7; 16], link_id, 3, Duration::from_secs(5), 4096)
+                .expect("request receipt");
+            assert!(
+                handler.request_tracker.resource_advertised(link_id, request_id, hash, 3, 3012)
+            );
+            handler
+                .publish_resource_events(vec![crate::transport::resource::ResourceEvent {
+                    hash,
+                    link_id,
+                    kind: ResourceEventKind::Complete(
+                        crate::transport::resource::ResourceComplete {
+                            data: file.clone(),
+                            metadata: Some(metadata.clone()),
+                            request_id: Some(request_id),
+                            is_request: false,
+                            is_response: true,
+                            transfer_size: 3012,
+                            checksum_verified: true,
+                        },
+                    ),
+                }])
+                .await;
+            let receipt = handler.request_tracker.get(&request_id).expect("completed receipt");
+            assert_eq!(receipt.status, crate::transport::request::RequestStatus::Succeeded);
+            assert_eq!(
+                receipt.response.as_deref(),
+                Some(encode_raw_response(&file).expect("binary").as_slice())
+            );
+            assert_eq!(receipt.response_metadata.as_deref(), Some(metadata.as_slice()));
+        }
     }
 }
