@@ -1198,7 +1198,6 @@ mod tests {
         sdu: usize,
         seed: u8,
     ) -> (Vec<Vec<u8>>, Vec<[u8; MAPHASH_LEN]>, ResourceAdvertisement) {
-        assert!(part_count <= HASHMAP_MAX_LEN, "fixture must fit one hashmap segment");
         let random_hash = [seed; RANDOM_HASH_SIZE];
         let parts = (0..part_count)
             .map(|index| vec![index as u8 ^ seed; sdu])
@@ -1218,12 +1217,38 @@ mod tests {
             random_hash,
             original_hash: hash,
             segment_index: 1,
-            total_segments: 1,
+            total_segments: part_count.div_ceil(HASHMAP_MAX_LEN) as u32,
             request_id: None,
             flags: 0,
-            hashmap: hashes.iter().flatten().copied().collect(),
+            hashmap: hashes[..part_count.min(HASHMAP_MAX_LEN)].iter().flatten().copied().collect(),
         };
         (parts, hashes, advertisement)
+    }
+
+    fn hashmap_continuation(
+        resource_hash: Hash,
+        hashes: &[[u8; MAPHASH_LEN]],
+        segment: usize,
+    ) -> ResourceHashUpdate {
+        let start = segment * HASHMAP_MAX_LEN;
+        let end = (start + HASHMAP_MAX_LEN).min(hashes.len());
+        ResourceHashUpdate {
+            resource_hash,
+            segment: segment as u32,
+            hashmap: hashes[start..end].iter().flatten().copied().collect(),
+        }
+    }
+
+    /// Deliver `parts[..count]` in order without any request accounting so the
+    /// receiver's consecutive height advances to `count`.
+    fn advance_receiver(receiver: &mut ResourceReceiver, link: &Link, parts: &[Vec<u8>], count: usize) {
+        for (offset, part) in parts[..count].iter().enumerate() {
+            assert!(matches!(
+                receiver.handle_part(part, link, Duration::from_millis(offset as u64)),
+                PartOutcome::Incomplete
+            ));
+        }
+        assert_eq!(receiver.consecutive_completed, count);
     }
 
     fn requested_link(name: &str) -> Link {
@@ -1248,7 +1273,9 @@ mod tests {
             ResourceReceiver::new(&advertisement, *link.id(), 4, 1024, Duration::ZERO)
                 .expect("bounded receiver");
 
-        let initial = receiver.request_round(RequestRound::Initial, Duration::ZERO);
+        let initial = receiver
+            .request_round(RequestRound::Initial, Duration::ZERO)
+            .expect("initial request");
         assert_eq!(initial.requested_hashes, hashes[..4]);
         assert_eq!(receiver.retry_count, 0);
         assert!(!receiver.round_drained());
@@ -1270,7 +1297,9 @@ mod tests {
         ));
         assert!(receiver.round_drained(), "a duplicate fragment does not reopen the round");
 
-        let next = receiver.request_round(RequestRound::Drained, Duration::from_millis(500));
+        let next = receiver
+            .request_round(RequestRound::Drained, Duration::from_millis(500))
+            .expect("drained round request");
         assert_eq!(receiver.window, WINDOW + 1, "a clean round grows the window by one");
         assert_eq!(next.requested_hashes, hashes[4..9]);
         assert_eq!(receiver.retry_count, 0);
@@ -1284,7 +1313,8 @@ mod tests {
             ResourceReceiver::new(&advertisement, *link.id(), 4, 1024, Duration::ZERO)
                 .expect("bounded receiver");
         let mut now = Duration::ZERO;
-        let mut request = receiver.request_round(RequestRound::Initial, now);
+        let mut request =
+            receiver.request_round(RequestRound::Initial, now).expect("initial request");
         let mut windows = vec![receiver.window];
         let mut next_index = 0usize;
         loop {
@@ -1311,7 +1341,8 @@ mod tests {
                 break;
             }
             assert!(receiver.round_drained());
-            request = receiver.request_round(RequestRound::Drained, now);
+            request =
+                receiver.request_round(RequestRound::Drained, now).expect("drained round request");
             windows.push(receiver.window);
         }
         assert_eq!(next_index, 64);
@@ -1339,7 +1370,7 @@ mod tests {
         let responses = manager.handle_packet(&packet, &mut link);
         assert_eq!(responses.len(), 1);
         assert_eq!(responses[0].context, PacketContext::ResourceRequest);
-        assert_eq!(manager.incoming[&advertisement.hash].outstanding, 4);
+        assert_eq!(manager.incoming[&advertisement.hash].outstanding.len(), 4);
 
         let mut expected_windows = Vec::new();
         for (retry, expected_window) in [(1_u8, 3_usize), (2, 2), (3, 1), (4, 1)] {
@@ -1408,11 +1439,205 @@ mod tests {
         assert_eq!(responses.len(), 1, "one request per drained round");
         assert_eq!(responses[0].context, PacketContext::ResourceRequest);
         assert_eq!(manager.incoming[&advertisement.hash].window, 4);
-        assert_eq!(manager.incoming[&advertisement.hash].outstanding, 4);
+        assert_eq!(manager.incoming[&advertisement.hash].outstanding.len(), 4);
 
         clock.advance(Duration::from_secs(1));
         let poll = manager.poll();
         assert_eq!(poll.requests.len(), 1, "a stalled round retries again");
         assert_eq!(manager.incoming[&advertisement.hash].retry_count, 1);
+    }
+
+    #[test]
+    fn continuation_refill_never_requests_an_in_flight_fragment_twice() {
+        let boundary = HASHMAP_MAX_LEN;
+        let link = requested_link("refill");
+        let (parts, hashes, advertisement) = windowed_resource(boundary + 6, 4, 0x61);
+        let mut receiver =
+            ResourceReceiver::new(&advertisement, *link.id(), 4, 4096, Duration::ZERO)
+                .expect("multi-segment receiver");
+        advance_receiver(&mut receiver, &link, &parts, boundary - 2);
+
+        let request = receiver
+            .request_round(RequestRound::Drained, Duration::from_secs(1))
+            .expect("window reaches the segment boundary");
+        assert_eq!(receiver.window, WINDOW + 1);
+        assert_eq!(request.requested_hashes, hashes[boundary - 2..boundary]);
+        assert!(request.hashmap_exhausted, "the active window reached unmapped fragments");
+        assert_eq!(request.last_map_hash, Some(hashes[boundary - 1]));
+        assert!(receiver.continuation_pending);
+
+        assert!(matches!(
+            receiver.handle_part(&parts[boundary - 2], &link, Duration::from_millis(1100)),
+            PartOutcome::Incomplete
+        ));
+        assert!(!receiver.round_drained(), "one requested fragment is still in flight");
+
+        receiver.handle_hash_update(&hashmap_continuation(advertisement.hash, &hashes, 1));
+        assert!(!receiver.continuation_pending);
+        let refill = receiver
+            .request_round(RequestRound::Continuation, Duration::from_millis(1200))
+            .expect("continuation refills the window");
+        assert!(!refill.requested_hashes.contains(&hashes[boundary - 1]), "in flight, not re-requested");
+        assert_eq!(refill.requested_hashes, hashes[boundary..boundary + 4], "refill stays within the window");
+        assert!(!refill.hashmap_exhausted);
+        assert_eq!(receiver.outstanding.len(), receiver.window);
+        assert_eq!(receiver.retry_count, 0);
+    }
+
+    #[test]
+    fn one_continuation_stays_outstanding_until_it_arrives_or_expires() {
+        let boundary = HASHMAP_MAX_LEN;
+        let link = requested_link("continuation");
+        let (parts, hashes, advertisement) = windowed_resource(boundary + 2, 4, 0x77);
+        let mut receiver =
+            ResourceReceiver::new(&advertisement, *link.id(), 4, 4096, Duration::ZERO)
+                .expect("multi-segment receiver");
+        advance_receiver(&mut receiver, &link, &parts, boundary - 1);
+
+        let request = receiver
+            .request_round(RequestRound::Drained, Duration::from_secs(1))
+            .expect("first continuation request");
+        assert_eq!(request.requested_hashes, hashes[boundary - 1..boundary]);
+        assert!(request.hashmap_exhausted);
+
+        assert!(matches!(
+            receiver.handle_part(&parts[boundary - 1], &link, Duration::from_millis(1100)),
+            PartOutcome::Incomplete
+        ));
+        assert!(receiver.round_drained());
+        assert!(
+            receiver.request_round(RequestRound::Drained, Duration::from_millis(1200)).is_none(),
+            "no second continuation while one is outstanding"
+        );
+        assert_eq!(receiver.last_request, Duration::from_secs(1), "nothing was sent");
+        assert!(receiver.continuation_pending);
+
+        let retry = receiver
+            .request_round(RequestRound::Retry, Duration::from_millis(2200))
+            .expect("an expired continuation is requested again");
+        assert!(retry.hashmap_exhausted);
+        assert_eq!(retry.last_map_hash, Some(hashes[boundary - 1]));
+        assert!(retry.requested_hashes.is_empty());
+        assert_eq!(receiver.retry_count, 1);
+        assert!(receiver.continuation_pending);
+
+        receiver.handle_hash_update(&hashmap_continuation(advertisement.hash, &hashes, 1));
+        let refill = receiver
+            .request_round(RequestRound::Continuation, Duration::from_millis(2300))
+            .expect("continuation arrived");
+        assert_eq!(refill.requested_hashes, hashes[boundary..]);
+        assert!(!refill.hashmap_exhausted);
+    }
+
+    #[test]
+    fn lost_continuation_expires_into_bounded_re_requests_and_one_terminal_timeout() {
+        let boundary = HASHMAP_MAX_LEN;
+        let mut link = requested_link("lost-continuation");
+        let sdu = link.resource_sdu();
+        let (parts, hashes, advertisement) = windowed_resource(boundary + 2, sdu, 0x13);
+        let clock = Arc::new(ManualMonotonicClock::default());
+        let mut manager = ResourceManager::new_with_config_and_clock(
+            Duration::from_secs(1),
+            2,
+            clock.clone(),
+        );
+        let packet = resource_packet(
+            PacketContext::ResourceAdvrtisement,
+            &advertisement.pack().expect("advertisement"),
+            *link.id(),
+        );
+        assert_eq!(manager.handle_packet(&packet, &mut link).len(), 1);
+
+        let mut requests = 0usize;
+        for part in &parts[..boundary] {
+            clock.advance(Duration::from_millis(1));
+            let packet = resource_packet(PacketContext::Resource, part, *link.id());
+            let responses = manager.handle_packet(&packet, &mut link);
+            assert!(responses.len() <= 1);
+            requests += responses.len();
+            let receiver = &manager.incoming[&advertisement.hash];
+            assert!(receiver.outstanding.len() <= receiver.window, "requests stay bounded");
+        }
+        assert!(requests > 0);
+        let receiver = &manager.incoming[&advertisement.hash];
+        assert_eq!(receiver.consecutive_completed, boundary);
+        assert!(receiver.continuation_pending, "the window reached the next segment");
+        assert!(receiver.round_drained());
+        let _ = manager.drain_events();
+
+        for retry in 1..=2_u8 {
+            clock.advance(Duration::from_secs(1));
+            let actions = manager.poll();
+            assert_eq!(actions.requests.len(), 1, "the expired continuation is requested again");
+            assert!(actions.requests[0].request.hashmap_exhausted);
+            assert_eq!(actions.requests[0].request.last_map_hash, Some(hashes[boundary - 1]));
+            assert_eq!(manager.incoming[&advertisement.hash].retry_count, retry);
+        }
+        clock.advance(Duration::from_secs(1));
+        let actions = manager.poll();
+        assert!(actions.requests.is_empty());
+        assert_eq!(actions.cancellations.len(), 1);
+        assert!(!manager.incoming.contains_key(&advertisement.hash), "owned state released");
+        assert!(matches!(
+            manager.drain_events().as_slice(),
+            [ResourceEvent { kind: ResourceEventKind::Failed(ResourceFailure::TimedOut), .. }]
+        ));
+        assert!(manager.poll().cancellations.is_empty(), "exactly one terminal failure");
+    }
+
+    #[test]
+    fn multi_segment_transfer_completes_and_releases_request_state() {
+        let boundary = HASHMAP_MAX_LEN;
+        let mut link = requested_link("multi-segment");
+        let sdu = link.resource_sdu();
+        let (parts, hashes, advertisement) = windowed_resource(boundary + 3, sdu, 0x2b);
+        let clock = Arc::new(ManualMonotonicClock::default());
+        let mut manager = ResourceManager::new_with_config_and_clock(
+            Duration::from_secs(1),
+            2,
+            clock.clone(),
+        );
+        let packet = resource_packet(
+            PacketContext::ResourceAdvrtisement,
+            &advertisement.pack().expect("advertisement"),
+            *link.id(),
+        );
+        assert_eq!(manager.handle_packet(&packet, &mut link).len(), 1);
+        for part in &parts[..boundary] {
+            let packet = resource_packet(PacketContext::Resource, part, *link.id());
+            manager.handle_packet(&packet, &mut link);
+        }
+        assert!(manager.incoming[&advertisement.hash].continuation_pending);
+
+        let update = hashmap_continuation(advertisement.hash, &hashes, 1);
+        let packet = resource_packet(
+            PacketContext::ResourceHashUpdate,
+            &update.encode().expect("hash update encodes"),
+            *link.id(),
+        );
+        let responses = manager.handle_packet(&packet, &mut link);
+        assert_eq!(responses.len(), 1, "the continuation refills the window once");
+        assert_eq!(responses[0].context, PacketContext::ResourceRequest);
+        {
+            let receiver = &manager.incoming[&advertisement.hash];
+            assert!(!receiver.continuation_pending);
+            assert_eq!(receiver.outstanding.len(), 3);
+            assert_eq!(receiver.retry_count, 0);
+        }
+
+        let mut responses = Vec::new();
+        for part in &parts[boundary..] {
+            let packet = resource_packet(PacketContext::Resource, part, *link.id());
+            responses = manager.handle_packet(&packet, &mut link);
+        }
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].context, PacketContext::ResourceProof);
+        assert!(manager.incoming.is_empty(), "completion releases owned request state");
+        assert!(manager
+            .drain_events()
+            .iter()
+            .any(|event| matches!(event.kind, ResourceEventKind::Complete(_))));
+        clock.advance(Duration::from_secs(5));
+        assert!(manager.poll().cancellations.is_empty());
     }
 }

@@ -176,8 +176,9 @@ impl ResourceManager {
         }
         let mut failed = Vec::new();
         for (hash, receiver) in self.incoming.iter_mut() {
-            if receiver.retry_due(now, self.retry_interval, self.retry_limit) {
-                let request = receiver.request_round(RequestRound::Retry, now);
+            if receiver.retry_due(now, self.retry_interval, self.retry_limit)
+                && let Some(request) = receiver.request_round(RequestRound::Retry, now)
+            {
                 actions.requests.push(ResourceRetryRequest { link_id: receiver.link_id, request });
             }
             if receiver.timeout_due(now, self.retry_interval, self.retry_limit) {
@@ -443,6 +444,9 @@ impl ResourceManager {
         };
         let request = receiver.request_round(RequestRound::Initial, now);
         self.incoming.insert(resource_hash, receiver);
+        let Some(request) = request else {
+            return;
+        };
         match build_link_packet(
             link,
             PacketType::Data,
@@ -487,7 +491,11 @@ impl ResourceManager {
         };
         if let Some(receiver) = self.incoming.get_mut(&update.resource_hash) {
             receiver.handle_hash_update(&update);
-            let request = receiver.build_request();
+            let Some(request) =
+                receiver.request_round(RequestRound::Continuation, self.clock.now())
+            else {
+                return;
+            };
             match build_link_packet(
                 link,
                 PacketType::Data,
@@ -540,9 +548,11 @@ impl ResourceManager {
                 PartOutcome::Incomplete => {
                     // One request per drained round: fragments still in flight
                     // from the current round are never asked for again here.
-                    if receiver.received > before_received && receiver.round_drained() {
-                        let request =
-                            receiver.request_round(RequestRound::Drained, self.clock.now());
+                    if receiver.received > before_received
+                        && receiver.round_drained()
+                        && let Some(request) =
+                            receiver.request_round(RequestRound::Drained, self.clock.now())
+                    {
                         request_packet = match build_link_packet(
                             link,
                             PacketType::Data,

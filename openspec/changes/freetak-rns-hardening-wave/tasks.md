@@ -61,9 +61,9 @@ Dependency gate: `beechat-rns-corrections-wave` group 2 must be verified complet
 ## 9. Resource continuation and outstanding window
 <!-- specs: rns-resource-hardening -->
 
-- [ ] 9.1 Add and run failing deterministic tests for outstanding-fragment deduplication, bounded window refill, active-window hashmap exhaustion, one outstanding continuation, lost-continuation expiry, and bounded re-request
-- [ ] 9.2 Implement the minimal outstanding-fragment and continuation-gate state on top of verified round accounting without changing the Reticulum-owned receive-part search offset
-- [ ] 9.3 Verify no in-flight fragment is requested twice, continuation loss cannot hang, requests remain bounded, and completion or one timeout failure releases owned request state
+- [x] 9.1 Add and run failing deterministic tests for outstanding-fragment deduplication, bounded window refill, active-window hashmap exhaustion, one outstanding continuation, lost-continuation expiry, and bounded re-request
+- [x] 9.2 Implement the minimal outstanding-fragment and continuation-gate state on top of verified round accounting without changing the Reticulum-owned receive-part search offset
+- [x] 9.3 Verify no in-flight fragment is requested twice, continuation loss cannot hang, requests remain bounded, and completion or one timeout failure releases owned request state
 
 ## 10. Resource admission caps and effective-MTU sizing
 <!-- specs: rns-resource-hardening -->
