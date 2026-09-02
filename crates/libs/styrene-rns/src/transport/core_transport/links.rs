@@ -6,6 +6,7 @@ use crate::transport::channel::{
 use crate::transport::destination_ext::link::{
     LinkCloseReason, LinkLifecycleSnapshot, LinkStateSnapshot,
 };
+use crate::transport::resource::{PreparedSegment, ResourceFailure};
 
 const TERMINAL_LINK_HISTORY_CAPACITY: usize = 200;
 
@@ -937,6 +938,79 @@ impl Transport {
     pub(crate) fn get_handler(&self) -> Arc<Mutex<TransportHandler>> {
         // direct access to handler for testing purposes
         self.handler.clone()
+    }
+}
+
+/// Prepare and dispatch every split segment whose predecessor was proved.
+///
+/// Segment construction (encryption and fragmentation) runs with only the
+/// Link locked; the transport handler is locked briefly to hand out bytes,
+/// adopt the prepared segment, and confirm dispatch. A segment that cannot be
+/// built or dispatched fails its whole split exactly once.
+pub(super) async fn advance_due_split_segments(handler_arc: &Arc<Mutex<TransportHandler>>) {
+    let due = handler_arc.lock().await.resource_manager.take_due_segments();
+    for pending in due {
+        let original = pending.original_hash;
+        let (link, iface_manager, now) = {
+            let handler = handler_arc.lock().await;
+            (
+                find_link_in_handler(&handler, pending.link_id).await,
+                handler.iface_manager.clone(),
+                handler.resource_manager.now(),
+            )
+        };
+        let prepared = match link {
+            Some(link) => {
+                let link = link.lock().await;
+                if link.status() != LinkStatus::Active {
+                    Err(ResourceFailure::LinkClosed)
+                } else {
+                    match link.ingress_iface() {
+                        Some(iface) => PreparedSegment::build(&link, pending, now)
+                            .map(|prepared| (prepared, iface))
+                            .map_err(|_| ResourceFailure::Integrity),
+                        None => Err(ResourceFailure::LinkClosed),
+                    }
+                }
+            }
+            None => Err(ResourceFailure::LinkClosed),
+        };
+        let (prepared, iface) = match prepared {
+            Ok(prepared) => prepared,
+            Err(failure) => {
+                let mut handler = handler_arc.lock().await;
+                let _ = handler.resource_manager.fail_split_outbound(original, failure);
+                let events = handler.resource_manager.drain_events();
+                handler.publish_resource_events(events).await;
+                continue;
+            }
+        };
+        let adopted = {
+            let mut handler = handler_arc.lock().await;
+            let adopted = handler.resource_manager.adopt_segment(prepared);
+            if let Some((_, packet)) = adopted.as_ref() {
+                handler.packet_cache.lock().await.update(packet);
+            }
+            adopted
+        };
+        let Some((segment_hash, packet)) = adopted else {
+            continue;
+        };
+        let sent = iface_manager
+            .lock()
+            .await
+            .send(TxMessage { tx_type: TxMessageType::Direct(iface), packet })
+            .await
+            .sent_ifaces
+            > 0;
+        let mut handler = handler_arc.lock().await;
+        let confirmed = handler.resource_manager.confirm_outbound_dispatch(segment_hash, sent);
+        if !sent || !confirmed {
+            let _ =
+                handler.resource_manager.fail_split_outbound(original, ResourceFailure::LinkClosed);
+        }
+        let events = handler.resource_manager.drain_events();
+        handler.publish_resource_events(events).await;
     }
 }
 

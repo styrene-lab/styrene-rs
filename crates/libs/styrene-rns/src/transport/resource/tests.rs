@@ -3,6 +3,7 @@ mod tests {
     use super::*;
     use crate::destination::{DestinationDesc, DestinationName};
     use crate::identity::PrivateIdentity;
+    use crate::transport::destination_ext::link::LinkHandleResult;
     use crate::transport::time::ManualMonotonicClock;
     use rand_core::OsRng;
     use std::sync::{
@@ -488,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn resource_manager_rejects_split_flag() {
+    fn single_segment_split_flag_is_accepted_as_a_plain_resource() {
         let signer = PrivateIdentity::new_from_rand(OsRng);
         let identity = *signer.as_identity();
         let destination = DestinationDesc {
@@ -520,8 +521,9 @@ mod tests {
         let mut manager = ResourceManager::new_with_config(Duration::from_secs(1), 1);
         let responses = manager.handle_packet(&packet, &mut link);
 
-        assert!(responses.is_empty());
-        assert!(manager.incoming.is_empty());
+        assert_eq!(responses.len(), 1, "a lone segment is an ordinary resource");
+        assert_eq!(manager.incoming.len(), 1);
+        assert!(manager.split_incoming.is_empty());
     }
 
     #[test]
@@ -674,7 +676,7 @@ mod tests {
             random_hash: [0x32; RANDOM_HASH_SIZE],
             original_hash: Hash::new_from_slice(&[0x31; 32]),
             segment_index: 1,
-            total_segments: parts.div_ceil(HASHMAP_MAX_LEN) as u32,
+            total_segments: 1,
             request_id: None,
             flags: 0,
             hashmap: vec![0; parts.min(HASHMAP_MAX_LEN) * MAPHASH_LEN],
@@ -696,8 +698,8 @@ mod tests {
         .is_err());
 
         let mut overflow = bounded_advertisement(resource_sdu, resource_sdu, resource_sdu);
-        overflow.segment_index = u32::MAX;
-        overflow.total_segments = u32::MAX;
+        overflow.segment_index = 2;
+        overflow.total_segments = 1;
         assert!(ResourceReceiver::new(
             &overflow,
             AddressHash::new([0; 16]),
@@ -1217,7 +1219,7 @@ mod tests {
             random_hash,
             original_hash: hash,
             segment_index: 1,
-            total_segments: part_count.div_ceil(HASHMAP_MAX_LEN) as u32,
+            total_segments: 1,
             request_id: None,
             flags: 0,
             hashmap: hashes[..part_count.min(HASHMAP_MAX_LEN)].iter().flatten().copied().collect(),
@@ -1880,5 +1882,518 @@ mod tests {
             .expect("request packet");
             assert!(wire_len(&request) <= mtu_budget, "{label}: largest request");
         }
+    }
+
+    fn active_link_pair(name: &str) -> (Link, Link) {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", name),
+        };
+        let (tx, _) = tokio::sync::broadcast::channel(8);
+        let mut outbound = Link::new(destination, tx.clone());
+        let request = outbound.request();
+        let mut inbound =
+            Link::new_from_request(&request, signer.sign_key().clone(), destination, tx)
+                .expect("link request should parse");
+        let iface = AddressHash::new_from_rand(OsRng);
+        assert!(matches!(
+            outbound.handle_packet(&inbound.prove(), iface),
+            LinkHandleResult::Activated
+        ));
+        inbound.set_ingress_iface(iface);
+        (outbound, inbound)
+    }
+
+    /// Turn a link packet built by one side into the plaintext packet the
+    /// peer's manager consumes, mirroring the transport's decrypt step.
+    fn relay(packet: &Packet, peer: &Link) -> Packet {
+        let link_encrypted = packet.context != PacketContext::Resource
+            && !(packet.header.packet_type == PacketType::Proof
+                && packet.context == PacketContext::ResourceProof);
+        if !link_encrypted {
+            return *packet;
+        }
+        let mut buffer = PacketDataBuffer::new();
+        let len = peer
+            .decrypt(packet.data.as_slice(), buffer.accuire_buf_max())
+            .expect("peer decrypts link packet")
+            .len();
+        buffer.resize(len);
+        let mut plain = *packet;
+        plain.data = buffer;
+        plain
+    }
+
+    struct SplitHarness {
+        out_link: Link,
+        in_link: Link,
+        sender: ResourceManager,
+        receiver: ResourceManager,
+        clock: Arc<ManualMonotonicClock>,
+        advertisements: Vec<ResourceAdvertisement>,
+        to_receiver: Vec<Packet>,
+        to_sender: Vec<Packet>,
+        /// Prepare due segments inside the exchange, as the transport does.
+        auto_advance: bool,
+    }
+
+    impl SplitHarness {
+        fn new(name: &str, segment_size: usize) -> Self {
+            let (out_link, in_link) = active_link_pair(name);
+            let clock = Arc::new(ManualMonotonicClock::default());
+            let mut sender = ResourceManager::new_with_config_and_clock(
+                Duration::from_secs(1),
+                2,
+                clock.clone(),
+            );
+            sender.set_split_segment_size(segment_size);
+            let receiver = ResourceManager::new_with_config_and_clock(
+                Duration::from_secs(1),
+                2,
+                clock.clone(),
+            );
+            Self {
+                out_link,
+                in_link,
+                sender,
+                receiver,
+                clock,
+                advertisements: Vec::new(),
+                to_receiver: Vec::new(),
+                to_sender: Vec::new(),
+                auto_advance: true,
+            }
+        }
+
+        fn start(&mut self, data: Vec<u8>, metadata: Option<Vec<u8>>) -> Hash {
+            let (original, advertisement) = self
+                .sender
+                .start_send(&self.out_link, data, metadata)
+                .expect("split send starts");
+            assert!(self.sender.confirm_outbound_dispatch(original, true));
+            self.to_receiver.push(advertisement);
+            original
+        }
+
+        /// Prepare and dispatch due later segments the way the transport does.
+        fn advance_sender(&mut self) {
+            for pending in self.sender.take_due_segments() {
+                let prepared = PreparedSegment::build(&self.out_link, pending, self.clock.now())
+                    .expect("later segment builds");
+                let (hash, packet) =
+                    self.sender.adopt_segment(prepared).expect("split still active");
+                assert!(self.sender.confirm_outbound_dispatch(hash, true));
+                self.to_receiver.push(packet);
+            }
+        }
+
+        /// Exchange packets until nothing is queued or `stop` holds.
+        fn pump(&mut self, stop: impl Fn(&Self) -> bool) {
+            for _ in 0..10_000 {
+                if stop(self) {
+                    return;
+                }
+                if let Some(packet) = self.to_receiver.first().cloned() {
+                    self.to_receiver.remove(0);
+                    let plain = relay(&packet, &self.in_link);
+                    if plain.context == PacketContext::ResourceAdvrtisement {
+                        self.advertisements
+                            .push(ResourceAdvertisement::unpack(plain.data.as_slice()).expect("adv"));
+                    }
+                    self.clock.advance(Duration::from_millis(1));
+                    let responses = self.receiver.handle_packet(&plain, &mut self.in_link);
+                    self.to_sender.extend(responses);
+                    continue;
+                }
+                if let Some(packet) = self.to_sender.first().cloned() {
+                    self.to_sender.remove(0);
+                    let plain = relay(&packet, &self.out_link);
+                    self.clock.advance(Duration::from_millis(1));
+                    let responses = self.sender.handle_packet(&plain, &mut self.out_link);
+                    self.to_receiver.extend(responses);
+                    if self.auto_advance {
+                        self.advance_sender();
+                    }
+                    continue;
+                }
+                return;
+            }
+            panic!("split exchange did not settle");
+        }
+
+        fn maps_are_empty(&self) -> bool {
+            self.sender.split_outgoing.is_empty()
+                && self.sender.outbound_owner.is_empty()
+                && self.sender.pending_outgoing.is_empty()
+                && self.sender.outgoing.is_empty()
+                && self.sender.due_segments.is_empty()
+                && self.receiver.split_incoming.is_empty()
+                && self.receiver.inbound_owner.is_empty()
+                && self.receiver.incoming.is_empty()
+        }
+    }
+
+    fn split_payload(len: usize) -> Vec<u8> {
+        (0..len).map(|index| (index * 7 % 251) as u8).collect()
+    }
+
+    #[test]
+    fn split_send_prepares_only_the_first_segment_eagerly() {
+        let mut harness = SplitHarness::new("eager", 1000);
+        let data = split_payload(2500);
+        let metadata = vec![0xab; 20];
+        let original = harness.start(data.clone(), Some(metadata));
+
+        assert_eq!(harness.sender.pending_outgoing.len(), 0, "first segment is advertised");
+        assert_eq!(harness.sender.outgoing.len(), 1);
+        let split = &harness.sender.split_outgoing[&original];
+        assert_eq!(split.total_segments, 3);
+        assert_eq!(split.next_index, 2);
+        assert_eq!(split.remaining, data[977..].to_vec(), "later bytes stay unprepared");
+        assert!(split.active.is_some());
+        assert!(harness.sender.take_due_segments().is_empty(), "nothing is due while in flight");
+
+        let advertisement = ResourceAdvertisement::unpack(
+            relay(&harness.to_receiver[0], &harness.in_link).data.as_slice(),
+        )
+        .expect("advertisement");
+        assert_eq!(advertisement.original_hash, original);
+        assert_eq!(advertisement.segment_index, 1);
+        assert_eq!(advertisement.total_segments, 3);
+        assert_eq!(advertisement.flags & (FLAG_SPLIT | FLAG_METADATA), FLAG_SPLIT | FLAG_METADATA);
+        assert_eq!(advertisement.data_size, 1000, "the first segment fills to the segment size");
+        assert_ne!(advertisement.hash, original);
+    }
+
+    #[test]
+    fn short_payloads_and_oversized_metadata_do_not_split() {
+        let mut harness = SplitHarness::new("unsplit", 1000);
+        let (hash, packet) = harness
+            .sender
+            .start_send(&harness.out_link, split_payload(900), Some(vec![1; 50]))
+            .expect("single resource");
+        let advertisement =
+            ResourceAdvertisement::unpack(relay(&packet, &harness.in_link).data.as_slice())
+                .expect("advertisement");
+        assert_eq!(advertisement.flags & FLAG_SPLIT, 0);
+        assert_eq!(advertisement.hash, hash);
+        assert!(harness.sender.split_outgoing.is_empty());
+
+        assert!(matches!(
+            harness.sender.start_send(&harness.out_link, split_payload(10), Some(vec![1; 1000])),
+            Err(RnsError::InvalidArgument)
+        ));
+    }
+
+    #[test]
+    fn multi_segment_transfer_assembles_byte_exact_data_and_strips_metadata_once() {
+        let mut harness = SplitHarness::new("assemble", 1000);
+        let data = split_payload(2500);
+        let metadata = vec![0xcd; 20];
+        let original = harness.start(data.clone(), Some(metadata.clone()));
+        harness.pump(|_| false);
+
+        let advertisements = &harness.advertisements;
+        assert_eq!(advertisements.len(), 3);
+        assert_eq!(
+            advertisements.iter().map(|adv| adv.segment_index).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert!(advertisements.iter().all(|adv| adv.original_hash == original));
+        assert!(advertisements.iter().all(|adv| adv.flags & FLAG_SPLIT == FLAG_SPLIT));
+        assert_eq!(advertisements[0].flags & FLAG_METADATA, FLAG_METADATA);
+        assert!(advertisements[1..].iter().all(|adv| adv.flags & FLAG_METADATA == 0));
+        assert_eq!(advertisements[1].data_size, 1000);
+        assert_eq!(advertisements[2].data_size, 523);
+
+        let receiver_events = harness.receiver.drain_events();
+        let completes = receiver_events
+            .iter()
+            .filter(|event| matches!(event.kind, ResourceEventKind::Complete(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(completes.len(), 1, "one verified completion");
+        assert_eq!(completes[0].hash, original);
+        let ResourceEventKind::Complete(complete) = &completes[0].kind else { unreachable!() };
+        assert_eq!(complete.data, data, "byte-exact original data");
+        assert_eq!(complete.metadata, Some(metadata), "metadata carried once");
+        assert!(complete.checksum_verified);
+        let split_progress = receiver_events
+            .iter()
+            .filter(|event| {
+                event.hash == original && matches!(event.kind, ResourceEventKind::Progress(_))
+            })
+            .count();
+        assert_eq!(split_progress, 2, "one split progress per completed earlier segment");
+        assert!(receiver_events.iter().all(|event| {
+            !matches!(event.kind, ResourceEventKind::Failed(_))
+        }));
+
+        let sender_events = harness.sender.drain_events();
+        let outbound_completes = sender_events
+            .iter()
+            .filter(|event| matches!(event.kind, ResourceEventKind::OutboundComplete))
+            .collect::<Vec<_>>();
+        assert_eq!(outbound_completes.len(), 1, "one outbound completion for the whole split");
+        assert_eq!(outbound_completes[0].hash, original);
+        assert!(harness.maps_are_empty(), "both sides release all segment state");
+    }
+
+    fn second_segment_in_flight(harness: &SplitHarness, original: Hash) -> bool {
+        harness
+            .receiver
+            .split_incoming
+            .get(&original)
+            .is_some_and(|record| record.next_index == 2 && record.active.is_some())
+    }
+
+    #[test]
+    fn initiator_cancellation_of_an_active_segment_is_one_terminal_outcome_on_both_sides() {
+        let mut harness = SplitHarness::new("initiator-cancel", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| second_segment_in_flight(harness, original));
+        let _ = harness.sender.drain_events();
+        let _ = harness.receiver.drain_events();
+
+        let cancellation =
+            harness.sender.cancel_local(original).expect("split is cancellable by original hash");
+        assert_eq!(cancellation.context, PacketContext::ResourceInitiatorCancel);
+        assert_ne!(cancellation.hash, original, "the peer is told about the active segment");
+        let sender_events = harness.sender.drain_events();
+        assert_eq!(sender_events.len(), 1);
+        assert_eq!(sender_events[0].hash, original);
+        assert!(matches!(
+            sender_events[0].kind,
+            ResourceEventKind::Failed(ResourceFailure::Cancelled)
+        ));
+        let progress = sender_events[0].progress.as_ref().expect("accumulated progress");
+        assert_eq!((progress.received_parts, progress.total_parts), (1, 3));
+        assert!(progress.received_bytes > 0);
+        assert!(harness.sender.cancel_local(original).is_none(), "cancelled once");
+
+        let cancel = build_resource_cancel_packet(
+            &harness.out_link,
+            cancellation.hash,
+            cancellation.context,
+        )
+        .expect("cancel packet");
+        let responses = harness.receiver.handle_packet(&relay(&cancel, &harness.in_link), &mut harness.in_link);
+        assert!(responses.is_empty());
+        let receiver_events = harness.receiver.drain_events();
+        assert_eq!(receiver_events.len(), 1);
+        assert_eq!(receiver_events[0].hash, original);
+        assert!(matches!(
+            receiver_events[0].kind,
+            ResourceEventKind::Failed(ResourceFailure::Cancelled)
+        ));
+        let progress = receiver_events[0].progress.as_ref().expect("accumulated progress");
+        assert_eq!((progress.received_parts, progress.total_parts), (1, 3));
+        assert!(harness.maps_are_empty());
+    }
+
+    #[test]
+    fn receiver_cancellation_and_between_segment_cancellation_release_original_state() {
+        let mut harness = SplitHarness::new("receiver-cancel", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| second_segment_in_flight(harness, original));
+        let _ = harness.sender.drain_events();
+        let _ = harness.receiver.drain_events();
+
+        let cancellation = harness.receiver.cancel_local(original).expect("receiver cancels");
+        assert_eq!(cancellation.context, PacketContext::ResourceReceiverCancel);
+        let receiver_events = harness.receiver.drain_events();
+        assert_eq!(receiver_events.len(), 1);
+        assert_eq!(receiver_events[0].hash, original);
+        let cancel = build_resource_cancel_packet(
+            &harness.in_link,
+            cancellation.hash,
+            cancellation.context,
+        )
+        .expect("cancel packet");
+        harness.sender.handle_packet(&relay(&cancel, &harness.out_link), &mut harness.out_link);
+        let sender_events = harness.sender.drain_events();
+        assert_eq!(sender_events.len(), 1);
+        assert_eq!(sender_events[0].hash, original);
+        assert!(matches!(
+            sender_events[0].kind,
+            ResourceEventKind::Failed(ResourceFailure::Cancelled)
+        ));
+        assert!(harness.maps_are_empty());
+
+        // A split caught between segments is cancelled by its original hash.
+        let mut harness = SplitHarness::new("between", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| {
+            harness
+                .receiver
+                .split_incoming
+                .get(&original)
+                .is_some_and(|record| record.next_index == 2 && record.active.is_none())
+        });
+        let _ = harness.receiver.drain_events();
+        let cancel = build_resource_cancel_packet(
+            &harness.out_link,
+            original,
+            PacketContext::ResourceInitiatorCancel,
+        )
+        .expect("cancel packet");
+        harness.receiver.handle_packet(&relay(&cancel, &harness.in_link), &mut harness.in_link);
+        let receiver_events = harness.receiver.drain_events();
+        assert_eq!(receiver_events.len(), 1);
+        assert_eq!(receiver_events[0].hash, original);
+        assert!(harness.receiver.split_incoming.is_empty());
+        assert!(harness.receiver.inbound_owner.is_empty());
+    }
+
+    #[test]
+    fn segment_timeouts_fail_the_split_once_on_either_side() {
+        let mut harness = SplitHarness::new("timeout", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| second_segment_in_flight(harness, original));
+        let _ = harness.sender.drain_events();
+        let _ = harness.receiver.drain_events();
+
+        let mut receiver_cancellations = Vec::new();
+        for _ in 0..4 {
+            harness.clock.advance(Duration::from_secs(1));
+            receiver_cancellations.extend(harness.receiver.poll().cancellations);
+        }
+        assert_eq!(receiver_cancellations.len(), 1, "one cancellation names the segment");
+        assert_ne!(receiver_cancellations[0].hash, original);
+        let receiver_events = harness.receiver.drain_events();
+        assert_eq!(receiver_events.len(), 1);
+        assert_eq!(receiver_events[0].hash, original);
+        assert!(matches!(
+            receiver_events[0].kind,
+            ResourceEventKind::Failed(ResourceFailure::TimedOut)
+        ));
+        assert_eq!(receiver_events[0].progress.as_ref().map(|p| p.received_parts), Some(1));
+        assert!(harness.receiver.split_incoming.is_empty());
+        assert!(harness.receiver.incoming.is_empty());
+
+        let mut sender_cancellations = Vec::new();
+        for _ in 0..8 {
+            harness.clock.advance(Duration::from_secs(1));
+            sender_cancellations.extend(harness.sender.poll().cancellations);
+        }
+        assert_eq!(sender_cancellations.len(), 1);
+        let sender_events = harness.sender.drain_events();
+        assert_eq!(sender_events.len(), 1);
+        assert_eq!(sender_events[0].hash, original);
+        assert!(matches!(
+            sender_events[0].kind,
+            ResourceEventKind::Failed(ResourceFailure::TimedOut)
+        ));
+        assert!(harness.maps_are_empty());
+    }
+
+    #[test]
+    fn segment_build_or_dispatch_failure_fails_the_split_once() {
+        let mut harness = SplitHarness::new("build-failure", 1000);
+        harness.auto_advance = false;
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| !harness.sender.due_segments.is_empty());
+        let _ = harness.sender.drain_events();
+        assert_eq!(harness.sender.due_segments, vec![original]);
+        assert!(harness.sender.split_outgoing[&original].active.is_none());
+
+        let due = harness.sender.take_due_segments();
+        assert_eq!(due.len(), 1, "the second segment is handed out once");
+        assert!(harness.sender.split_outgoing[&original].building);
+        assert!(harness.sender.take_due_segments().is_empty());
+        let cancellation = harness
+            .sender
+            .fail_split_outbound(original, ResourceFailure::Integrity)
+            .expect("split fails once");
+        assert_eq!(cancellation.hash, original, "no segment is active, so the original is named");
+        let events = harness.sender.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].hash, original);
+        assert!(matches!(events[0].kind, ResourceEventKind::Failed(ResourceFailure::Integrity)));
+        assert_eq!(events[0].progress.as_ref().map(|p| p.received_parts), Some(1));
+        assert!(harness.sender.fail_split_outbound(original, ResourceFailure::Integrity).is_none());
+        assert!(harness.sender.split_outgoing.is_empty());
+        assert!(harness.sender.outbound_owner.is_empty());
+
+        // A prepared segment whose split was released is dropped, not adopted.
+        for pending in due {
+            let prepared = PreparedSegment::build(&harness.out_link, pending, harness.clock.now())
+                .expect("segment builds");
+            assert!(harness.sender.adopt_segment(prepared).is_none());
+        }
+
+        // Dispatch failure of a first segment releases the split as well.
+        let (original, _) = harness
+            .sender
+            .start_send(&harness.out_link, split_payload(2500), None)
+            .expect("split starts");
+        assert!(!harness.sender.confirm_outbound_dispatch(original, false));
+        assert!(harness.sender.split_outgoing.is_empty());
+        assert!(harness.sender.pending_outgoing.is_empty());
+    }
+
+    #[test]
+    fn assembly_mismatch_fails_the_split_once_without_new_state() {
+        let mut harness = SplitHarness::new("mismatch", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| {
+            harness
+                .receiver
+                .split_incoming
+                .get(&original)
+                .is_some_and(|record| record.next_index == 2 && record.active.is_none())
+        });
+        let _ = harness.receiver.drain_events();
+        // The real second-segment advertisement is next in line; corrupt its position.
+        harness.pump(|harness| !harness.to_receiver.is_empty());
+        let packet = harness.to_receiver.remove(0);
+        let plain = relay(&packet, &harness.in_link);
+        let mut advertisement =
+            ResourceAdvertisement::unpack(plain.data.as_slice()).expect("advertisement");
+        assert_eq!(advertisement.segment_index, 2);
+        advertisement.segment_index = 3;
+        let skipped = resource_packet(
+            PacketContext::ResourceAdvrtisement,
+            &advertisement.pack().expect("packs"),
+            *harness.in_link.id(),
+        );
+        let responses = harness.receiver.handle_packet(&skipped, &mut harness.in_link);
+        assert!(responses.is_empty(), "no request for a segment that does not continue");
+        assert!(harness.receiver.incoming.is_empty(), "no receiver state");
+        let events = harness.receiver.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].hash, original);
+        assert!(matches!(events[0].kind, ResourceEventKind::Failed(ResourceFailure::Integrity)));
+        assert_eq!(events[0].progress.as_ref().map(|p| p.received_parts), Some(1));
+        assert!(harness.receiver.split_incoming.is_empty());
+
+        // A later segment for an unknown original is ignored without state or events.
+        let responses = harness.receiver.handle_packet(&skipped, &mut harness.in_link);
+        assert!(responses.is_empty());
+        assert!(harness.receiver.incoming.is_empty());
+        assert!(harness.receiver.drain_events().is_empty());
+    }
+
+    #[test]
+    fn link_release_reports_a_split_once_including_between_segments() {
+        let mut harness = SplitHarness::new("link-release", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| second_segment_in_flight(harness, original));
+        let _ = harness.sender.drain_events();
+        let _ = harness.receiver.drain_events();
+        let link_id = *harness.out_link.id();
+        harness.sender.cancel_link(link_id);
+        harness.receiver.remove_orphaned(&[]);
+        for events in [harness.sender.drain_events(), harness.receiver.drain_events()] {
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].hash, original);
+            assert!(matches!(
+                events[0].kind,
+                ResourceEventKind::Failed(ResourceFailure::LinkClosed)
+            ));
+        }
+        assert!(harness.maps_are_empty());
     }
 }

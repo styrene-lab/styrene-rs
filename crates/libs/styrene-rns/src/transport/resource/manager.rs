@@ -3,10 +3,128 @@ pub struct ResourceManager {
     outgoing: HashMap<Hash, ResourceSender>,
     incoming: HashMap<Hash, ResourceReceiver>,
     incoming_limits: HashMap<Hash, usize>,
+    /// Outbound split resources keyed by original hash.
+    split_outgoing: HashMap<Hash, SplitOutbound>,
+    /// Active outbound segment hash to its original hash.
+    outbound_owner: HashMap<Hash, Hash>,
+    /// Inbound split resources keyed by original hash.
+    split_incoming: HashMap<Hash, SplitInbound>,
+    /// Active inbound segment hash to its original hash.
+    inbound_owner: HashMap<Hash, Hash>,
+    /// Originals whose next segment may be prepared outside the lock.
+    due_segments: Vec<Hash>,
+    split_segment_size: usize,
     events: Vec<ResourceEvent>,
     retry_interval: Duration,
     retry_limit: u8,
     clock: Arc<dyn MonotonicClock>,
+}
+
+/// Outbound split state. Only the first segment is prepared eagerly; the
+/// bytes of later segments stay here until the previous segment is proved.
+#[derive(Debug, Clone)]
+struct SplitOutbound {
+    link_id: AddressHash,
+    total_segments: u32,
+    /// Index of the next segment to prepare.
+    next_index: u32,
+    remaining: Vec<u8>,
+    segment_size: usize,
+    /// Segment currently pending or transferring.
+    active: Option<Hash>,
+    /// A later segment is being prepared outside the lock.
+    building: bool,
+    sent_bytes: u64,
+    total_bytes: u64,
+}
+
+impl SplitOutbound {
+    /// Segments proved so far: every segment adopted before the next index,
+    /// minus the one still in flight. A segment being prepared has not been
+    /// adopted yet and is not counted either way.
+    fn completed_segments(&self) -> usize {
+        let adopted = self.next_index.saturating_sub(1) as usize;
+        adopted.saturating_sub(usize::from(self.active.is_some()))
+    }
+
+    fn progress(&self) -> ResourceProgress {
+        ResourceProgress {
+            received_bytes: self.sent_bytes,
+            total_bytes: self.total_bytes,
+            received_parts: self.completed_segments(),
+            total_parts: self.total_segments as usize,
+        }
+    }
+}
+
+/// Inbound split state: segments are appended in order and released as one
+/// completion or one terminal failure keyed by the original hash.
+#[derive(Debug, Clone)]
+struct SplitInbound {
+    link_id: AddressHash,
+    total_segments: u32,
+    /// Segment index expected next.
+    next_index: u32,
+    data: Vec<u8>,
+    metadata: Option<Vec<u8>>,
+    received_bytes: u64,
+    maximum_data_size: usize,
+    active: Option<Hash>,
+    request_id: Option<[u8; ADDRESS_HASH_SIZE]>,
+    is_request: bool,
+    is_response: bool,
+}
+
+impl SplitInbound {
+    fn progress(&self) -> ResourceProgress {
+        ResourceProgress {
+            received_bytes: self.received_bytes,
+            total_bytes: 0,
+            received_parts: self.next_index.saturating_sub(1) as usize,
+            total_parts: self.total_segments as usize,
+        }
+    }
+}
+
+/// Bytes of one later segment handed out for construction outside the
+/// transport lock.
+#[derive(Debug)]
+pub(crate) struct PendingSegment {
+    pub link_id: AddressHash,
+    pub original_hash: Hash,
+    pub index: u32,
+    pub total: u32,
+    pub bytes: Vec<u8>,
+}
+
+/// A later segment constructed outside the lock, ready to be adopted.
+pub(crate) struct PreparedSegment {
+    original_hash: Hash,
+    sender: ResourceSender,
+}
+
+impl PreparedSegment {
+    /// Encrypt and fragment one later segment. This touches only the Link.
+    pub(crate) fn build(
+        link: &Link,
+        pending: PendingSegment,
+        now: Duration,
+    ) -> Result<Self, RnsError> {
+        let sender = ResourceSender::new_segment(
+            link,
+            pending.bytes,
+            None,
+            None,
+            false,
+            Some(SegmentDescriptor {
+                original_hash: pending.original_hash,
+                index: pending.index,
+                total: pending.total,
+            }),
+            now,
+        )?;
+        Ok(Self { original_hash: pending.original_hash, sender })
+    }
 }
 
 pub(crate) struct ResourceRetryRequest {
@@ -55,11 +173,147 @@ impl ResourceManager {
             outgoing: HashMap::new(),
             incoming: HashMap::new(),
             incoming_limits: HashMap::new(),
+            split_outgoing: HashMap::new(),
+            outbound_owner: HashMap::new(),
+            split_incoming: HashMap::new(),
+            inbound_owner: HashMap::new(),
+            due_segments: Vec::new(),
+            split_segment_size: SPLIT_SEGMENT_SIZE,
             events: Vec::new(),
             retry_interval,
             retry_limit,
             clock,
         }
+    }
+
+    pub(crate) fn now(&self) -> Duration {
+        self.clock.now()
+    }
+
+    #[cfg(test)]
+    fn set_split_segment_size(&mut self, size: usize) {
+        self.split_segment_size = size;
+    }
+
+    /// Map a segment hash to its outbound original hash.
+    fn outbound_original(&self, hash: Hash) -> Option<Hash> {
+        if self.split_outgoing.contains_key(&hash) {
+            Some(hash)
+        } else {
+            self.outbound_owner.get(&hash).copied()
+        }
+    }
+
+    /// Map a segment hash to its inbound original hash.
+    fn inbound_original(&self, hash: Hash) -> Option<Hash> {
+        if self.split_incoming.contains_key(&hash) {
+            Some(hash)
+        } else {
+            self.inbound_owner.get(&hash).copied()
+        }
+    }
+
+    /// Record one terminal outbound failure. `hash` is a plain resource hash
+    /// or a segment hash whose sender the caller already removed; a split
+    /// releases its original-hash state and reports exactly once.
+    fn fail_outbound(&mut self, hash: Hash, link_id: AddressHash, failure: ResourceFailure) {
+        if let Some(original) = self.outbound_original(hash) {
+            self.outbound_owner.retain(|_, owner| *owner != original);
+            let Some(split) = self.split_outgoing.remove(&original) else {
+                return;
+            };
+            if let Some(active) = split.active {
+                self.pending_outgoing.remove(&active);
+                self.outgoing.remove(&active);
+            }
+            self.due_segments.retain(|due| *due != original);
+            self.events.push(ResourceEvent {
+                hash: original,
+                link_id,
+                kind: ResourceEventKind::Failed(failure),
+                progress: Some(split.progress()),
+            });
+        } else {
+            self.events.push(ResourceEvent::new(hash, link_id, ResourceEventKind::Failed(failure)));
+        }
+    }
+
+    /// Record one terminal inbound failure; see [`Self::fail_outbound`].
+    fn fail_inbound(&mut self, hash: Hash, link_id: AddressHash, failure: ResourceFailure) {
+        if let Some(original) = self.inbound_original(hash) {
+            self.inbound_owner.retain(|_, owner| *owner != original);
+            let Some(split) = self.split_incoming.remove(&original) else {
+                return;
+            };
+            if let Some(active) = split.active {
+                self.incoming.remove(&active);
+            }
+            self.events.push(ResourceEvent {
+                hash: original,
+                link_id,
+                kind: ResourceEventKind::Failed(failure),
+                progress: Some(split.progress()),
+            });
+        } else {
+            self.events.push(ResourceEvent::new(hash, link_id, ResourceEventKind::Failed(failure)));
+        }
+    }
+
+    /// Hand out the bytes of every segment that may now be prepared outside
+    /// the lock: its predecessor was proved and nothing is in flight.
+    pub(crate) fn take_due_segments(&mut self) -> Vec<PendingSegment> {
+        let due = std::mem::take(&mut self.due_segments);
+        due.into_iter()
+            .filter_map(|original| {
+                let split = self.split_outgoing.get_mut(&original)?;
+                if split.active.is_some() || split.building || split.remaining.is_empty() {
+                    return None;
+                }
+                let take = split.remaining.len().min(split.segment_size);
+                let bytes = split.remaining.drain(..take).collect();
+                split.building = true;
+                Some(PendingSegment {
+                    link_id: split.link_id,
+                    original_hash: original,
+                    index: split.next_index,
+                    total: split.total_segments,
+                    bytes,
+                })
+            })
+            .collect()
+    }
+
+    /// Adopt a prepared later segment as the split's active pending sender.
+    /// Returns `None` when the split was released in the meantime.
+    pub(crate) fn adopt_segment(&mut self, prepared: PreparedSegment) -> Option<(Hash, Packet)> {
+        let split = self.split_outgoing.get_mut(&prepared.original_hash)?;
+        let hash = prepared.sender.resource_hash;
+        let packet = prepared.sender.advertisement_packet();
+        split.building = false;
+        split.active = Some(hash);
+        split.next_index = split.next_index.saturating_add(1);
+        self.pending_outgoing.insert(hash, prepared.sender);
+        self.outbound_owner.insert(hash, prepared.original_hash);
+        Some((hash, packet))
+    }
+
+    /// Fail an outbound split from outside the manager, such as when a later
+    /// segment cannot be built or dispatched. Returns the cancellation to
+    /// send so the peer releases its side.
+    pub(crate) fn fail_split_outbound(
+        &mut self,
+        original: Hash,
+        failure: ResourceFailure,
+    ) -> Option<ResourceCancellation> {
+        let split = self.split_outgoing.get(&original)?;
+        let link_id = split.link_id;
+        let hash = split.active.unwrap_or(original);
+        self.fail_outbound(original, link_id, failure);
+        Some(ResourceCancellation {
+            link_id,
+            hash,
+            context: PacketContext::ResourceInitiatorCancel,
+        })
     }
 
     pub(crate) fn set_incoming_limit(&mut self, hash: Hash, maximum_data_size: usize) -> bool {
@@ -70,18 +324,65 @@ impl ResourceManager {
         true
     }
 
+    /// Start an outbound transfer. A payload longer than the split segment
+    /// size becomes a split resource: only the first segment is prepared
+    /// here, later segments are prepared outside the lock as their
+    /// predecessors are proved, and the returned hash is the original hash
+    /// that identifies the whole transfer.
     pub fn start_send(
         &mut self,
         link: &Link,
         data: Vec<u8>,
         metadata: Option<Vec<u8>>,
     ) -> Result<(Hash, Packet), RnsError> {
-        let sender =
-            ResourceSender::new(link, data, metadata, None, false, self.clock.now())?;
-        let resource_hash = sender.resource_hash;
+        let prefix_len = metadata.as_ref().map_or(0, |metadata| 3 + metadata.len());
+        let segment_size = self.split_segment_size;
+        if prefix_len + data.len() <= segment_size {
+            let sender =
+                ResourceSender::new(link, data, metadata, None, false, self.clock.now())?;
+            let resource_hash = sender.resource_hash;
+            let packet = sender.advertisement_packet();
+            self.pending_outgoing.insert(resource_hash, sender);
+            return Ok((resource_hash, packet));
+        }
+        if prefix_len >= segment_size {
+            return Err(RnsError::InvalidArgument);
+        }
+        let total_bytes = (prefix_len + data.len()) as u64;
+        let first_len = segment_size - prefix_len;
+        let mut data = data;
+        let remaining = data.split_off(first_len);
+        let total_segments = 1 + remaining.len().div_ceil(segment_size);
+        let total_segments = u32::try_from(total_segments).map_err(|_| RnsError::InvalidArgument)?;
+        let original_hash = Hash::new(random_bytes::<HASH_SIZE>());
+        let sender = ResourceSender::new_segment(
+            link,
+            data,
+            metadata,
+            None,
+            false,
+            Some(SegmentDescriptor { original_hash, index: 1, total: total_segments }),
+            self.clock.now(),
+        )?;
+        let segment_hash = sender.resource_hash;
         let packet = sender.advertisement_packet();
-        self.pending_outgoing.insert(resource_hash, sender);
-        Ok((resource_hash, packet))
+        self.pending_outgoing.insert(segment_hash, sender);
+        self.outbound_owner.insert(segment_hash, original_hash);
+        self.split_outgoing.insert(
+            original_hash,
+            SplitOutbound {
+                link_id: *link.id(),
+                total_segments,
+                next_index: 2,
+                remaining,
+                segment_size,
+                active: Some(segment_hash),
+                building: false,
+                sent_bytes: 0,
+                total_bytes,
+            },
+        );
+        Ok((original_hash, packet))
     }
 
     pub fn start_response(
@@ -125,6 +426,11 @@ impl ResourceManager {
     }
 
     pub fn confirm_outbound_dispatch(&mut self, resource_hash: Hash, sent: bool) -> bool {
+        let resource_hash = self
+            .split_outgoing
+            .get(&resource_hash)
+            .and_then(|split| split.active)
+            .unwrap_or(resource_hash);
         let Some(mut sender) = self.pending_outgoing.remove(&resource_hash) else {
             return false;
         };
@@ -134,6 +440,10 @@ impl ResourceManager {
             self.outgoing.insert(resource_hash, sender);
             true
         } else {
+            if let Some(original) = self.outbound_owner.remove(&resource_hash) {
+                self.split_outgoing.remove(&original);
+                self.due_segments.retain(|due| *due != original);
+            }
             false
         }
     }
@@ -163,11 +473,7 @@ impl ResourceManager {
             .collect::<Vec<_>>();
         for (hash, link_id) in pending_timed_out {
             self.pending_outgoing.remove(&hash);
-            self.events.push(ResourceEvent {
-                hash,
-                link_id,
-                kind: ResourceEventKind::Failed(ResourceFailure::TimedOut),
-            });
+            self.fail_outbound(hash, link_id, ResourceFailure::TimedOut);
             actions.cancellations.push(ResourceCancellation {
                 link_id,
                 hash,
@@ -187,11 +493,7 @@ impl ResourceManager {
         }
         for (hash, link_id) in failed {
             self.incoming.remove(&hash);
-            self.events.push(ResourceEvent {
-                hash,
-                link_id,
-                kind: ResourceEventKind::Failed(ResourceFailure::TimedOut),
-            });
+            self.fail_inbound(hash, link_id, ResourceFailure::TimedOut);
             actions.cancellations.push(ResourceCancellation {
                 link_id,
                 hash,
@@ -217,11 +519,7 @@ impl ResourceManager {
 
         for (hash, link_id) in failed {
             self.outgoing.remove(&hash);
-            self.events.push(ResourceEvent {
-                hash,
-                link_id,
-                kind: ResourceEventKind::Failed(ResourceFailure::TimedOut),
-            });
+            self.fail_outbound(hash, link_id, ResourceFailure::TimedOut);
             actions.cancellations.push(ResourceCancellation {
                 link_id,
                 hash,
@@ -237,7 +535,25 @@ impl ResourceManager {
         self.poll().packets
     }
 
+    /// Cancel a local transfer by its resource hash, segment hash, or split
+    /// original hash. The returned cancellation names the hash the peer can
+    /// resolve: the active segment while one is in flight, otherwise the
+    /// original hash.
     pub(crate) fn cancel_local(&mut self, hash: Hash) -> Option<ResourceCancellation> {
+        if let Some(original) = self.inbound_original(hash) {
+            let split = self.split_incoming.get(&original)?;
+            let link_id = split.link_id;
+            let wire_hash = split.active.unwrap_or(original);
+            self.fail_inbound(original, link_id, ResourceFailure::Cancelled);
+            return Some(ResourceCancellation {
+                link_id,
+                hash: wire_hash,
+                context: PacketContext::ResourceReceiverCancel,
+            });
+        }
+        if let Some(original) = self.outbound_original(hash) {
+            return self.fail_split_outbound(original, ResourceFailure::Cancelled);
+        }
         let (link_id, context) = if let Some(receiver) = self.incoming.remove(&hash) {
             (receiver.link_id, PacketContext::ResourceReceiverCancel)
         } else if let Some(sender) = self.pending_outgoing.remove(&hash) {
@@ -246,94 +562,70 @@ impl ResourceManager {
             let sender = self.outgoing.remove(&hash)?;
             (sender.link_id, PacketContext::ResourceInitiatorCancel)
         };
-        self.events.push(ResourceEvent {
-            hash,
-            link_id,
-            kind: ResourceEventKind::Failed(ResourceFailure::Cancelled),
-        });
+        self.events
+            .push(ResourceEvent::new(hash, link_id, ResourceEventKind::Failed(ResourceFailure::Cancelled)));
         Some(ResourceCancellation { link_id, hash, context })
     }
 
     pub(crate) fn remove_orphaned(&mut self, live_links: &[AddressHash]) {
-        let pending = self
-            .pending_outgoing
-            .iter()
-            .filter_map(|(hash, sender)| (!live_links.contains(&sender.link_id)).then_some(*hash))
-            .collect::<Vec<_>>();
-        let outgoing = self
-            .outgoing
-            .iter()
-            .filter_map(|(hash, sender)| (!live_links.contains(&sender.link_id)).then_some(*hash))
-            .collect::<Vec<_>>();
-        let incoming = self
-            .incoming
-            .iter()
-            .filter_map(|(hash, receiver)| (!live_links.contains(&receiver.link_id)).then_some(*hash))
-            .collect::<Vec<_>>();
-        for (hash, link_id) in pending
-            .into_iter()
-            .filter_map(|hash| self.pending_outgoing.remove(&hash).map(|sender| (hash, sender.link_id)))
-            .chain(
-                outgoing
-                    .into_iter()
-                    .filter_map(|hash| self.outgoing.remove(&hash).map(|sender| (hash, sender.link_id))),
-            )
-            .chain(
-                incoming
-                    .into_iter()
-                    .filter_map(|hash| self.incoming.remove(&hash).map(|receiver| (hash, receiver.link_id))),
-            )
-        {
-            self.events.push(ResourceEvent {
-                hash,
-                link_id,
-                kind: ResourceEventKind::Failed(ResourceFailure::LinkClosed),
-            });
-        }
+        self.release_links(|link_id| !live_links.contains(&link_id));
     }
 
     pub(crate) fn cancel_link(&mut self, link_id: AddressHash) {
+        self.release_links(|candidate| candidate == link_id);
+    }
+
+    /// Release every transfer whose Link matches `dead`, reporting each
+    /// single resource and each split exactly once as link-closed.
+    fn release_links(&mut self, dead: impl Fn(AddressHash) -> bool) {
         let pending = self
             .pending_outgoing
             .iter()
-            .filter_map(|(hash, sender)| (sender.link_id == link_id).then_some(*hash))
+            .filter_map(|(hash, sender)| dead(sender.link_id).then_some((*hash, sender.link_id)))
             .collect::<Vec<_>>();
         let outgoing = self
             .outgoing
             .iter()
-            .filter_map(|(hash, sender)| (sender.link_id == link_id).then_some(*hash))
+            .filter_map(|(hash, sender)| dead(sender.link_id).then_some((*hash, sender.link_id)))
             .collect::<Vec<_>>();
         let incoming = self
             .incoming
             .iter()
-            .filter_map(|(hash, receiver)| (receiver.link_id == link_id).then_some(*hash))
+            .filter_map(|(hash, receiver)| {
+                dead(receiver.link_id).then_some((*hash, receiver.link_id))
+            })
             .collect::<Vec<_>>();
-        for hash in pending {
+        for (hash, link_id) in pending {
             if self.pending_outgoing.remove(&hash).is_some() {
-                self.events.push(ResourceEvent {
-                    hash,
-                    link_id,
-                    kind: ResourceEventKind::Failed(ResourceFailure::LinkClosed),
-                });
+                self.fail_outbound(hash, link_id, ResourceFailure::LinkClosed);
             }
         }
-        for hash in outgoing {
+        for (hash, link_id) in outgoing {
             if self.outgoing.remove(&hash).is_some() {
-                self.events.push(ResourceEvent {
-                    hash,
-                    link_id,
-                    kind: ResourceEventKind::Failed(ResourceFailure::LinkClosed),
-                });
+                self.fail_outbound(hash, link_id, ResourceFailure::LinkClosed);
             }
         }
-        for hash in incoming {
+        for (hash, link_id) in incoming {
             if self.incoming.remove(&hash).is_some() {
-                self.events.push(ResourceEvent {
-                    hash,
-                    link_id,
-                    kind: ResourceEventKind::Failed(ResourceFailure::LinkClosed),
-                });
+                self.fail_inbound(hash, link_id, ResourceFailure::LinkClosed);
             }
+        }
+        // Splits caught between segments have no active sender or receiver.
+        let idle_outbound = self
+            .split_outgoing
+            .iter()
+            .filter_map(|(original, split)| dead(split.link_id).then_some((*original, split.link_id)))
+            .collect::<Vec<_>>();
+        for (original, link_id) in idle_outbound {
+            self.fail_outbound(original, link_id, ResourceFailure::LinkClosed);
+        }
+        let idle_inbound = self
+            .split_incoming
+            .iter()
+            .filter_map(|(original, split)| dead(split.link_id).then_some((*original, split.link_id)))
+            .collect::<Vec<_>>();
+        for (original, link_id) in idle_inbound {
+            self.fail_inbound(original, link_id, ResourceFailure::LinkClosed);
         }
     }
 
@@ -407,11 +699,13 @@ impl ResourceManager {
         let Ok(advertisement) = ResourceAdvertisement::unpack(packet.data.as_slice()) else {
             return;
         };
-        if (advertisement.flags & FLAG_SPLIT) == FLAG_SPLIT {
-            log::warn!(
-                "resource: rejecting unsupported advertisement flags (split={})",
-                (advertisement.flags & FLAG_SPLIT) == FLAG_SPLIT
-            );
+        let split =
+            (advertisement.flags & FLAG_SPLIT) == FLAG_SPLIT && advertisement.total_segments > 1;
+        if split
+            && (advertisement.segment_index == 0
+                || advertisement.segment_index > advertisement.total_segments)
+        {
+            log::warn!("resource: rejecting split advertisement with an invalid segment index");
             return;
         }
         if !advertisement.is_response()
@@ -428,10 +722,40 @@ impl ResourceManager {
             return;
         }
         let now = self.clock.now();
-        let maximum_data_size = self
+        let mut maximum_data_size = self
             .incoming_limits
             .remove(&resource_hash)
             .unwrap_or(MAX_UNSOLICITED_RESOURCE_SIZE);
+        if split {
+            let original = advertisement.original_hash;
+            match self.split_incoming.get(&original) {
+                None => {
+                    if advertisement.segment_index != 1 {
+                        log::warn!("resource: rejecting split segment without its first segment");
+                        return;
+                    }
+                }
+                Some(record) => {
+                    if record.active.is_some() {
+                        return;
+                    }
+                    let mismatch = record.link_id != *link.id()
+                        || record.total_segments != advertisement.total_segments
+                        || record.next_index != advertisement.segment_index;
+                    let overflow = record
+                        .received_bytes
+                        .saturating_add(advertisement.data_size)
+                        > record.maximum_data_size as u64;
+                    if mismatch || overflow {
+                        log::warn!("resource: split segment does not continue its original");
+                        let link_id = record.link_id;
+                        self.fail_inbound(original, link_id, ResourceFailure::Integrity);
+                        return;
+                    }
+                    maximum_data_size = record.maximum_data_size;
+                }
+            }
+        }
         let Ok(mut receiver) = ResourceReceiver::new(
             &advertisement,
             *link.id(),
@@ -443,6 +767,24 @@ impl ResourceManager {
             return;
         };
         let request = receiver.request_round(RequestRound::Initial, now);
+        if split {
+            let original = advertisement.original_hash;
+            let record = self.split_incoming.entry(original).or_insert_with(|| SplitInbound {
+                link_id: *link.id(),
+                total_segments: advertisement.total_segments,
+                next_index: 1,
+                data: Vec::new(),
+                metadata: None,
+                received_bytes: 0,
+                maximum_data_size,
+                active: None,
+                request_id: receiver.request_id,
+                is_request: receiver.is_request,
+                is_response: receiver.is_response,
+            });
+            record.active = Some(resource_hash);
+            self.inbound_owner.insert(resource_hash, original);
+        }
         self.incoming.insert(resource_hash, receiver);
         let Some(request) = request else {
             return;
@@ -567,11 +909,7 @@ impl ResourceManager {
                         };
                     }
                     if receiver.received > before_received {
-                        self.events.push(ResourceEvent {
-                            hash: *hash,
-                            link_id: receiver.link_id,
-                            kind: ResourceEventKind::Progress(receiver.progress()),
-                        });
+                        self.events.push(ResourceEvent::new(*hash, receiver.link_id, ResourceEventKind::Progress(receiver.progress())));
                     }
                     break;
                 }
@@ -579,23 +917,67 @@ impl ResourceManager {
         }
         if let Some((hash, link_id)) = failed {
             self.incoming.remove(&hash);
-            self.events.push(ResourceEvent {
-                hash,
-                link_id,
-                kind: ResourceEventKind::Failed(ResourceFailure::Integrity),
-            });
+            self.fail_inbound(hash, link_id, ResourceFailure::Integrity);
             return;
         }
         if let Some(hash) = completed {
             self.incoming.remove(&hash);
-            if let Some(payload) = payload {
+            let split_original = self.inbound_owner.remove(&hash);
+            let assembled = match (split_original, payload) {
+                (Some(original), Some(payload)) => {
+                    let Some(record) = self.split_incoming.get_mut(&original) else {
+                        return;
+                    };
+                    record.active = None;
+                    if record.next_index == 1 {
+                        record.metadata = payload.metadata;
+                    }
+                    record.data.extend_from_slice(&payload.data);
+                    record.received_bytes =
+                        record.received_bytes.saturating_add(receiver_transfer_size);
+                    record.next_index = record.next_index.saturating_add(1);
+                    if record.next_index <= record.total_segments {
+                        let progress = record.progress();
+                        self.events.push(ResourceEvent::new(
+                            original,
+                            *link.id(),
+                            ResourceEventKind::Progress(progress),
+                        ));
+                        None
+                    } else {
+                        let record = self.split_incoming.remove(&original);
+                        record.map(|record| {
+                            (
+                                original,
+                                ResourcePayload { data: record.data, metadata: record.metadata },
+                                record.request_id,
+                                record.is_request,
+                                record.is_response,
+                                record.received_bytes,
+                            )
+                        })
+                    }
+                }
+                (None, Some(payload)) => Some((
+                    hash,
+                    payload,
+                    receiver_request_id,
+                    receiver_is_request,
+                    receiver_is_response,
+                    receiver_transfer_size,
+                )),
+                (_, None) => None,
+            };
+            if let Some((hash, payload, request_id, is_request, is_response, transfer_size)) =
+                assembled
+            {
                 let complete = ResourceComplete {
                     data: payload.data,
                     metadata: payload.metadata,
-                    request_id: receiver_request_id,
-                    is_request: receiver_is_request,
-                    is_response: receiver_is_response,
-                    transfer_size: receiver_transfer_size,
+                    request_id,
+                    is_request,
+                    is_response,
+                    transfer_size,
                     checksum_verified: true,
                 };
                 let unsolicited = complete.request_id.is_none()
@@ -606,11 +988,11 @@ impl ResourceManager {
                         crate::destination::invoke_ingress_handler(handler, &complete.data, context)
                     });
                 if accepted {
-                    self.events.push(ResourceEvent {
+                    self.events.push(ResourceEvent::new(
                         hash,
-                        link_id: *link.id(),
-                        kind: ResourceEventKind::Complete(complete),
-                    });
+                        *link.id(),
+                        ResourceEventKind::Complete(complete),
+                    ));
                 } else {
                     proof_packet = None;
                     rejection_packet = build_resource_cancel_packet(
@@ -619,11 +1001,11 @@ impl ResourceManager {
                         PacketContext::ResourceReceiverCancel,
                     )
                     .ok();
-                    self.events.push(ResourceEvent {
+                    self.events.push(ResourceEvent::new(
                         hash,
-                        link_id: *link.id(),
-                        kind: ResourceEventKind::Failed(ResourceFailure::Cancelled),
-                    });
+                        *link.id(),
+                        ResourceEventKind::Failed(ResourceFailure::Cancelled),
+                    ));
                 }
             }
         }
@@ -641,33 +1023,57 @@ impl ResourceManager {
             return;
         };
         if let Some(sender) = self.outgoing.get_mut(&proof.resource_hash)
-            && sender.handle_proof(&proof) {
-                self.outgoing.remove(&proof.resource_hash);
-                self.events.push(ResourceEvent {
-                    hash: proof.resource_hash,
-                    link_id: packet.destination,
-                    kind: ResourceEventKind::OutboundComplete,
-                });
+            && sender.handle_proof(&proof)
+        {
+            let Some(sender) = self.outgoing.remove(&proof.resource_hash) else {
+                return;
+            };
+            if let Some(original) = self.outbound_owner.remove(&proof.resource_hash) {
+                let Some(split) = self.split_outgoing.get_mut(&original) else {
+                    return;
+                };
+                split.active = None;
+                split.sent_bytes = split
+                    .sent_bytes
+                    .saturating_add(sender.parts.iter().map(|part| part.len() as u64).sum());
+                if split.next_index > split.total_segments {
+                    self.split_outgoing.remove(&original);
+                    self.events.push(ResourceEvent::new(
+                        original,
+                        packet.destination,
+                        ResourceEventKind::OutboundComplete,
+                    ));
+                } else {
+                    self.due_segments.push(original);
+                }
+                return;
             }
+            self.events.push(ResourceEvent::new(
+                proof.resource_hash,
+                packet.destination,
+                ResourceEventKind::OutboundComplete,
+            ));
+        }
     }
 
     fn cancel_into(&mut self, packet: &Packet, _responses: &mut Vec<Packet>) {
         if let Ok(hash_bytes) = copy_hash(packet.data.as_slice()) {
             let hash = Hash::new(hash_bytes);
-            let removed = match packet.context {
-                PacketContext::ResourceInitiatorCancel => self.incoming.remove(&hash).is_some(),
-                PacketContext::ResourceReceiverCancel => {
-                    self.pending_outgoing.remove(&hash).is_some()
-                        || self.outgoing.remove(&hash).is_some()
+            match packet.context {
+                PacketContext::ResourceInitiatorCancel => {
+                    let removed = self.incoming.remove(&hash).is_some();
+                    if removed || self.inbound_original(hash).is_some() {
+                        self.fail_inbound(hash, packet.destination, ResourceFailure::Cancelled);
+                    }
                 }
-                _ => false,
-            };
-            if removed {
-                self.events.push(ResourceEvent {
-                    hash,
-                    link_id: packet.destination,
-                    kind: ResourceEventKind::Failed(ResourceFailure::Cancelled),
-                });
+                PacketContext::ResourceReceiverCancel => {
+                    let removed = self.pending_outgoing.remove(&hash).is_some()
+                        || self.outgoing.remove(&hash).is_some();
+                    if removed || self.outbound_original(hash).is_some() {
+                        self.fail_outbound(hash, packet.destination, ResourceFailure::Cancelled);
+                    }
+                }
+                _ => {}
             }
         }
     }

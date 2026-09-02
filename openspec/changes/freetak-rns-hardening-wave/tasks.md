@@ -79,9 +79,9 @@ Dependency gate: `reticulum-1-5-parity-wave` group 7 must be verified complete b
 
 Dependency gate: `reticulum-1-5-parity-wave` group 8 must be verified complete before task 11.1 starts.
 
-- [ ] 11.1 Add and run failing tests for first-segment-only eager preparation, outside-lock later construction, byte-exact multi-segment assembly, first-segment-only metadata stripping, segment cancellation, timeout, packet/segment build failure, and assembly mismatch
-- [ ] 11.2 Implement only lazy split construction and original-hash split cleanup/events, consuming rather than duplicating generic Link-close cancellation and receive-part offset behavior
-- [ ] 11.3 Verify byte-exact assembly, lock exclusion, state-count cleanup, and exactly one terminal split outcome while the predecessor's generic resource regression suite remains green
+- [x] 11.1 Add and run failing tests for first-segment-only eager preparation, outside-lock later construction, byte-exact multi-segment assembly, first-segment-only metadata stripping, segment cancellation, timeout, packet/segment build failure, and assembly mismatch
+- [x] 11.2 Implement only lazy split construction and original-hash split cleanup/events, consuming rather than duplicating generic Link-close cancellation and receive-part offset behavior
+- [x] 11.3 Verify byte-exact assembly, lock exclusion, state-count cleanup, and exactly one terminal split outcome while the predecessor's generic resource regression suite remains green
 
 ## 12. Transport worker supervision
 <!-- specs: rns-link-transport-hardening -->

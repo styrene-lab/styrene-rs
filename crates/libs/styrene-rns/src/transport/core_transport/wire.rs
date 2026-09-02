@@ -210,6 +210,7 @@ pub(super) async fn handle_proof(
     if packet.context == PacketContext::ResourceProof
         && packet.header.destination_type == DestinationType::Link
     {
+        let handler_arc = handler.clone();
         let mut handler = handler.lock().await;
         let mut link = handler
             .in_links
@@ -236,6 +237,8 @@ pub(super) async fn handle_proof(
                 handler.send_packet(response).await;
             }
             handler.publish_resource_events(events).await;
+            drop(handler);
+            super::links::advance_due_split_segments(&handler_arc).await;
         }
         return;
     }

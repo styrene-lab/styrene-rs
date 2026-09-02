@@ -963,6 +963,7 @@ mod tests {
                             checksum_verified: true,
                         },
                     ),
+                    progress: None,
                 }])
                 .await;
             let receipt = handler.request_tracker.get(&request_id).expect("completed receipt");
@@ -1004,6 +1005,7 @@ mod tests {
                             checksum_verified: true,
                         },
                     ),
+                    progress: None,
                 }])
                 .await;
             let receipt = handler.request_tracker.get(&request_id).expect("completed receipt");

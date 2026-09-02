@@ -178,6 +178,7 @@ async fn trusted_completed_resource_sends_one_correlated_structured_echo() {
             transfer_size: wire.len() as u64,
             checksum_verified: true,
         }),
+        progress: None,
     });
 
     let request_id = lxmf::WireMessage::unpack(&wire).unwrap().message_id();
@@ -494,6 +495,7 @@ async fn outbound_resource_completion_updates_the_service_store() {
         hash: resource_hash,
         link_id: AddressHash::new([0x33; 16]),
         kind: ResourceEventKind::OutboundComplete,
+        progress: None,
     });
 
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
@@ -577,6 +579,7 @@ async fn outbound_resource_integrity_failure_is_terminal_and_sticky() {
         hash: resource_hash,
         link_id: AddressHash::new([0x44; 16]),
         kind: ResourceEventKind::Failed(ResourceFailure::Integrity),
+        progress: None,
     });
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         loop {
