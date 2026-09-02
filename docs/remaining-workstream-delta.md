@@ -381,6 +381,13 @@ typed outcomes. Mutations require the `profile.manage` capability. Promotion
 publishes the destination and reports that a restart is required before the
 source is released.
 
+The session layer now opens Quick, Local, Portable, and Connected sessions and
+reads profile truth from the daemon's inventory. Live is an observed condition
+rather than a profile. The TUI runs its ephemeral mode as a managed Quick
+session and labels the profile from backend truth. Its Standard mode still
+composes an unmanaged runtime on the legacy paths, and the desktop migration
+follows in `styrene-ui`.
+
 The profile lifecycle covers coherent Quick and Local roots, atomic promotion,
 and coherent snapshots. It also covers verified custody recovery, encrypted
 Portable operation, exclusive ownership, typed IPC, and frontend migration.

@@ -148,6 +148,8 @@ fn offset_index(current: usize, delta: isize, count: usize) -> usize {
 pub struct App {
     pub theme: Box<dyn Theme>,
     pub runtime_profile: crate::RuntimeProfile,
+    /// Backend profile truth for the connected daemon, when it manages profiles.
+    pub profile_info: Option<styrene_ipc::types::ProfileInfo>,
 
     // Navigation
     pub workspace: Workspace,
@@ -423,6 +425,7 @@ impl App {
         Self {
             theme,
             runtime_profile: crate::RuntimeProfile::Standard,
+            profile_info: None,
             workspace: Workspace::Home,
             focus: Focus::Main,
             input_mode: InputMode::Normal,
@@ -1020,8 +1023,8 @@ impl App {
             Span::styled("⬡ ", Style::default().fg(t.accent())),
             Span::styled("styrene", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
             Span::styled(
-                format!(" [{}]", self.runtime_profile.label()),
-                Style::default().fg(if self.runtime_profile.is_ephemeral() {
+                format!(" [{}]", self.profile_label()),
+                Style::default().fg(if self.profile_is_ephemeral() {
                     t.warning()
                 } else {
                     t.dim()
@@ -2069,6 +2072,36 @@ impl App {
 
     // ─── Demo / data injection ───────────────────────────────────────────────
 
+    /// The profile label: backend truth when the daemon manages profiles,
+    /// otherwise the local runtime profile name.
+    pub fn profile_label(&self) -> String {
+        match self.profile_info.as_ref() {
+            Some(profile) => {
+                let storage = match profile.storage {
+                    styrene_ipc::types::ProfileStorageKind::Quick => "QUICK",
+                    styrene_ipc::types::ProfileStorageKind::Local => "LOCAL",
+                    styrene_ipc::types::ProfileStorageKind::Portable => "PORTABLE",
+                    styrene_ipc::types::ProfileStorageKind::Connected => "CONNECTED",
+                    _ => "PROFILE",
+                };
+                if profile.ownership.active {
+                    storage.to_string()
+                } else {
+                    format!("{storage}·remote")
+                }
+            }
+            None => self.runtime_profile.label().to_string(),
+        }
+    }
+
+    /// Whether the active profile's state disappears when the session ends.
+    pub fn profile_is_ephemeral(&self) -> bool {
+        match self.profile_info.as_ref() {
+            Some(profile) => profile.persistence.removed_on_release,
+            None => self.runtime_profile.is_ephemeral(),
+        }
+    }
+
     pub fn push_welcome(&mut self) {
         self.conversation.push_system(
             "⬡ Styrene mesh TUI\n\n  \
@@ -2657,5 +2690,34 @@ mod terminal_smoke_tests {
         app.push_welcome();
         terminal.draw(|frame| app.draw(frame)).expect("narrow frame");
         assert!(rendered_text(&terminal).chars().any(|c| !c.is_whitespace()));
+    }
+}
+
+#[cfg(test)]
+mod profile_label_tests {
+    use super::*;
+    use styrene_ipc::types::{ProfileInfo, ProfileStorageKind};
+
+    #[test]
+    fn profile_label_prefers_backend_truth_over_local_mode_names() {
+        let mut app = App::new();
+        app.runtime_profile = crate::RuntimeProfile::Ghost;
+        assert_eq!(app.profile_label(), "GHOST");
+        assert!(app.profile_is_ephemeral());
+
+        let mut profile = ProfileInfo::default();
+        profile.storage = ProfileStorageKind::Local;
+        profile.ownership.active = true;
+        profile.persistence.durable = true;
+        app.profile_info = Some(profile.clone());
+        assert_eq!(app.profile_label(), "LOCAL");
+        assert!(!app.profile_is_ephemeral(), "backend persistence wins over the local mode name");
+
+        profile.storage = ProfileStorageKind::Quick;
+        profile.ownership.active = false;
+        profile.persistence.removed_on_release = true;
+        app.profile_info = Some(profile);
+        assert_eq!(app.profile_label(), "QUICK·remote");
+        assert!(app.profile_is_ephemeral());
     }
 }

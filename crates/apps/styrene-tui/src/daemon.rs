@@ -55,6 +55,9 @@ pub enum TuiEvent {
     /// Daemon status snapshot (polled periodically).
     Status(DaemonStatusInfo),
     EventGeneration(u64),
+    /// The backend's description of the profile the daemon runs from. Only
+    /// managed daemons send it; the TUI never derives it from a mode name.
+    Profile(Box<styrene_ipc::types::ProfileInfo>),
     /// New or updated announce / peer record.
     PeerAnnounce(PeerRecord),
     /// Inbound LXMF message received.
@@ -1855,6 +1858,12 @@ pub async fn connect(socket_path: Option<&Path>) -> Result<DaemonConnection, Str
     let (tx, rx) = mpsc::channel::<TuiEvent>(128);
     let _ = tx.send(TuiEvent::Status(status)).await;
     let _ = tx.send(TuiEvent::EventGeneration(event_generation)).await;
+    if let Ok(inventory) = handle.client().profile_inventory().await
+        && let Some(active) = inventory.active_profile_id.as_deref()
+        && let Some(profile) = inventory.profiles.into_iter().find(|profile| profile.id == active)
+    {
+        let _ = tx.send(TuiEvent::Profile(Box::new(profile))).await;
+    }
     let _ = tx.send(TuiEvent::RouteSnapshot(routes)).await;
     let _ = tx.send(TuiEvent::InterfaceSnapshot(interfaces)).await;
     let _ = tx.send(TuiEvent::LinkSnapshot(links)).await;
@@ -2264,6 +2273,9 @@ pub fn apply_event(app: &mut crate::app::App, ev: TuiEvent) {
             }
         }
 
+        TuiEvent::Profile(profile) => {
+            app.profile_info = Some(*profile);
+        }
         TuiEvent::EventGeneration(generation) => {
             if generation == 0 {
                 app.event_connection_generation = None;
