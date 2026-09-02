@@ -38,6 +38,7 @@ async-trait.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+styrene-session = { path = "../../libs/styrene-session" }
 styrene-tui = { path = "../../apps/styrene-tui" }
 tokio = { workspace = true, features = ["full", "test-util"] }
 rmpv = { workspace = true, features = ["with-serde"] }
