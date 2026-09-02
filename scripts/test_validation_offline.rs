@@ -238,7 +238,8 @@ impl CargoInvocation {
 
     fn selects_test(&self, package: &str, target: &str, test_name: &str) -> bool {
         self.selects(package, target)
-            && (self.filters.is_empty() || self.filters.iter().any(|filter| test_name.contains(filter)))
+            && (self.filters.is_empty()
+                || self.filters.iter().any(|filter| test_name.contains(filter)))
     }
 }
 
@@ -339,11 +340,9 @@ fn rns_parity_policy_errors(
     if authority_files != ["tests/interop/fixtures/rns/index-v2.json"] {
         errors.push(format!("competing RNS fixture authority schemas: {authority_files:?}"));
     }
-    for consumer in [
-        "beechat-rns-corrections-wave",
-        "freetak-rns-hardening-wave",
-        "leviculum-rns-corpus-wave",
-    ] {
+    for consumer in
+        ["beechat-rns-corrections-wave", "freetak-rns-hardening-wave", "leviculum-rns-corpus-wave"]
+    {
         if !consumers.contains(&format!("\"change_id\": \"{consumer}\"")) {
             errors.push(format!("missing shared-loader consumer {consumer}"));
         }
@@ -404,12 +403,14 @@ fn rns_parity_policy_errors(
         }
     }
     for upstream in table_blocks(product, "[[parity_upstreams]]") {
-        let revision = upstream
-            .lines()
-            .find_map(|line| line.strip_prefix("revision = \"").and_then(|value| value.strip_suffix('"')));
+        let revision = upstream.lines().find_map(|line| {
+            line.strip_prefix("revision = \"").and_then(|value| value.strip_suffix('"'))
+        });
         if !revision.is_some_and(|revision| {
             revision.len() == 40
-                && revision.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                && revision
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
         }) {
             errors.push("parity upstream revision is mutable or malformed".to_string());
         }
@@ -418,14 +419,11 @@ fn rns_parity_policy_errors(
 }
 
 fn enables_hardware_by_default(manifest: &str) -> bool {
-    manifest
-        .lines()
-        .find(|line| line.starts_with("default ="))
-        .is_some_and(|line| {
-            ["hardware-trng", "serial", "yubikey", "keychain"]
-                .iter()
-                .any(|feature| line.contains(feature))
-        })
+    manifest.lines().find(|line| line.starts_with("default =")).is_some_and(|line| {
+        ["hardware-trng", "serial", "yubikey", "keychain"]
+            .iter()
+            .any(|feature| line.contains(feature))
+    })
 }
 
 fn workspace_packages() -> HashMap<String, PathBuf> {
@@ -564,18 +562,33 @@ fn interpreter(token: &str) -> bool {
         || basename.starts_with("pypy3.")
 }
 
+/// Offline policy scripts that ordinary validation may run through an interpreter.
+const OFFLINE_POLICY_SCRIPTS: [&str; 2] =
+    ["scripts/check_human_attribution.py", "scripts/test_check_human_attribution.py"];
+
 fn inspect_offline_commands(document: &str, context: &str) -> Result<HashSet<String>, String> {
     let mut delegated = HashSet::new();
     for line in logical_lines(document) {
-        if line.ends_with(':') || line.contains(": format-check") {
+        let is_recipe_header =
+            line.split_whitespace().next().is_some_and(|token| token.ends_with(':'));
+        if line.ends_with(':') || is_recipe_header {
             continue;
         }
         for unsupported in ["&&", "||", " | ", ";", "${", "{{", "$(", "`"] {
             if line.contains(unsupported) {
-                return Err(format!("{context}: unmodeled shell construct '{unsupported}': {line}"));
+                return Err(format!(
+                    "{context}: unmodeled shell construct '{unsupported}': {line}"
+                ));
             }
         }
         let tokens = shell_tokens(&line);
+        if tokens.first().map(String::as_str) == Some("python3")
+            && tokens.get(1).is_some_and(|script| OFFLINE_POLICY_SCRIPTS.contains(&script.as_str()))
+            && tokens.iter().skip(2).all(|argument| argument == "--staged")
+        {
+            delegated.insert(tokens[1].clone());
+            continue;
+        }
         if tokens.iter().any(|token| interpreter(token)) {
             return Err(format!("{context}: interpreter is forbidden: {line}"));
         }
@@ -602,15 +615,21 @@ fn inspect_offline_commands(document: &str, context: &str) -> Result<HashSet<Str
                 .cloned()
                 .collect::<Vec<_>>();
             if sources.len() != 1 {
-                return Err(format!("{context}: rustc must delegate exactly one repository source: {line}"));
+                return Err(format!(
+                    "{context}: rustc must delegate exactly one repository source: {line}"
+                ));
             }
             delegated.insert(sources[0].clone());
         }
         for token in &tokens {
             let candidate = token.trim_start_matches("./");
             if root().join(candidate).is_file()
-                && ["py", "sh", "bash", "zsh", "pl", "rb", "js", "ts", "lua"]
-                    .contains(&Path::new(candidate).extension().and_then(|value| value.to_str()).unwrap_or(""))
+                && ["py", "sh", "bash", "zsh", "pl", "rb", "js", "ts", "lua"].contains(
+                    &Path::new(candidate)
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or(""),
+                )
             {
                 return Err(format!("{context}: delegated script is forbidden: {candidate}"));
             }
@@ -675,7 +694,8 @@ fn inspect_local_action(action: &str, seen: &mut HashSet<String>) -> Result<(), 
         .into_iter()
         .find(|candidate| candidate.is_file())
         .ok_or_else(|| format!("local action has no manifest: {action}"))?;
-    let document = fs::read_to_string(&manifest).map_err(|error| format!("read {}: {error}", manifest.display()))?;
+    let document = fs::read_to_string(&manifest)
+        .map_err(|error| format!("read {}: {error}", manifest.display()))?;
     for block in action_run_blocks(&document) {
         inspect_offline_commands(&block, action)?;
     }
@@ -906,7 +926,8 @@ fn ordinary_recipe_expansion_is_offline_and_has_no_shell_indirection() {
             .any(|invocation| invocation.command == "clippy" && invocation.all_targets),
         "ordinary Clippy target model did not inspect all selected targets"
     );
-    let expected_matrix = quoted_values(&policy, "selected_targets").into_iter().collect::<HashSet<_>>();
+    let expected_matrix =
+        quoted_values(&policy, "selected_targets").into_iter().collect::<HashSet<_>>();
     let actual_matrix = selected_test_matrix(&invocations);
     assert_eq!(actual_matrix, expected_matrix, "ordinary test target matrix drifted");
     for required in [
@@ -1142,7 +1163,10 @@ fn every_workflow_obeys_trigger_and_reuse_boundaries() {
                 }
                 let content = read(&delegated).to_ascii_lowercase();
                 for forbidden in ["curl ", "wget ", "git fetch", "docker ", "podman ", "python3 "] {
-                    assert!(!content.contains(forbidden), "ordinary workflow {path} delegates '{forbidden}' through {delegated}");
+                    assert!(
+                        !content.contains(forbidden),
+                        "ordinary workflow {path} delegates '{forbidden}' through {delegated}"
+                    );
                 }
             }
             for invocation in cargo_invocations(&workflow) {
@@ -1160,11 +1184,7 @@ fn every_workflow_obeys_trigger_and_reuse_boundaries() {
                 {
                     assert_eq!(
                         invocation.tests,
-                        [
-                            "identity",
-                            "lxmf_protocol",
-                            "pqc_scenario",
-                        ],
+                        ["identity", "lxmf_protocol", "pqc_scenario",],
                         "ordinary workflow {path} selects unapproved E2E targets"
                     );
                 }
@@ -1181,19 +1201,25 @@ fn every_workflow_obeys_trigger_and_reuse_boundaries() {
                 let action = action.trim().trim_matches(['\'', '"']);
                 if action.starts_with("./") {
                     let action_root = root().join(action.trim_start_matches("./"));
-                    let manifest = [action_root.join("action.yml"), action_root.join("action.yaml")]
-                        .into_iter()
-                        .find(|candidate| candidate.is_file())
-                        .unwrap_or_else(|| panic!("local action has no manifest in {path}: {action}"));
+                    let manifest =
+                        [action_root.join("action.yml"), action_root.join("action.yaml")]
+                            .into_iter()
+                            .find(|candidate| candidate.is_file())
+                            .unwrap_or_else(|| {
+                                panic!("local action has no manifest in {path}: {action}")
+                            });
                     let local = fs::read_to_string(&manifest).expect("read local action manifest");
                     for delegated in delegated_paths(&local) {
-                        assert!(root().join(delegated).is_file(), "local action delegates missing file");
+                        assert!(
+                            root().join(delegated).is_file(),
+                            "local action delegates missing file"
+                        );
                     }
                 } else {
                     external_action_count += 1;
-                    let (repository, reference) = action
-                        .rsplit_once('@')
-                        .unwrap_or_else(|| panic!("external action lacks a reference in {path}: {line}"));
+                    let (repository, reference) = action.rsplit_once('@').unwrap_or_else(|| {
+                        panic!("external action lacks a reference in {path}: {line}")
+                    });
                     assert!(
                         repository.split('/').count() >= 2 && !reference.is_empty(),
                         "invalid external action syntax in {path}: {line}"
@@ -1353,22 +1379,17 @@ fn rns_parity_policy_rejects_unsafe_validation_and_claim_promotion() {
     assert!(inspect_offline_commands("python3 generate.py", "Python launch").is_err());
     assert!(enables_hardware_by_default("default = [\"serial\"]"));
 
-    let mutable = handoff.replace(
-        "149e4151095adf098b8f53eab0c03b37169e8559",
-        "main",
+    let mutable = handoff.replace("149e4151095adf098b8f53eab0c03b37169e8559", "main");
+    assert!(
+        !rns_parity_policy_errors(&index, &consumers, &mutable, &product, &authority_documents,)
+            .is_empty()
     );
-    assert!(!rns_parity_policy_errors(
-        &index,
-        &consumers,
-        &mutable,
-        &product,
-        &authority_documents,
-    )
-    .is_empty());
 
     let mut competing = authority_documents.clone();
     competing.push(("tests/interop/fixtures/rns/other.json", "{\"authorities\":{}}"));
-    assert!(!rns_parity_policy_errors(&index, &consumers, &handoff, &product, &competing).is_empty());
+    assert!(
+        !rns_parity_policy_errors(&index, &consumers, &handoff, &product, &competing).is_empty()
+    );
 
     let no_checksum = handoff.replacen("\"artifact_sha256_required\": true", "", 1);
     assert!(!rns_parity_policy_errors(
@@ -1380,29 +1401,19 @@ fn rns_parity_policy_rejects_unsafe_validation_and_claim_promotion() {
     )
     .is_empty());
 
-    let promoted = handoff.replace(
-        "\"claim_status\": \"unevidenced\"",
-        "\"claim_status\": \"supported\"",
+    let promoted =
+        handoff.replace("\"claim_status\": \"unevidenced\"", "\"claim_status\": \"supported\"");
+    assert!(
+        !rns_parity_policy_errors(&index, &consumers, &promoted, &product, &authority_documents,)
+            .is_empty()
     );
-    assert!(!rns_parity_policy_errors(
-        &index,
-        &consumers,
-        &promoted,
-        &product,
-        &authority_documents,
-    )
-    .is_empty());
 
-    let registered = product.clone()
-        + "\n[[parity_gates]]\nid = \"rns-1.5.1-mixed-interface-mtu\"\n";
-    assert!(!rns_parity_policy_errors(
-        &index,
-        &consumers,
-        &handoff,
-        &registered,
-        &authority_documents,
-    )
-    .is_empty());
+    let registered =
+        product.clone() + "\n[[parity_gates]]\nid = \"rns-1.5.1-mixed-interface-mtu\"\n";
+    assert!(
+        !rns_parity_policy_errors(&index, &consumers, &handoff, &registered, &authority_documents,)
+            .is_empty()
+    );
 }
 
 #[test]
