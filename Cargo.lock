@@ -4243,6 +4243,7 @@ dependencies = [
  "styrene-rbac",
  "styrene-rns",
  "styrene-services",
+ "styrene-session",
  "styrene-tui",
  "styrene-tunnel",
  "styrened",
@@ -4544,6 +4545,22 @@ dependencies = [
  "serde_json",
  "sha2",
  "styrene-a2a",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
+name = "styrene-session"
+version = "0.1.0"
+dependencies = [
+ "rmpv",
+ "serde",
+ "serde_json",
+ "styrene-ipc",
+ "styrene-ipc-client",
+ "styrene-ipc-wire",
+ "styrened",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
 ]
