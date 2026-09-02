@@ -48,6 +48,19 @@ pub(super) async fn protocol_drop_reason(
         }
     }
 
+    // Canonical next-hop gate: a transported non-announce packet is for this
+    // node only when its transport field names this transport instance. Any
+    // other transported packet was overheard on a shared medium and is
+    // dropped here, before queues, caches, routing state, or cryptography.
+    if packet.header.header_type == HeaderType::Type2
+        && packet.header.packet_type != PacketType::Announce
+    {
+        let local_transport = *handler.lock().await.config.identity.address_hash();
+        if packet.transport != Some(local_transport) {
+            return Some(InterfaceDropReason::NotNextHop);
+        }
+    }
+
     let path_request_name = {
         let handler = handler.lock().await;
         (packet.destination == handler.fixed_dest_path_requests)
@@ -231,10 +244,6 @@ pub(super) async fn handle_cull_paths<'a>(mut handler: MutexGuard<'a, TransportH
     }
 }
 
-pub(super) fn should_rebroadcast(packet_type: PacketType) -> bool {
-    matches!(packet_type, PacketType::Data)
-}
-
 async fn find_live_link(
     handler: &TransportHandler,
     link_id: AddressHash,
@@ -404,20 +413,6 @@ pub(super) async fn manage_transport(
                                 packet.header.packet_type
                             );
                             continue;
-                        }
-
-                        // Link requests and proofs have dedicated directed forwarding paths.
-                        // Rebroadcasting them here as well creates a topology loop because
-                        // their hop-mutated copies evade packet-hash deduplication.
-                        if handler.config.broadcast
-                            && should_rebroadcast(packet.header.packet_type)
-                        {
-                            handler
-                                .send(TxMessage {
-                                    tx_type: TxMessageType::Broadcast(Some(message.address)),
-                                    packet,
-                                })
-                                .await;
                         }
 
                         match packet.header.packet_type {
