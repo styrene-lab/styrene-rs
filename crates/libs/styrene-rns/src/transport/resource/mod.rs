@@ -18,6 +18,10 @@ use crate::transport::error::RnsError;
 use crate::transport::time::{MonotonicClock, SystemMonotonicClock};
 
 pub const WINDOW: usize = 4;
+/// Smallest request window an inbound resource shrinks to after timed-out rounds.
+pub const WINDOW_MIN: usize = 1;
+/// Largest request window an inbound resource grows to through clean rounds.
+pub const WINDOW_MAX: usize = 10;
 pub const MAPHASH_LEN: usize = 4;
 pub const RANDOM_HASH_SIZE: usize = 4;
 pub const ADVERTISEMENT_OVERHEAD: usize = 134;

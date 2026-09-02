@@ -177,8 +177,7 @@ impl ResourceManager {
         let mut failed = Vec::new();
         for (hash, receiver) in self.incoming.iter_mut() {
             if receiver.retry_due(now, self.retry_interval, self.retry_limit) {
-                let request = receiver.build_request();
-                receiver.mark_request_at(now);
+                let request = receiver.request_round(RequestRound::Retry, now);
                 actions.requests.push(ResourceRetryRequest { link_id: receiver.link_id, request });
             }
             if receiver.timeout_due(now, self.retry_interval, self.retry_limit) {
@@ -442,8 +441,7 @@ impl ResourceManager {
             log::warn!("resource: rejecting unreasonable advertisement");
             return;
         };
-        let request = receiver.build_request();
-        receiver.mark_request_at(now);
+        let request = receiver.request_round(RequestRound::Initial, now);
         self.incoming.insert(resource_hash, receiver);
         match build_link_packet(
             link,
@@ -540,20 +538,24 @@ impl ResourceManager {
                     break;
                 }
                 PartOutcome::Incomplete => {
-                    let request = receiver.build_request();
-                    receiver.mark_request_at(self.clock.now());
-                    request_packet = match build_link_packet(
-                        link,
-                        PacketType::Data,
-                        PacketContext::ResourceRequest,
-                        &request.encode(),
-                    ) {
-                        Ok(packet) => Some(packet),
-                        Err(_) => {
-                            log::warn!("resource: failed to build request packet");
-                            None
-                        }
-                    };
+                    // One request per drained round: fragments still in flight
+                    // from the current round are never asked for again here.
+                    if receiver.received > before_received && receiver.round_drained() {
+                        let request =
+                            receiver.request_round(RequestRound::Drained, self.clock.now());
+                        request_packet = match build_link_packet(
+                            link,
+                            PacketType::Data,
+                            PacketContext::ResourceRequest,
+                            &request.encode(),
+                        ) {
+                            Ok(packet) => Some(packet),
+                            Err(_) => {
+                                log::warn!("resource: failed to build request packet");
+                                None
+                            }
+                        };
+                    }
                     if receiver.received > before_received {
                         self.events.push(ResourceEvent {
                             hash: *hash,
