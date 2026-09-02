@@ -42,6 +42,7 @@ selected_targets = [
   "styrened:test/mobile_minimum_corpus",
   "styrened:test/mobile_p0_backend",
   "styrened:test/nomadnet_pages_offline",
+  "styrened:test/nomadnet_fixtures",
   "styrened:test/receipt_bridge",
   "styrened:test/receipt_mapping",
   "styrened:test/rns_crypto",

@@ -704,3 +704,39 @@ printf escaped"#,
         assert!(diagnostics.contains("dynamic page execution failed"));
     }
 }
+
+#[cfg(test)]
+mod pinned_fixture_tests {
+    //! Byte-level checks against `tests/interop/fixtures/nomadnet-v1`, which the
+    //! pinned Python NomadNet node and RNS `Link.handle_request` produced.
+
+    use super::encode_native_response;
+    use rns_core::transport::request::encode_response_envelope;
+
+    const STATIC_PAGE: &[u8] =
+        include_bytes!("../../../../../tests/interop/fixtures/nomadnet-v1/response_index.bin");
+    const PYTHON_ENVELOPE: &[u8] = include_bytes!(
+        "../../../../../tests/interop/fixtures/nomadnet-v1/response_envelope_index.msgpack"
+    );
+    const INDEX: &str =
+        include_str!("../../../../../tests/interop/fixtures/nomadnet-v1/index.json");
+
+    #[test]
+    fn native_page_response_matches_pinned_python_packet_envelope() {
+        let index: serde_json::Value = serde_json::from_str(INDEX).expect("fixture index");
+        let vector = index["vectors"]
+            .as_array()
+            .expect("vectors")
+            .iter()
+            .find(|vector| vector["id"] == "rns-response-envelope-index")
+            .expect("response envelope vector");
+        let request_id: [u8; 16] =
+            hex::decode(vector["expected"]["request_id_hex"].as_str().expect("id"))
+                .expect("hex")
+                .try_into()
+                .expect("16 bytes");
+        let native = encode_native_response("/page/index.mu", STATIC_PAGE);
+        let envelope = encode_response_envelope(request_id, &native).expect("envelope");
+        assert_eq!(envelope, PYTHON_ENVELOPE);
+    }
+}
