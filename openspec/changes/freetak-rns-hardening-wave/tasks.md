@@ -54,9 +54,9 @@ Dependency gate: `beechat-rns-corrections-wave` group 2 must be verified complet
 ## 8. Resource retry and round accounting
 <!-- specs: rns-resource-hardening -->
 
-- [ ] 8.1 Add and run failing deterministic tests proving active fragment progress does not consume retries, one request is emitted per drained round, clean rounds grow the bounded window, and timed-out rounds shrink it
-- [ ] 8.2 Implement only progress-neutral retry counters and bounded round-transition accounting without changing continuation, admission, MTU, or split behavior
-- [ ] 8.3 Verify virtual-clock loss, progress, timeout, window floor/ceiling, and terminal retry behavior with no wall-clock sleeps
+- [x] 8.1 Add and run failing deterministic tests proving active fragment progress does not consume retries, one request is emitted per drained round, clean rounds grow the bounded window, and timed-out rounds shrink it
+- [x] 8.2 Implement only progress-neutral retry counters and bounded round-transition accounting without changing continuation, admission, MTU, or split behavior
+- [x] 8.3 Verify virtual-clock loss, progress, timeout, window floor/ceiling, and terminal retry behavior with no wall-clock sleeps
 
 ## 9. Resource continuation and outstanding window
 <!-- specs: rns-resource-hardening -->
