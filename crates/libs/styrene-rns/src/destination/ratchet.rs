@@ -54,6 +54,13 @@ impl Default for RatchetState {
 }
 
 impl RatchetState {
+    /// Enable ratchets without persistence. The first announce creates the
+    /// first ratchet from the supplied wall-clock time.
+    pub(crate) fn enable_in_memory(&mut self) {
+        self.latest_ratchet_time = Some(0.0);
+        self.enabled = true;
+    }
+
     #[cfg(feature = "std")]
     pub(crate) fn enable(
         &mut self,

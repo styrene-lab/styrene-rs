@@ -24,9 +24,9 @@
 ## 4. Embedded Time Contract
 <!-- specs: embedded-time -->
 
-- [ ] 4.1 Add failing no-default-feature compile checks and tests for unavailable time, initialized announce timestamps, advancing/refreshed time, and ratchet rotation using the same source
-- [ ] 4.2 Reconcile current-branch core destination time use with canonical Reticulum 1.5.1 non-panicking embedded-time behavior, removing unconditional `std` dependencies without adding Beechat's Embassy clock
-- [ ] 4.3 Run the no-default-feature check, focused timestamp/ratchet tests, and standard-feature regression tests
+- [x] 4.1 Add failing no-default-feature compile checks and tests for unavailable time, initialized announce timestamps, advancing/refreshed time, and ratchet rotation using the same source
+- [x] 4.2 Reconcile current-branch core destination time use with canonical Reticulum 1.5.1 non-panicking embedded-time behavior, removing unconditional `std` dependencies without adding Beechat's Embassy clock
+- [x] 4.3 Run the no-default-feature check, focused timestamp/ratchet tests, and standard-feature regression tests
 
 ## 5. UDP Broadcast Capability
 <!-- specs: interface-failure-policy -->

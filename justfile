@@ -85,6 +85,8 @@ check-library-minimal:
     cargo check --lib --no-default-features -p styrene-rnode-firmware
     cargo check --lib --no-default-features -p styrene-identity
     cargo check --lib --no-default-features -p styrene-secrets
+    cargo clippy --lib --no-default-features --no-deps -p styrene-rns -- -D warnings
+    cargo test --no-default-features -p styrene-rns --test embedded_time
 
 # Format code
 format:
