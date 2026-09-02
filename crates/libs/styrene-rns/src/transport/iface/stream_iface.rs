@@ -25,9 +25,18 @@ use crate::transport::iface::{
 use super::hdlc::Hdlc;
 use super::ifac::IfacConfig;
 
-// Per-interface buffer sizes. 2 KB per buffer; frame accumulator grows
-// dynamically but is capped to prevent unbounded growth on malformed streams.
-const HDLC_BUF: usize = 2048;
+// Per-interface buffer sizes.
+//
+// A wire frame carries one packet of at most `MAX_LINK_MTU` bytes plus the IFAC
+// prefix and token. HDLC escaping can double a frame and adds two flag bytes,
+// so the encode buffer must hold the fully escaped worst case: a link-MTU
+// packet whose ciphertext happens to contain many flag or escape bytes must
+// still be transmitted. Frames that fail to fit were previously dropped without
+// any protocol-visible signal. The frame accumulator grows dynamically but is
+// capped to prevent unbounded growth on malformed streams.
+const IFAC_MAX_OVERHEAD: usize = 2 + 64;
+const WIRE_FRAME_BUF: usize = crate::packet::MAX_LINK_MTU + IFAC_MAX_OVERHEAD;
+const HDLC_BUF: usize = 2 * WIRE_FRAME_BUF + 2;
 const TCP_READ_BUF: usize = HDLC_BUF * 16;
 const FRAME_BUF_LIMIT: usize = HDLC_BUF * 64;
 
@@ -176,7 +185,7 @@ pub async fn run_hdlc_tx_loop<W>(
     W: tokio::io::AsyncWrite + Unpin + Send,
 {
     let mut hdlc_tx_buffer = [0u8; HDLC_BUF];
-    let mut tx_buffer = [0u8; HDLC_BUF];
+    let mut tx_buffer = [0u8; WIRE_FRAME_BUF];
 
     loop {
         if stop.is_cancelled() {
@@ -237,8 +246,7 @@ pub async fn run_hdlc_tx_loop<W>(
 mod tests {
     use super::*;
     use crate::packet::PacketDataBuffer;
-    use crate::transport::iface::InterfaceChannel;
-    use tokio::io::AsyncWriteExt;
+    use crate::transport::iface::{InterfaceChannel, TxMessage, TxMessageType};
     use tokio::time::{Duration, timeout};
 
     fn frame(data: &[u8]) -> Vec<u8> {
@@ -291,4 +299,60 @@ mod tests {
         cancel.cancel();
         task.await.expect("stream worker must not panic");
     }
+
+    /// A link-MTU packet whose payload is entirely flag bytes escapes to
+    /// almost twice its size. The transmit path must still frame and write it;
+    /// it used to fail HDLC encoding against a 2 KB buffer and drop the frame
+    /// silently, which lost resource parts on high-MTU links.
+    #[tokio::test]
+    async fn worst_case_escaped_link_mtu_frame_is_transmitted_intact() {
+        let (writer, mut reader) = tokio::io::duplex(16 * 1024);
+        let (tx_send, tx_recv) = InterfaceChannel::make_tx_channel(4);
+        let address = AddressHash::new([0x42; 16]);
+        let cancel = CancellationToken::new();
+        let stop = CancellationToken::new();
+        let task = tokio::spawn(run_hdlc_tx_loop(
+            writer,
+            Arc::new(Mutex::new(tx_recv)),
+            address,
+            cancel.clone(),
+            stop,
+            None,
+        ));
+
+        // The same shape as a resource part on a 2048-byte link: a link data
+        // packet carrying a 2012-byte payload made entirely of flag bytes.
+        let payload = vec![HDLC_FRAME_FLAG_FOR_TEST; 2012];
+        let packet = Packet {
+            header: crate::packet::Header {
+                destination_type: crate::packet::DestinationType::Link,
+                packet_type: crate::packet::PacketType::Data,
+                ..Default::default()
+            },
+            destination: AddressHash::new([0x7e; 16]),
+            context: crate::packet::PacketContext::Resource,
+            data: PacketDataBuffer::new_from_slice(&payload),
+            ..Default::default()
+        };
+        let serialized = packet.to_bytes().expect("serialize link-MTU packet");
+        let expected = frame(&serialized);
+        assert!(expected.len() > 2048, "test frame must exceed the old 2 KB encode buffer");
+
+        tx_send
+            .send(TxMessage { tx_type: TxMessageType::Broadcast(None), packet })
+            .await
+            .expect("queue frame");
+
+        let mut received = vec![0_u8; expected.len()];
+        timeout(Duration::from_secs(2), reader.read_exact(&mut received))
+            .await
+            .expect("frame write deadline")
+            .expect("frame bytes");
+        assert_eq!(received, expected, "escaped frame was truncated or corrupted");
+
+        cancel.cancel();
+        task.await.expect("transmit worker must not panic");
+    }
+
+    const HDLC_FRAME_FLAG_FOR_TEST: u8 = 0x7e;
 }
