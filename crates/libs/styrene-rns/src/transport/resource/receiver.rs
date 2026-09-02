@@ -14,7 +14,6 @@ struct ResourceReceiver {
     maximum_data_size: usize,
     encrypted: bool,
     compressed: bool,
-    split: bool,
     has_metadata: bool,
     request_id: Option<[u8; ADDRESS_HASH_SIZE]>,
     is_request: bool,
@@ -107,20 +106,17 @@ impl ResourceReceiver {
         let data_size = usize::try_from(adv.data_size).map_err(|_| RnsError::InvalidArgument)?;
         let expected_parts = transfer_size.div_ceil(resource_sdu);
         let total_parts = usize::try_from(adv.parts).map_err(|_| RnsError::InvalidArgument)?;
-        let expected_segments = expected_parts.div_ceil(HASHMAP_MAX_LEN);
-        let segment_index = usize::try_from(adv.segment_index).map_err(|_| RnsError::InvalidArgument)?;
-        let segment_start = segment_index
-            .checked_sub(1)
-            .and_then(|segment| segment.checked_mul(HASHMAP_MAX_LEN))
-            .ok_or(RnsError::InvalidArgument)?;
-        let expected_segment_hashes = expected_parts.saturating_sub(segment_start).min(HASHMAP_MAX_LEN);
+        // `segment_index` and `total_segments` describe this resource's place
+        // in a split transfer, never the hashmap: an advertisement always
+        // carries the first hashmap segment of its own resource, and later
+        // hashmap segments arrive as hashmap updates.
+        let expected_advertised_hashes = expected_parts.min(HASHMAP_MAX_LEN);
         if total_parts == 0
             || total_parts != expected_parts
-            || expected_segments == 0
-            || usize::try_from(adv.total_segments).ok() != Some(expected_segments)
-            || segment_index == 0
-            || segment_index > expected_segments
-            || adv.hashmap.len() != expected_segment_hashes.saturating_mul(MAPHASH_LEN)
+            || adv.total_segments == 0
+            || adv.segment_index == 0
+            || adv.segment_index > adv.total_segments
+            || adv.hashmap.len() != expected_advertised_hashes.saturating_mul(MAPHASH_LEN)
         {
             return Err(RnsError::InvalidArgument);
         }
@@ -139,7 +135,6 @@ impl ResourceReceiver {
             maximum_data_size,
             encrypted: adv.encrypted(),
             compressed: adv.compressed(),
-            split: (adv.flags & FLAG_SPLIT) == FLAG_SPLIT,
             has_metadata: (adv.flags & FLAG_METADATA) == FLAG_METADATA,
             request_id: adv.request_id.as_ref().and_then(|id| id.as_slice().try_into().ok()),
             is_request: adv.is_request(),
@@ -152,7 +147,7 @@ impl ResourceReceiver {
             window: WINDOW,
             status: ResourceStatus::Advertised,
         };
-        receiver.apply_hashmap_segment(adv.segment_index.saturating_sub(1) as usize, &adv.hashmap);
+        receiver.apply_hashmap_segment(0, &adv.hashmap);
         Ok(receiver)
     }
 
@@ -216,11 +211,6 @@ impl ResourceReceiver {
     }
 
     fn handle_part(&mut self, part: &[u8], link: &Link, now: Duration) -> PartOutcome {
-        if self.split {
-            self.status = ResourceStatus::Failed;
-            return PartOutcome::Failed;
-        }
-
         let hash = map_hash(part, &self.random_hash);
         let start = self.consecutive_completed;
         let end = (start + self.window).min(self.hashmap.len());
