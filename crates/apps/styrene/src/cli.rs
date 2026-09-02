@@ -72,6 +72,10 @@ pub enum Command {
     #[cfg(feature = "cli")]
     Status,
 
+    /// Show the standard LXMF propagation node snapshot as JSON
+    #[cfg(feature = "cli")]
+    Propagation,
+
     /// List known peers
     #[cfg(feature = "cli")]
     Peers {

@@ -12,6 +12,12 @@ TIMEOUT_SECS="${TIMEOUT_SECS:-45}"
 SENDER_WAIT_SECS="${SENDER_WAIT_SECS:-240}"
 REMOTE_STATUS_TIMEOUT_SECS="${REMOTE_STATUS_TIMEOUT_SECS:-10}"
 PROPAGATION_TARGET_COST="${PROPAGATION_TARGET_COST:-16}"
+# Queue bound for the capacity scenario: smaller than any stamped LXMF message.
+CAPACITY_QUEUE_MAX_BYTES="${CAPACITY_QUEUE_MAX_BYTES:-64}"
+# Queue expiry for the expiry scenario: long enough to persist the item, short
+# enough to expire it inside one run. Eight seconds raced the persisted check
+# under CI load.
+EXPIRY_SECS="${EXPIRY_SECS:-20}"
 LOG_LIMIT_BYTES="${LOG_LIMIT_BYTES:-2097152}"
 SCENARIO="${SCENARIO:-direct}"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}"
@@ -32,7 +38,7 @@ PY_INSTANCE_CONTROL_PORT="${PY_INSTANCE_CONTROL_PORT:-$((PY_SHARED_INSTANCE_PORT
 
 usage() {
   cat <<'EOF'
-Usage: python-lxmd-rust-lxmd-smoke.sh [--scenario direct|direct_resource|opportunistic|propagated_resource_lxm|propagated_retrieval] [--timeout SECONDS]
+Usage: python-lxmd-rust-lxmd-smoke.sh [--scenario direct|direct_resource|opportunistic|propagated_resource_lxm|propagated_retrieval|propagated_capacity|propagated_expiry] [--timeout SECONDS]
 EOF
 }
 
@@ -70,7 +76,7 @@ parse_args() {
   done
 
   case "${SCENARIO}" in
-    direct|direct_resource|opportunistic|propagated_resource_lxm|propagated_retrieval) ;;
+    direct|direct_resource|opportunistic|propagated_resource_lxm|propagated_retrieval|propagated_capacity|propagated_expiry) ;;
     *)
       echo "unsupported scenario: ${SCENARIO}" >&2
       usage >&2
@@ -255,6 +261,10 @@ RUST_RESTART_LOG="${TMP_ROOT}/rust-lxmd-restart.log"
 RUST_RETRIEVAL_PROOF_PATH="${TMP_ROOT}/rust-retrieval-proof.json"
 PY_RETRIEVE_LOG="${TMP_ROOT}/python-retrieve.json"
 RETRIEVE_SIGNAL="${TMP_ROOT}/retrieve.go"
+RUST_PROPAGATION_SNAPSHOT_LOG="${TMP_ROOT}/rust-propagation-snapshot.json"
+PY_REMOTE_STATS_LOG="${TMP_ROOT}/python-remote-stats.json"
+RUST_CAPACITY_PROOF_PATH="${TMP_ROOT}/rust-capacity-proof.json"
+RUST_EXPIRY_PROOF_PATH="${TMP_ROOT}/rust-expiry-proof.json"
 # Unix socket paths are limited to about 100 bytes, so the IPC socket lives in
 # a short-lived directory outside the run root. Cleanup removes it.
 RUST_SOCKET_DIR="$(mktemp -d /tmp/styrene-smoke.XXXXXX)"
@@ -320,7 +330,7 @@ RUST_IDENTITY="${RUST_DIR}/identity"
 
 RUST_ROLE="full_node"
 case "${SCENARIO}" in
-  propagated_resource_lxm|propagated_retrieval) RUST_ROLE="hub" ;;
+  propagated_resource_lxm|propagated_retrieval|propagated_capacity|propagated_expiry) RUST_ROLE="hub" ;;
 esac
 
 cat > "${RUST_DIR}/config.toml" <<EOF
@@ -373,7 +383,16 @@ cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" -p styrened -p styrene --b
 # addresses are reused, so a restart proves persisted propagation state.
 start_rust_daemon() {
   local log_path="$1"
+  # Policy scenarios bound the Rust queue through the daemon's documented
+  # environment overrides so the policy outcome is observable in one run.
+  local -a policy_env=()
+  if [[ "${SCENARIO}" == "propagated_capacity" ]]; then
+    policy_env+=("STYRENE_PROPAGATION_QUEUE_MAX_BYTES=${CAPACITY_QUEUE_MAX_BYTES}")
+  elif [[ "${SCENARIO}" == "propagated_expiry" ]]; then
+    policy_env+=("STYRENE_PROPAGATION_EXPIRY_SECS=${EXPIRY_SECS}")
+  fi
   (
+    env ${policy_env[@]+"${policy_env[@]}"} \
     LXMF_DISPLAY_NAME="Rust Smoke Node" \
     STYRENE_PROPAGATION_CONTROL_ALLOWED_IDENTITIES="${PY_CONTROL_IDENTITY_HASH}" \
       "${STYRENED_BIN}" \
@@ -475,6 +494,44 @@ wait_rust_propagation_ready() {
   [[ "${rust_propagation_ready}" == "true" ]]
 }
 
+# Fetch the Rust node's raw /pn/get/stats response through the pinned Python
+# control client and store it as JSON at $1.
+python_remote_stats() {
+  local output="$1"
+  PYTHONUNBUFFERED=1 "${PYTHON_BIN}" - <<'PY' "${PY_DIR}" "${PY_RNS_DIR}" "${PY_DIR}/identity" "${RUST_PROPAGATION_HASH}" "${REMOTE_STATUS_TIMEOUT_SECS}" "${output}"
+import json
+import sys
+
+from LXMF.Utilities import lxmd
+
+configdir, rnsconfigdir, identity_path, remote, timeout, output = sys.argv[1:7]
+lxmd._remote_init(configdir, rnsconfigdir, 0, 0, identity_path)
+target = lxmd._get_target_identity(remote)
+response = lxmd.query_status(
+    lxmd.identity, remote_identity=target, timeout=float(timeout), exit_on_fail=True
+)
+if not isinstance(response, dict) or "messagestore" not in response:
+    raise SystemExit(f"unexpected propagation status response: {response!r}")
+store = response["messagestore"]
+with open(output, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "messagestore_count": int(store["count"]),
+            "messagestore_bytes": int(store["bytes"]),
+            "messagestore_limit": int(store["limit"]),
+        },
+        handle,
+        sort_keys=True,
+    )
+    handle.write("\n")
+PY
+}
+
+# Capture the Rust daemon's standard propagation snapshot at $1.
+rust_propagation_snapshot() {
+  "${STYRENE_CLI_BIN}" --socket "${RUST_SOCKET}" propagation > "$1"
+}
+
 if [[ "${RUST_ROLE}" == "hub" ]]; then
   if ! wait_rust_propagation_ready "${TIMEOUT_SECS}"; then
     echo "Rust styrened does not expose a Python-compatible lxmf.propagation control destination" >&2
@@ -499,6 +556,15 @@ elif [[ "${SCENARIO}" == "propagated_retrieval" ]]; then
   # from the Rust node after it restarts.
   PY_MESSAGE_METHOD="propagated"
   PY_MESSAGE_CONTENT="python-smoke-retrieval-$(date +%s)"
+elif [[ "${SCENARIO}" == "propagated_capacity" ]]; then
+  # Packet-sized content the bounded Rust node must refuse.
+  PY_MESSAGE_METHOD="propagated"
+  PY_MESSAGE_CONTENT="python-smoke-capacity-$(date +%s)"
+elif [[ "${SCENARIO}" == "propagated_expiry" ]]; then
+  # Packet-sized content queued for a second Python identity that the Rust
+  # node must expire before the recipient asks for it.
+  PY_MESSAGE_METHOD="propagated"
+  PY_MESSAGE_CONTENT="python-smoke-expiry-$(date +%s)"
 fi
 # The Python peer stays alive after sending so the Rust daemon can deliver a
 # message back to it. Send evidence lands in PY_SEND_LOG as soon as the
@@ -565,7 +631,7 @@ source = router.register_delivery_identity(identity, display_name="Python Smoke 
 # on the same Reticulum instance.
 recipient_identity = None
 recipient_router = None
-if scenario == "propagated_retrieval":
+if scenario in ("propagated_retrieval", "propagated_expiry"):
     recipient_identity = RNS.Identity()
     recipient_router = LXMF.LXMRouter(
         identity=recipient_identity, storagepath=os.path.join(storage_dir, "recipient")
@@ -666,29 +732,57 @@ if desired_method == LXMF.LXMessage.PROPAGATED:
     message.pack()
 router.handle_outbound(message)
 
+def send_evidence(state, extra=None):
+    payload = {
+        "state": int(state),
+        "destination": destination_hash_hex,
+        "source": RNS.hexrep(source.hash, delimit=False).lower(),
+        "message_id": RNS.hexrep(message.hash, delimit=False).lower(),
+        "transient_id": (
+            RNS.hexrep(message.transient_id, delimit=False).lower()
+            if message.transient_id is not None
+            else None
+        ),
+        "method": message_method,
+        "representation": (
+            int(message.representation) if message.representation is not None else None
+        ),
+    }
+    if extra:
+        payload.update(extra)
+    return json.dumps(payload)
+
+
 sent = False
+if scenario == "propagated_capacity":
+    # The bounded Rust node must refuse the upload. LXMF marks the message
+    # SENDING while a transfer runs and returns it to OUTBOUND when the node
+    # cancels the resource, so each SENDING-to-OUTBOUND round trip is one
+    # rejected attempt. Reaching SENT would mean the bound was not enforced.
+    rejected_attempts = 0
+    was_sending = False
+    capacity_deadline = time.time() + receive_wait_secs * 2
+    while time.time() < capacity_deadline:
+        state = message.state
+        if state in (LXMF.LXMessage.DELIVERED, LXMF.LXMessage.SENT):
+            raise SystemExit("bounded Rust node accepted a message beyond its queue capacity")
+        if state == LXMF.LXMessage.SENDING:
+            was_sending = True
+        elif was_sending and state == LXMF.LXMessage.OUTBOUND:
+            rejected_attempts += 1
+            print(send_evidence(state, {"rejected_attempts": rejected_attempts}), flush=True)
+            sent = True
+            break
+        time.sleep(0.02)
+    if not sent:
+        raise SystemExit(
+            f"Rust node did not reject the upload within the window, state={message.state}"
+        )
+    raise SystemExit(0)
+
 while time.time() < deadline:
     if message.state in (LXMF.LXMessage.DELIVERED, LXMF.LXMessage.SENT):
-        print(
-            json.dumps(
-                {
-                    "state": int(message.state),
-                    "destination": destination_hash_hex,
-                    "source": RNS.hexrep(source.hash, delimit=False).lower(),
-                    "message_id": RNS.hexrep(message.hash, delimit=False).lower(),
-                    "transient_id": (
-                        RNS.hexrep(message.transient_id, delimit=False).lower()
-                        if message.transient_id is not None
-                        else None
-                    ),
-                    "method": message_method,
-                    "representation": (
-                        int(message.representation) if message.representation is not None else None
-                    ),
-                }
-            ),
-            flush=True,
-        )
+        print(send_evidence(message.state), flush=True)
         sent = True
         break
     time.sleep(0.2)
@@ -696,9 +790,10 @@ while time.time() < deadline:
 if not sent:
     raise SystemExit(f"timed out waiting for Python message delivery, state={message.state}")
 
-if scenario == "propagated_retrieval":
-    # Wait for the harness to restart the Rust node, then retrieve the queued
-    # message with the recipient identity and let LXMF acknowledge it.
+if scenario in ("propagated_retrieval", "propagated_expiry"):
+    # Wait for the harness signal, then retrieve with the recipient identity.
+    # The retrieval scenario expects the queued message; the expiry scenario
+    # expects the transfer to complete with nothing to deliver.
     signal_deadline = time.time() + receive_wait_secs * 4
     while time.time() < signal_deadline and not os.path.exists(retrieve_signal_path):
         time.sleep(0.2)
@@ -707,13 +802,46 @@ if scenario == "propagated_retrieval":
 
     retrieve_deadline = time.time() + receive_wait_secs * 3
     next_request = 0.0
+    requested = False
+    completed_empty = False
     while time.time() < retrieve_deadline and not received_event.is_set():
         state = recipient_router.propagation_transfer_state
+        if (
+            scenario == "propagated_expiry"
+            and requested
+            and state == LXMF.LXMRouter.PR_COMPLETE
+            and recipient_router.propagation_transfer_last_result == 0
+        ):
+            completed_empty = True
+            break
         idle = state == LXMF.LXMRouter.PR_IDLE or state >= LXMF.LXMRouter.PR_NO_PATH
         if idle and time.time() >= next_request:
             recipient_router.request_messages_from_propagation_node(recipient_identity)
+            requested = True
             next_request = time.time() + 5.0
         received_event.wait(0.2)
+    if scenario == "propagated_expiry":
+        if received_event.is_set():
+            raise SystemExit("Rust node delivered a message that should have expired")
+        if not completed_empty:
+            raise SystemExit(
+                "recipient retrieval did not complete empty, "
+                f"state={recipient_router.propagation_transfer_state}"
+            )
+        with open(retrieve_log_path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "transfer_state": int(recipient_router.propagation_transfer_state),
+                    "messages": int(recipient_router.propagation_transfer_last_result),
+                    "delivered": False,
+                    "requested": True,
+                },
+                handle,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            handle.write("\n")
+        raise SystemExit(0)
     if not received_event.is_set():
         raise SystemExit(
             "timed out retrieving from the Rust node, "
@@ -832,7 +960,97 @@ if [[ "${PY_MESSAGE_REPRESENTATION}" != "${EXPECTED_PY_REPRESENTATION}" ]]; then
   exit 1
 fi
 
-if [[ "${RUST_ROLE}" == "hub" ]]; then
+if [[ "${SCENARIO}" == "propagated_capacity" ]]; then
+  # The bounded node must have refused the upload: no queued item may exist
+  # for the transient id, the Rust snapshot must carry a recorded capacity
+  # failure and an empty queue, and the pinned Python control client must
+  # see the same empty store under the same limit.
+  rust_propagation_snapshot "${RUST_PROPAGATION_SNAPSHOT_LOG}"
+  python_remote_stats "${PY_REMOTE_STATS_LOG}"
+  "${PYTHON_BIN}" - <<'PY' \
+    "${RUST_DB}" \
+    "${PY_MESSAGE_TRANSIENT_ID}" \
+    "${PY_MESSAGE_DESTINATION}" \
+    "${PY_SENDER_SOURCE_HASH}" \
+    "${PY_SEND_LOG}" \
+    "${RUST_PROPAGATION_SNAPSHOT_LOG}" \
+    "${PY_REMOTE_STATS_LOG}" \
+    "${CAPACITY_QUEUE_MAX_BYTES}" \
+    "${RUST_CAPACITY_PROOF_PATH}" \
+    "${SCENARIO}" \
+    "${STYRENE_INTEROP_CORRELATION_ID}"
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+(
+    path,
+    transient_id,
+    destination,
+    source,
+    send_log_path,
+    snapshot_path,
+    remote_stats_path,
+    queue_max_bytes,
+    proof_path,
+    scenario,
+    correlation_id,
+) = sys.argv[1:12]
+with sqlite3.connect(path) as db:
+    row = db.execute(
+        "SELECT state FROM standard_lxmf_propagation_items WHERE transient_id = ? LIMIT 1",
+        (bytes.fromhex(transient_id),),
+    ).fetchone()
+sent = json.loads(Path(send_log_path).read_text(encoding="utf-8"))
+snapshot = json.loads(Path(snapshot_path).read_text(encoding="utf-8"))
+remote = json.loads(Path(remote_stats_path).read_text(encoding="utf-8"))
+policy = snapshot.get("policy") or {}
+queue = snapshot.get("queue") or {}
+capacity_failures = sum(
+    1 for failure in snapshot.get("failures") or [] if failure.get("code") == "capacity"
+)
+problems = []
+if row is not None and row[0] == "queued":
+    problems.append("Rust node queued a message beyond its capacity bound")
+if int(policy.get("queue_max_bytes", -1)) != int(queue_max_bytes):
+    problems.append(f"Rust policy queue_max_bytes is {policy.get('queue_max_bytes')!r}")
+if int(queue.get("queued_count", -1)) != 0 or int(queue.get("queued_bytes", -1)) != 0:
+    problems.append(f"Rust queue is not empty: {queue!r}")
+if capacity_failures < 1:
+    problems.append("Rust node recorded no capacity failure")
+if int(sent.get("rejected_attempts", 0)) < 1 or int(sent.get("state", -1)) != 1:
+    problems.append(f"Python sender did not observe a rejected attempt: {sent!r}")
+if remote["messagestore_count"] != 0 or remote["messagestore_limit"] != int(queue_max_bytes):
+    problems.append(f"Python control view disagrees with the Rust bound: {remote!r}")
+if problems:
+    raise SystemExit("; ".join(problems))
+proof = {
+    "correlation_id": correlation_id,
+    "expected_hashes": {
+        "destination": destination,
+        "source": source,
+        "transient_id": transient_id,
+    },
+    "python_rejected_attempts": int(sent["rejected_attempts"]),
+    "python_remote_status": remote,
+    "rust_item_present": row is not None and row[0] == "queued",
+    "rust_snapshot": {
+        "capacity_failures": capacity_failures,
+        "queue_max_bytes": int(policy["queue_max_bytes"]),
+        "queued_bytes": int(queue["queued_bytes"]),
+        "queued_count": int(queue["queued_count"]),
+    },
+    "scenario": scenario,
+    "table": "standard_lxmf_propagation_items",
+}
+with open(proof_path, "w", encoding="utf-8") as handle:
+    json.dump(proof, handle, sort_keys=True, separators=(",", ":"))
+    handle.write("\n")
+PY
+  runner_assertion "python-to-rust-capacity-rejected"
+  runner_milestone "rust-capacity-enforced"
+elif [[ "${RUST_ROLE}" == "hub" ]]; then
   for _ in $(seq 1 "${TIMEOUT_SECS}"); do
     if "${PYTHON_BIN}" - <<'PY' "${RUST_DB}" "${PY_MESSAGE_TRANSIENT_ID}" "${PY_MESSAGE_DESTINATION}"; then
 import sqlite3
@@ -964,7 +1182,9 @@ with open(proof_path, "w", encoding="utf-8") as handle:
 PY
   runner_assertion "python-to-rust-content"
 fi
-runner_milestone "rust-message-persisted"
+if [[ "${SCENARIO}" != "propagated_capacity" ]]; then
+  runner_milestone "rust-message-persisted"
+fi
 
 BIDIRECTIONAL=false
 case "${SCENARIO}" in
@@ -1139,6 +1359,139 @@ fi
 
 PY_RETRIEVAL_TRANSFER_STATE=""
 RUST_ITEM_STATE=""
+if [[ "${SCENARIO}" == "propagated_expiry" ]]; then
+  # The queued item must expire on its own: poll the Rust snapshot until the
+  # queue is empty and the expired count is up, then let the recipient ask.
+  expiry_deadline=$((SECONDS + EXPIRY_SECS + TIMEOUT_SECS))
+  expired=false
+  while (( SECONDS < expiry_deadline )); do
+    if rust_propagation_snapshot "${RUST_PROPAGATION_SNAPSHOT_LOG}" && \
+      "${PYTHON_BIN}" - <<'PY' "${RUST_PROPAGATION_SNAPSHOT_LOG}"; then
+import json
+import sys
+from pathlib import Path
+
+queue = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("queue") or {}
+raise SystemExit(0 if queue.get("queued_count") == 0 and queue.get("expired_count", 0) >= 1 else 1)
+PY
+      expired=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${expired}" != "true" ]]; then
+    echo "Rust node did not expire the queued propagation item within ${EXPIRY_SECS}s + ${TIMEOUT_SECS}s" >&2
+    exit 1
+  fi
+  runner_milestone "rust-item-expired"
+  python_remote_stats "${PY_REMOTE_STATS_LOG}"
+  : > "${RETRIEVE_SIGNAL}"
+  runner_milestone "python-retrieval-requested"
+  if ! wait_for_file_pattern "${PY_RETRIEVE_LOG}" '"transfer_state"' "$((TIMEOUT_SECS * 2))"; then
+    echo "Python recipient did not complete an empty retrieval from the Rust node" >&2
+    exit 1
+  fi
+  if ! wait "${PY_SENDER_PID}"; then
+    echo "Python peer exited with an error after the empty retrieval" >&2
+    exit 1
+  fi
+  PY_SENDER_PID=""
+  RUST_ITEM_STATE="$("${PYTHON_BIN}" - <<'PY' \
+    "${RUST_DB}" \
+    "${PY_MESSAGE_TRANSIENT_ID}" \
+    "${PY_MESSAGE_DESTINATION}" \
+    "${PY_SENDER_SOURCE_HASH}" \
+    "${RUST_PROPAGATION_SNAPSHOT_LOG}" \
+    "${PY_REMOTE_STATS_LOG}" \
+    "${PY_RETRIEVE_LOG}" \
+    "${EXPIRY_SECS}" \
+    "${RUST_EXPIRY_PROOF_PATH}" \
+    "${SCENARIO}" \
+    "${STYRENE_INTEROP_CORRELATION_ID}"
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+(
+    path,
+    transient_id,
+    destination,
+    source,
+    snapshot_path,
+    remote_stats_path,
+    retrieve_log_path,
+    expiry_secs,
+    proof_path,
+    scenario,
+    correlation_id,
+) = sys.argv[1:12]
+with sqlite3.connect(path) as db:
+    row = db.execute(
+        "SELECT hex(transient_id), hex(destination), state, stored_size "
+        "FROM standard_lxmf_propagation_items WHERE transient_id = ? LIMIT 1",
+        (bytes.fromhex(transient_id),),
+    ).fetchone()
+if row is None:
+    raise SystemExit("Rust node lost the propagation item instead of expiring it")
+snapshot = json.loads(Path(snapshot_path).read_text(encoding="utf-8"))
+remote = json.loads(Path(remote_stats_path).read_text(encoding="utf-8"))
+retrieval = json.loads(Path(retrieve_log_path).read_text(encoding="utf-8"))
+policy = snapshot.get("policy") or {}
+queue = snapshot.get("queue") or {}
+problems = []
+if row[2] != "expired" or int(row[3]) != 0:
+    problems.append(f"Rust item state is {row[2]!r} with stored_size {row[3]!r}")
+if int(policy.get("expiry_secs", -1)) != int(expiry_secs):
+    problems.append(f"Rust policy expiry_secs is {policy.get('expiry_secs')!r}")
+if int(queue.get("queued_count", -1)) != 0 or int(queue.get("expired_count", 0)) < 1:
+    problems.append(f"Rust queue did not record the expiry: {queue!r}")
+if remote["messagestore_count"] != 0:
+    problems.append(f"Python control view still counts stored messages: {remote!r}")
+if retrieval.get("transfer_state") != 7 or retrieval.get("messages") != 0 or retrieval.get("delivered"):
+    problems.append(f"Python retrieval did not complete empty: {retrieval!r}")
+if problems:
+    raise SystemExit("; ".join(problems))
+proof = {
+    "correlation_id": correlation_id,
+    "expected_hashes": {
+        "destination": destination,
+        "source": source,
+        "transient_id": transient_id,
+    },
+    "item": {
+        "destination": row[1].lower(),
+        "state": row[2],
+        "stored_size": int(row[3]),
+        "transient_id": row[0].lower(),
+    },
+    "python_remote_status": remote,
+    "python_retrieval": retrieval,
+    "rust_snapshot": {
+        "expired_count": int(queue["expired_count"]),
+        "expiry_secs": int(policy["expiry_secs"]),
+        "queued_count": int(queue["queued_count"]),
+    },
+    "scenario": scenario,
+    "table": "standard_lxmf_propagation_items",
+}
+with open(proof_path, "w", encoding="utf-8") as handle:
+    json.dump(proof, handle, sort_keys=True, separators=(",", ":"))
+    handle.write("\n")
+print(row[2])
+PY
+)"
+  PY_RETRIEVAL_TRANSFER_STATE="$("${PYTHON_BIN}" - <<'PY' "${PY_RETRIEVE_LOG}"
+import json
+import sys
+from pathlib import Path
+
+print(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")).get("transfer_state"))
+PY
+)"
+  runner_assertion "rust-to-python-expired-retrieval"
+  runner_milestone "python-retrieval-empty"
+fi
 if [[ "${SCENARIO}" == "propagated_retrieval" ]]; then
   # Offline delivery must survive a node restart: stop the Rust node while the
   # message is queued, start it again on the same database, and only then let
@@ -1373,7 +1726,14 @@ PY
 fi
 
 runner_artifact "scenario-report" "${REPORT_PATH}"
-runner_artifact "datastore-proof" "${DATASTORE_PROOF_PATH}"
+if [[ "${SCENARIO}" == "propagated_capacity" ]]; then
+  runner_artifact "rust-capacity-proof" "${RUST_CAPACITY_PROOF_PATH}"
+else
+  runner_artifact "datastore-proof" "${DATASTORE_PROOF_PATH}"
+fi
+if [[ "${SCENARIO}" == "propagated_expiry" ]]; then
+  runner_artifact "rust-expiry-proof" "${RUST_EXPIRY_PROOF_PATH}"
+fi
 if [[ "${BIDIRECTIONAL}" == "true" ]]; then
   runner_artifact "rust-outbound-proof" "${RUST_OUTBOUND_PROOF_PATH}"
 fi

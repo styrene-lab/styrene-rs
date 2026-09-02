@@ -2038,16 +2038,18 @@ impl MessagesStore {
         {
             if let Some(peer) = source_peer {
                 upsert_observed_peer(&transaction, &peer, now)?;
-                record_failure_in_transaction(
-                    &transaction,
-                    "capacity",
-                    None,
-                    now,
-                    Some(&peer),
-                    None,
-                    attempt_id.as_ref(),
-                )?;
             }
+            // Client uploads carry no peer; the rejection is still an
+            // observable policy outcome, so record it either way.
+            record_failure_in_transaction(
+                &transaction,
+                "capacity",
+                None,
+                now,
+                source_peer.as_ref(),
+                None,
+                attempt_id.as_ref(),
+            )?;
             if let Some(attempt_id) = attempt_id {
                 transaction.execute(
                     "UPDATE standard_lxmf_propagation_attempts

@@ -57,7 +57,7 @@ const DECIMAL_KB: usize = 1000;
 const DEFAULT_EXPIRY_SECS: i64 = 30 * 24 * 60 * 60;
 const DEFAULT_THROTTLE_SECS: i64 = 180;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct PropagationPolicy {
     target_cost: u32,
     flexibility: u32,
@@ -131,6 +131,83 @@ impl StandardPropagationRuntimeObservation {
 
     fn set_active(&self, active: bool) {
         self.active.store(active, Ordering::Release);
+    }
+}
+
+/// Environment overrides for the propagation queue policy. Operators bound the
+/// store with them, and live gates use them to make capacity and expiry
+/// observable within one run. Invalid values refuse registration.
+pub const QUEUE_MAX_COUNT_ENV: &str = "STYRENE_PROPAGATION_QUEUE_MAX_COUNT";
+pub const QUEUE_MAX_BYTES_ENV: &str = "STYRENE_PROPAGATION_QUEUE_MAX_BYTES";
+pub const EXPIRY_SECS_ENV: &str = "STYRENE_PROPAGATION_EXPIRY_SECS";
+const MAX_QUEUE_COUNT: usize = 1_000_000;
+const MAX_QUEUE_BYTES: usize = 64 * 1024 * 1024 * 1024;
+const MAX_EXPIRY_SECS: i64 = 365 * 24 * 60 * 60;
+
+/// Why a queue policy override was refused. `name` is the environment variable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PolicyOverrideError {
+    pub name: &'static str,
+    pub kind: PolicyOverrideErrorKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PolicyOverrideErrorKind {
+    NotAnInteger,
+    OutOfRange,
+}
+
+impl std::fmt::Display for PolicyOverrideError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            PolicyOverrideErrorKind::NotAnInteger => {
+                write!(formatter, "{} must be an integer", self.name)
+            }
+            PolicyOverrideErrorKind::OutOfRange => {
+                write!(formatter, "{} is outside its permitted range", self.name)
+            }
+        }
+    }
+}
+
+fn bounded_env<T>(
+    lookup: &dyn Fn(&str) -> Option<String>,
+    name: &'static str,
+    min: T,
+    max: T,
+) -> Result<Option<T>, PolicyOverrideError>
+where
+    T: std::str::FromStr + PartialOrd,
+{
+    let Some(raw) = lookup(name) else { return Ok(None) };
+    let value = raw
+        .trim()
+        .parse::<T>()
+        .map_err(|_| PolicyOverrideError { name, kind: PolicyOverrideErrorKind::NotAnInteger })?;
+    if value < min || value > max {
+        return Err(PolicyOverrideError { name, kind: PolicyOverrideErrorKind::OutOfRange });
+    }
+    Ok(Some(value))
+}
+
+impl PropagationPolicy {
+    /// The default policy with any environment overrides applied.
+    fn from_lookup(lookup: &dyn Fn(&str) -> Option<String>) -> Result<Self, PolicyOverrideError> {
+        let mut policy = Self::default();
+        if let Some(value) = bounded_env(lookup, QUEUE_MAX_COUNT_ENV, 1, MAX_QUEUE_COUNT)? {
+            policy.queue_max_count = value;
+        }
+        if let Some(value) = bounded_env(lookup, QUEUE_MAX_BYTES_ENV, 1, MAX_QUEUE_BYTES)? {
+            policy.queue_max_bytes = value;
+        }
+        if let Some(value) = bounded_env(lookup, EXPIRY_SECS_ENV, 1, MAX_EXPIRY_SECS)? {
+            policy.expiry_secs = value;
+        }
+        Ok(policy)
+    }
+
+    fn from_env() -> Result<Self, PolicyOverrideError> {
+        Self::from_lookup(&|name| std::env::var(name).ok())
     }
 }
 
@@ -1156,12 +1233,14 @@ impl StandardPropagationEndpoint {
         node_name: &str,
         store: Arc<StdMutex<MessagesStore>>,
     ) -> Result<Self, StandardPropagationRegistrationError> {
+        let policy =
+            PropagationPolicy::from_env().map_err(StandardPropagationRegistrationError::Policy)?;
         Self::register_with_policy(
             transport,
             identity,
             node_name,
             store,
-            PropagationPolicy::default(),
+            policy,
             Arc::new(SystemPropagationClock),
         )
         .await
@@ -2137,6 +2216,8 @@ fn throttle_transfer_link(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StandardPropagationRegistrationError {
     MissingName,
+    /// An environment override for the queue policy was not a bounded integer.
+    Policy(PolicyOverrideError),
     Metadata(AnnounceError),
     Transport(DestinationRegistrationError),
     Request(RequestRegistrationError),
@@ -2178,6 +2259,37 @@ impl From<IngressRegistrationError> for StandardPropagationActivationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queue_policy_env_overrides_are_bounded_and_fail_closed() {
+        let lookup = |values: &[(&str, &str)]| {
+            let owned: Vec<(String, String)> =
+                values.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+            move |name: &str| {
+                owned.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone())
+            }
+        };
+        let defaults = PropagationPolicy::from_lookup(&lookup(&[])).expect("defaults");
+        assert_eq!(defaults.queue_max_bytes, PropagationPolicy::default().queue_max_bytes);
+        let tuned = PropagationPolicy::from_lookup(&lookup(&[
+            (QUEUE_MAX_COUNT_ENV, "2"),
+            (QUEUE_MAX_BYTES_ENV, " 64 "),
+            (EXPIRY_SECS_ENV, "5"),
+        ]))
+        .expect("tuned");
+        assert_eq!((tuned.queue_max_count, tuned.queue_max_bytes, tuned.expiry_secs), (2, 64, 5));
+        assert_eq!(tuned.throttle_secs, defaults.throttle_secs);
+        for (name, value) in [
+            (QUEUE_MAX_COUNT_ENV, "0"),
+            (QUEUE_MAX_BYTES_ENV, "lots"),
+            (EXPIRY_SECS_ENV, "-1"),
+            (EXPIRY_SECS_ENV, "99999999999"),
+        ] {
+            let error = PropagationPolicy::from_lookup(&lookup(&[(name, value)]))
+                .expect_err("invalid override must fail closed");
+            assert_eq!(error.name, name, "{error}");
+        }
+    }
     use lxmf::propagation::transient_id;
     use rns_core::destination::{DestinationAnnounce, RequestLinkContext, request_path_hash};
     use rns_core::transport::core_transport::TransportConfig;

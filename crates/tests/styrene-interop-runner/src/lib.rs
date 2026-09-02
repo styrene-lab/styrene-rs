@@ -37,6 +37,8 @@ pub enum PinnedScenarioId {
     PropagatedRetrieval,
     NomadnetPages,
     NomadnetClient,
+    PropagatedCapacity,
+    PropagatedExpiry,
 }
 
 impl PinnedScenarioId {
@@ -47,6 +49,8 @@ impl PinnedScenarioId {
             Self::Opportunistic => "opportunistic",
             Self::PropagatedResourceLxm => "propagated_resource_lxm",
             Self::PropagatedRetrieval => "propagated_retrieval",
+            Self::PropagatedCapacity => "propagated_capacity",
+            Self::PropagatedExpiry => "propagated_expiry",
             Self::NomadnetPages => "nomadnet_pages",
             Self::NomadnetClient => "nomadnet_client",
         }
@@ -70,9 +74,27 @@ impl PinnedScenarioId {
         matches!(self, Self::PropagatedRetrieval)
     }
 
+    /// The Rust node refuses a Python upload because its bounded queue is
+    /// full, and both sides record the rejection.
+    pub const fn is_capacity(self) -> bool {
+        matches!(self, Self::PropagatedCapacity)
+    }
+
+    /// The Rust node expires a queued message before the recipient asks for
+    /// it, and the recipient's retrieval completes empty.
+    pub const fn is_expiry(self) -> bool {
+        matches!(self, Self::PropagatedExpiry)
+    }
+
     /// Scenarios where the Rust node is the propagation store.
     pub const fn rust_is_propagation_node(self) -> bool {
-        matches!(self, Self::PropagatedResourceLxm | Self::PropagatedRetrieval)
+        matches!(
+            self,
+            Self::PropagatedResourceLxm
+                | Self::PropagatedRetrieval
+                | Self::PropagatedCapacity
+                | Self::PropagatedExpiry
+        )
     }
 
     /// Direct, resource-backed Direct, and Opportunistic gates exercise both
@@ -92,6 +114,8 @@ impl PinnedScenarioId {
             | Self::Opportunistic
             | Self::PropagatedResourceLxm
             | Self::PropagatedRetrieval
+            | Self::PropagatedCapacity
+            | Self::PropagatedExpiry
             | Self::NomadnetPages
             | Self::NomadnetClient => "packet",
         }
@@ -99,14 +123,17 @@ impl PinnedScenarioId {
 
     /// LXMF message state the Python sender must reach for the Python-to-Rust
     /// leg: 8 is DELIVERED, which requires a Rust delivery proof. Propagated
-    /// messages stop at 4 (SENT) once the node has accepted them.
+    /// messages stop at 4 (SENT) once the node has accepted them. A message
+    /// the node refused for capacity returns to 1 (OUTBOUND) for retry.
     pub const fn expected_python_state(self) -> &'static str {
         match self {
             Self::Direct | Self::DirectResource | Self::Opportunistic => "8",
             Self::PropagatedResourceLxm
             | Self::PropagatedRetrieval
+            | Self::PropagatedExpiry
             | Self::NomadnetPages
             | Self::NomadnetClient => "4",
+            Self::PropagatedCapacity => "1",
         }
     }
 
@@ -118,6 +145,8 @@ impl PinnedScenarioId {
             Self::Direct
             | Self::Opportunistic
             | Self::PropagatedRetrieval
+            | Self::PropagatedCapacity
+            | Self::PropagatedExpiry
             | Self::NomadnetPages
             | Self::NomadnetClient => "1",
         }
@@ -192,6 +221,18 @@ pub const PINNED_SCENARIOS: &[PinnedScenarioDefinition] = &[
         title: "Pinned Propagation Retrieval Interop",
         description: "Queues a Python message on the Rust propagation node, restarts the node, and retrieves it with the recipient identity.",
         controls: &["announce", "send-message", "restart", "cancel"],
+    },
+    PinnedScenarioDefinition {
+        id: PinnedScenarioId::PropagatedCapacity,
+        title: "Pinned Propagation Capacity Interop",
+        description: "Bounds the Rust propagation queue below one message so a Python upload is refused, then proves both sides recorded the rejection.",
+        controls: &["announce", "send-message", "cancel"],
+    },
+    PinnedScenarioDefinition {
+        id: PinnedScenarioId::PropagatedExpiry,
+        title: "Pinned Propagation Expiry Interop",
+        description: "Queues a Python message on a Rust node with a short expiry, waits for it to expire, and proves the recipient's retrieval completes empty.",
+        controls: &["announce", "send-message", "cancel"],
     },
 ];
 
@@ -565,6 +606,8 @@ pub fn python_lxmf_scenario(
 ) -> LiveScenario {
     let bidirectional = scenario_id.is_bidirectional();
     let retrieval = scenario_id.is_retrieval();
+    let capacity = scenario_id.is_capacity();
+    let expiry = scenario_id.is_expiry();
     let nomadnet = scenario_id.is_nomadnet();
     let nomadnet_client = scenario_id.is_nomadnet_client();
     let scenario_id = scenario_id.as_str();
@@ -696,6 +739,27 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
                 "python-message-retrieved".to_string(),
                 "child-cleanup-complete".to_string(),
             ]
+        } else if capacity {
+            vec![
+                "topology-configured".to_string(),
+                "rust-ready".to_string(),
+                "python-ready".to_string(),
+                "python-message-sent".to_string(),
+                "rust-capacity-enforced".to_string(),
+                "child-cleanup-complete".to_string(),
+            ]
+        } else if expiry {
+            vec![
+                "topology-configured".to_string(),
+                "rust-ready".to_string(),
+                "python-ready".to_string(),
+                "python-message-sent".to_string(),
+                "rust-message-persisted".to_string(),
+                "rust-item-expired".to_string(),
+                "python-retrieval-requested".to_string(),
+                "python-retrieval-empty".to_string(),
+                "child-cleanup-complete".to_string(),
+            ]
         } else {
             vec![
                 "topology-configured".to_string(),
@@ -716,6 +780,13 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
             vec![
                 "python-to-rust-propagation-item".to_string(),
                 "rust-to-python-retrieval".to_string(),
+            ]
+        } else if capacity {
+            vec!["python-to-rust-capacity-rejected".to_string()]
+        } else if expiry {
+            vec![
+                "python-to-rust-propagation-item".to_string(),
+                "rust-to-python-expired-retrieval".to_string(),
             ]
         } else {
             vec!["python-to-rust-propagation-item".to_string()]
@@ -749,6 +820,21 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
                 "rust-retrieval-proof".to_string(),
                 "rust-daemon-log".to_string(),
                 "rust-daemon-restart-log".to_string(),
+                "python-daemon-log".to_string(),
+            ]
+        } else if capacity {
+            vec![
+                "scenario-report".to_string(),
+                "rust-capacity-proof".to_string(),
+                "rust-daemon-log".to_string(),
+                "python-daemon-log".to_string(),
+            ]
+        } else if expiry {
+            vec![
+                "scenario-report".to_string(),
+                "datastore-proof".to_string(),
+                "rust-expiry-proof".to_string(),
+                "rust-daemon-log".to_string(),
                 "python-daemon-log".to_string(),
             ]
         } else {
@@ -1171,6 +1257,12 @@ fn validate_protocol_artifacts(
         }
     }
 
+    if let Some(scenario_id) = pinned_scenario(&scenario.id).map(|definition| definition.id)
+        && scenario_id.is_capacity()
+    {
+        return validate_capacity_proof(scenario, &load, &report["proof"]);
+    }
+
     let proof = match load("datastore-proof") {
         Ok(proof) => proof,
         Err(error) => return Some(error),
@@ -1214,6 +1306,9 @@ fn validate_protocol_artifacts(
     let scenario_id = pinned_scenario(&scenario.id).map(|definition| definition.id)?;
     if scenario_id.is_retrieval() {
         return validate_retrieval_proof(scenario, &load, report_proof);
+    }
+    if scenario_id.is_expiry() {
+        return validate_expiry_proof(scenario, &load, report_proof);
     }
     if !scenario_id.is_bidirectional() {
         return None;
@@ -1395,6 +1490,82 @@ fn validate_retrieval_proof(
         && receipt.get("signature_validated").and_then(serde_json::Value::as_bool) == Some(true)
         && receipt.get("transfer_state").and_then(serde_json::Value::as_i64) == Some(7);
     (!matches).then(|| "retained Rust retrieval proof does not match expected values".to_string())
+}
+
+/// The capacity proof must show the Rust queue bounded below the message, the
+/// upload refused with a recorded `capacity` failure, nothing queued on either
+/// side's view of the store, and the Python message back in OUTBOUND.
+fn validate_capacity_proof(
+    scenario: &LiveScenario,
+    load: &dyn Fn(&str) -> Result<serde_json::Value, String>,
+    report_proof: &serde_json::Value,
+) -> Option<String> {
+    let proof = match load("rust-capacity-proof") {
+        Ok(proof) => proof,
+        Err(error) => return Some(error),
+    };
+    if json_string_field(&proof, "scenario") != scenario.id
+        || json_string_field(&proof, "correlation_id") != scenario.correlation_id
+    {
+        return Some("retained Rust capacity proof does not match this run".to_string());
+    }
+    let expected = &proof["expected_hashes"];
+    let snapshot = &proof["rust_snapshot"];
+    let remote = &proof["python_remote_status"];
+    let transient_id = json_string_field(expected, "transient_id");
+    let queue_max_bytes = snapshot["queue_max_bytes"].as_u64();
+    let matches = !transient_id.is_empty()
+        && json_string_field(report_proof, "python_message_transient_id") == transient_id
+        && json_string_field(report_proof, "python_message_state") == "1"
+        && proof["rust_item_present"].as_bool() == Some(false)
+        && proof["python_rejected_attempts"].as_u64().is_some_and(|attempts| attempts >= 1)
+        && queue_max_bytes.is_some_and(|limit| limit < 1024)
+        && snapshot["queued_count"].as_u64() == Some(0)
+        && snapshot["queued_bytes"].as_u64() == Some(0)
+        && snapshot["capacity_failures"].as_u64().is_some_and(|count| count >= 1)
+        && remote["messagestore_count"].as_u64() == Some(0)
+        && remote["messagestore_limit"].as_u64() == queue_max_bytes;
+    (!matches).then(|| "retained Rust capacity proof does not match expected values".to_string())
+}
+
+/// The expiry proof must show the queued item expired on the Rust node before
+/// retrieval, the Python control view of the store empty, and the recipient's
+/// retrieval completing with no messages.
+fn validate_expiry_proof(
+    scenario: &LiveScenario,
+    load: &dyn Fn(&str) -> Result<serde_json::Value, String>,
+    report_proof: &serde_json::Value,
+) -> Option<String> {
+    let proof = match load("rust-expiry-proof") {
+        Ok(proof) => proof,
+        Err(error) => return Some(error),
+    };
+    if json_string_field(&proof, "scenario") != scenario.id
+        || json_string_field(&proof, "correlation_id") != scenario.correlation_id
+    {
+        return Some("retained Rust expiry proof does not match this run".to_string());
+    }
+    let expected = &proof["expected_hashes"];
+    let item = &proof["item"];
+    let snapshot = &proof["rust_snapshot"];
+    let remote = &proof["python_remote_status"];
+    let retrieval = &proof["python_retrieval"];
+    let transient_id = json_string_field(expected, "transient_id");
+    let matches = !transient_id.is_empty()
+        && json_string_field(report_proof, "python_message_transient_id") == transient_id
+        && json_string_field(report_proof, "rust_item_state") == "expired"
+        && json_string_field(report_proof, "python_retrieval_transfer_state") == "7"
+        && json_string_field(item, "transient_id") == transient_id
+        && json_string_field(item, "state") == "expired"
+        && item["stored_size"].as_u64() == Some(0)
+        && snapshot["expiry_secs"].as_u64().is_some_and(|secs| secs <= 60)
+        && snapshot["queued_count"].as_u64() == Some(0)
+        && snapshot["expired_count"].as_u64().is_some_and(|count| count >= 1)
+        && remote["messagestore_count"].as_u64() == Some(0)
+        && retrieval["transfer_state"].as_i64() == Some(7)
+        && retrieval["messages"].as_u64() == Some(0)
+        && retrieval["delivered"].as_bool() == Some(false);
+    (!matches).then(|| "retained Rust expiry proof does not match expected values".to_string())
 }
 
 fn json_string_field<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
