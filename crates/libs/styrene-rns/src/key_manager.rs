@@ -1,5 +1,9 @@
-use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::string::{String, ToString};
+#[cfg(feature = "std")]
+use alloc::collections::BTreeMap;
+use alloc::collections::BTreeSet;
+use alloc::string::String;
+#[cfg(feature = "std")]
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
@@ -314,6 +318,7 @@ fn merge_key_ids(mut first: Vec<String>, second: Vec<String>) -> Vec<String> {
     ids.into_iter().collect()
 }
 
+#[cfg(feature = "std")]
 fn is_valid_key_id(value: &str) -> bool {
     !value.is_empty()
         && value.chars().all(|character| {

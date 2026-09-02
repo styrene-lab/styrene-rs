@@ -87,16 +87,12 @@ pub fn decrypt_with_identity(
     Ok(plain.as_bytes().to_vec())
 }
 
+/// Current Unix time as fractional seconds from the system clock.
+///
+/// Transport-side bookkeeping that already requires `std` uses this; the
+/// protocol core uses [`crate::time_source::unix_now`], which is explicit
+/// about unavailable time on embedded targets.
+#[cfg(feature = "std")]
 pub fn now_secs() -> f64 {
-    #[cfg(feature = "std")]
-    {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs_f64()
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        0.0
-    }
+    crate::time_source::unix_now_secs_f64().unwrap_or_default()
 }

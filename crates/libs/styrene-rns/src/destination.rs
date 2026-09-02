@@ -2,9 +2,11 @@ use ed25519_dalek::{SIGNATURE_LENGTH, Signature, SigningKey, VerifyingKey};
 use rand_core::CryptoRngCore;
 use x25519_dalek::PublicKey;
 
-use alloc::{sync::Arc, vec::Vec};
-use std::collections::{BTreeMap, VecDeque};
-use std::time::Instant as StdInstant;
+use alloc::{
+    collections::{BTreeMap, VecDeque},
+    sync::Arc,
+    vec::Vec,
+};
 
 pub const PATH_RESPONSE_TAG_WINDOW: u64 = 30;
 pub const PATH_RESPONSE_TAG_CAP: usize = 64;
@@ -20,7 +22,8 @@ use crate::{
         self, ContextFlag, DestinationType, Header, HeaderType, IfacFlag, Packet, PacketContext,
         PacketDataBuffer, PacketType, PropagationType,
     },
-    ratchets::{decrypt_with_identity, now_secs},
+    ratchets::decrypt_with_identity,
+    time_source::unix_now,
 };
 use sha2::Digest;
 
@@ -259,8 +262,9 @@ pub struct Destination<I: HashIdentity, D: Direction, T: Type> {
     pub identity: I,
     pub desc: DestinationDesc,
     ratchet_state: RatchetState,
-    path_responses: BTreeMap<Vec<u8>, (StdInstant, Packet)>,
-    path_response_queue: VecDeque<(Vec<u8>, StdInstant)>,
+    /// Cached path responses keyed by request tag, expiring at a Unix second.
+    path_responses: BTreeMap<Vec<u8>, (u64, Packet)>,
+    path_response_queue: VecDeque<(Vec<u8>, u64)>,
     request_registry: RequestRegistry,
     ingress_handler: Option<IngressHandler>,
     ingress_resource_limit: Option<usize>,
@@ -406,6 +410,13 @@ impl Destination<PrivateIdentity, Input, Single> {
         }
     }
 
+    /// Enable ratchets kept only in memory, for embeddings without a file
+    /// system. Rotation uses the same wall-clock source as announce
+    /// timestamps.
+    pub fn enable_ratchets_in_memory(&mut self) {
+        self.ratchet_state.enable_in_memory();
+    }
+
     #[cfg(feature = "std")]
     pub fn enable_ratchets<P: AsRef<Path>>(&mut self, path: P) -> Result<(), RnsError> {
         let path = path.as_ref().to_path_buf();
@@ -478,7 +489,9 @@ impl Destination<PrivateIdentity, Input, Single> {
         let mut rng_mut = rng;
         rng_mut.fill_bytes(&mut random_part);
         rand_hash[..RAND_HASH_LENGTH / 2].copy_from_slice(&random_part);
-        let emitted_secs = now_secs().floor() as u64;
+        // One wall-clock reading feeds both the announce timestamp and the
+        // ratchet rotation decision; without a clock the announce is refused.
+        let emitted_secs = unix_now()?;
         let emitted_be = emitted_secs.to_be_bytes();
         rand_hash[RAND_HASH_LENGTH / 2..].copy_from_slice(&emitted_be[3..8]);
 
@@ -486,8 +499,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         let verifying_key = self.identity.as_identity().verifying_key_bytes();
 
         let ratchet = if self.ratchet_state.enabled {
-            let now = now_secs();
-            self.ratchet_state.rotate_if_needed(&self.identity, now)?;
+            self.ratchet_state.rotate_if_needed(&self.identity, emitted_secs as f64)?;
             self.ratchet_state.current_ratchet_public()
         } else {
             None
@@ -560,7 +572,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         app_data: Option<&[u8]>,
         tag: Option<&[u8]>,
     ) -> Result<Packet, RnsError> {
-        let now = StdInstant::now();
+        let now = unix_now()?;
         self.prune_path_responses(now);
 
         if let Some(tag) = tag
@@ -573,7 +585,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         announce.context = PacketContext::PathResponse;
 
         if let Some(tag) = tag {
-            let expires_at = now + std::time::Duration::from_secs(PATH_RESPONSE_TAG_WINDOW);
+            let expires_at = now.saturating_add(PATH_RESPONSE_TAG_WINDOW);
             let tag = tag.to_vec();
             self.path_responses.insert(tag.clone(), (expires_at, announce));
             self.path_response_queue.push_back((tag, expires_at));
@@ -583,7 +595,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         Ok(announce)
     }
 
-    fn prune_path_responses(&mut self, now: StdInstant) {
+    fn prune_path_responses(&mut self, now: u64) {
         while let Some((tag, expires_at)) = self.path_response_queue.front().cloned() {
             if expires_at > now && self.path_responses.len() <= PATH_RESPONSE_TAG_CAP {
                 break;
