@@ -458,7 +458,9 @@ mobile P0 backend contracts, and the shared frontend session. It also covers
 the Reticulum parity waves, the FreeTAK hardening wave, the Beechat
 corrections wave, operation-scoped authorization, persistent correlated echo,
 and the Reticulum 1.5.2 empty-carrier parity. The baselines under
-`openspec/baseline/` record their behavior. The remaining changes each
+`openspec/baseline/` record their behavior.
+
+The remaining changes each
 carry a single, separable gate: hardware or packaged evidence, publication
 approval, launcher packaging, or repository governance.
 
