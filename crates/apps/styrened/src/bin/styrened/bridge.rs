@@ -23,12 +23,19 @@ use styrened::receipt_bridge::{
 };
 use styrened::rpc::{AnnounceBridge, OutboundBridge};
 
+/// A NomadNet node destination and the app data its announces carry.
+type NomadnetAnnounce = (Arc<tokio::sync::Mutex<SingleInputDestination>>, Option<Vec<u8>>);
+
 pub(super) struct TransportBridge {
     transport: Arc<Transport>,
     signer: PrivateIdentity,
     delivery_source_hash: [u8; 16],
     announce_destination: Arc<tokio::sync::Mutex<SingleInputDestination>>,
     announce_app_data: Option<Vec<u8>>,
+    /// The native NomadNet node destination and its announce app data. Like a
+    /// Python NomadNet node, the host re-announces on the same schedule as
+    /// delivery so transport nodes that join later still learn the path.
+    nomadnet_announce: Option<NomadnetAnnounce>,
     peer_crypto: Arc<Mutex<HashMap<String, PeerCrypto>>>,
     receipt_map: Arc<Mutex<HashMap<String, String>>>,
     receipt_waiters: ReceiptWaiters,
@@ -48,6 +55,7 @@ impl TransportBridge {
         delivery_source_hash: [u8; 16],
         announce_destination: Arc<tokio::sync::Mutex<SingleInputDestination>>,
         announce_app_data: Option<Vec<u8>>,
+        nomadnet_announce: Option<NomadnetAnnounce>,
         peer_crypto: Arc<Mutex<HashMap<String, PeerCrypto>>>,
         receipt_map: Arc<Mutex<HashMap<String, String>>>,
         receipt_waiters: ReceiptWaiters,
@@ -59,6 +67,7 @@ impl TransportBridge {
             delivery_source_hash,
             announce_destination,
             announce_app_data,
+            nomadnet_announce,
             peer_crypto,
             receipt_map,
             receipt_waiters,
@@ -313,8 +322,12 @@ impl AnnounceBridge for TransportBridge {
         let transport = self.transport.clone();
         let destination = self.announce_destination.clone();
         let app_data = self.announce_app_data.clone();
+        let nomadnet = self.nomadnet_announce.clone();
         tokio::spawn(async move {
             transport.send_announce(&destination, app_data.as_deref()).await;
+            if let Some((node, node_app_data)) = nomadnet {
+                transport.send_announce(&node, node_app_data.as_deref()).await;
+            }
         });
         Ok(())
     }

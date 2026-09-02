@@ -563,6 +563,9 @@ async fn bootstrap_with_transport_override(
                 local_display_name
                     .as_ref()
                     .and_then(|display_name| encode_delivery_display_name_app_data(display_name)),
+                nomadnet_destination.clone().map(|node| {
+                    (node, local_display_name.as_deref().map(|name| name.as_bytes().to_vec()))
+                }),
                 peer_crypto.clone(),
                 receipt_map.clone(),
                 receipt_waiters.clone(),
