@@ -458,11 +458,14 @@ impl Link {
         }
     }
 
+    /// Handle a Link data packet. Liveness, stale recovery, activity events,
+    /// proofs, and semantic state change only after the packet has passed
+    /// exact framing, Link binding, authentication, or decryption for its
+    /// context, so hostile control traffic cannot revive or refresh a Link.
     fn handle_data_packet(&mut self, packet: &Packet) -> LinkHandleResult {
         if self.status != LinkStatus::Active {
             log::warn!("link({}): handling data packet in inactive state", self.id);
         }
-        self.note_inbound(packet.context);
 
         match packet.context {
             PacketContext::Channel => {
@@ -471,20 +474,22 @@ impl Link {
                     return LinkHandleResult::None;
                 }
 
-                let proof = self.prove_packet(packet);
                 let mut buffer = [0u8; PACKET_DATA_CAPACITY];
-                if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
-                    log::trace!("link({}): data {}B", self.id, plain_text.len());
-                    self.handle_channel_frame(plain_text);
-                } else {
-                    log::error!("link({}): can't decrypt packet", self.id);
-                }
+                let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) else {
+                    log::warn!("link({}): dropping undecryptable channel packet", self.id);
+                    return LinkHandleResult::None;
+                };
+                log::trace!("link({}): data {}B", self.id, plain_text.len());
+                self.note_inbound(packet.context);
+                let proof = self.prove_packet(packet);
+                self.handle_channel_frame(plain_text);
                 return LinkHandleResult::Proof(proof);
             }
             PacketContext::None | PacketContext::Request | PacketContext::Response => {
                 let mut buffer = [0u8; PACKET_DATA_CAPACITY];
                 if let Ok(plain_text) = self.decrypt(packet.data.as_slice(), &mut buffer[..]) {
                     log::trace!("link({}): data {}B", self.id, plain_text.len());
+                    self.note_inbound(packet.context);
                     let request_id = if packet.context == PacketContext::Request {
                         let hash = packet.hash().to_bytes();
                         let mut request_id = [0u8; crate::hash::ADDRESS_HASH_SIZE];
@@ -526,13 +531,16 @@ impl Link {
                 }
             }
             PacketContext::KeepAlive => {
-                if !packet.data.is_empty() && packet.data.as_slice()[0] == 0xFF {
+                // A keepalive is exactly one byte; a suffixed payload is hostile.
+                if packet.data.as_slice() == [0xFF] {
+                    self.note_inbound(packet.context);
                     self.request_time = Instant::now();
                     log::trace!("link({}): keep-alive request", self.id);
                     return LinkHandleResult::KeepAlive;
                 }
-                if !packet.data.is_empty() && packet.data.as_slice()[0] == 0xFE {
+                if packet.data.as_slice() == [0xFE] {
                     log::trace!("link({}): keep-alive response", self.id);
+                    self.note_inbound(packet.context);
                     self.rtt = self.request_time.elapsed();
                     self.update_keepalive_timing();
                     self.refresh_channel_flow_control();
@@ -557,6 +565,7 @@ impl Link {
                         return LinkHandleResult::None;
                     };
                     let measured_rtt = self.request_time.elapsed();
+                    self.note_inbound(packet.context);
                     self.rtt = measured_rtt.max(peer_rtt);
                     self.update_keepalive_timing();
                     self.refresh_channel_flow_control();
@@ -1186,34 +1195,41 @@ impl Link {
         self.stale_time = Duration::from_secs_f32(keepalive_secs * STALE_FACTOR);
     }
 
-    fn handle_identify(&mut self, plain_text: &[u8]) {
+    /// Verify an exactly framed identify proof bound to this Link and retain
+    /// the verified identity separately from the handshake identity. Returns
+    /// whether the proof was accepted; a rejected proof changes nothing.
+    fn handle_identify(&mut self, plain_text: &[u8]) -> bool {
         const IDENTITY_PUBLIC_KEY_SIZE: usize = PUBLIC_KEY_LENGTH * 2;
         const IDENTIFY_SIZE: usize = IDENTITY_PUBLIC_KEY_SIZE + SIGNATURE_LENGTH;
 
         if self.initiator || plain_text.len() != IDENTIFY_SIZE {
-            return;
+            return false;
         }
         let mut encryption_key = [0u8; PUBLIC_KEY_LENGTH];
         encryption_key.copy_from_slice(&plain_text[..PUBLIC_KEY_LENGTH]);
         let mut verifying_key = [0u8; PUBLIC_KEY_LENGTH];
         verifying_key.copy_from_slice(&plain_text[PUBLIC_KEY_LENGTH..IDENTITY_PUBLIC_KEY_SIZE]);
         let Ok(verifying_key) = VerifyingKey::from_bytes(&verifying_key) else {
-            return;
+            return false;
         };
         let Ok(signature) = Signature::from_slice(&plain_text[IDENTITY_PUBLIC_KEY_SIZE..]) else {
-            return;
+            return false;
         };
         let identity = Identity::new(x25519_dalek::PublicKey::from(encryption_key), verifying_key);
         let mut signed_data = Vec::with_capacity(ADDRESS_HASH_SIZE + IDENTITY_PUBLIC_KEY_SIZE);
         signed_data.extend_from_slice(self.id.as_slice());
         signed_data.extend_from_slice(&plain_text[..IDENTITY_PUBLIC_KEY_SIZE]);
         if identity.verify(&signed_data, &signature).is_err() || self.remote_identity.is_some() {
-            return;
+            return false;
         }
 
+        // Liveness and activity follow the verified proof, and the identity
+        // is retained before its semantic event is published.
+        self.note_inbound(PacketContext::LinkIdentify);
         self.remote_identity = Some(identity);
         self.observed_at = std::time::SystemTime::now();
         self.post_event(LinkEvent::Identified);
+        true
     }
 
     fn inbound_anchor(&self) -> Instant {
@@ -2706,5 +2722,216 @@ mod tests {
             rtt_events += usize::from(matches!(event.event, LinkEvent::RttUpdated));
         }
         assert_eq!(rtt_events, 1);
+    }
+
+    /// An active initiator/responder pair whose shared event stream has been
+    /// drained, for adversarial control-traffic tests.
+    fn adversarial_pair(
+        name: &str,
+    ) -> (Link, Link, AddressHash, tokio::sync::broadcast::Receiver<LinkEventData>, PrivateIdentity)
+    {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", name),
+        };
+        let (tx, mut rx) = tokio::sync::broadcast::channel(64);
+        let mut initiator = Link::new(destination, tx.clone());
+        let request = initiator.request();
+        let mut responder =
+            Link::new_from_request(&request, signer.sign_key().clone(), destination, tx)
+                .expect("link request should parse");
+        let iface = AddressHash::new_from_rand(OsRng);
+        assert!(matches!(
+            initiator.handle_packet(&responder.prove(), iface),
+            LinkHandleResult::Activated
+        ));
+        responder.set_ingress_iface(iface);
+        while rx.try_recv().is_ok() {}
+        (initiator, responder, iface, rx, signer)
+    }
+
+    fn encrypted_control(link: &Link, context: PacketContext, plain: &[u8]) -> Packet {
+        let mut data = PacketDataBuffer::new();
+        let len = link.encrypt(plain, data.accuire_buf_max()).expect("encrypt").len();
+        data.resize(len);
+        Packet {
+            header: Header {
+                destination_type: DestinationType::Link,
+                packet_type: PacketType::Data,
+                ..Default::default()
+            },
+            destination: *link.id(),
+            context,
+            data,
+            ..Default::default()
+        }
+    }
+
+    fn drain_events(rx: &mut tokio::sync::broadcast::Receiver<LinkEventData>) -> Vec<LinkEvent> {
+        let mut events = Vec::new();
+        loop {
+            match rx.try_recv() {
+                Ok(event) => events.push(event.event),
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+        events
+    }
+
+    fn make_stale(link: &mut Link) {
+        link.rtt = Duration::from_millis(500);
+        link.update_keepalive_timing();
+        let anchor = Instant::now() - link.stale_time - Duration::from_secs(1);
+        link.activated_at = Some(anchor);
+        link.last_proof = Some(anchor);
+        link.last_inbound = Some(anchor);
+        link.last_activity = anchor;
+        assert_eq!(link.check_watchdog(false), LinkWatchdogAction::None);
+        assert_eq!(link.status, LinkStatus::Stale);
+    }
+
+    fn identify_plaintext(link_id: &AddressHash, identity: &PrivateIdentity) -> Vec<u8> {
+        let public_identity = identity.as_identity();
+        let mut signed_data = Vec::new();
+        signed_data.extend_from_slice(link_id.as_slice());
+        signed_data.extend_from_slice(public_identity.public_key.as_bytes());
+        signed_data.extend_from_slice(public_identity.verifying_key.as_bytes());
+        let mut proof = Vec::new();
+        proof.extend_from_slice(public_identity.public_key.as_bytes());
+        proof.extend_from_slice(public_identity.verifying_key.as_bytes());
+        proof.extend_from_slice(&identity.sign(&signed_data).to_bytes());
+        proof
+    }
+
+    #[test]
+    fn identify_requires_exact_framing_link_binding_and_survives_every_byte_corruption() {
+        let (initiator, mut responder, iface, mut rx, _) = adversarial_pair("identify-exact");
+        let remote = PrivateIdentity::new_from_rand(OsRng);
+        let handshake_identity = responder.peer_identity.address_hash;
+        let valid = identify_plaintext(responder.id(), &remote);
+
+        let mut hostile = Vec::new();
+        hostile.push(valid[..valid.len() - 1].to_vec());
+        hostile.push([valid.clone(), vec![0]].concat());
+        hostile.push(identify_plaintext(&AddressHash::new_from_rand(OsRng), &remote));
+        for index in 0..valid.len() {
+            let mut corrupt = valid.clone();
+            corrupt[index] ^= 0x01;
+            hostile.push(corrupt);
+        }
+        for plain in &hostile {
+            let packet = encrypted_control(&initiator, PacketContext::LinkIdentify, plain);
+            assert!(matches!(responder.handle_packet(&packet, iface), LinkHandleResult::None));
+            assert!(responder.remote_identity().is_none(), "hostile identify never verifies");
+        }
+        let events = drain_events(&mut rx);
+        assert!(
+            !events.iter().any(|event| matches!(event, LinkEvent::Identified)),
+            "no identity event for hostile identify traffic"
+        );
+
+        let packet = encrypted_control(&initiator, PacketContext::LinkIdentify, &valid);
+        assert!(matches!(responder.handle_packet(&packet, iface), LinkHandleResult::None));
+        let verified = responder.remote_identity().expect("exact identify verifies");
+        assert_eq!(verified.address_hash, remote.as_identity().address_hash);
+        assert_eq!(
+            responder.peer_identity.address_hash, handshake_identity,
+            "handshake identity is retained"
+        );
+        let events = drain_events(&mut rx);
+        assert_eq!(
+            events.iter().filter(|event| matches!(event, LinkEvent::Identified)).count(),
+            1,
+            "one identity event after the verified identity is retained"
+        );
+
+        let other = PrivateIdentity::new_from_rand(OsRng);
+        let packet = encrypted_control(
+            &initiator,
+            PacketContext::LinkIdentify,
+            &identify_plaintext(responder.id(), &other),
+        );
+        assert!(matches!(responder.handle_packet(&packet, iface), LinkHandleResult::None));
+        assert_eq!(
+            responder.remote_identity().map(|identity| identity.address_hash),
+            Some(remote.as_identity().address_hash),
+            "a later identify cannot replace the verified identity"
+        );
+    }
+
+    #[test]
+    fn hostile_controls_cannot_revive_a_stale_link_or_earn_proofs() {
+        let (initiator, mut responder, iface, mut rx, _) = adversarial_pair("stale-hostile");
+        responder.open_channel();
+        make_stale(&mut responder);
+        let _ = drain_events(&mut rx);
+        let liveness_before = responder.last_inbound;
+        let request_time_before = responder.request_time;
+
+        let remote = PrivateIdentity::new_from_rand(OsRng);
+        let mut bad_identify = identify_plaintext(responder.id(), &remote);
+        bad_identify[5] ^= 0x80;
+        let mut suffixed_keepalive = PacketDataBuffer::new();
+        suffixed_keepalive.safe_write(&[0xFF, 0x00]);
+        let mut corrupt_channel = encrypted_control(&initiator, PacketContext::Channel, b"frame");
+        let last = corrupt_channel.data.len() - 1;
+        corrupt_channel.data.as_mut_slice()[last] ^= 0x01;
+        let hostile = [
+            encrypted_control(&initiator, PacketContext::LinkIdentify, &bad_identify),
+            Packet {
+                header: Header {
+                    destination_type: DestinationType::Link,
+                    packet_type: PacketType::Data,
+                    ..Default::default()
+                },
+                destination: *responder.id(),
+                context: PacketContext::KeepAlive,
+                data: suffixed_keepalive,
+                ..Default::default()
+            },
+            encrypted_control(&initiator, PacketContext::LinkClose, &[0x55; 16]),
+            corrupt_channel,
+            encrypted_control(&initiator, PacketContext::None, b"x"),
+        ];
+        let mut garbage_none = hostile[4];
+        let last = garbage_none.data.len() - 1;
+        garbage_none.data.as_mut_slice()[last] ^= 0x01;
+        let hostile = [hostile[0], hostile[1], hostile[2], hostile[3], garbage_none];
+
+        for (index, packet) in hostile.iter().enumerate() {
+            for _ in 0..3 {
+                let outcome = responder.handle_packet(packet, iface);
+                assert!(
+                    matches!(outcome, LinkHandleResult::None),
+                    "hostile control {index} must not be proved, delivered, or answered"
+                );
+            }
+            assert_eq!(responder.status, LinkStatus::Stale, "hostile control {index}");
+            assert_eq!(responder.last_inbound, liveness_before, "hostile control {index}");
+            assert_eq!(responder.request_time, request_time_before, "hostile control {index}");
+            assert!(responder.remote_identity().is_none());
+        }
+        assert!(drain_events(&mut rx).is_empty(), "hostile traffic emits no link event");
+
+        // A valid keepalive request after the hostile burst refreshes liveness.
+        let keepalive = initiator.keep_alive_packet(0xFF);
+        assert!(matches!(responder.handle_packet(&keepalive, iface), LinkHandleResult::KeepAlive));
+        assert_eq!(responder.status, LinkStatus::Active);
+        assert!(responder.last_inbound > liveness_before);
+        assert!(drain_events(&mut rx).iter().any(|event| matches!(event, LinkEvent::Activity)));
+
+        // A valid channel frame is proved and a canonical close still tears down.
+        let valid_channel = encrypted_control(&initiator, PacketContext::Channel, b"frame");
+        assert!(matches!(
+            responder.handle_packet(&valid_channel, iface),
+            LinkHandleResult::Proof(_)
+        ));
+        let close = initiator.teardown_packet().expect("teardown packet");
+        assert!(matches!(responder.handle_packet(&close, iface), LinkHandleResult::None));
+        assert_eq!(responder.status, LinkStatus::Closed);
     }
 }
