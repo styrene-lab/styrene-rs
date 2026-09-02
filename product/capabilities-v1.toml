@@ -280,9 +280,9 @@ enabled = false
 ignored = true
 protocol = "native"
 upstreams = ["python-rns", "python-lxmf", "python-nomadnet"]
-command = "cargo test -p styrened --test python_compat_matrix -- --ignored python_compat_routed_direct python_compat_routed_direct_resource python_compat_routed_nomadnet_pages"
+command = "cargo test -p styrened --test python_compat_matrix -- --ignored python_compat_routed_direct python_compat_routed_direct_resource python_compat_routed_nomadnet_pages python_compat_routed_channel"
 evidence = [
-  "scripts/python-lxmf-smoke.sh", "scripts/python-nomadnet-smoke.sh", "crates/apps/styrened/tests/python_compat_matrix.rs", "crates/tests/styrene-interop-runner/src/lib.rs", ".github/workflows/live-interop.yml", "tests/interop/handoffs/pinned-live-evidence.json",
+  "scripts/python-lxmf-smoke.sh", "scripts/python-nomadnet-smoke.sh", "scripts/rust-channel-hop-smoke.sh", "crates/tests/styrene-e2e/src/bin/channel_probe.rs", "crates/apps/styrened/tests/python_compat_matrix.rs", "crates/tests/styrene-interop-runner/src/lib.rs", ".github/workflows/live-interop.yml", "tests/interop/handoffs/pinned-live-evidence.json",
 ]
 
 [[parity_gates]]
@@ -507,10 +507,9 @@ reason = "Fixture provenance and deterministic regeneration are not yet release-
 
 [[parity_claims]]
 id = "rns.operations"
-level = "degraded"
+level = "verified"
 required_gates = ["rns-operations-evidence"]
 evidence_gates = ["rns-rust-e2e", "rns-live-operations", "rns-operations-evidence"]
-reason = "Routed link, request, and resource gates pass across a pinned Python transport hop; routed channel evidence is not yet automated."
 
 [[parity_claims]]
 id = "lxmf.codec"

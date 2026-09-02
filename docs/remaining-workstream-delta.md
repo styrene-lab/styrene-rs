@@ -45,7 +45,7 @@ authorization.
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
 | Shared frontend session | 9/29 | Negotiation, event/reconnect behavior, TUI migration, common sessions, desktop migration, and revision-pair verification |
-| Reticulum/LXMF/NomadNet parity | 85/85 | Hosted routed channel evidence and the Reticulum operations claim |
+| Reticulum/LXMF/NomadNet parity | 85/85 | Archive after closure review |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
@@ -260,8 +260,8 @@ retries. Proofs now reach inbound links as well.
 
 Repository policy keeps live Python runs manual and scheduled workflows
 fixture-only, so each hosted dispatch is an operator action recorded in the
-evidence file. The Reticulum operations claim moves to verified once a hosted
-dispatch records the routed channel scenario.
+evidence file. A hosted dispatch has recorded the routed channel scenario, so
+the Reticulum operations claim is verified as well.
 
 Authority:
 
