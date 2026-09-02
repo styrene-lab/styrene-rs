@@ -3634,6 +3634,21 @@ mod tests {
         assert_eq!(message.lifecycle_state, styrene_ipc::types::MessageLifecycleState::Delivered);
     }
 
+    #[tokio::test]
+    async fn connect_to_a_missing_endpoint_fails_without_creating_it_or_starting_a_runtime() {
+        let missing = std::env::temp_dir().join(format!(
+            "styrene-tui-missing-{}-{}.sock",
+            std::process::id(),
+            line!()
+        ));
+        let error = match connect(Some(&missing)).await {
+            Ok(_) => panic!("a missing endpoint must not connect"),
+            Err(error) => error,
+        };
+        assert!(error.contains("socket not found"), "{error}");
+        assert!(!missing.exists(), "live connection never creates the endpoint");
+    }
+
     #[test]
     fn frame_to_tui_event_unknown_type_is_none() {
         let frame = Frame {
