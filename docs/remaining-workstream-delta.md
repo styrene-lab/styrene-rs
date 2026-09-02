@@ -151,8 +151,8 @@ empty packet hash, so no proof could ever correlate. The live runner signalled
 process groups in a form that Linux `kill` misparses, so no hosted scenario had
 ever passed its revision probe. The stream interface encoded outbound frames
 into a fixed 2 KB buffer. A link-MTU resource part whose escaped ciphertext
-exceeded that size was dropped without any signal, so resource transfers to
-Python failed at random until the buffer covered a fully escaped frame.
+exceeded that size was dropped without any signal. Resource transfers to Python
+failed at random until the buffer covered a fully escaped frame.
 
 Remaining gates require pinned Python/Rust runs for routed RNS, standard
 propagation, and native NomadNet. Repository policy keeps live
