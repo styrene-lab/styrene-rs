@@ -101,6 +101,15 @@ check-workspace-policy:
     python3 scripts/test_check_workspace_policy.py
     python3 scripts/check_workspace_policy.py
 
+# Install the repository-managed Git hooks
+install-hooks:
+    git config core.hooksPath .githooks
+
+# Test the human-attribution policy checker
+check-human-attribution:
+    python3 scripts/test_check_human_attribution.py
+    python3 scripts/check_human_attribution.py --staged
+
 # Explicit alias for full-workspace formatting checks
 format-check-all:
     cargo fmt --all -- --check
@@ -163,7 +172,7 @@ test-validation-offline:
     target/test-validation-offline
 
 # Run deterministic, offline validation against Rust code and committed fixtures
-validate: format-check check-library-minimal check-offline lint test test-interop test-validation-offline
+validate: check-human-attribution format-check check-library-minimal check-offline lint test test-interop test-validation-offline
 
 # Check all crates compile (fast, no codegen)
 check:

@@ -12,6 +12,7 @@ git clone https://github.com/styrene-lab/styrene-rs.git
 cd styrene-rs
 just check
 just test
+just install-hooks
 ```
 
 The committed `rust-toolchain.toml` pins the supported stable Rust release. Do not silently downgrade the workspace MSRV or introduce nightly-only features.
@@ -90,6 +91,9 @@ feat(tui): add runtime profile indicator
 fix(rns): validate transported link proof
 build: refresh release target matrix
 ```
+
+Repository hooks reject automated attribution, bot authorship trailers, and
+model-generated boilerplate. Committers remain responsible for every change.
 
 A pull request should state:
 
