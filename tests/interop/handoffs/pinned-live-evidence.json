@@ -25,7 +25,7 @@
     {
       "run_id": 33582749453,
       "url": "https://github.com/styrene-lab/styrene-rs/actions/runs/33582749453",
-      "styrene_rs_revision": "41be5ea34e651584d75d5d7387d7df37c54dd1d8",
+      "styrene_rs_revision": "7abd8e8eb0d6e4afeb0635086a19683d627b2cc8",
       "recorded_at": "2026-09-02T02:18:48Z",
       "conclusion": "success",
       "pull_request": 38,
@@ -42,7 +42,7 @@
     {
       "run_id": 33588597649,
       "url": "https://github.com/styrene-lab/styrene-rs/actions/runs/33588597649",
-      "styrene_rs_revision": "100ef4f42eac2c84ce1cd786e52bf26e7b67b045",
+      "styrene_rs_revision": "9ad5382adeb94803211945bd9ca224b0e7125518",
       "recorded_at": "2026-09-02T03:51:09Z",
       "conclusion": "success",
       "pull_request": 40,
@@ -61,7 +61,7 @@
     {
       "run_id": 33609130877,
       "url": "https://github.com/styrene-lab/styrene-rs/actions/runs/33609130877",
-      "styrene_rs_revision": "cd1778888795068d1485c51903c9168db7ac95a6",
+      "styrene_rs_revision": "264aaad0341e55c6ed28c5060c6e78d75da75ed1",
       "recorded_at": "2026-09-02T08:31:05Z",
       "conclusion": "success",
       "pull_request": 41,
@@ -83,7 +83,7 @@
     {
       "run_id": 33632518861,
       "url": "https://github.com/styrene-lab/styrene-rs/actions/runs/33632518861",
-      "styrene_rs_revision": "494695ce842641dd4fec3a5022b894d1aa2a3403",
+      "styrene_rs_revision": "d3baaa458da6a2d76eb481a15b39018bf0d36813",
       "recorded_at": "2026-09-02T12:53:50Z",
       "conclusion": "success",
       "pull_request": 43,

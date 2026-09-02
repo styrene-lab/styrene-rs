@@ -51,7 +51,7 @@ Every build exposes its source revision:
 
 ```console
 $ styrene --version
-styrene 0.1.0+ce025b424
+styrene 0.1.0+14393951c
 ```
 
 ### Build and install from source

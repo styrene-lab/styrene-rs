@@ -1,8 +1,8 @@
 schema_version = 1
 profile = "styrene-repository-signing-v1"
 status = "candidate"
-base_revision = "7cfa906e146684277a2cb4d3bd8623ef3e4904d5"
-generator_revision = "989c41eb984bf942987f33c0173b88de75fc7877"
+base_revision = "b8253d7d1d143ea26629db618cd495dd699f1684"
+generator_revision = "7392a31b14b19e03b0a2de91d45711146b2e8dbe"
 generated_on = "2026-08-26"
 warning = "DANGER: All roots and private seeds in this corpus are public test material and MUST NEVER be used for real identities or repositories."
 notes = "The generator revision contains the exact generators and artifacts. Change status to released only in the publication commit."

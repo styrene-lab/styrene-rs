@@ -14,8 +14,8 @@ summary if the change affects priorities or release boundaries.
 
 This assessment uses these canonical revisions:
 
-- `styrene-rs`: `2722ed0c8442f982498ac028a0d3b10325930eef`
-- `styrene-ui`: `6746d99307cbc251aa0ac13d471a3d0da5ea7c99`
+- `styrene-rs`: `354a91cd494a7bac5703f7d1b128a2af95d08d8c`
+- `styrene-ui`: `344796386711bc7b4ac5e038436d36d262c6eb93`
 
 The backend revision is the consolidated hardening and parity corpus: every
 Reticulum parity, FreeTAK hardening, and Beechat correction wave is merged and
@@ -342,7 +342,7 @@ the wire spelling and tolerates unknown capabilities.
 
 The TUI smoke checks run without a terminal: a headless render across every
 workspace, a Live-failure unit test, and an embedded runtime e2e test. The
-`styrene-ui` desktop now pins `styrene-rs` at `be869620` and runs on the shared
+`styrene-ui` desktop now pins `styrene-rs` at `772a8eaa` and runs on the shared
 client and sessions. Its request broker, daemon bridge, and parsers are gone,
 conversations use the canonical record, and its live scenario catalog mirrors
 every pinned runner scenario. The tested revision pairs are recorded in the

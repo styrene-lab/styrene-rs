@@ -9,18 +9,18 @@ Evidence date: 2026-07-19
 Repository commits establishing the path:
 
 ```text
-d35e8d24 feat(nix): scaffold RG35XXSP appliance bring-up
-f01edc05 feat(product): declare repeatable RPi4 builder flasher
-96278d9a feat(devices): add bounded OEM media preservation
-22682683 fix(evidence): make bounded OEM capture portable
-b4039d37 feat(product): scaffold RG35XXSP bring-up contract
-0a4c3602 feat(nix): select RG35XXSP boot-chain sources
-fc446ff3 feat(nix): pin RG35XXSP open boot-chain sources
-1901f251 feat(nix): archive RPi4 build outputs locally
-d7abcf03 feat(nix): materialize RG35XXSP structural image
-09965fec fix(nix): resume detached handheld image builds
-0683ea2f fix(nix): use valid handheld boot label
-d419980a fix(nix): install handheld image manifest in place
+de383d27 feat(nix): scaffold RG35XXSP appliance bring-up
+0e6502b4 feat(product): declare repeatable RPi4 builder flasher
+11db6b6a feat(devices): add bounded OEM media preservation
+289fdd71 fix(evidence): make bounded OEM capture portable
+25500654 feat(product): scaffold RG35XXSP bring-up contract
+c9facc70 feat(nix): select RG35XXSP boot-chain sources
+7707bb4a feat(nix): pin RG35XXSP open boot-chain sources
+a26eceba feat(nix): archive RPi4 build outputs locally
+f22fcfa8 feat(nix): materialize RG35XXSP structural image
+1a9a7280 fix(nix): resume detached handheld image builds
+57aa750f fix(nix): use valid handheld boot label
+fda59d59 fix(nix): install handheld image manifest in place
 ```
 
 Current status:

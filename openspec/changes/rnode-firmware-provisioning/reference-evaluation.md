@@ -5,7 +5,7 @@
 On 2026-08-31, the `nucleus` host contained an uncommitted RAK4631 flasher
 variant in `/home/wilson/workspace/styrene-lab/styrene-rs`. The checkout was on
 branch `linux-android` at base revision
-`e499853b104786e8291681406726dafa4c03e8df`.
+`e5496dbb43cc7332de5097690dfd3d418c921e92`.
 
 The uncommitted files are implementation evidence. They are not a merge source
 or an immutable upstream revision. The reviewed file digests were:

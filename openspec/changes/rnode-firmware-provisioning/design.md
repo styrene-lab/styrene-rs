@@ -118,7 +118,7 @@ A target-generation change invalidates confirmation. A reported transfer still
 requires NUS reconnection plus model, version, and application-hash verification.
 
 The Apple callback contract is retained in `styrene-ui` revision
-`d798453efb58e587c35357c017a11b3f64f5c685`. It can begin DFU discovery only
+`2fba782e804f746c87d08c04ab07b7cdd567fabe`. It can begin DFU discovery only
 after consuming single-use proof of an observed NUS disconnect. It rejects stale
 callbacks, incomplete DFU characteristics, progress outside the expected byte
 count, and progress regression. It preserves whether disconnect occurred before,
@@ -126,7 +126,7 @@ during, or after the reported transfer. This contract performs no scan,
 connection, protocol command, packet write, or recovery decision.
 
 The bounded Apple transport is retained in `styrene-ui` revision
-`ed250481a5570c21febad53b2b7ab31d4830c528`. It implements only the RAK4631
+`017f456b8ac867f7d8c0618f078ac732054d5536`. It implements only the RAK4631
 Legacy DFU `0.8` application sequence. It requires an admitted init packet,
 application bytes, and separate DFU peripheral identity. The bridge does not
 scan for or select a DFU peripheral.

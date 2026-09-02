@@ -10,22 +10,22 @@ and no frontend imports server wire internals.
 
 ## Tested Revision Pair
 
-- `styrene-rs`: `be869620b792a3d1610438b6c3b1deb2d40448e8` (merge of #53).
+- `styrene-rs`: `772a8eaa2e651f547f53700132c30ec4f03f6f86` (merge of #53).
 - `styrene-ui`: pull request #16 from `feat/shared-client-sessions`, head
-  `f00fb20da8ba8e7a31609d6a8b4888cd5595ed00`, merged as
-  `ecbac266b8bf743958df659bbc75f015d197221b`, pins that revision for the
+  `1baba22d7e3f18aad7c8a5e04311001fe50d9612`, merged as
+  `d64b287ea999faceaaeb611d97082be3043318ec`, pins that revision for the
   desktop and mobile applications.
 
 The pair advanced on 2026-09-02. `styrene-rs` moved to
-`5895790f8005426a1c62287ca75bfafe904ead7a` (merge of #57). `styrene-ui` moved
-to pull request #17, head `a074376dee29740279b96e84e0798edcd258be72`. That
+`cf39251d6639e18cd5e88b0fa47d476d8c01aa0a` (merge of #57). `styrene-ui` moved
+to pull request #17, head `795daec75b3c3139d01a494699a4073050c27e37`. That
 pair adds Quick, Local, and Connected profile selection and backend profile
 truth.
 
 The pair advanced again on 2026-09-02 to the consolidated hardening corpus.
-`styrene-rs` moved to `2722ed0c8442f982498ac028a0d3b10325930eef` (merge of
+`styrene-rs` moved to `354a91cd494a7bac5703f7d1b128a2af95d08d8c` (merge of
 #66). `styrene-ui` moved to pull request #18, merged as
-`6746d99307cbc251aa0ac13d471a3d0da5ea7c99`, which pins that revision in all
+`344796386711bc7b4ac5e038436d36d262c6eb93`, which pins that revision in all
 three manifests with no source change. The library workspace, the desktop
 application (118 passing tests), and the iOS check built and tested against it.
 

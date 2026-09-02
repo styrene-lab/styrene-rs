@@ -102,11 +102,11 @@ fn handoff_declares_the_verified_cross_repository_revision_pair() {
         serde_json::from_str(REVISION_PAIR).expect("revision pair must be strict JSON");
 
     assert_eq!(pair.schema_version, 1);
-    assert_eq!(pair.backend_revision, "f0359c92ba9f6d63ce248bc97617fc3115a0f3c3");
-    assert_eq!(pair.ui_revision, "45e3d20103faf5e1aa9006fb46497c69ea67cff5");
+    assert_eq!(pair.backend_revision, "73daf4414deb826d388a4ca2cc1bb53a4bfd32d5");
+    assert_eq!(pair.ui_revision, "9750cb52e5291e6cbd887ef725d0306878cad50f");
     assert_eq!(
         pair.fixture_sha256,
-        "96b6ea4456b88826099bf7b3fff55724f6dd6fe366db2bc751df4e5c4005c61f"
+        "00918cb8d369d8bc1622942bfebb92994b9ae56f5fe893047e3f111b198df014"
     );
     assert_eq!(pair.evidence_class, "component_and_reducer");
     assert_eq!(pair.verification.len(), 4);

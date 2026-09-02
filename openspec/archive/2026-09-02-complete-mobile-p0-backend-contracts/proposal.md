@@ -4,7 +4,7 @@
 
 Complete and verify the backend-owned P0 mobile contracts that are unsafe,
 missing, or incomplete at revision
-`7dbe68e0e7a2e5e657e4c6c55b304a6a009ab992`. Keep this work independent from
+`84bc816168c185bb4de039c0f86e082620f31c05`. Keep this work independent from
 the frontend branch, which can continue integrating the existing stable draft,
 send, retry, unread, lifecycle, receipt, contact, and standard-propagation APIs.
 

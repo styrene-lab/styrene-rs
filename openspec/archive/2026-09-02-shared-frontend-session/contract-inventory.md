@@ -2,8 +2,8 @@
 
 Original inventory revision: `f2a5999893970fe4b9677db4bd671c8a006d4f47`
 
-Reassessed against backend revision `23beb83dbed95165347debdaabb1a672febfdc92`
-and UI revision `6a1143665ff2afbc3da076d6b1c3eb326f3fe527`.
+Reassessed against backend revision `6e43f9f8362d04a0c9b81c2e82a60457cfa30acd`
+and UI revision `c537f4e5f5f7b91f128743a890169296210e16eb`.
 
 ## Authorities
 

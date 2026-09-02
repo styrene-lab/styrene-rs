@@ -4,8 +4,8 @@ use std::path::{Component, Path, PathBuf};
 use serde::Deserialize;
 
 const CORPUS_ID: &str = "styrene-mobile-custody-handoff-v1";
-const BACKEND_CONTRACT_REVISION: &str = "899da81302c5f4e92f60a2fdaf396c26e813ba76";
-const FRONTEND_HANDOFF_REVISION: &str = "a98c5c42db89818f2206bb8498c1c3632d638fdc";
+const BACKEND_CONTRACT_REVISION: &str = "d8c0569fc30dd49280a3246703a31c84bb646bf3";
+const FRONTEND_HANDOFF_REVISION: &str = "e8a30c8ba1a42c322de43df005c8aebbea8f5e56";
 const REQUIRED_HOST_ORCHESTRATION: &[&str] = &[
     "approved_clean_reset",
     "install_baseline_package",
