@@ -996,6 +996,18 @@ impl Transport {
             .unwrap_or(true)
     }
 
+    /// The most recent accepted announce packet known for a destination,
+    /// for path persistence on nodes that do not retransmit.
+    pub async fn cached_announce(&self, destination: &AddressHash) -> Option<Packet> {
+        self.handler.lock().await.announce_table.cached_announce(destination)
+    }
+
+    /// Announces queued for retransmission and retained for persistence.
+    pub async fn announce_table_sizes(&self) -> (usize, usize) {
+        let handler = self.handler.lock().await;
+        (handler.announce_table.queued_len(), handler.announce_table.cached_len())
+    }
+
     /// Outcome of worker supervision once the manager task has ended.
     pub async fn supervision_outcome(&self) -> Option<SupervisionOutcome> {
         self.handler.lock().await.supervision
