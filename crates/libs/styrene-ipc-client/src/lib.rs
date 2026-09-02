@@ -18,9 +18,10 @@ use styrene_ipc::types::{
     ExecResult, FileDownloadInfo, FileDownloadRequest, IdentityBackupExport, IdentityBackupImport,
     IdentityBackupMetadata, IdentityInfo, IdentityRestoreOutcome, InterfaceDetail, LinkSnapshot,
     MessageInfo, MessagePage, MessagingDisposition, MessagingOperationOutcome,
-    NetworkOperationInfo, PageContent, PageInfo, PageNavigationRequest, PathInfo, PropagationQuery,
-    PropagationSnapshot, RebootResult, RemoteStatusInfo, RequestObservationInfo,
-    ResourceTransferInfo, SendChatOutcome, SendChatRequest, StandardPropagationSnapshot,
+    NetworkOperationInfo, ObservationMetadata, ObservationSource, PageContent, PageInfo,
+    PageNavigationRequest, PathInfo, PropagationQuery, PropagationSnapshot, RebootResult,
+    RemoteStatusInfo, RequestObservationInfo, ResourceTransferInfo, RouteEventInfo, RouteEventKind,
+    RouteLossReason, SendChatOutcome, SendChatRequest, StandardPropagationSnapshot,
     StartNetworkOperationInfo, StartRequestInfo, TunnelInfo, TunnelOperationInfo,
 };
 use styrene_ipc_wire::{self as wire, Frame, MessageType, REQUEST_ID_SIZE};
@@ -168,6 +169,59 @@ impl EventFrame {
     #[must_use]
     pub fn text(&self, key: &str) -> String {
         text(&self.payload, key, "")
+    }
+
+    /// Decode a route lifecycle event. The daemon spells it flat: the route's
+    /// own fields sit beside the event's, with the route observation under
+    /// `route_*` keys, so the nested canonical record is rebuilt here.
+    pub fn route_event(&self) -> Result<RouteEventInfo, ClientError> {
+        if self.message_type != MessageType::EventRoute {
+            return Err(ClientError::Protocol {
+                message: format!("{:?} is not a route event", self.message_type),
+            });
+        }
+        let payload = &self.payload;
+        let destination_hash = text(payload, "destination_hash", "");
+        if destination_hash.is_empty() {
+            return Err(ClientError::Protocol {
+                message: "route event omitted destination_hash".into(),
+            });
+        }
+        let string = |key: &str| payload.get(key).and_then(Value::as_str).map(str::to_owned);
+        let mut route = PathInfo::default();
+        route.destination_hash = destination_hash;
+        route.hops =
+            payload.get("hops").and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok());
+        route.next_hop = string("next_hop");
+        route.interface = string("interface");
+        route.expires = payload.get("expires").and_then(Value::as_i64);
+        route.observation = ObservationMetadata::default();
+        route.observation.source = ObservationSource::TransportPathTable;
+        route.observation.observed_at = payload.get("route_observed_at").and_then(Value::as_i64);
+        route.observation.connection_generation =
+            payload.get("route_connection_generation").and_then(Value::as_u64);
+        route.observation.age_secs = payload.get("route_age_secs").and_then(Value::as_u64);
+        route.observation.freshness_threshold_secs =
+            payload.get("route_freshness_threshold_secs").and_then(Value::as_u64);
+        route.observation.stale =
+            payload.get("route_stale").and_then(Value::as_bool).unwrap_or(false);
+
+        let mut event = RouteEventInfo::default();
+        event.kind = match payload.get("kind").and_then(Value::as_str) {
+            Some("discovered") => RouteEventKind::Discovered,
+            Some("lost") => RouteEventKind::Lost,
+            Some("rediscovered") => RouteEventKind::Rediscovered,
+            _ => RouteEventKind::Unknown,
+        };
+        event.loss_reason =
+            payload.get("loss_reason").and_then(Value::as_str).map(|reason| match reason {
+                "expired" => RouteLossReason::Expired,
+                "interface_unavailable" => RouteLossReason::InterfaceUnavailable,
+                _ => RouteLossReason::Unknown,
+            });
+        event.route = route;
+        event.observation = decode_map(payload, "route observation")?;
+        Ok(event)
     }
 }
 
@@ -1050,13 +1104,16 @@ impl Client {
         &self,
         request: &StartRequestInfo,
     ) -> Result<RequestObservationInfo, ClientError> {
-        let payload = HashMap::from([
+        let mut payload = HashMap::from([
             ("link_id".into(), Value::from(request.link_id.as_str())),
             ("path".into(), Value::from(request.path.as_str())),
             ("data".into(), Value::Binary(request.data.clone())),
             ("timeout_ms".into(), Value::from(request.timeout_ms)),
             ("max_response_size".into(), Value::from(request.max_response_size)),
         ]);
+        if let Some(correlation_id) = &request.correlation_id {
+            payload.insert("correlation_id".into(), Value::from(correlation_id.as_str()));
+        }
         let frame = self.request(MessageType::CmdRequestStart, payload, DEFAULT_DEADLINE).await?;
         decode_map(&frame.payload, "request observation")
     }
@@ -2288,6 +2345,56 @@ mod tests {
         drop(server);
         assert!(matches!(watch.recv().await, Some(CompatibilityEvent::Lost { .. })));
         assert_eq!(watch.recv().await, None);
+    }
+
+    #[test]
+    fn route_events_rebuild_the_nested_record_from_the_flat_wire_spelling() {
+        let payload = HashMap::from([
+            ("kind".to_string(), Value::from("lost")),
+            ("destination_hash".to_string(), Value::from("dest")),
+            ("hops".to_string(), Value::from(2_u64)),
+            ("next_hop".to_string(), Value::from("relay")),
+            ("interface".to_string(), Value::from("iface")),
+            ("expires".to_string(), Value::from(500_i64)),
+            ("loss_reason".to_string(), Value::from("interface_unavailable")),
+            ("source".to_string(), Value::from("transport_path_table")),
+            ("observed_at".to_string(), Value::from(100_i64)),
+            ("connection_generation".to_string(), Value::from(7_u64)),
+            ("stale".to_string(), Value::from(true)),
+            ("correlation_id".to_string(), Value::from("corr")),
+            ("route_observed_at".to_string(), Value::from(90_i64)),
+            ("route_connection_generation".to_string(), Value::from(7_u64)),
+            ("route_age_secs".to_string(), Value::from(10_u64)),
+            ("route_stale".to_string(), Value::from(false)),
+        ]);
+        let frame = EventFrame {
+            message_type: MessageType::EventRoute,
+            payload,
+            generation: ConnectionGeneration(1),
+        };
+        let event = frame.route_event().expect("route event");
+        assert_eq!(event.kind, RouteEventKind::Lost);
+        assert_eq!(event.loss_reason, Some(RouteLossReason::InterfaceUnavailable));
+        assert_eq!(event.route.destination_hash, "dest");
+        assert_eq!(event.route.hops, Some(2));
+        assert_eq!(event.route.next_hop.as_deref(), Some("relay"));
+        assert_eq!(event.route.expires, Some(500));
+        assert_eq!(event.route.observation.source, ObservationSource::TransportPathTable);
+        assert_eq!(event.route.observation.observed_at, Some(90));
+        assert_eq!(event.route.observation.age_secs, Some(10));
+        assert!(!event.route.observation.stale);
+        assert_eq!(event.observation.source, ObservationSource::TransportPathTable);
+        assert_eq!(event.observation.observed_at, Some(100));
+        assert_eq!(event.observation.connection_generation, Some(7));
+        assert!(event.observation.stale);
+        assert_eq!(event.observation.correlation_id.as_deref(), Some("corr"));
+
+        let other = EventFrame {
+            message_type: MessageType::EventDevice,
+            payload: HashMap::new(),
+            generation: ConnectionGeneration(1),
+        };
+        assert!(other.route_event().is_err());
     }
 
     #[tokio::test]
