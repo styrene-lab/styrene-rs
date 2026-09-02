@@ -14,10 +14,18 @@
 //! - **Policy evaluation** is pure — no I/O, no side effects. Takes a roster
 //!   and an identity hash, returns allow/deny.
 //!
+//! # Operation-scoped authorization
+//!
+//! The [`authz`] module adds principals, exact and prefix operation grants
+//! with deny precedence, role bundles, resource and context constraints,
+//! trusted issuer extraction, structured decisions, and policy discovery.
+//! Existing coarse roles remain available as data-backed bundles.
+//!
 //! # Features
 //!
 //! - `config` — enables serde deserialization from YAML/TOML/JSON config.
 
+pub mod authz;
 mod capability;
 mod policy;
 mod role;
@@ -26,6 +34,7 @@ mod warning;
 
 pub use capability::{
     ADMIN_CAPS, ALL_CAPABILITIES, Capability, MONITOR_CAPS, OPERATOR_CAPS, PEER_CAPS,
+    capabilities_for_role,
 };
 pub use policy::{MIN_BLOCKED_PREFIX_LEN, RbacPolicy, RosterEntry};
 pub use role::Role;
