@@ -577,6 +577,7 @@ pub struct InterfaceStats {
     pre_validation_link: AtomicU64,
     excessive_path_request_tags: AtomicU64,
     valid_blackhole: AtomicU64,
+    not_next_hop: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -587,6 +588,9 @@ pub enum InterfaceDropReason {
     PreValidationLink,
     ExcessivePathRequestTags,
     ValidBlackhole,
+    /// A transported non-announce packet named another transport instance
+    /// as its next hop; canonical policy drops it before any state changes.
+    NotNextHop,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -601,6 +605,7 @@ pub struct InterfaceViolationSnapshot {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct InterfaceFilterSnapshot {
     pub valid_blackhole: u64,
+    pub not_next_hop: u64,
 }
 
 impl InterfaceStats {
@@ -614,6 +619,7 @@ impl InterfaceStats {
             pre_validation_link: AtomicU64::new(0),
             excessive_path_request_tags: AtomicU64::new(0),
             valid_blackhole: AtomicU64::new(0),
+            not_next_hop: AtomicU64::new(0),
         }
     }
 
@@ -631,6 +637,7 @@ impl InterfaceStats {
             InterfaceDropReason::PreValidationLink => &self.pre_validation_link,
             InterfaceDropReason::ExcessivePathRequestTags => &self.excessive_path_request_tags,
             InterfaceDropReason::ValidBlackhole => &self.valid_blackhole,
+            InterfaceDropReason::NotNextHop => &self.not_next_hop,
         };
         Self::increment(counter);
     }
@@ -650,6 +657,7 @@ impl InterfaceStats {
             },
             filters: InterfaceFilterSnapshot {
                 valid_blackhole: self.valid_blackhole.load(Ordering::Relaxed),
+                not_next_hop: self.not_next_hop.load(Ordering::Relaxed),
             },
         }
     }

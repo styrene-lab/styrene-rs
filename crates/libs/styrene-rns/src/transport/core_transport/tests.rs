@@ -1218,14 +1218,6 @@ async fn transport_supervision_is_pending_while_workers_run() {
     assert_eq!(transport.worker_failure().await, None);
 }
 
-#[test]
-fn only_data_uses_generic_rebroadcast_path() {
-    assert!(super::jobs::should_rebroadcast(PacketType::Data));
-    assert!(!super::jobs::should_rebroadcast(PacketType::Announce));
-    assert!(!super::jobs::should_rebroadcast(PacketType::LinkRequest));
-    assert!(!super::jobs::should_rebroadcast(PacketType::Proof));
-}
-
 #[tokio::test]
 async fn drop_duplicates() {
     let mut config: TransportConfig = Default::default();
@@ -2038,4 +2030,248 @@ async fn rate_limited_release_and_refresh_follow_the_same_cache_bound() {
         Some(second.data),
         "the newest accepted packet is the one retained"
     );
+}
+
+/// Every transported (Type-2) non-announce packet kind, addressed to `dest`
+/// with `transport` as its next hop.
+fn transported_packets(dest: AddressHash, transport: AddressHash) -> Vec<(&'static str, Packet)> {
+    let base = |packet_type: PacketType, destination_type: DestinationType, context| Packet {
+        header: Header {
+            header_type: HeaderType::Type2,
+            packet_type,
+            destination_type,
+            hops: 1,
+            ..Default::default()
+        },
+        destination: dest,
+        transport: Some(transport),
+        context,
+        data: PacketDataBuffer::new_from_slice(&[0x5a; 64]),
+        ..Default::default()
+    };
+    vec![
+        ("data", base(PacketType::Data, DestinationType::Single, PacketContext::None)),
+        (
+            "link request",
+            base(PacketType::LinkRequest, DestinationType::Single, PacketContext::None),
+        ),
+        (
+            "proof",
+            base(PacketType::Proof, DestinationType::Single, PacketContext::LinkRequestProof),
+        ),
+        ("link packet", base(PacketType::Data, DestinationType::Link, PacketContext::None)),
+    ]
+}
+
+#[tokio::test]
+async fn transported_packets_for_another_next_hop_are_dropped_before_any_state() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("overhearer", &identity, true);
+    config.set_retransmit(true);
+    let transport = Transport::new(config);
+    let channel = test_interface_channel(&transport).await;
+    let mut other_channel = test_interface_channel(&transport).await;
+    let mut iface_events = transport.iface_rx();
+    let other_transport = AddressHash::new_from_rand(OsRng);
+    let dest = AddressHash::new_from_rand(OsRng);
+    let ingress_before = transport.ingress_snapshot().await;
+
+    let overheard = transported_packets(dest, other_transport);
+    for (label, packet) in overheard.iter().map(|(label, packet)| (*label, *packet)) {
+        let outcome = channel
+            .rx_channel
+            .send(RxMessage::physical(channel.address, packet, 500))
+            .await
+            .expect("inject overheard packet");
+        assert_eq!(
+            outcome,
+            crate::transport::iface::IngressEnqueueOutcome::Rejected,
+            "{label}: rejected before the queue"
+        );
+    }
+    assert!(timeout(Duration::from_millis(100), iface_events.recv()).await.is_err());
+    assert!(other_channel.tx_channel.try_recv().is_err(), "nothing is forwarded or rebroadcast");
+    let stats = interface_stats_for(&transport, channel.address).await;
+    assert_eq!(stats.filters.not_next_hop, 4);
+    assert_eq!(stats.rx_bytes, 0, "overheard packets are not counted as received traffic");
+    assert_eq!(transport.ingress_snapshot().await, ingress_before);
+    {
+        let handler = transport.handler.lock().await;
+        assert_eq!(handler.link_table.len(), 0);
+        assert!(handler.path_table.get(&dest).is_none());
+        for (label, packet) in &overheard {
+            assert!(
+                handler.filter_duplicate_packets(packet).await,
+                "{label}: the duplicate cache never saw the overheard packet"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn transported_packets_naming_this_transport_enter_processing_once() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("next-hop", &identity, true);
+    config.set_retransmit(true);
+    let transport = Transport::new(config);
+    let channel = test_interface_channel(&transport).await;
+    let mut iface_events = transport.iface_rx();
+    let local_transport = *identity.address_hash();
+    let dest = AddressHash::new_from_rand(OsRng);
+
+    for (label, packet) in transported_packets(dest, local_transport) {
+        let outcome = channel
+            .rx_channel
+            .send(RxMessage::physical(channel.address, packet, 500))
+            .await
+            .expect("inject packet for this transport");
+        assert_eq!(
+            outcome,
+            crate::transport::iface::IngressEnqueueOutcome::Accepted,
+            "{label}: admitted"
+        );
+        let observed = timeout(Duration::from_secs(1), iface_events.recv())
+            .await
+            .expect("ingress observation deadline")
+            .expect("ingress observation");
+        assert_eq!(observed.packet.transport, Some(local_transport), "{label}");
+    }
+    let stats = interface_stats_for(&transport, channel.address).await;
+    assert_eq!(stats.filters.not_next_hop, 0);
+}
+
+/// Deliver everything a node emitted on its shared-medium channel to the
+/// other nodes on that medium.
+async fn pump_medium(
+    from: &mut crate::transport::iface::InterfaceChannel,
+    others: &[&crate::transport::iface::InterfaceChannel],
+) -> usize {
+    let mut delivered = 0;
+    while let Ok(message) = from.tx_channel.try_recv() {
+        for other in others {
+            other
+                .rx_channel
+                .send(RxMessage::physical(other.address, message.packet, 500))
+                .await
+                .expect("shared medium delivery");
+        }
+        delivered += 1;
+    }
+    delivered
+}
+
+#[tokio::test]
+async fn shared_medium_link_request_is_forwarded_by_the_designated_relay_only() {
+    // Initiator A, relay R, and overhearer O share one medium; destination D
+    // sits behind R on a private interface.
+    let a_identity = PrivateIdentity::new_from_rand(OsRng);
+    let r_identity = PrivateIdentity::new_from_rand(OsRng);
+    let o_identity = PrivateIdentity::new_from_rand(OsRng);
+    let d_identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut a_config = TransportConfig::new("initiator", &a_identity, false);
+    a_config.set_retransmit(false);
+    let mut r_config = TransportConfig::new("relay", &r_identity, false);
+    r_config.set_retransmit(true);
+    let mut o_config = TransportConfig::new("overhearer", &o_identity, false);
+    o_config.set_retransmit(true);
+    let a = Transport::new(a_config);
+    let r = Transport::new(r_config);
+    let o = Transport::new(o_config);
+    let mut a_medium = test_interface_channel(&a).await;
+    let mut r_medium = test_interface_channel(&r).await;
+    let mut o_medium = test_interface_channel(&o).await;
+    let mut r_private = test_interface_channel(&r).await;
+    let mut a_routes = a.route_events().await;
+    let mut o_routes = o.route_events().await;
+
+    // D announces to R over the private interface; R learns D at one hop.
+    let mut d_destination =
+        SingleInputDestination::new(d_identity.clone(), DestinationName::new("lxmf", "delivery"));
+    let d_desc = d_destination.desc;
+    let announce = d_destination.announce(OsRng, None).expect("announce");
+    let mut r_routes = r.route_events().await;
+    r_private
+        .rx_channel
+        .send(RxMessage::physical(r_private.address, announce, 500))
+        .await
+        .expect("D announce reaches R");
+    timeout(Duration::from_secs(1), r_routes.recv())
+        .await
+        .expect("R route deadline")
+        .expect("R route");
+
+    // R retransmits the announce on the shared medium naming itself as the
+    // transport; A and O learn D via R. Deliver the retransmission by hand so
+    // the topology stays deterministic.
+    let mut relayed = Packet {
+        header: Header {
+            header_type: HeaderType::Type2,
+            propagation_type: crate::packet::PropagationType::Broadcast,
+            hops: 1,
+            ..announce.header
+        },
+        transport: Some(*r_identity.address_hash()),
+        ..announce
+    };
+    relayed.header.packet_type = PacketType::Announce;
+    for channel in [&a_medium, &o_medium] {
+        channel
+            .rx_channel
+            .send(RxMessage::physical(channel.address, relayed, 500))
+            .await
+            .expect("relayed announce reaches the medium");
+    }
+    let a_route = timeout(Duration::from_secs(1), a_routes.recv())
+        .await
+        .expect("A route deadline")
+        .expect("A route");
+    let o_route = timeout(Duration::from_secs(1), o_routes.recv())
+        .await
+        .expect("O route deadline")
+        .expect("O route");
+    assert_eq!(a_route.route.hops, 2);
+    assert_eq!(o_route.route.hops, 2);
+    // Drain R's own announce retransmission attempts so they are not confused
+    // with forwarding actions later.
+    while r_medium.tx_channel.try_recv().is_ok() {}
+
+    // A opens a link to D: a transported link request naming R as next hop.
+    let _link = a.link(d_desc).await;
+    let request = timeout(Duration::from_secs(1), a_medium.tx_channel.recv())
+        .await
+        .expect("link request deadline")
+        .expect("link request");
+    assert_eq!(request.packet.header.packet_type, PacketType::LinkRequest);
+    assert_eq!(request.packet.header.header_type, HeaderType::Type2);
+    assert_eq!(request.packet.transport, Some(*r_identity.address_hash()));
+    for channel in [&r_medium, &o_medium] {
+        channel
+            .rx_channel
+            .send(RxMessage::physical(channel.address, request.packet, 500))
+            .await
+            .expect("shared medium delivers the link request");
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // The overhearer drops it before any state and emits nothing.
+    assert!(o_medium.tx_channel.try_recv().is_err(), "overhearer emits nothing");
+    assert_eq!(interface_stats_for(&o, o_medium.address).await.filters.not_next_hop, 1);
+    assert_eq!(o.handler.lock().await.link_table.len(), 0);
+
+    // The relay forwards exactly one directed link request toward D and
+    // nothing back onto the shared medium.
+    let forwarded = timeout(Duration::from_secs(1), r_private.tx_channel.recv())
+        .await
+        .expect("relay forwarding deadline")
+        .expect("relay forwards");
+    assert_eq!(forwarded.packet.header.packet_type, PacketType::LinkRequest);
+    assert_eq!(forwarded.packet.destination, d_desc.address_hash);
+    assert!(r_private.tx_channel.try_recv().is_err(), "exactly one forwarding action");
+    assert_eq!(
+        pump_medium(&mut r_medium, &[&a_medium, &o_medium]).await,
+        0,
+        "nothing onto the medium"
+    );
+    assert_eq!(r.handler.lock().await.link_table.len(), 1);
+    assert_eq!(interface_stats_for(&r, r_medium.address).await.filters.not_next_hop, 0);
 }
