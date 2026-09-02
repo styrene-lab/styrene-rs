@@ -12,7 +12,7 @@
 
 - [x] 2.1 Add failing link tests using the shared 1.5.1 fixture authority, proving Rust cannot decode canonical MessagePack `f64`, emits the wrong width, accepts an invalid numeric value, or ignores trailing bytes
 - [x] 2.2 Change the current-branch LinkRTT codec to encode `f64`, accept only finite non-negative values with complete payload consumption, and preserve internal `Duration` and lifecycle semantics
-- [x] 2.3 Run focused fixture/link tests and the existing bidirectional pinned-Python link gate, retaining the shared authority revision and exact assertions (local pinned-Python runs on 2026-09-02:  interop-direct-115-0 and  interop-direct_resource-2834-0 passed against Reticulum , LXMF )
+- [x] 2.3 Run focused fixture/link tests and the existing bidirectional pinned-Python link gate, retaining the shared authority revision and exact assertions (local pinned-Python runs on 2026-09-02: `direct` interop-direct-115-0 and `direct_resource` interop-direct_resource-2834-0 passed against Reticulum `b48b96e6`, LXMF `795fdaa2`)
 
 ## 3. Type-2 Admission And Forwarding
 <!-- specs: rns-wire-corrections -->
