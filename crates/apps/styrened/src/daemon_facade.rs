@@ -709,9 +709,15 @@ impl DaemonIdentity for DaemonFacade {
     async fn announce(&self) -> Result<bool, IpcError> {
         self.require(Capability::NETWORK_ANNOUNCE)?;
         self.ctx.identity().announce(None).await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
         self.ctx
             .network_operations()
-            .announce_propagation(tokio::time::Instant::now() + std::time::Duration::from_secs(10))
+            .announce_propagation(deadline)
+            .await
+            .map_err(|error| IpcError::Transport { message: error.to_string() })?;
+        self.ctx
+            .network_operations()
+            .announce_nomadnet_node(deadline)
             .await
             .map_err(|error| IpcError::Transport { message: error.to_string() })?;
         Ok(true)
