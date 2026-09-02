@@ -43,7 +43,7 @@ test:
         --test mobile_corpus --test mobile_destination_convergence \
         --test mobile_forced_termination \
         --test mobile_minimum_corpus --test mobile_p0_backend \
-        --test nomadnet_pages_offline --test receipt_bridge --test receipt_mapping \
+        --test nomadnet_fixtures --test nomadnet_pages_offline --test receipt_bridge --test receipt_mapping \
         --test rns_crypto --test transport_contract --test transport_null \
         --test worker_announce --test worker_inbound
     cargo test -p styrene-e2e \
