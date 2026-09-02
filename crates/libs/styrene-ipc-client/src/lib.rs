@@ -12,11 +12,14 @@ use rmpv::Value;
 use serde::de::DeserializeOwned;
 use styrene_ipc::IpcError;
 use styrene_ipc::types::{
-    ConfigApplyResult, ConfigSnapshot, ConversationInfo, DaemonStatusInfo, DeviceInfo, ExecResult,
-    FileDownloadInfo, FileDownloadRequest, IdentityBackupExport, IdentityBackupImport,
-    IdentityBackupMetadata, IdentityInfo, IdentityRestoreOutcome, MessageInfo, PageContent,
-    PageNavigationRequest, PathInfo, RebootResult, RemoteStatusInfo, SendChatOutcome,
-    SendChatRequest, StandardPropagationSnapshot, TunnelInfo, TunnelOperationInfo,
+    ConfigApplyResult, ConfigSnapshot, ConversationDraft, ConversationInfo, ConversationPage,
+    DaemonStatusInfo, DeviceInfo, ExecResult, FileDownloadInfo, FileDownloadRequest,
+    IdentityBackupExport, IdentityBackupImport, IdentityBackupMetadata, IdentityInfo,
+    IdentityRestoreOutcome, InterfaceDetail, LinkSnapshot, MessageInfo, MessagePage,
+    MessagingDisposition, MessagingOperationOutcome, NetworkOperationInfo, PageContent,
+    PageNavigationRequest, PathInfo, RebootResult, RemoteStatusInfo, RequestObservationInfo,
+    ResourceTransferInfo, SendChatOutcome, SendChatRequest, StandardPropagationSnapshot,
+    StartNetworkOperationInfo, StartRequestInfo, TunnelInfo, TunnelOperationInfo,
 };
 use styrene_ipc_wire::{self as wire, Frame, MessageType, REQUEST_ID_SIZE};
 use thiserror::Error;
@@ -733,6 +736,443 @@ impl Client {
         required_bool(&frame.payload, "success", "fleet revoke")
     }
 
+    // ── Transport observation ───────────────────────────────────────────────
+
+    /// Active and historical link telemetry from the daemon's link tables.
+    pub async fn links(&self) -> Result<LinkSnapshot, ClientError> {
+        let frame = self.request(MessageType::QueryLinks, HashMap::new(), DEFAULT_DEADLINE).await?;
+        decode_map(&frame.payload, "link snapshot")
+    }
+
+    /// Every known route with hops, next hop, interface, and expiry.
+    pub async fn path_table(&self) -> Result<Vec<PathInfo>, ClientError> {
+        let frame =
+            self.request(MessageType::QueryPathTable, HashMap::new(), DEFAULT_DEADLINE).await?;
+        decode_key(&frame.payload, &["paths"], "path table")
+    }
+
+    /// Per-interface counters and state.
+    pub async fn interface_stats(&self) -> Result<Vec<InterfaceDetail>, ClientError> {
+        let frame = self
+            .request(MessageType::QueryInterfaceStats, HashMap::new(), DEFAULT_DEADLINE)
+            .await?;
+        decode_key(&frame.payload, &["interfaces"], "interface stats")
+    }
+
+    // ── Network operations, requests, and resources ─────────────────────────
+
+    /// Start a bounded network operation (path request, link, probe).
+    pub async fn start_network_operation(
+        &self,
+        request: &StartNetworkOperationInfo,
+    ) -> Result<NetworkOperationInfo, ClientError> {
+        let mut payload = HashMap::from([
+            ("kind".into(), Value::from(request.kind.as_str())),
+            ("timeout_ms".into(), Value::from(request.timeout_ms)),
+        ]);
+        if let Some(destination) = &request.destination_hash {
+            payload.insert("destination_hash".into(), Value::from(destination.as_str()));
+        }
+        if let Some(link_id) = &request.link_id {
+            payload.insert("link_id".into(), Value::from(link_id.as_str()));
+        }
+        let frame =
+            self.request(MessageType::CmdNetworkOperationStart, payload, DEFAULT_DEADLINE).await?;
+        decode_map(&frame.payload, "network operation")
+    }
+
+    pub async fn cancel_network_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<NetworkOperationInfo, ClientError> {
+        let payload = HashMap::from([("operation_id".into(), Value::from(operation_id))]);
+        let frame =
+            self.request(MessageType::CmdNetworkOperationCancel, payload, DEFAULT_DEADLINE).await?;
+        decode_map(&frame.payload, "network operation")
+    }
+
+    pub async fn network_operations(&self) -> Result<Vec<NetworkOperationInfo>, ClientError> {
+        let frame = self
+            .request(MessageType::QueryNetworkOperation, HashMap::new(), DEFAULT_DEADLINE)
+            .await?;
+        decode_key(&frame.payload, &["operations"], "network operations")
+    }
+
+    /// Start a native RNS request over an active link.
+    pub async fn start_request(
+        &self,
+        request: &StartRequestInfo,
+    ) -> Result<RequestObservationInfo, ClientError> {
+        let payload = HashMap::from([
+            ("link_id".into(), Value::from(request.link_id.as_str())),
+            ("path".into(), Value::from(request.path.as_str())),
+            ("data".into(), Value::Binary(request.data.clone())),
+            ("timeout_ms".into(), Value::from(request.timeout_ms)),
+            ("max_response_size".into(), Value::from(request.max_response_size)),
+        ]);
+        let frame = self.request(MessageType::CmdRequestStart, payload, DEFAULT_DEADLINE).await?;
+        decode_map(&frame.payload, "request observation")
+    }
+
+    pub async fn cancel_request(
+        &self,
+        request_id: &str,
+    ) -> Result<RequestObservationInfo, ClientError> {
+        let payload = HashMap::from([("request_id".into(), Value::from(request_id))]);
+        let frame = self.request(MessageType::CmdRequestCancel, payload, DEFAULT_DEADLINE).await?;
+        decode_map(&frame.payload, "request observation")
+    }
+
+    pub async fn requests(&self) -> Result<Vec<RequestObservationInfo>, ClientError> {
+        let frame =
+            self.request(MessageType::QueryRequests, HashMap::new(), DEFAULT_DEADLINE).await?;
+        decode_key(&frame.payload, &["requests"], "requests")
+    }
+
+    pub async fn resources(&self) -> Result<Vec<ResourceTransferInfo>, ClientError> {
+        let frame =
+            self.request(MessageType::QueryResources, HashMap::new(), DEFAULT_DEADLINE).await?;
+        decode_key(&frame.payload, &["resources"], "resources")
+    }
+
+    /// Cancel a resource transfer; returns whether the daemon accepted the cancel.
+    pub async fn cancel_resource(&self, resource_hash: &str) -> Result<bool, ClientError> {
+        let payload = HashMap::from([("resource_hash".into(), Value::from(resource_hash))]);
+        let frame = self.request(MessageType::CmdResourceCancel, payload, DEFAULT_DEADLINE).await?;
+        Ok(frame.payload.get("accepted").and_then(Value::as_bool).unwrap_or(false))
+    }
+
+    // ── Conversations and messages ──────────────────────────────────────────
+
+    /// One page of a conversation, newest first. A stale cursor is retried
+    /// once from the start and reported through `reset`.
+    pub async fn message_page(
+        &self,
+        peer_hash: &str,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<(MessagePage, bool), ClientError> {
+        let mut payload = HashMap::from([
+            ("peer_hash".into(), Value::from(peer_hash)),
+            ("limit".into(), Value::from(limit)),
+        ]);
+        if let Some(cursor) = cursor {
+            payload.insert("cursor".into(), Value::from(cursor));
+        }
+        let first =
+            self.request(MessageType::QueryMessages, payload.clone(), DEFAULT_DEADLINE).await;
+        let (frame, reset) = match first {
+            Ok(frame) => (frame, false),
+            Err(error) if cursor.is_some() && is_stale_cursor(&error) => {
+                payload.remove("cursor");
+                (self.request(MessageType::QueryMessages, payload, DEFAULT_DEADLINE).await?, true)
+            }
+            Err(error) => return Err(error),
+        };
+        let messages = match frame.payload.get("messages") {
+            Some(value) => decode_value(value.clone(), "messages")?,
+            None => Vec::new(),
+        };
+        let mut page = MessagePage::default();
+        page.messages = messages;
+        page.next_cursor =
+            frame.payload.get("next_cursor").and_then(Value::as_str).map(str::to_owned);
+        Ok((page, reset))
+    }
+
+    pub async fn message(&self, message_id: &str) -> Result<Option<MessageInfo>, ClientError> {
+        let payload = HashMap::from([("message_id".into(), Value::from(message_id))]);
+        let frame = self.request(MessageType::QueryMessage, payload, DEFAULT_DEADLINE).await?;
+        match frame.payload.get("message") {
+            None | Some(Value::Nil) => Ok(None),
+            Some(value) => decode_value(value.clone(), "message").map(Some),
+        }
+    }
+
+    /// One page of conversations. A stale cursor is retried once from the start.
+    pub async fn conversation_page(
+        &self,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<(ConversationPage, bool), ClientError> {
+        let mut payload = HashMap::from([
+            ("unread_only".into(), Value::Boolean(false)),
+            ("limit".into(), Value::from(limit)),
+        ]);
+        if let Some(cursor) = cursor {
+            payload.insert("cursor".into(), Value::from(cursor));
+        }
+        let first =
+            self.request(MessageType::QueryConversations, payload.clone(), DEFAULT_DEADLINE).await;
+        let (frame, reset) = match first {
+            Ok(frame) => (frame, false),
+            Err(error) if cursor.is_some() && is_stale_cursor(&error) => {
+                payload.remove("cursor");
+                (
+                    self.request(MessageType::QueryConversations, payload, DEFAULT_DEADLINE)
+                        .await?,
+                    true,
+                )
+            }
+            Err(error) => return Err(error),
+        };
+        let conversations = match frame.payload.get("conversations") {
+            Some(value) => decode_value(value.clone(), "conversations")?,
+            None => Vec::new(),
+        };
+        let mut page = ConversationPage::default();
+        page.conversations = conversations;
+        page.next_cursor =
+            frame.payload.get("next_cursor").and_then(Value::as_str).map(str::to_owned);
+        Ok((page, reset))
+    }
+
+    /// Mark a conversation read. Older daemons answer with a bare count.
+    pub async fn mark_read(
+        &self,
+        peer_hash: &str,
+    ) -> Result<MessagingOperationOutcome, ClientError> {
+        let payload = HashMap::from([("peer_hash".into(), Value::from(peer_hash))]);
+        let frame = self.request(MessageType::CmdMarkRead, payload, DEFAULT_DEADLINE).await?;
+        if let Some(outcome) = frame.payload.get("outcome") {
+            return decode_value(outcome.clone(), "mark-read outcome");
+        }
+        let count = frame.payload.get("count").and_then(Value::as_u64).ok_or_else(|| {
+            ClientError::Protocol { message: "mark-read response omitted outcome and count".into() }
+        })?;
+        Ok(legacy_outcome(count, peer_hash))
+    }
+
+    /// Delete one message. Older daemons answer with a bare deleted flag.
+    pub async fn delete_message(
+        &self,
+        message_id: &str,
+    ) -> Result<MessagingOperationOutcome, ClientError> {
+        let payload = HashMap::from([("message_id".into(), Value::from(message_id))]);
+        let frame = self.request(MessageType::CmdDeleteMessage, payload, DEFAULT_DEADLINE).await?;
+        if let Some(outcome) = frame.payload.get("outcome") {
+            return decode_value(outcome.clone(), "delete outcome");
+        }
+        let deleted = frame.payload.get("deleted").and_then(Value::as_bool).ok_or_else(|| {
+            ClientError::Protocol { message: "delete response omitted outcome and flag".into() }
+        })?;
+        Ok(legacy_outcome(u64::from(deleted), message_id))
+    }
+
+    pub async fn retry_message(
+        &self,
+        message_id: &str,
+    ) -> Result<MessagingOperationOutcome, ClientError> {
+        let payload = HashMap::from([("message_id".into(), Value::from(message_id))]);
+        let frame = self.request(MessageType::CmdRetryMessage, payload, DEFAULT_DEADLINE).await?;
+        decode_typed_key(&frame.payload, "outcome", "retry outcome")
+    }
+
+    pub async fn cancel_message(
+        &self,
+        message_id: &str,
+    ) -> Result<MessagingOperationOutcome, ClientError> {
+        let payload = HashMap::from([("message_id".into(), Value::from(message_id))]);
+        let frame = self.request(MessageType::CmdCancelMessage, payload, DEFAULT_DEADLINE).await?;
+        decode_typed_key(&frame.payload, "outcome", "cancel outcome")
+    }
+
+    // ── Drafts ──────────────────────────────────────────────────────────────
+
+    pub async fn set_draft(
+        &self,
+        peer_hash: &str,
+        content: &str,
+    ) -> Result<ConversationDraft, ClientError> {
+        let payload = HashMap::from([
+            ("peer_hash".into(), Value::from(peer_hash)),
+            ("content".into(), Value::from(content)),
+        ]);
+        let frame = self.request(MessageType::CmdSetDraft, payload, DEFAULT_DEADLINE).await?;
+        decode_typed_key(&frame.payload, "draft", "draft")
+    }
+
+    pub async fn draft(&self, peer_hash: &str) -> Result<Option<ConversationDraft>, ClientError> {
+        let payload = HashMap::from([("peer_hash".into(), Value::from(peer_hash))]);
+        let frame = self.request(MessageType::QueryDraft, payload, DEFAULT_DEADLINE).await?;
+        match frame.payload.get("draft") {
+            None | Some(Value::Nil) => Ok(None),
+            Some(value) => decode_value(value.clone(), "draft").map(Some),
+        }
+    }
+
+    pub async fn clear_draft(&self, peer_hash: &str) -> Result<(), ClientError> {
+        let payload = HashMap::from([("peer_hash".into(), Value::from(peer_hash))]);
+        self.request(MessageType::CmdClearDraft, payload, DEFAULT_DEADLINE).await.map(|_| ())
+    }
+
+    // ── Identity, auto-reply, and blocking ──────────────────────────────────
+
+    pub async fn set_identity(
+        &self,
+        display_name: &str,
+        icon: Option<&str>,
+    ) -> Result<(), ClientError> {
+        let mut payload = HashMap::from([("display_name".into(), Value::from(display_name))]);
+        if let Some(icon) = icon {
+            payload.insert("icon".into(), Value::from(icon));
+        }
+        self.request(MessageType::CmdSetIdentity, payload, DEFAULT_DEADLINE).await.map(|_| ())
+    }
+
+    pub async fn set_auto_reply(
+        &self,
+        mode: &str,
+        message: &str,
+        cooldown_secs: Option<u64>,
+    ) -> Result<(), ClientError> {
+        let mut payload = HashMap::from([
+            ("mode".into(), Value::from(mode)),
+            ("message".into(), Value::from(message)),
+        ]);
+        if let Some(cooldown) = cooldown_secs {
+            payload.insert("cooldown_secs".into(), Value::from(cooldown));
+        }
+        self.request(MessageType::CmdSetAutoReply, payload, DEFAULT_DEADLINE).await.map(|_| ())
+    }
+
+    pub async fn block_peer(&self, identity_hash: &str) -> Result<(), ClientError> {
+        let payload = HashMap::from([("identity_hash".into(), Value::from(identity_hash))]);
+        self.request(MessageType::CmdBlockPeer, payload, DEFAULT_DEADLINE).await.map(|_| ())
+    }
+
+    pub async fn unblock_peer(&self, identity_hash: &str) -> Result<(), ClientError> {
+        let payload = HashMap::from([("identity_hash".into(), Value::from(identity_hash))]);
+        self.request(MessageType::CmdUnblockPeer, payload, DEFAULT_DEADLINE).await.map(|_| ())
+    }
+
+    pub async fn blocked_peers(&self) -> Result<Vec<String>, ClientError> {
+        let frame =
+            self.request(MessageType::QueryBlockedPeers, HashMap::new(), DEFAULT_DEADLINE).await?;
+        Ok(frame
+            .payload
+            .get("blocked_peers")
+            .and_then(Value::as_array)
+            .map(|entries| entries.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+            .unwrap_or_default())
+    }
+
+    /// The daemon's raw configuration map; typed access is `config()`.
+    pub async fn config_map(&self) -> Result<HashMap<String, Value>, ClientError> {
+        let frame =
+            self.request(MessageType::QueryConfig, HashMap::new(), DEFAULT_DEADLINE).await?;
+        Ok(frame.payload)
+    }
+
+    // ── Remote terminals ────────────────────────────────────────────────────
+
+    /// Open a remote terminal session; returns the session id.
+    pub async fn terminal_open(
+        &self,
+        destination_hash: &str,
+        rows: u16,
+        cols: u16,
+    ) -> Result<String, ClientError> {
+        let payload = HashMap::from([
+            ("destination_hash".into(), Value::from(destination_hash)),
+            ("rows".into(), Value::from(u64::from(rows))),
+            ("cols".into(), Value::from(u64::from(cols))),
+        ]);
+        let frame = self.request(MessageType::CmdTerminalOpen, payload, DEFAULT_DEADLINE).await?;
+        let session_id = text(&frame.payload, "session_id", "");
+        if session_id.is_empty() {
+            return Err(ClientError::Protocol {
+                message: "terminal open omitted the session id".into(),
+            });
+        }
+        Ok(session_id)
+    }
+
+    pub async fn terminal_input(&self, session_id: &str, data: &[u8]) -> Result<(), ClientError> {
+        let payload = HashMap::from([
+            ("session_id".into(), Value::from(session_id)),
+            ("data".into(), Value::Binary(data.to_vec())),
+        ]);
+        self.request(MessageType::CmdTerminalInput, payload, DEFAULT_DEADLINE).await.map(|_| ())
+    }
+
+    pub async fn terminal_resize(
+        &self,
+        session_id: &str,
+        rows: u16,
+        cols: u16,
+    ) -> Result<(), ClientError> {
+        let payload = HashMap::from([
+            ("session_id".into(), Value::from(session_id)),
+            ("rows".into(), Value::from(u64::from(rows))),
+            ("cols".into(), Value::from(u64::from(cols))),
+        ]);
+        self.request(MessageType::CmdTerminalResize, payload, DEFAULT_DEADLINE).await.map(|_| ())
+    }
+
+    pub async fn terminal_close(&self, session_id: &str) -> Result<(), ClientError> {
+        let payload = HashMap::from([("session_id".into(), Value::from(session_id))]);
+        self.request(MessageType::CmdTerminalClose, payload, DEFAULT_DEADLINE).await.map(|_| ())
+    }
+
+    // ── Pages and files ─────────────────────────────────────────────────────
+
+    pub async fn close_page(&self, session_id: &str) -> Result<(), ClientError> {
+        let payload = HashMap::from([("session_id".into(), Value::from(session_id))]);
+        self.request(MessageType::CmdPageDisconnect, payload, DEFAULT_DEADLINE).await.map(|_| ())
+    }
+
+    pub async fn cancel_file_download(
+        &self,
+        download_id: &str,
+    ) -> Result<FileDownloadInfo, ClientError> {
+        let payload = HashMap::from([("download_id".into(), Value::from(download_id))]);
+        let frame =
+            self.request(MessageType::CmdFileDownloadCancel, payload, DEFAULT_DEADLINE).await?;
+        decode_typed_key(&frame.payload, "download", "file download")
+    }
+
+    pub async fn save_file_download(
+        &self,
+        download_id: &str,
+        destination: &str,
+    ) -> Result<FileDownloadInfo, ClientError> {
+        let payload = HashMap::from([
+            ("download_id".into(), Value::from(download_id)),
+            ("destination".into(), Value::from(destination)),
+        ]);
+        let frame =
+            self.request(MessageType::CmdFileDownloadSave, payload, DEFAULT_DEADLINE).await?;
+        decode_typed_key(&frame.payload, "download", "file download")
+    }
+
+    /// Known page paths on a host as `(path, host_hash)` pairs.
+    pub async fn list_pages(&self, host: &str) -> Result<Vec<(String, String)>, ClientError> {
+        let payload = HashMap::from([("host".into(), Value::from(host))]);
+        let frame = self.request(MessageType::CmdPageListSites, payload, DEFAULT_DEADLINE).await?;
+        Ok(frame
+            .payload
+            .get("pages")
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let map = entry.as_map()?;
+                        let field = |name: &str| {
+                            map.iter()
+                                .find(|(key, _)| key.as_str() == Some(name))
+                                .and_then(|(_, value)| value.as_str())
+                                .unwrap_or("")
+                                .to_string()
+                        };
+                        Some((field("path"), field("host_hash")))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     #[must_use]
     pub fn diagnostics(&self) -> ClientDiagnostics {
         ClientDiagnostics {
@@ -1050,6 +1490,27 @@ fn attachment_value(attachment: &styrene_ipc::types::AttachmentInput) -> Value {
     Value::Map(fields)
 }
 
+/// Daemons report a stale paging cursor as a typed or legacy remote error.
+fn is_stale_cursor(error: &ClientError) -> bool {
+    match error {
+        ClientError::Remote(remote) => format!("{remote:?}").contains("cursor_stale"),
+        ClientError::LegacyRemote { code, message, .. } => {
+            code.contains("cursor_stale") || message.contains("cursor_stale")
+        }
+        _ => false,
+    }
+}
+
+/// The typed outcome older daemons implied with a bare count or flag.
+fn legacy_outcome(count: u64, target_id: &str) -> MessagingOperationOutcome {
+    let mut outcome = MessagingOperationOutcome::default();
+    outcome.disposition =
+        if count == 0 { MessagingDisposition::Unchanged } else { MessagingDisposition::Applied };
+    outcome.affected_count = count;
+    outcome.target_id = target_id.into();
+    outcome
+}
+
 fn text(payload: &HashMap<String, Value>, key: &str, default: &str) -> String {
     payload.get(key).and_then(Value::as_str).unwrap_or(default).to_string()
 }
@@ -1278,6 +1739,88 @@ mod tests {
         ping.await.expect("join").expect("ping");
         assert!(matches!(events.recv().await, Err(broadcast::error::RecvError::Lagged(_))));
         assert_eq!(client.diagnostics().events_received, 4);
+    }
+
+    #[tokio::test]
+    async fn message_page_retries_a_stale_cursor_from_the_start() {
+        let (client, mut server) = pair(4);
+        let page = tokio::spawn({
+            let client = client.clone();
+            async move { client.message_page("peer", Some("old-cursor"), 50).await }
+        });
+        let stale = wire::read_frame_async(&mut server).await.expect("first page request");
+        assert_eq!(stale.payload.get("cursor").and_then(Value::as_str), Some("old-cursor"));
+        let error = HashMap::from([
+            ("kind".into(), Value::from("invalid_request")),
+            ("code".into(), Value::from("cursor_stale")),
+            ("message".into(), Value::from("cursor is stale")),
+        ]);
+        reply(&mut server, MessageType::Error, &stale.request_id, &error).await;
+        let retry = wire::read_frame_async(&mut server).await.expect("retried page request");
+        assert!(!retry.payload.contains_key("cursor"), "retry must start from the beginning");
+        let payload = HashMap::from([
+            ("messages".into(), Value::Array(Vec::new())),
+            ("next_cursor".into(), Value::from("next")),
+        ]);
+        reply(&mut server, MessageType::Result, &retry.request_id, &payload).await;
+        let (page, reset) = page.await.expect("join").expect("page");
+        assert!(reset);
+        assert!(page.messages.is_empty());
+        assert_eq!(page.next_cursor.as_deref(), Some("next"));
+    }
+
+    #[tokio::test]
+    async fn mark_read_accepts_the_legacy_count_response() {
+        let (client, mut server) = pair(4);
+        let outcome = tokio::spawn({
+            let client = client.clone();
+            async move { client.mark_read("peer-a").await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("mark-read request");
+        assert_eq!(request.msg_type, MessageType::CmdMarkRead);
+        reply(
+            &mut server,
+            MessageType::Result,
+            &request.request_id,
+            &HashMap::from([("count".into(), Value::from(3_u64))]),
+        )
+        .await;
+        let outcome = outcome.await.expect("join").expect("outcome");
+        assert_eq!(outcome.affected_count, 3);
+        assert_eq!(outcome.target_id, "peer-a");
+        assert_eq!(outcome.disposition, MessagingDisposition::Applied);
+    }
+
+    #[tokio::test]
+    async fn terminal_open_requires_a_session_id_and_pages_decode_pairs() {
+        let (client, mut server) = pair(4);
+        let open = tokio::spawn({
+            let client = client.clone();
+            async move { client.terminal_open("dest", 24, 80).await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("terminal open");
+        assert_eq!(request.payload.get("rows").and_then(Value::as_u64), Some(24));
+        reply(&mut server, MessageType::Result, &request.request_id, &HashMap::new()).await;
+        assert!(matches!(open.await.expect("join"), Err(ClientError::Protocol { .. })));
+
+        let pages = tokio::spawn({
+            let client = client.clone();
+            async move { client.list_pages("host").await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("list pages");
+        let entry = Value::Map(vec![
+            (Value::from("path"), Value::from("/page/index.mu")),
+            (Value::from("host_hash"), Value::from("abcd")),
+        ]);
+        reply(
+            &mut server,
+            MessageType::Result,
+            &request.request_id,
+            &HashMap::from([("pages".into(), Value::Array(vec![entry]))]),
+        )
+        .await;
+        let pages = pages.await.expect("join").expect("pages");
+        assert_eq!(pages, vec![("/page/index.mu".to_string(), "abcd".to_string())]);
     }
 
     #[tokio::test]
