@@ -456,6 +456,33 @@ impl Transport {
         sent
     }
 
+    /// Send one already-built packet on an established Link's bound interface.
+    ///
+    /// Link IDs are ephemeral and never enter the destination path table, so
+    /// routing a Link packet by destination would drop it on a non-broadcast
+    /// transport or steer it by a stale entry. The Link must be active.
+    pub async fn send_link_packet(
+        &self,
+        link: &Arc<Mutex<Link>>,
+        packet: Packet,
+    ) -> SendPacketOutcome {
+        let iface = {
+            let link = link.lock().await;
+            if link.status() != LinkStatus::Active {
+                return SendPacketOutcome::DroppedNoRoute;
+            }
+            link.ingress_iface()
+        };
+        let Some(iface) = iface else {
+            return SendPacketOutcome::DroppedNoRoute;
+        };
+        if self.dispatch_bound_link_packets(vec![(iface, packet)]).await == 1 {
+            SendPacketOutcome::SentDirect
+        } else {
+            SendPacketOutcome::DroppedNoRoute
+        }
+    }
+
     pub async fn send_channel_to_all_out_links(&self, payload: &[u8]) {
         let packets = {
             let handler = self.handler.lock().await;
@@ -967,6 +994,17 @@ impl Transport {
             .ok()
             .and_then(|task| task.as_ref().map(tokio::task::JoinHandle::is_finished))
             .unwrap_or(true)
+    }
+
+    /// Outcome of worker supervision once the manager task has ended.
+    pub async fn supervision_outcome(&self) -> Option<SupervisionOutcome> {
+        self.handler.lock().await.supervision
+    }
+
+    /// The attributable failure of a supervised worker that exited before
+    /// shutdown, if any.
+    pub async fn worker_failure(&self) -> Option<WorkerFailure> {
+        self.supervision_outcome().await.and_then(|outcome| outcome.failure())
     }
 
     pub async fn shutdown_manager(&self) -> Result<(), tokio::task::JoinError> {

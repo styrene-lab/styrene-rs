@@ -86,9 +86,9 @@ Dependency gate: `reticulum-1-5-parity-wave` group 8 must be verified complete b
 ## 12. Transport worker supervision
 <!-- specs: rns-link-transport-hardening -->
 
-- [ ] 12.1 Add and run failing tests for a named worker's silent early return, panic, sibling cancellation, attribution, and normal shutdown drain
-- [ ] 12.2 Retain all long-lived worker handles in the minimal supervisor and cancel/drain the worker set on unexpected completion
-- [ ] 12.3 Verify focused supervision tests and transport startup/shutdown tests, including no false failure on ordinary cancellation and no surviving sibling tasks
+- [x] 12.1 Add and run failing tests for a named worker's silent early return, panic, sibling cancellation, attribution, and normal shutdown drain
+- [x] 12.2 Retain all long-lived worker handles in the minimal supervisor and cancel/drain the worker set on unexpected completion
+- [x] 12.3 Verify focused supervision tests and transport startup/shutdown tests, including no false failure on ordinary cancellation and no surviving sibling tasks
 
 ## 13. Passive-node announce bounds
 <!-- specs: rns-interface-policy -->
