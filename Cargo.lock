@@ -4233,6 +4233,7 @@ dependencies = [
  "rmp-serde",
  "rmpv",
  "serde_bytes",
+ "serde_json",
  "styrene-content",
  "styrene-identity",
  "styrene-ipc",
