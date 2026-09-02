@@ -231,12 +231,15 @@ The harness clients now ask at a real client's pace instead of twice a second.
 Support claims now follow hosted evidence. The committed record
 `tests/interop/handoffs/pinned-live-evidence.json` lists every
 `live-interop.yml` dispatch whose scenarios all passed, with the styrene-rs
-revision and the pinned upstream revisions. An offline test requires a passing
-hosted run for every pinned scenario. It also refuses a live gate in the
-capability registry that names a scenario without one. On that evidence the LXMF direct,
-resource, and propagation claims and the NomadNet transport claim are
-verified. Reticulum operations stay degraded until routed channel evidence
-exists.
+revision and the pinned upstream revisions. Live gates stay isolated in the
+capability registry, as repository policy requires. Fixture gates verify the
+record offline instead. Each claim group needs a passing hosted run for every
+scenario its live gates opt into. The record must also match the runner's pins
+and the workflow matrix.
+
+On that evidence the LXMF direct, resource, and propagation claims and the
+NomadNet transport claim are verified. Reticulum operations stay degraded
+until routed channel evidence exists.
 
 The remaining live evidence is a routed channel exchange. No pinned Python
 application speaks a channel protocol the Rust daemon exposes, so that
