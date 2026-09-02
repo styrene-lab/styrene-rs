@@ -44,7 +44,7 @@ authorization.
 | iOS App Lock policy | 15/17 | Physical iPhone matrix and separate App Lock versus Keychain prompt observations |
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
-| Shared frontend session | 15/29 | TUI smoke checks, common sessions, desktop migration, and revision-pair verification |
+| Shared frontend session | 20/29 | TUI smoke checks, desktop migration, and revision-pair verification |
 | Reticulum/LXMF/NomadNet parity | 85/85 | Archive after closure review |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
@@ -300,9 +300,16 @@ Authority:
 Neutral framing, the bounded IPC client, negotiation, event fanout,
 compatibility polling, full operation coverage, and the one-shot CLI migration
 are complete. The TUI connects, negotiates, queries, and receives pushed events
-through the shared client, and no frontend crate depends on the IPC server. No
-common `LiveSession`, `EmbeddedSession`, or `FixtureSession` implementation
-exists.
+through the shared client, and no frontend crate depends on the IPC server.
+
+The `styrene-session` crate now owns the Live, Embedded, and Fixture profiles.
+Live connects to an existing endpoint and fails with a recoverable typed error.
+Embedded starts a `styrened` runtime over a private socket and shuts it down on
+close. Fixture answers from a script over an in-process stream pair with no
+daemon or network interface. A loopback e2e test shows Live and Embedded
+sessions returning the same identity, status, capability, and device records.
+Ordinary validation now also runs the IPC wire and client unit tests, which CI
+had never selected.
 
 The TUI migration exposed a decoding defect. The TUI decoded typed payloads
 with rmpv's enum decoding, which rejects the daemon's string-spelled enum
@@ -315,9 +322,8 @@ the NomadNet host discovered capability did not match the wire spelling. No
 typed consumer could decode a device that advertised it. The contract now pins
 the wire spelling and tolerates unknown capabilities.
 
-The remaining sequence is TUI smoke checks, common sessions, cross-repository
-desktop migration, and aggregate verification against one immutable backend/UI
-pair.
+The remaining sequence is TUI smoke checks, cross-repository desktop
+migration, and aggregate verification against one immutable backend/UI pair.
 
 The loopback network suite (`just test-network`, `network-tests.yml`) does not
 pass on `main`. Hosted runs 33639376197 (`main`) and 33638808709 stop at the

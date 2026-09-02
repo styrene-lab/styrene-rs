@@ -20,11 +20,11 @@
 ## 3. Frontend Sessions
 <!-- specs: frontend-session/spec -->
 
-- [ ] 3.1 Define the common session profile, metadata, capability, generation, and shutdown contracts
-- [ ] 3.2 Implement `LiveSession` with the reusable IPC client and no Embedded fallback
-- [ ] 3.3 Implement `EmbeddedSession` with deterministic startup, ownership, and idempotent shutdown
-- [ ] 3.4 Implement a network-isolated `FixtureSession` for supported deterministic operations
-- [ ] 3.5 Verify Live and Embedded operations return equivalent typed daemon records
+- [x] 3.1 Define the common session profile, metadata, capability, generation, and shutdown contracts
+- [x] 3.2 Implement `LiveSession` with the reusable IPC client and no Embedded fallback
+- [x] 3.3 Implement `EmbeddedSession` with deterministic startup, ownership, and idempotent shutdown
+- [x] 3.4 Implement a network-isolated `FixtureSession` for supported deterministic operations
+- [x] 3.5 Verify Live and Embedded operations return equivalent typed daemon records
 
 ## 4. Ratatui Migration
 <!-- specs: frontend-session/spec -->

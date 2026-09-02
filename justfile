@@ -27,6 +27,7 @@ test:
     cargo test --features styrene-identity/repository-signing \
         -p styrene-entropy -p styrene-content -p styrene-telemetry \
         -p styrene-rns -p styrene-lxmf -p styrene-mesh -p styrene-ipc \
+        -p styrene-ipc-wire -p styrene-ipc-client -p styrene-session \
         -p styrene-identity -p styrene-tunnel -p styrene-micron \
         -p styrene-rbac -p styrene-rnode-firmware -p styrene-secrets -p styrene-services \
         -p styrene-a2a -p styrene-mqtt -p styrene-forge -p styrene-amcp
