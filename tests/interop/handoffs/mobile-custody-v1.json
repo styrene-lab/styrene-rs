@@ -7,7 +7,7 @@
     "backend_contract_revision": "899da81302c5f4e92f60a2fdaf396c26e813ba76",
     "integration_corpus": "tests/fixtures/mobile-integration-v1/corpus.json",
     "integration_case": "mobile.identity.device-custody",
-    "openspec_task": "openspec/changes/complete-mobile-p0-backend-contracts/tasks.md#3.5",
+    "openspec_task": "openspec/archive/2026-09-02-complete-mobile-p0-backend-contracts/tasks.md#3.5",
     "frontend_repository": "https://github.com/styrene-lab/styrene-ui.git",
     "frontend_handoff_revision": "a98c5c42db89818f2206bb8498c1c3632d638fdc"
   },
