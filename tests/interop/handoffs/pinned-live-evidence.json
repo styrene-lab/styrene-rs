@@ -21,9 +21,6 @@
       "version": "1.2.3"
     }
   },
-  "pending": {
-    "routed_channel": "Added on 2026-09-02; awaiting the first hosted live-interop.yml dispatch that includes it."
-  },
   "runs": [
     {
       "run_id": 33582749453,
@@ -78,6 +75,29 @@
         "propagated_expiry": "success",
         "propagated_resource_lxm": "success",
         "propagated_retrieval": "success",
+        "routed_direct": "success",
+        "routed_direct_resource": "success",
+        "routed_nomadnet_pages": "success"
+      }
+    },
+    {
+      "run_id": 33632518861,
+      "url": "https://github.com/styrene-lab/styrene-rs/actions/runs/33632518861",
+      "styrene_rs_revision": "494695ce842641dd4fec3a5022b894d1aa2a3403",
+      "recorded_at": "2026-09-02T12:53:50Z",
+      "conclusion": "success",
+      "pull_request": 43,
+      "scenarios": {
+        "direct": "success",
+        "direct_resource": "success",
+        "nomadnet_client": "success",
+        "nomadnet_pages": "success",
+        "opportunistic": "success",
+        "propagated_capacity": "success",
+        "propagated_expiry": "success",
+        "propagated_resource_lxm": "success",
+        "propagated_retrieval": "success",
+        "routed_channel": "success",
         "routed_direct": "success",
         "routed_direct_resource": "success",
         "routed_nomadnet_pages": "success"
