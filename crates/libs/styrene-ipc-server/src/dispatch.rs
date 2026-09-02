@@ -76,6 +76,51 @@ pub async fn dispatch_for_connection(
         MessageType::CmdRestoreIdentityBackup => {
             dispatch_restore_identity_backup(daemon, &payload).await
         }
+        MessageType::QueryProfileInventory => {
+            let inventory = daemon.profile_inventory().await.map_err(typed_ipc_error)?;
+            typed_payload("inventory", &inventory)
+        }
+        MessageType::CmdProfileCreate => {
+            let request = decode_typed(&payload, "request")?;
+            let outcome = daemon.create_profile(request).await.map_err(typed_ipc_error)?;
+            typed_payload("outcome", &outcome)
+        }
+        MessageType::CmdProfilePromote => {
+            let request = decode_typed(&payload, "request")?;
+            let outcome = daemon.promote_profile(request).await.map_err(typed_ipc_error)?;
+            typed_payload("outcome", &outcome)
+        }
+        MessageType::CmdProfileSnapshot => {
+            let request = decode_typed(&payload, "request")?;
+            let outcome = daemon.snapshot_profile(request).await.map_err(typed_ipc_error)?;
+            typed_payload("outcome", &outcome)
+        }
+        MessageType::CmdProfileRestore => {
+            let request = decode_typed(&payload, "request")?;
+            let outcome = daemon.restore_profile(request).await.map_err(typed_ipc_error)?;
+            typed_payload("outcome", &outcome)
+        }
+        MessageType::CmdProfileExport => {
+            let request = decode_typed(&payload, "request")?;
+            let outcome = daemon.export_profile(request).await.map_err(typed_ipc_error)?;
+            typed_payload("outcome", &outcome)
+        }
+        MessageType::CmdProfileImport => {
+            let request = decode_typed(&payload, "request")?;
+            let outcome = daemon.import_profile(request).await.map_err(typed_ipc_error)?;
+            typed_payload("outcome", &outcome)
+        }
+        MessageType::CmdProfileAdopt => {
+            let request = decode_typed(&payload, "request")?;
+            let outcome = daemon.adopt_profile(request).await.map_err(typed_ipc_error)?;
+            typed_payload("outcome", &outcome)
+        }
+        MessageType::QueryProfileOperation => {
+            let operation_id = val_str(&payload, "operation_id")
+                .ok_or_else(|| "operation_id is required".to_string())?;
+            let progress = daemon.profile_operation(operation_id).await.map_err(typed_ipc_error)?;
+            typed_payload("progress", &progress)
+        }
         MessageType::QueryDevices => dispatch_query_devices(daemon, &payload).await,
         MessageType::QueryAutoReply => dispatch_query_auto_reply(daemon).await,
         MessageType::CmdAnnounce => dispatch_announce(daemon).await,

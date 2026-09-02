@@ -61,6 +61,8 @@ impl Capability {
     pub const POLICY_UPDATE: &str = "policy.update";
     pub const TERMINAL_FULL: &str = "terminal.full";
     pub const ADAPTER_PROVISION: &str = "adapter.provision";
+    /// Create, promote, snapshot, restore, import, export, or adopt operator profiles.
+    pub const PROFILE_MANAGE: &str = "profile.manage";
     pub const RELAY_ADMIN: &str = "relay.admin";
 
     // ── Tunnel (tiered) ─────────────────────────────────────────
@@ -130,6 +132,7 @@ pub const ALL_CAPABILITIES: &[&str] = &[
     Capability::POLICY_UPDATE,
     Capability::TERMINAL_FULL,
     Capability::ADAPTER_PROVISION,
+    Capability::PROFILE_MANAGE,
     Capability::RELAY_ADMIN,
     // Tunnel
     Capability::TUNNEL_STATUS,
@@ -299,6 +302,7 @@ pub const ADMIN_CAPS: &[&str] = &[
     Capability::POLICY_UPDATE,
     Capability::TERMINAL_FULL,
     Capability::ADAPTER_PROVISION,
+    Capability::PROFILE_MANAGE,
     Capability::RELAY_ADMIN,
 ];
 

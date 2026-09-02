@@ -345,6 +345,18 @@ impl PendingPromotion {
     }
 }
 
+impl PendingPromotion {
+    /// Publish the promoted profile without restarting into it. Both the
+    /// promoted destination and the Quick source stay leased by the caller,
+    /// so the source is not removed until the operator restarts from the
+    /// destination and releases it.
+    pub fn publish_without_restart(mut self) -> (StoppedManagedProfile, StoppedManagedProfile) {
+        let promoted = self.profile.take().expect("pending promotion has profile");
+        let source = self.source.take().expect("pending promotion has source");
+        (promoted, source)
+    }
+}
+
 impl Drop for PendingPromotion {
     fn drop(&mut self) {
         if let Some(profile) = self.profile.take() {
@@ -399,6 +411,20 @@ impl StoppedManagedProfile {
             pages: self.paths.pages.clone(),
             files: self.paths.files.clone(),
             display_name: self.manifest.display_name.clone(),
+            profile_root: self.paths.root.clone(),
+            profiles_parent: self
+                .paths
+                .root
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| self.paths.root.clone()),
+            runtime_parent: self
+                .paths
+                .runtime_root
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| self.paths.runtime_root.clone()),
+            profile_id: self.manifest.id.clone(),
         };
         match crate::daemon::start_managed(paths).await {
             Ok(daemon) => Ok(RunningManagedProfile { daemon: Some(daemon), profile: Some(self) }),
@@ -688,6 +714,46 @@ pub enum ProfileError {
     PortableNotFound,
     #[error("portable media is no longer present")]
     MediaMissing,
+}
+
+impl ProfileError {
+    /// A reportable copy: identical for value variants, and an `Io` variant
+    /// re-created from its kind and message.
+    pub fn clone_for_report(&self) -> Self {
+        match self {
+            Self::Io { action, source } => {
+                Self::Io { action, source: io::Error::new(source.kind(), source.to_string()) }
+            }
+            Self::DestinationExists(path) => Self::DestinationExists(path.clone()),
+            Self::InvalidManifest => Self::InvalidManifest,
+            Self::UnsupportedFormat(version) => Self::UnsupportedFormat(*version),
+            Self::InvalidPath(message) => Self::InvalidPath(message.clone()),
+            Self::SymbolicLink(path) => Self::SymbolicLink(path.clone()),
+            Self::CopyLimit => Self::CopyLimit,
+            Self::UnsupportedPlatform => Self::UnsupportedPlatform,
+            Self::InvalidIdentity => Self::InvalidIdentity,
+            Self::InsecurePermissions(path) => Self::InsecurePermissions(path.clone()),
+            Self::FileTooLarge(path) => Self::FileTooLarge(path.clone()),
+            Self::ProfileInUse(path) => Self::ProfileInUse(path.clone()),
+            Self::InvalidPromotionSource => Self::InvalidPromotionSource,
+            Self::SerializeManifest(_) => Self::InvalidManifest,
+            Self::SnapshotTampered(component) => Self::SnapshotTampered(component.clone()),
+            Self::SnapshotMissingComponent(component) => {
+                Self::SnapshotMissingComponent(component.clone())
+            }
+            Self::Database(message) => Self::Database(message.clone()),
+            Self::InvalidCustody => Self::InvalidCustody,
+            Self::IdentityUnavailable => Self::IdentityUnavailable,
+            Self::UnknownRecoverySlot(id) => Self::UnknownRecoverySlot(id.clone()),
+            Self::NotHardwareCustody => Self::NotHardwareCustody,
+            Self::Custody(message) => Self::Custody(message.clone()),
+            Self::UnsupportedPortableMedia(reason) => {
+                Self::UnsupportedPortableMedia(reason.clone())
+            }
+            Self::PortableNotFound => Self::PortableNotFound,
+            Self::MediaMissing => Self::MediaMissing,
+        }
+    }
 }
 
 fn validate_manifest(manifest: &ProfileManifest) -> Result<(), ProfileError> {
@@ -2236,4 +2302,108 @@ fn checkpoint_database(path: &Path) -> Result<(), ProfileError> {
     conn.pragma_update(None, "journal_mode", "delete")
         .map_err(|error| ProfileError::Database(error.to_string()))?;
     Ok(())
+}
+
+// ── Inventory probes ─────────────────────────────────────────────────────────
+
+/// What can be learned about a profile root without taking its lease.
+#[derive(Clone, Debug)]
+pub struct ProfileProbe {
+    pub root: PathBuf,
+    pub manifest: ProfileManifest,
+    pub custody: Option<CustodyRecord>,
+    /// Another owner currently holds the exclusive writer lease.
+    pub leased: bool,
+    pub identity_available: bool,
+    pub snapshot_count: u32,
+}
+
+/// Read a profile root's manifest, custody, lease state, and snapshot count
+/// without acquiring its lease or mutating it.
+pub fn probe_root(root: &Path) -> Result<ProfileProbe, ProfileError> {
+    reject_symlink(root)?;
+    let root = root
+        .canonicalize()
+        .map_err(|source| ProfileError::Io { action: "resolve profile root", source })?;
+    let manifest_bytes = read_bounded_file(&root.join("manifest.toml"), MAX_MANIFEST_BYTES)?;
+    let manifest: ProfileManifest = toml::from_str(
+        std::str::from_utf8(&manifest_bytes).map_err(|_| ProfileError::InvalidManifest)?,
+    )
+    .map_err(|_| ProfileError::InvalidManifest)?;
+    validate_manifest(&manifest)?;
+    let paths = ProfilePaths::for_roots(root.clone(), PathBuf::new());
+    let custody = paths.custody.exists().then(|| read_custody(&paths.custody)).transpose()?;
+    let identity_available = validate_identity(&paths.identity).is_ok();
+    let leased = lease_is_held(&root)?;
+    let snapshot_count = list_snapshots(&paths.snapshots).map(|list| list.len()).unwrap_or(0);
+    Ok(ProfileProbe {
+        root,
+        manifest,
+        custody,
+        leased,
+        identity_available,
+        snapshot_count: u32::try_from(snapshot_count).unwrap_or(u32::MAX),
+    })
+}
+
+#[cfg(unix)]
+fn lease_is_held(root: &Path) -> Result<bool, ProfileError> {
+    use rustix::fs::{FlockOperation, Mode, OFlags, flock, open};
+    let path = root.join(".profile.lock");
+    if !path.exists() {
+        return Ok(false);
+    }
+    let fd = open(&path, OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOFOLLOW, Mode::empty())
+        .map_err(|error| ProfileError::Io {
+            action: "open profile lease",
+            source: io::Error::from_raw_os_error(error.raw_os_error()),
+        })?;
+    let file = File::from(fd);
+    match flock(&file, FlockOperation::NonBlockingLockExclusive) {
+        Ok(()) => {
+            let _ = flock(&file, FlockOperation::Unlock);
+            Ok(false)
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(true),
+        Err(error) => Err(ProfileError::Io {
+            action: "probe profile lease",
+            source: io::Error::from_raw_os_error(error.raw_os_error()),
+        }),
+    }
+}
+
+#[cfg(not(unix))]
+fn lease_is_held(_root: &Path) -> Result<bool, ProfileError> {
+    Err(ProfileError::UnsupportedPlatform)
+}
+
+/// Snapshot the profile this daemon runs from, through its live stores.
+pub fn snapshot_running_root(
+    root: &Path,
+    app_context: &crate::app_context::AppContext,
+) -> Result<SnapshotRef, ProfileError> {
+    let probe = probe_root(root)?;
+    let paths = ProfilePaths::for_roots(probe.root, PathBuf::new());
+    write_snapshot(&paths, &probe.manifest, DatabaseSource::Running(app_context))
+}
+
+/// Copy a verified snapshot generation to an unused directory outside the
+/// profile, then verify the copy.
+pub fn copy_snapshot(
+    snapshot: &SnapshotRef,
+    destination: &Path,
+) -> Result<SnapshotRef, ProfileError> {
+    snapshot.verify()?;
+    if destination.exists() {
+        return Err(ProfileError::DestinationExists(destination.to_path_buf()));
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| ProfileError::InvalidPath("destination has no parent".into()))?;
+    validate_existing_directory(parent)?;
+    let mut budget = CopyBudget::default();
+    copy_tree(&snapshot.root, destination, &mut budget)?;
+    make_files_read_only(destination)?;
+    sync_tree(destination)?;
+    SnapshotRef::open(destination)
 }

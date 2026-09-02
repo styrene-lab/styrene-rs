@@ -3,6 +3,7 @@ mod fleet;
 mod identity;
 mod messaging;
 mod pages;
+mod profiles;
 mod status;
 mod tunnel;
 
@@ -11,6 +12,7 @@ pub use fleet::DaemonFleet;
 pub use identity::DaemonIdentity;
 pub use messaging::DaemonMessaging;
 pub use pages::DaemonPages;
+pub use profiles::DaemonProfiles;
 pub use status::DaemonStatus;
 pub use tunnel::DaemonTunnel;
 
@@ -26,6 +28,7 @@ pub trait Daemon:
     + DaemonEvents
     + DaemonTunnel
     + DaemonPages
+    + DaemonProfiles
 {
 }
 
@@ -37,5 +40,6 @@ impl<T> Daemon for T where
         + DaemonEvents
         + DaemonTunnel
         + DaemonPages
+        + DaemonProfiles
 {
 }

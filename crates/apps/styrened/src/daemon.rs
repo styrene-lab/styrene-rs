@@ -53,6 +53,12 @@ pub(crate) struct ManagedDaemonPaths {
     pub pages: PathBuf,
     pub files: PathBuf,
     pub display_name: String,
+    /// The profile root, its parent, and the host-private runtime parent,
+    /// which let the daemon manage sibling profiles.
+    pub profile_root: PathBuf,
+    pub profiles_parent: PathBuf,
+    pub runtime_parent: PathBuf,
+    pub profile_id: String,
 }
 
 /// Handle to a running daemon.
@@ -526,7 +532,21 @@ async fn start_inner(
     }
 
     // --- DaemonFacade ---
-    let daemon_facade = Arc::new(DaemonFacade::new(app_context.clone(), identity_hash.clone()));
+    let mut facade = DaemonFacade::new(app_context.clone(), identity_hash.clone());
+    if let Some(paths) = managed_paths.as_ref() {
+        let manager = crate::profile_manager::ProfileManager::new(
+            crate::profile_manager::ProfileRoots {
+                profiles_parent: paths.profiles_parent.clone(),
+                runtime_parent: paths.runtime_parent.clone(),
+            },
+            Some(crate::profile_manager::ActiveProfile {
+                id: paths.profile_id.clone(),
+                root: paths.profile_root.clone(),
+            }),
+        );
+        facade = facade.with_profiles(Arc::new(manager));
+    }
+    let daemon_facade = Arc::new(facade);
 
     // --- Workers ---
     let local_delivery_hash = if transport_active { Some(delivery_hash) } else { None };
