@@ -269,6 +269,15 @@ pub(super) async fn handle_proof(
             rtt_packets.push(link.create_rtt());
         }
     }
+    // The destination side of a link sends channel packets too, and the
+    // initiator proves them. Those proofs must reach the inbound link so its
+    // channel deliveries are recorded instead of retrying until the link is
+    // torn down.
+    if packet.header.destination_type == DestinationType::Link
+        && let Some(link) = handler.in_links.get(&packet.destination).cloned()
+    {
+        let _ = link.lock().await.handle_packet(&packet, iface);
+    }
     for packet in rtt_packets {
         handler.send_packet(packet).await;
     }
@@ -526,6 +535,19 @@ pub(super) async fn handle_data<'a>(
         for link in handler.out_links.values() {
             let mut link = link.lock().await;
             let result = link.handle_packet(packet, iface);
+            crate::transport_diagnostic!(
+                "[tp] out_link_rx link={} ctx={:02x} matched={} result={}",
+                link.id(),
+                packet.context as u8,
+                *link.id() == packet.destination,
+                match &result {
+                    LinkHandleResult::Proof(_) => "proof",
+                    LinkHandleResult::Ingress { .. } => "ingress",
+                    LinkHandleResult::Response(_) => "response",
+                    LinkHandleResult::None => "none",
+                    _ => "other",
+                }
+            );
             match result {
                 LinkHandleResult::Proof(proof_packet) => proof_packets.push(proof_packet),
                 LinkHandleResult::Ingress { payload, proof } => {
@@ -561,9 +583,20 @@ pub(super) async fn handle_data<'a>(
         }
 
         for packet in link_packets {
+            crate::transport_diagnostic!(
+                "[tp] link_reply_tx dst={} type={:?} ctx={:02x}",
+                packet.destination,
+                packet.header.packet_type,
+                packet.context as u8
+            );
             handler.send(TxMessage { tx_type: TxMessageType::Direct(iface), packet }).await;
         }
         for packet in proof_packets {
+            crate::transport_diagnostic!(
+                "[tp] link_proof_reply_tx dst={} ctx={:02x}",
+                packet.destination,
+                packet.context as u8
+            );
             handler.send(TxMessage { tx_type: TxMessageType::Direct(iface), packet }).await;
         }
 

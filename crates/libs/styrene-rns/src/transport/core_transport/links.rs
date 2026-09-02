@@ -1058,6 +1058,16 @@ impl TransportChannel {
         Ok(ready)
     }
 
+    /// Delivery state of a message this channel sent, by its sequence number.
+    pub async fn state(
+        &self,
+        sequence: u16,
+    ) -> Result<crate::transport::channel::MessageState, ChannelError> {
+        let link = self.find_link().await.ok_or(ChannelError::LinkNotReady)?;
+        let state = link.lock().await.channel_state(sequence);
+        Ok(state)
+    }
+
     pub async fn close_wait_hint(&self) -> Result<Duration, ChannelError> {
         let link = self.find_link().await.ok_or(ChannelError::LinkNotReady)?;
         let hint = link.lock().await.channel_close_wait_hint();
