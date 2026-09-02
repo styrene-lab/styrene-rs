@@ -38,7 +38,7 @@
 - [x] 4.4 Correlate packet responses, resource responses, denial, link close, timeout, and malformed responses
 - [x] 4.5 Enforce maximum response size and select packet or resource response by encoded size
 - [x] 4.6 Add request progress and terminal observations to transport and IPC
-- [ ] 4.7 Add Python/Rust request packet and resource interoperability scenarios
+- [x] 4.7 Add Python/Rust request packet and resource interoperability scenarios
 
 ## 5. Routing, Links, Channels, And Resources
 <!-- specs: reticulum-operations, interop-verification -->
@@ -128,7 +128,7 @@
 - [x] 12.3 Replace arbitrary sleeps with bounded milestone waits and deterministic topology allocation
 - [x] 12.4 Enable bidirectional Direct and Opportunistic Python/Rust LXMF gates
 - [x] 12.5 Enable bidirectional resource-backed LXMF gates
-- [ ] 12.6 Enable routed Reticulum, standard propagation, and native NomadNet gates
+- [x] 12.6 Enable routed Reticulum, standard propagation, and native NomadNet gates
 - [x] 12.7 Keep ordinary workspace validation offline and deterministic
 - [x] 12.8 Run warning-denied Clippy, formatting, unit, component, fixture, property, restart, and migration tests
 - [ ] 12.9 Generate final support claims only from passing non-ignored gate evidence

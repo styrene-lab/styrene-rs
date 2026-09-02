@@ -39,6 +39,9 @@ pub enum PinnedScenarioId {
     NomadnetClient,
     PropagatedCapacity,
     PropagatedExpiry,
+    RoutedDirect,
+    RoutedDirectResource,
+    RoutedNomadnetPages,
 }
 
 impl PinnedScenarioId {
@@ -51,6 +54,9 @@ impl PinnedScenarioId {
             Self::PropagatedRetrieval => "propagated_retrieval",
             Self::PropagatedCapacity => "propagated_capacity",
             Self::PropagatedExpiry => "propagated_expiry",
+            Self::RoutedDirect => "routed_direct",
+            Self::RoutedDirectResource => "routed_direct_resource",
+            Self::RoutedNomadnetPages => "routed_nomadnet_pages",
             Self::NomadnetPages => "nomadnet_pages",
             Self::NomadnetClient => "nomadnet_client",
         }
@@ -59,7 +65,14 @@ impl PinnedScenarioId {
     /// NomadNet page scenarios in either direction. No LXMF message is
     /// exchanged, so LXMF sender evidence does not apply.
     pub const fn is_nomadnet(self) -> bool {
-        matches!(self, Self::NomadnetPages | Self::NomadnetClient)
+        matches!(self, Self::NomadnetPages | Self::NomadnetClient | Self::RoutedNomadnetPages)
+    }
+
+    /// A pinned Python transport hop sits between the Python endpoint and the
+    /// Rust node, so every exchange crosses two hops and both sides must
+    /// record the same route.
+    pub const fn is_routed(self) -> bool {
+        matches!(self, Self::RoutedDirect | Self::RoutedDirectResource | Self::RoutedNomadnetPages)
     }
 
     /// The Rust native client browsing a pinned Python NomadNet node.
@@ -102,22 +115,31 @@ impl PinnedScenarioId {
     /// peer. The propagated scenario proves Python-to-Rust propagation intake
     /// only.
     pub const fn is_bidirectional(self) -> bool {
-        matches!(self, Self::Direct | Self::DirectResource | Self::Opportunistic)
+        matches!(
+            self,
+            Self::Direct
+                | Self::DirectResource
+                | Self::Opportunistic
+                | Self::RoutedDirect
+                | Self::RoutedDirectResource
+        )
     }
 
     /// Wire representation the Rust outbound route must record for the
     /// Rust-to-Python leg of a bidirectional scenario.
     pub const fn expected_outbound_representation(self) -> &'static str {
         match self {
-            Self::DirectResource => "resource",
+            Self::DirectResource | Self::RoutedDirectResource => "resource",
             Self::Direct
             | Self::Opportunistic
+            | Self::RoutedDirect
             | Self::PropagatedResourceLxm
             | Self::PropagatedRetrieval
             | Self::PropagatedCapacity
             | Self::PropagatedExpiry
             | Self::NomadnetPages
-            | Self::NomadnetClient => "packet",
+            | Self::NomadnetClient
+            | Self::RoutedNomadnetPages => "packet",
         }
     }
 
@@ -127,12 +149,17 @@ impl PinnedScenarioId {
     /// the node refused for capacity returns to 1 (OUTBOUND) for retry.
     pub const fn expected_python_state(self) -> &'static str {
         match self {
-            Self::Direct | Self::DirectResource | Self::Opportunistic => "8",
+            Self::Direct
+            | Self::DirectResource
+            | Self::Opportunistic
+            | Self::RoutedDirect
+            | Self::RoutedDirectResource => "8",
             Self::PropagatedResourceLxm
             | Self::PropagatedRetrieval
             | Self::PropagatedExpiry
             | Self::NomadnetPages
-            | Self::NomadnetClient => "4",
+            | Self::NomadnetClient
+            | Self::RoutedNomadnetPages => "4",
             Self::PropagatedCapacity => "1",
         }
     }
@@ -141,14 +168,16 @@ impl PinnedScenarioId {
     /// Python-to-Rust leg: 1 is PACKET, 2 is RESOURCE.
     pub const fn expected_python_representation(self) -> &'static str {
         match self {
-            Self::DirectResource | Self::PropagatedResourceLxm => "2",
+            Self::DirectResource | Self::RoutedDirectResource | Self::PropagatedResourceLxm => "2",
             Self::Direct
             | Self::Opportunistic
+            | Self::RoutedDirect
             | Self::PropagatedRetrieval
             | Self::PropagatedCapacity
             | Self::PropagatedExpiry
             | Self::NomadnetPages
-            | Self::NomadnetClient => "1",
+            | Self::NomadnetClient
+            | Self::RoutedNomadnetPages => "1",
         }
     }
 }
@@ -233,6 +262,24 @@ pub const PINNED_SCENARIOS: &[PinnedScenarioDefinition] = &[
         title: "Pinned Propagation Expiry Interop",
         description: "Queues a Python message on a Rust node with a short expiry, waits for it to expire, and proves the recipient's retrieval completes empty.",
         controls: &["announce", "send-message", "cancel"],
+    },
+    PinnedScenarioDefinition {
+        id: PinnedScenarioId::RoutedDirect,
+        title: "Pinned Routed Direct Interop",
+        description: "Runs the direct-delivery harness in both directions across a pinned Python transport hop and proves both nodes record the same two-hop route.",
+        controls: &["announce", "send-message", "cancel"],
+    },
+    PinnedScenarioDefinition {
+        id: PinnedScenarioId::RoutedDirectResource,
+        title: "Pinned Routed Direct Resource Interop",
+        description: "Runs the resource-backed direct harness in both directions across a pinned Python transport hop.",
+        controls: &["announce", "send-resource", "cancel"],
+    },
+    PinnedScenarioDefinition {
+        id: PinnedScenarioId::RoutedNomadnetPages,
+        title: "Pinned Routed NomadNet Host Interop",
+        description: "Fetches every NomadNet host path from the Rust node through a pinned Python transport hop and proves the request crossed two hops.",
+        controls: &["announce", "request", "cancel"],
     },
 ];
 
@@ -608,6 +655,7 @@ pub fn python_lxmf_scenario(
     let retrieval = scenario_id.is_retrieval();
     let capacity = scenario_id.is_capacity();
     let expiry = scenario_id.is_expiry();
+    let routed = scenario_id.is_routed();
     let nomadnet = scenario_id.is_nomadnet();
     let nomadnet_client = scenario_id.is_nomadnet_client();
     let scenario_id = scenario_id.as_str();
@@ -676,7 +724,11 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
         args: if nomadnet_client {
             vec![repo_root.join("scripts/rust-nomadnet-client-smoke.sh").display().to_string()]
         } else if nomadnet {
-            vec![repo_root.join("scripts/python-nomadnet-smoke.sh").display().to_string()]
+            vec![
+                repo_root.join("scripts/python-nomadnet-smoke.sh").display().to_string(),
+                "--scenario".to_string(),
+                scenario_id.to_string(),
+            ]
         } else {
             vec![
                 repo_root.join("scripts/python-lxmf-smoke.sh").display().to_string(),
@@ -704,9 +756,11 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
                 "child-cleanup-complete".to_string(),
             ]
         } else if nomadnet {
-            vec![
-                "topology-configured".to_string(),
-                "rust-ready".to_string(),
+            let mut milestones = vec!["topology-configured".to_string(), "rust-ready".to_string()];
+            if routed {
+                milestones.push("transport-hop-ready".to_string());
+            }
+            milestones.extend([
                 "python-ready".to_string(),
                 "nomadnet-static-served".to_string(),
                 "nomadnet-dynamic-served".to_string(),
@@ -714,18 +768,25 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
                 "nomadnet-allowed-served".to_string(),
                 "nomadnet-file-served".to_string(),
                 "child-cleanup-complete".to_string(),
-            ]
+            ]);
+            milestones
         } else if bidirectional {
-            vec![
+            let mut milestones = vec![
                 "topology-configured".to_string(),
                 "rust-ready".to_string(),
                 "python-ready".to_string(),
                 "python-message-sent".to_string(),
                 "rust-message-persisted".to_string(),
+            ];
+            if routed {
+                milestones.push("routed-path-verified".to_string());
+            }
+            milestones.extend([
                 "rust-message-sent".to_string(),
                 "python-message-received".to_string(),
                 "child-cleanup-complete".to_string(),
-            ]
+            ]);
+            milestones
         } else if retrieval {
             vec![
                 "topology-configured".to_string(),
@@ -775,7 +836,12 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
         } else if nomadnet {
             vec!["python-to-rust-nomadnet-pages".to_string()]
         } else if bidirectional {
-            vec!["python-to-rust-content".to_string(), "rust-to-python-content".to_string()]
+            let mut assertions =
+                vec!["python-to-rust-content".to_string(), "rust-to-python-content".to_string()];
+            if routed {
+                assertions.push("routed-path-two-hops".to_string());
+            }
+            assertions
         } else if retrieval {
             vec![
                 "python-to-rust-propagation-item".to_string(),
@@ -806,13 +872,16 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
                 "python-client-log".to_string(),
             ]
         } else if bidirectional {
-            vec![
+            let mut artifacts = vec![
                 "scenario-report".to_string(),
                 "datastore-proof".to_string(),
                 "rust-outbound-proof".to_string(),
-                "rust-daemon-log".to_string(),
-                "python-daemon-log".to_string(),
-            ]
+            ];
+            if routed {
+                artifacts.push("routed-path-proof".to_string());
+            }
+            artifacts.extend(["rust-daemon-log".to_string(), "python-daemon-log".to_string()]);
+            artifacts
         } else if retrieval {
             vec![
                 "scenario-report".to_string(),
@@ -1351,7 +1420,13 @@ fn validate_protocol_artifacts(
         && json_string_field(report_proof, "rust_to_python_outbound_content") == content
         && json_string_field(report_proof, "rust_outbound_state") == route_state
         && route_accepted;
-    (!matches).then(|| "retained Rust outbound proof does not match expected values".to_string())
+    if !matches {
+        return Some("retained Rust outbound proof does not match expected values".to_string());
+    }
+    if scenario_id.is_routed() {
+        return validate_routed_proof(scenario, &load);
+    }
+    None
 }
 
 /// The NomadNet proof must show every request class behaving canonically:
@@ -1382,7 +1457,11 @@ fn validate_nomadnet_proof(
     };
     let dynamic_public = json_string_field(&results["dynamic_public"], "text");
     let dynamic_identified = json_string_field(&results["dynamic_identified"], "text");
+    let routed = pinned_scenario(&scenario.id).is_some_and(|definition| definition.id.is_routed());
+    let expected_hops = if routed { 2 } else { 1 };
     let matches = client.len() == 32
+        && expected["hops_to_node"].as_u64() == Some(expected_hops)
+        && results["hops_to_node"].as_u64() == Some(expected_hops)
         && served("static", "static_sha256")
         && served("allowed", "private_sha256")
         && json_string_field(&results["dynamic_public"], "status") == "ready"
@@ -1495,6 +1574,34 @@ fn validate_retrieval_proof(
 /// The capacity proof must show the Rust queue bounded below the message, the
 /// upload refused with a recorded `capacity` failure, nothing queued on either
 /// side's view of the store, and the Python message back in OUTBOUND.
+/// The routed proof must show both nodes two hops apart through the same
+/// transport identity, with the Rust route record naming its interface.
+fn validate_routed_proof(
+    scenario: &LiveScenario,
+    load: &dyn Fn(&str) -> Result<serde_json::Value, String>,
+) -> Option<String> {
+    let proof = match load("routed-path-proof") {
+        Ok(proof) => proof,
+        Err(error) => return Some(error),
+    };
+    if json_string_field(&proof, "scenario") != scenario.id
+        || json_string_field(&proof, "correlation_id") != scenario.correlation_id
+    {
+        return Some("retained routed path proof does not match this run".to_string());
+    }
+    let rust = &proof["rust_route"];
+    let python = &proof["python_route"];
+    let next_hop = json_string_field(rust, "next_hop");
+    let matches = proof["expected_hops"].as_u64() == Some(2)
+        && rust["found"].as_bool() == Some(true)
+        && rust["hops"].as_u64() == Some(2)
+        && python["hops"].as_u64() == Some(2)
+        && next_hop.len() == 32
+        && json_string_field(python, "next_hop") == next_hop
+        && !json_string_field(rust, "interface").is_empty();
+    (!matches).then(|| "retained routed path proof does not match expected values".to_string())
+}
+
 fn validate_capacity_proof(
     scenario: &LiveScenario,
     load: &dyn Fn(&str) -> Result<serde_json::Value, String>,

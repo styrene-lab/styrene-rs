@@ -57,7 +57,7 @@ fn fake_scenario(script: &str, evidence_dir: &Path) -> LiveScenario {
 
 #[test]
 fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
-    assert_eq!(PINNED_SCENARIOS.len(), 9);
+    assert_eq!(PINNED_SCENARIOS.len(), 12);
     assert_eq!("direct".parse(), Ok(PinnedScenarioId::Direct));
     assert_eq!("nomadnet_client".parse(), Ok(PinnedScenarioId::NomadnetClient));
     assert_eq!("nomadnet_pages".parse(), Ok(PinnedScenarioId::NomadnetPages));
@@ -71,6 +71,21 @@ fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
     assert!(!PinnedScenarioId::PropagatedCapacity.is_bidirectional());
     assert_eq!(PinnedScenarioId::PropagatedCapacity.expected_python_state(), "1");
     assert_eq!(PinnedScenarioId::PropagatedExpiry.expected_python_state(), "4");
+    assert_eq!("routed_direct".parse(), Ok(PinnedScenarioId::RoutedDirect));
+    assert_eq!("routed_direct_resource".parse(), Ok(PinnedScenarioId::RoutedDirectResource));
+    assert_eq!("routed_nomadnet_pages".parse(), Ok(PinnedScenarioId::RoutedNomadnetPages));
+    assert!(PinnedScenarioId::RoutedDirect.is_routed());
+    assert!(PinnedScenarioId::RoutedDirect.is_bidirectional());
+    assert!(PinnedScenarioId::RoutedDirectResource.is_bidirectional());
+    assert!(PinnedScenarioId::RoutedNomadnetPages.is_nomadnet());
+    assert!(!PinnedScenarioId::RoutedNomadnetPages.is_nomadnet_client());
+    assert!(!PinnedScenarioId::Direct.is_routed());
+    assert_eq!(PinnedScenarioId::RoutedDirectResource.expected_python_representation(), "2");
+    assert_eq!(
+        PinnedScenarioId::RoutedDirectResource.expected_outbound_representation(),
+        "resource"
+    );
+    assert_eq!(PinnedScenarioId::RoutedDirect.expected_python_state(), "8");
     assert_eq!("direct_resource".parse(), Ok(PinnedScenarioId::DirectResource));
     assert!("unknown".parse::<PinnedScenarioId>().is_err());
     assert_eq!(pinned_scenario("opportunistic").unwrap().id, PinnedScenarioId::Opportunistic);
@@ -119,9 +134,29 @@ fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
     );
     assert!(PinnedScenarioId::NomadnetPages.is_nomadnet());
     assert!(nomadnet.args[0].ends_with("scripts/python-nomadnet-smoke.sh"));
-    assert_eq!(nomadnet.args.len(), 1);
+    assert_eq!(nomadnet.args[1..], ["--scenario", "nomadnet_pages"]);
     assert_eq!(nomadnet.required_assertions, ["python-to-rust-nomadnet-pages"]);
     assert!(nomadnet.required_artifacts.iter().any(|name| name == "nomadnet-proof"));
+    assert!(!nomadnet.required_milestones.iter().any(|name| name == "transport-hop-ready"));
+    let routed_pages = python_lxmf_scenario(
+        Path::new("/repo"),
+        PinnedScenarioId::RoutedNomadnetPages,
+        Duration::from_secs(300),
+        "/pinned/python",
+    );
+    assert_eq!(routed_pages.args[1..], ["--scenario", "routed_nomadnet_pages"]);
+    assert!(routed_pages.required_milestones.iter().any(|name| name == "transport-hop-ready"));
+    let routed_direct = python_lxmf_scenario(
+        Path::new("/repo"),
+        PinnedScenarioId::RoutedDirect,
+        Duration::from_secs(300),
+        "/pinned/python",
+    );
+    assert_eq!(routed_direct.args[1..], ["--scenario", "routed_direct"]);
+    assert!(routed_direct.required_milestones.iter().any(|name| name == "routed-path-verified"));
+    assert!(routed_direct.required_assertions.iter().any(|name| name == "routed-path-two-hops"));
+    assert!(routed_direct.required_artifacts.iter().any(|name| name == "routed-path-proof"));
+    assert!(routed_direct.required_artifacts.iter().any(|name| name == "rust-outbound-proof"));
     let client = python_lxmf_scenario(
         Path::new("/repo"),
         PinnedScenarioId::NomadnetClient,
