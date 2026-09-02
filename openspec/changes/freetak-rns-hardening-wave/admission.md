@@ -74,3 +74,9 @@ range or copying from the evidence repository.
   reasons exhaustively.
 - Split segments are only produced by outbound data transfers. Request and
   response resources remain single resources.
+- The internal announce policy predates Reticulum 1.5.0. In a clone of the
+  Reticulum repository, `announces_from_internal` is present at tag 1.4.0
+  and `announces_to_internal` at tag 1.4.1. The 1.5.0 tag commit
+  `e32d4df754a7b87b1bf1bb0d08675d12ff505ae6` and the 1.5.1 tag commit
+  `149e4151095adf098b8f53eab0c03b37169e8559` carry identical announce
+  decision rows, so the 1.5.1 authority stands unchanged.
