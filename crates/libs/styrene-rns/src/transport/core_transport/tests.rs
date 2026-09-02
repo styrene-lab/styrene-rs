@@ -1196,6 +1196,26 @@ async fn protocol_scheduler_is_owned_and_joined_by_transport() {
         .expect("manager shutdown deadline")
         .expect("manager task must not panic");
     assert!(transport.manager_task_finished());
+    assert_eq!(
+        transport.supervision_outcome().await,
+        Some(SupervisionOutcome::Shutdown { drained: true }),
+        "ordinary cancellation must drain every worker and report no failure"
+    );
+    assert_eq!(transport.worker_failure().await, None);
+}
+
+#[tokio::test]
+async fn transport_supervision_is_pending_while_workers_run() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let transport = Transport::new(TransportConfig::new("supervision-live", &identity, false));
+    tokio::task::yield_now().await;
+    assert_eq!(transport.supervision_outcome().await, None);
+    assert!(!transport.manager_task_finished());
+    timeout(Duration::from_secs(1), transport.shutdown_manager())
+        .await
+        .expect("manager shutdown deadline")
+        .expect("manager task must not panic");
+    assert_eq!(transport.worker_failure().await, None);
 }
 
 #[test]
@@ -1683,4 +1703,339 @@ async fn receipt_callback_reenters_send_and_duplicate_expiry_race_is_terminal() 
 
     assert_eq!(callbacks.load(Ordering::SeqCst), 1);
     assert_eq!(sends.load(Ordering::SeqCst), 1);
+}
+
+/// Two registered interfaces on a non-broadcast transport, one active outbound
+/// Link and one active inbound Link bound to the first interface, and one
+/// pending outbound Link bound to the second interface. The destination path
+/// table stays empty on purpose: established Link sends must not consult it.
+struct BoundLinkFixture {
+    transport: Transport,
+    bound: crate::transport::iface::InterfaceChannel,
+    other: crate::transport::iface::InterfaceChannel,
+    destination: AddressHash,
+    inactive_destination: AddressHash,
+    out_link_id: AddressHash,
+    in_link_id: AddressHash,
+}
+
+async fn bound_link_fixture() -> BoundLinkFixture {
+    let local = PrivateIdentity::new_from_rand(OsRng);
+    let transport = Transport::new(TransportConfig::new("bound-links", &local, false));
+    let bound = test_interface_channel(&transport).await;
+    let other = test_interface_channel(&transport).await;
+
+    let signer = PrivateIdentity::new_from_rand(OsRng);
+    let identity = *signer.as_identity();
+    let destination = DestinationDesc {
+        identity,
+        address_hash: identity.address_hash,
+        name: DestinationName::new("test", "bound"),
+    };
+    let tx = transport.link_out_event_tx.clone();
+    let mut outbound = Link::new(destination, tx.clone());
+    let request = outbound.request();
+    let mut inbound =
+        Link::new_from_request(&request, signer.sign_key().clone(), destination, tx.clone())
+            .expect("link request should parse");
+    assert!(matches!(
+        outbound.handle_packet(&inbound.prove(), bound.address),
+        LinkHandleResult::Activated
+    ));
+    inbound.set_ingress_iface(bound.address);
+    outbound.open_channel();
+    inbound.open_channel();
+    assert_eq!(outbound.status(), LinkStatus::Active);
+    assert_eq!(inbound.status(), LinkStatus::Active);
+    let out_link_id = *outbound.id();
+    let in_link_id = *inbound.id();
+
+    let inactive_signer = PrivateIdentity::new_from_rand(OsRng);
+    let inactive_identity = *inactive_signer.as_identity();
+    let inactive_destination = DestinationDesc {
+        identity: inactive_identity,
+        address_hash: inactive_identity.address_hash,
+        name: DestinationName::new("test", "inactive"),
+    };
+    let mut pending = Link::new(inactive_destination, tx);
+    pending.set_ingress_iface(other.address);
+    assert_eq!(pending.status(), LinkStatus::Pending);
+
+    {
+        let mut handler = transport.handler.lock().await;
+        handler.out_links.insert(destination.address_hash, Arc::new(Mutex::new(outbound)));
+        handler.out_links.insert(inactive_destination.address_hash, Arc::new(Mutex::new(pending)));
+        handler.in_links.insert(in_link_id, Arc::new(Mutex::new(inbound)));
+    }
+
+    BoundLinkFixture {
+        transport,
+        bound,
+        other,
+        destination: destination.address_hash,
+        inactive_destination: inactive_destination.address_hash,
+        out_link_id,
+        in_link_id,
+    }
+}
+
+impl BoundLinkFixture {
+    async fn expect_bound_send(&mut self, link_id: AddressHash, context: PacketContext) {
+        let message = timeout(Duration::from_millis(200), self.bound.tx_channel.recv())
+            .await
+            .expect("bound interface must receive the Link packet")
+            .expect("bound interface channel open");
+        assert_eq!(message.tx_type, TxMessageType::Direct(self.bound.address));
+        assert_eq!(message.packet.destination, link_id);
+        assert_eq!(message.packet.header.destination_type, DestinationType::Link);
+        assert_eq!(message.packet.header.packet_type, PacketType::Data);
+        assert_eq!(message.packet.context, context);
+    }
+
+    fn expect_quiet(&mut self) {
+        assert!(
+            self.bound.tx_channel.try_recv().is_err(),
+            "bound interface must not receive extra packets"
+        );
+        assert!(
+            self.other.tx_channel.try_recv().is_err(),
+            "the inactive Link's interface must receive nothing"
+        );
+    }
+}
+
+#[tokio::test]
+async fn data_send_to_all_out_links_uses_each_active_links_bound_interface() {
+    let mut fixture = bound_link_fixture().await;
+    fixture.transport.send_to_all_out_links(b"fan-out").await;
+    let link_id = fixture.out_link_id;
+    fixture.expect_bound_send(link_id, PacketContext::None).await;
+    fixture.expect_quiet();
+}
+
+#[tokio::test]
+async fn channel_send_to_all_out_links_uses_each_active_links_bound_interface() {
+    let mut fixture = bound_link_fixture().await;
+    fixture.transport.send_channel_to_all_out_links(b"channel").await;
+    let link_id = fixture.out_link_id;
+    fixture.expect_bound_send(link_id, PacketContext::Channel).await;
+    fixture.expect_quiet();
+}
+
+#[tokio::test]
+async fn data_send_to_out_links_for_a_destination_uses_the_bound_interface() {
+    let mut fixture = bound_link_fixture().await;
+    let destination = fixture.destination;
+    fixture.transport.send_to_out_links(&destination, b"targeted").await;
+    let link_id = fixture.out_link_id;
+    fixture.expect_bound_send(link_id, PacketContext::None).await;
+    fixture.expect_quiet();
+
+    let inactive = fixture.inactive_destination;
+    fixture.transport.send_to_out_links(&inactive, b"never").await;
+    fixture.expect_quiet();
+}
+
+#[tokio::test]
+async fn data_send_to_in_links_for_a_destination_uses_the_bound_interface() {
+    let mut fixture = bound_link_fixture().await;
+    let destination = fixture.destination;
+    fixture.transport.send_to_in_links(&destination, b"inbound").await;
+    let link_id = fixture.in_link_id;
+    fixture.expect_bound_send(link_id, PacketContext::None).await;
+    fixture.expect_quiet();
+}
+
+#[tokio::test]
+async fn established_link_sends_ignore_the_destination_path_table() {
+    let mut fixture = bound_link_fixture().await;
+    let wrong_route = fixture.other.address;
+    let out_link_id = fixture.out_link_id;
+    let announce = Packet {
+        header: Header { packet_type: PacketType::Announce, ..Default::default() },
+        destination: out_link_id,
+        ..Default::default()
+    };
+    fixture.transport.handler.lock().await.path_table.handle_announce(
+        &announce,
+        None,
+        wrong_route,
+        InterfaceMode::AccessPoint,
+        [3; crate::destination::RAND_HASH_LENGTH],
+    );
+    fixture.transport.send_to_all_out_links(b"bound wins").await;
+    fixture.expect_bound_send(out_link_id, PacketContext::None).await;
+    fixture.expect_quiet();
+}
+
+#[tokio::test]
+async fn single_link_packet_send_uses_the_bound_interface_and_rejects_inactive_links() {
+    let mut fixture = bound_link_fixture().await;
+    let destination = fixture.destination;
+    let inactive = fixture.inactive_destination;
+    let (active, pending) = {
+        let handler = fixture.transport.handler.lock().await;
+        (handler.out_links[&destination].clone(), handler.out_links[&inactive].clone())
+    };
+    let packet = active.lock().await.data_packet(b"single").expect("active link packet");
+    assert_eq!(
+        fixture.transport.send_link_packet(&active, packet).await,
+        SendPacketOutcome::SentDirect
+    );
+    let link_id = fixture.out_link_id;
+    fixture.expect_bound_send(link_id, PacketContext::None).await;
+    fixture.expect_quiet();
+
+    assert_eq!(
+        fixture.transport.send_link_packet(&pending, packet).await,
+        SendPacketOutcome::DroppedNoRoute
+    );
+    fixture.expect_quiet();
+}
+
+fn remote_announce(name: &str) -> (SingleInputDestination, Packet) {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut remote = SingleInputDestination::new(identity, DestinationName::new("lxmf", name));
+    let packet = remote.announce(OsRng, None).expect("valid announce");
+    (remote, packet)
+}
+
+async fn accept_announce(transport: &Transport, iface: AddressHash, packet: &Packet) {
+    handle_announce(packet, transport.handler.lock().await, iface).await;
+}
+
+#[tokio::test]
+async fn passive_node_retains_announces_in_the_bounded_cache_without_queueing() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("passive", &identity, false);
+    config.set_retransmit(false);
+    config.set_announce_cache_capacity(4);
+    let transport = Transport::new(config);
+    let channel = test_interface_channel(&transport).await;
+    let mut announce_events = transport.recv_announces().await;
+
+    let mut destinations = Vec::new();
+    for index in 0..6 {
+        let (_, packet) = remote_announce(&format!("passive-{index}"));
+        // The per-interface rate limiter holds a burst of unknown destinations,
+        // so each distinct announce arrives on its own interface.
+        let ingress = test_interface_channel(&transport).await;
+        accept_announce(&transport, ingress.address, &packet).await;
+        destinations.push((packet.destination, packet));
+        timeout(Duration::from_millis(200), announce_events.recv())
+            .await
+            .expect("announce event deadline")
+            .expect("accepted announce is still published");
+    }
+
+    let (queued, cached) = transport.announce_table_sizes().await;
+    assert_eq!(queued, 0, "a passive node never fills the retransmission queue");
+    assert!(cached <= 4, "the persistence cache stays bounded");
+    for (destination, packet) in &destinations[destinations.len() - 2..] {
+        assert_eq!(
+            transport.cached_announce(destination).await.map(|cached| cached.data),
+            Some(packet.data),
+            "the newest accepted packets remain available"
+        );
+        assert!(transport.handler.lock().await.path_table.get(destination).is_some());
+    }
+    assert!(
+        transport.handler.lock().await.announce_table.add_response(
+            destinations[5].0,
+            channel.address,
+            2
+        ),
+        "a retained announce still serves a path response"
+    );
+}
+
+#[tokio::test]
+async fn transport_node_queues_ordinary_announces_but_never_path_responses() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("transport", &identity, true);
+    config.set_retransmit(true);
+    let transport = Transport::new(config);
+    let channel = test_interface_channel(&transport).await;
+
+    let (_, ordinary) = remote_announce("ordinary");
+    accept_announce(&transport, channel.address, &ordinary).await;
+    assert_eq!(transport.announce_table_sizes().await, (1, 0));
+
+    let (mut responder, _) = remote_announce("path-response");
+    let response =
+        responder.path_response_with_tag(OsRng, None, Some(&[7; 16])).expect("valid path response");
+    assert_eq!(response.context, PacketContext::PathResponse);
+    let second_ingress = test_interface_channel(&transport).await;
+    accept_announce(&transport, second_ingress.address, &response).await;
+    assert_eq!(
+        transport.announce_table_sizes().await,
+        (1, 1),
+        "a path response is retained for persistence but never re-queued"
+    );
+    assert!(transport.cached_announce(&response.destination).await.is_some());
+}
+
+#[tokio::test]
+async fn shared_instance_ingress_queues_announces_on_a_passive_node() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("shared", &identity, false);
+    config.set_retransmit(false);
+    let transport = Transport::new(config);
+    let (shared, _control) = {
+        let handler = transport.get_handler();
+        let manager = handler.lock().await.iface_manager.clone();
+        let mut manager = manager.lock().await;
+        manager.new_host_channel(
+            8,
+            crate::transport::iface::InterfaceDescriptor {
+                shared_instance: true,
+                ..Default::default()
+            },
+        )
+    };
+    let physical = test_interface_channel(&transport).await;
+
+    let (_, from_client) = remote_announce("client");
+    accept_announce(&transport, shared.address, &from_client).await;
+    assert_eq!(transport.announce_table_sizes().await, (1, 0), "local clients are served");
+
+    let (_, from_network) = remote_announce("network");
+    accept_announce(&transport, physical.address, &from_network).await;
+    assert_eq!(transport.announce_table_sizes().await, (1, 1));
+}
+
+#[tokio::test]
+async fn rate_limited_release_and_refresh_follow_the_same_cache_bound() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("released", &identity, false);
+    config.set_retransmit(false);
+    let transport = Transport::new(config);
+    let channel = test_interface_channel(&transport).await;
+
+    let (mut remote, first) = remote_announce("refresh");
+    super::announce::handle_ingress_limited_announce(
+        &first,
+        transport.handler.lock().await,
+        channel.address,
+    )
+    .await;
+    assert_eq!(
+        transport.announce_table_sizes().await,
+        (0, 1),
+        "released announces do not bypass the bound"
+    );
+
+    let second = remote.announce(OsRng, Some(b"refreshed")).expect("refreshed announce");
+    assert_ne!(first.data, second.data);
+    accept_announce(&transport, channel.address, &second).await;
+    assert_eq!(
+        transport.announce_table_sizes().await,
+        (0, 1),
+        "a refresh replaces, never duplicates"
+    );
+    assert_eq!(
+        transport.cached_announce(&second.destination).await.map(|cached| cached.data),
+        Some(second.data),
+        "the newest accepted packet is the one retained"
+    );
 }

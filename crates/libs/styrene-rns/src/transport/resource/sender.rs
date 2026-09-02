@@ -24,6 +24,14 @@ enum OutboundResourcePoll {
     Failed,
 }
 
+/// Position of one segment inside a split resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SegmentDescriptor {
+    original_hash: Hash,
+    index: u32,
+    total: u32,
+}
+
 impl ResourceSender {
     fn new(
         link: &Link,
@@ -31,6 +39,18 @@ impl ResourceSender {
         metadata: Option<Vec<u8>>,
         request_id: Option<ByteBuf>,
         is_response: bool,
+        now: Duration,
+    ) -> Result<Self, RnsError> {
+        Self::new_segment(link, data, metadata, request_id, is_response, None, now)
+    }
+
+    fn new_segment(
+        link: &Link,
+        data: Vec<u8>,
+        metadata: Option<Vec<u8>>,
+        request_id: Option<ByteBuf>,
+        is_response: bool,
+        segment: Option<SegmentDescriptor>,
         now: Duration,
     ) -> Result<Self, RnsError> {
         let has_metadata = metadata.is_some();
@@ -85,12 +105,15 @@ impl ResourceSender {
             parts: parts.len() as u32,
             hash: resource_hash,
             random_hash,
-            original_hash: resource_hash,
-            segment_index: 1,
-            total_segments: 1,
+            original_hash: segment.map_or(resource_hash, |segment| segment.original_hash),
+            segment_index: segment.map_or(1, |segment| segment.index),
+            total_segments: segment.map_or(1, |segment| segment.total),
             request_id: request_id.clone(),
             flags: {
                 let mut flags = FLAG_ENCRYPTED;
+                if segment.is_some() {
+                    flags |= FLAG_SPLIT;
+                }
                 if is_response {
                     flags |= FLAG_RESPONSE;
                 } else if request_id.is_some() {

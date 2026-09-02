@@ -104,7 +104,7 @@ impl RatchetState {
     #[cfg(feature = "std")]
     fn persist(&self, identity: &PrivateIdentity, path: &Path) -> Result<(), RnsError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| RnsError::PacketError)?;
+            crate::private_file::ensure_private_dir(parent).map_err(|_| RnsError::PacketError)?;
         }
         let packed = pack_ratchets(&self.ratchets)?;
         let signature = identity.sign(&packed).to_bytes();
@@ -113,13 +113,7 @@ impl RatchetState {
             ratchets: ByteBuf::from(packed),
         };
         let encoded = rmp_serde::to_vec(&persisted).map_err(|_| RnsError::PacketError)?;
-        let tmp_path = path.with_extension("tmp");
-        std::fs::write(&tmp_path, encoded).map_err(|_| RnsError::PacketError)?;
-        if path.exists() {
-            let _ = std::fs::remove_file(path);
-        }
-        std::fs::rename(&tmp_path, path).map_err(|_| RnsError::PacketError)?;
-        Ok(())
+        crate::private_file::write_private_atomic(path, &encoded).map_err(|_| RnsError::PacketError)
     }
 
     pub(crate) fn rotate_if_needed(

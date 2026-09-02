@@ -4830,6 +4830,7 @@ mod tests {
                 hash: resource_hash,
                 link_id,
                 kind: rns_core::transport::resource::ResourceEventKind::OutboundComplete,
+                progress: None,
             });
         });
 
@@ -5184,6 +5185,7 @@ mod tests {
                 hash: resource_hash,
                 link_id,
                 kind: rns_core::transport::resource::ResourceEventKind::OutboundComplete,
+                progress: None,
             });
         });
 
@@ -5262,6 +5264,7 @@ mod tests {
                 hash: resource_hash,
                 link_id,
                 kind: rns_core::transport::resource::ResourceEventKind::OutboundComplete,
+                progress: None,
             });
         });
         service.resume_standard_propagation_outbound_once(CancellationToken::new()).await.unwrap();

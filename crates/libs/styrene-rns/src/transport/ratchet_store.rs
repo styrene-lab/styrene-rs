@@ -89,15 +89,10 @@ impl RatchetStore {
         record: &RatchetRecord,
     ) -> Result<(), RnsError> {
         ensure_dir(&self.ratchet_dir)?;
-        let encoded = rmp_serde::to_vec_named(record).map_err(|_| RnsError::PacketError)?;
         let path = self.path_for(destination);
-        let tmp_path = path.with_extension("out");
-        fs::write(&tmp_path, encoded).map_err(|_| RnsError::PacketError)?;
-        if path.exists() {
-            let _ = fs::remove_file(&path);
-        }
-        fs::rename(&tmp_path, &path).map_err(|_| RnsError::PacketError)?;
-        Ok(())
+        let encoded = rmp_serde::to_vec(record).map_err(|_| RnsError::PacketError)?;
+        crate::private_file::write_private_atomic(&path, &encoded)
+            .map_err(|_| RnsError::PacketError)
     }
 
     fn load_record(&self, destination: &AddressHash) -> Option<RatchetRecord> {
@@ -117,7 +112,7 @@ impl RatchetStore {
 }
 
 fn ensure_dir(path: &Path) -> Result<(), RnsError> {
-    fs::create_dir_all(path).map_err(|_| RnsError::PacketError)
+    crate::private_file::ensure_private_dir(path).map_err(|_| RnsError::PacketError)
 }
 
 #[cfg(test)]
