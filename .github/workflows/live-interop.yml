@@ -23,6 +23,9 @@ jobs:
           - propagated_retrieval
           - propagated_capacity
           - propagated_expiry
+          - routed_direct
+          - routed_direct_resource
+          - routed_nomadnet_pages
           - nomadnet_pages
           - nomadnet_client
     steps:

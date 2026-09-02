@@ -35,10 +35,13 @@ RUST_TRANSPORT_PORT="${RUST_TRANSPORT_ADDR##*:}"
 
 PY_SHARED_INSTANCE_PORT="${PY_SHARED_INSTANCE_PORT:-$((39428 + (PORT_SEED % 2000)))}"
 PY_INSTANCE_CONTROL_PORT="${PY_INSTANCE_CONTROL_PORT:-$((PY_SHARED_INSTANCE_PORT + 1))}"
+# Routed scenarios make the Python lxmd instance a transport hop: it listens
+# here and the Python sender reaches the Rust node only through it.
+PY_HOP_PORT="${PY_HOP_PORT:-$((PY_SHARED_INSTANCE_PORT + 2))}"
 
 usage() {
   cat <<'EOF'
-Usage: python-lxmd-rust-lxmd-smoke.sh [--scenario direct|direct_resource|opportunistic|propagated_resource_lxm|propagated_retrieval|propagated_capacity|propagated_expiry] [--timeout SECONDS]
+Usage: python-lxmd-rust-lxmd-smoke.sh [--scenario direct|direct_resource|opportunistic|propagated_resource_lxm|propagated_retrieval|propagated_capacity|propagated_expiry|routed_direct|routed_direct_resource] [--timeout SECONDS]
 EOF
 }
 
@@ -76,7 +79,7 @@ parse_args() {
   done
 
   case "${SCENARIO}" in
-    direct|direct_resource|opportunistic|propagated_resource_lxm|propagated_retrieval|propagated_capacity|propagated_expiry) ;;
+    direct|direct_resource|opportunistic|propagated_resource_lxm|propagated_retrieval|propagated_capacity|propagated_expiry|routed_direct|routed_direct_resource) ;;
     *)
       echo "unsupported scenario: ${SCENARIO}" >&2
       usage >&2
@@ -264,6 +267,8 @@ RETRIEVE_SIGNAL="${TMP_ROOT}/retrieve.go"
 RUST_PROPAGATION_SNAPSHOT_LOG="${TMP_ROOT}/rust-propagation-snapshot.json"
 PY_REMOTE_STATS_LOG="${TMP_ROOT}/python-remote-stats.json"
 RUST_CAPACITY_PROOF_PATH="${TMP_ROOT}/rust-capacity-proof.json"
+ROUTED_PATH_PROOF_PATH="${TMP_ROOT}/routed-path-proof.json"
+RUST_PATH_LOG="${TMP_ROOT}/rust-path.log"
 RUST_EXPIRY_PROOF_PATH="${TMP_ROOT}/rust-expiry-proof.json"
 # Unix socket paths are limited to about 100 bytes, so the IPC socket lives in
 # a short-lived directory outside the run root. Cleanup removes it.
@@ -328,6 +333,11 @@ PY
 RUST_DB="${RUST_DIR}/messages.db"
 RUST_IDENTITY="${RUST_DIR}/identity"
 
+ROUTED=false
+case "${SCENARIO}" in
+  routed_direct|routed_direct_resource) ROUTED=true ;;
+esac
+
 RUST_ROLE="full_node"
 case "${SCENARIO}" in
   propagated_resource_lxm|propagated_retrieval|propagated_capacity|propagated_expiry) RUST_ROLE="hub" ;;
@@ -358,6 +368,23 @@ cat > "${PY_RNS_DIR}/config" <<EOF
     target_host = ${RUST_TRANSPORT_HOST}
     target_port = ${RUST_TRANSPORT_PORT}
 EOF
+if [[ "${ROUTED}" == "true" ]]; then
+  cat >> "${PY_RNS_DIR}/config" <<EOF
+
+  [[Transport Hop]]
+    type = TCPServerInterface
+    enabled = yes
+    listen_ip = 127.0.0.1
+    listen_port = ${PY_HOP_PORT}
+EOF
+fi
+
+SENDER_TARGET_HOST="${RUST_TRANSPORT_HOST}"
+SENDER_TARGET_PORT="${RUST_TRANSPORT_PORT}"
+if [[ "${ROUTED}" == "true" ]]; then
+  SENDER_TARGET_HOST="127.0.0.1"
+  SENDER_TARGET_PORT="${PY_HOP_PORT}"
+fi
 
 cat > "${PY_SENDER_RNS_DIR}/config" <<EOF
 [reticulum]
@@ -373,8 +400,8 @@ cat > "${PY_SENDER_RNS_DIR}/config" <<EOF
   [[Rust LXMD Sender]]
     type = TCPClientInterface
     enabled = yes
-    target_host = ${RUST_TRANSPORT_HOST}
-    target_port = ${RUST_TRANSPORT_PORT}
+    target_host = ${SENDER_TARGET_HOST}
+    target_port = ${SENDER_TARGET_PORT}
 EOF
 
 cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" -p styrened -p styrene --bin styrened --bin styrene --quiet
@@ -542,9 +569,9 @@ fi
 
 PY_MESSAGE_CONTENT="python-smoke-message-$(date +%s)"
 PY_MESSAGE_METHOD="opportunistic"
-if [[ "${SCENARIO}" == "direct" ]]; then
+if [[ "${SCENARIO}" == "direct" || "${SCENARIO}" == "routed_direct" ]]; then
   PY_MESSAGE_METHOD="direct"
-elif [[ "${SCENARIO}" == "direct_resource" ]]; then
+elif [[ "${SCENARIO}" == "direct_resource" || "${SCENARIO}" == "routed_direct_resource" ]]; then
   # Larger than one link packet, so LXMF must carry it as an RNS resource.
   PY_MESSAGE_METHOD="direct"
   PY_MESSAGE_CONTENT="python-smoke-resource-$(date +%s)-$(head -c 4096 /dev/zero | tr '\0' 'p')"
@@ -747,6 +774,13 @@ def send_evidence(state, extra=None):
         "representation": (
             int(message.representation) if message.representation is not None else None
         ),
+        "hops_to_destination": RNS.Transport.hops_to(destination_hash),
+        "next_hop": (
+            RNS.hexrep(RNS.Transport.next_hop(destination_hash), delimit=False).lower()
+            if RNS.Transport.next_hop(destination_hash) is not None
+            else None
+        ),
+        "next_hop_interface": str(RNS.Transport.next_hop_interface(destination_hash)),
     }
     if extra:
         payload.update(extra)
@@ -952,7 +986,7 @@ print(payload.get("representation") if payload.get("representation") is not None
 PY
 )"
 EXPECTED_PY_REPRESENTATION=1
-if [[ "${SCENARIO}" == "direct_resource" || "${SCENARIO}" == "propagated_resource_lxm" ]]; then
+if [[ "${SCENARIO}" == "direct_resource" || "${SCENARIO}" == "routed_direct_resource" || "${SCENARIO}" == "propagated_resource_lxm" ]]; then
   EXPECTED_PY_REPRESENTATION=2
 fi
 if [[ "${PY_MESSAGE_REPRESENTATION}" != "${EXPECTED_PY_REPRESENTATION}" ]]; then
@@ -1188,15 +1222,83 @@ fi
 
 BIDIRECTIONAL=false
 case "${SCENARIO}" in
-  direct|direct_resource|opportunistic) BIDIRECTIONAL=true ;;
+  direct|direct_resource|opportunistic|routed_direct|routed_direct_resource) BIDIRECTIONAL=true ;;
 esac
+
+if [[ "${ROUTED}" == "true" ]]; then
+  # Both endpoints must see each other two hops away through the Python
+  # transport hop, and both must name the same transport identity as the
+  # next hop. The Rust route record comes from the daemon's path table.
+  for _ in $(seq 1 "${TIMEOUT_SECS}"); do
+    if "${STYRENE_CLI_BIN}" --socket "${RUST_SOCKET}" path "${PY_SENDER_SOURCE_HASH}" >"${RUST_PATH_LOG}" 2>&1 \
+      && grep -q '^hops=' "${RUST_PATH_LOG}"; then
+      break
+    fi
+    sleep 1
+  done
+  "${PYTHON_BIN}" - <<'PY' \
+    "${RUST_PATH_LOG}" \
+    "${PY_SEND_LOG}" \
+    "${PY_SENDER_SOURCE_HASH}" \
+    "${RUST_DELIVERY_HASH}" \
+    "${ROUTED_PATH_PROOF_PATH}" \
+    "${SCENARIO}" \
+    "${STYRENE_INTEROP_CORRELATION_ID}"
+import json
+import sys
+from pathlib import Path
+
+path_log, send_log, sender_hash, rust_delivery, proof_path, scenario, correlation_id = sys.argv[1:8]
+rust = {}
+for line in Path(path_log).read_text(encoding="utf-8").splitlines():
+    if "=" in line:
+        key, value = line.split("=", 1)
+        rust[key.strip()] = value.strip()
+sent = json.loads(Path(send_log).read_text(encoding="utf-8"))
+rust_hops = int(rust["hops"]) if rust.get("hops", "").isdigit() else None
+python_hops = sent.get("hops_to_destination")
+problems = []
+if rust.get("found") != "true" or rust_hops != 2:
+    problems.append(f"Rust route to the Python sender is not two hops: {rust!r}")
+if python_hops != 2:
+    problems.append(f"Python route to the Rust node is not two hops: {python_hops!r}")
+if not rust.get("next_hop") or rust.get("next_hop") != sent.get("next_hop"):
+    problems.append(
+        f"next hops disagree: rust={rust.get('next_hop')!r} python={sent.get('next_hop')!r}"
+    )
+if problems:
+    raise SystemExit("; ".join(problems))
+proof = {
+    "correlation_id": correlation_id,
+    "expected_hops": 2,
+    "expected_hashes": {"python_sender": sender_hash, "rust_delivery": rust_delivery},
+    "python_route": {
+        "hops": python_hops,
+        "next_hop": sent.get("next_hop"),
+        "next_hop_interface": sent.get("next_hop_interface"),
+    },
+    "rust_route": {
+        "found": rust.get("found") == "true",
+        "hops": rust_hops,
+        "interface": rust.get("interface"),
+        "next_hop": rust.get("next_hop"),
+    },
+    "scenario": scenario,
+}
+with open(proof_path, "w", encoding="utf-8") as handle:
+    json.dump(proof, handle, sort_keys=True, separators=(",", ":"))
+    handle.write("\n")
+PY
+  runner_assertion "routed-path-two-hops"
+  runner_milestone "routed-path-verified"
+fi
 
 RUST_MESSAGE_CONTENT=""
 RUST_MESSAGE_ID=""
 RUST_OUTBOUND_STATE=""
 if [[ "${BIDIRECTIONAL}" == "true" ]]; then
   RUST_MESSAGE_CONTENT="rust-smoke-message-$(date +%s)"
-  if [[ "${SCENARIO}" == "direct_resource" ]]; then
+  if [[ "${SCENARIO}" == "direct_resource" || "${SCENARIO}" == "routed_direct_resource" ]]; then
     RUST_MESSAGE_CONTENT="rust-smoke-resource-$(date +%s)-$(head -c 4096 /dev/zero | tr '\0' 'q')"
   fi
   if ! "${STYRENE_CLI_BIN}" --socket "${RUST_SOCKET}" send \
@@ -1736,6 +1838,9 @@ if [[ "${SCENARIO}" == "propagated_expiry" ]]; then
 fi
 if [[ "${BIDIRECTIONAL}" == "true" ]]; then
   runner_artifact "rust-outbound-proof" "${RUST_OUTBOUND_PROOF_PATH}"
+fi
+if [[ "${ROUTED}" == "true" ]]; then
+  runner_artifact "routed-path-proof" "${ROUTED_PATH_PROOF_PATH}"
 fi
 if [[ "${SCENARIO}" == "propagated_retrieval" ]]; then
   runner_artifact "rust-retrieval-proof" "${RUST_RETRIEVAL_PROOF_PATH}"

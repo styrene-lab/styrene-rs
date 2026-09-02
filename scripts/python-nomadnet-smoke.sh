@@ -21,12 +21,56 @@ export CARGO_TARGET_DIR
 STYRENED_BIN="${STYRENED_BIN:-${CARGO_TARGET_DIR}/debug/styrened}"
 
 PORT_SEED="${PORT_SEED:-$$}"
+SCENARIO="${SCENARIO:-nomadnet_pages}"
 RUST_RPC_PORT="${RUST_RPC_PORT:-$((4243 + (PORT_SEED % 2000)))}"
 RUST_TRANSPORT_PORT="${RUST_TRANSPORT_PORT:-$((37429 + (PORT_SEED % 2000)))}"
 RUST_RPC_ADDR="${RUST_RPC_ADDR:-127.0.0.1:${RUST_RPC_PORT}}"
 RUST_TRANSPORT_ADDR="${RUST_TRANSPORT_ADDR:-127.0.0.1:${RUST_TRANSPORT_PORT}}"
 RUST_TRANSPORT_HOST="${RUST_TRANSPORT_ADDR%:*}"
 RUST_TRANSPORT_PORT="${RUST_TRANSPORT_ADDR##*:}"
+# The routed scenario places a Python transport hop between the client and
+# the Rust host; the hop listens here.
+PY_HOP_PORT="${PY_HOP_PORT:-$((39528 + (PORT_SEED % 2000)))}"
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --scenario)
+        if [[ $# -lt 2 || -z "${2:-}" ]]; then
+          echo "missing value for --scenario" >&2
+          exit 2
+        fi
+        SCENARIO="$2"
+        shift 2
+        ;;
+      --timeout)
+        if [[ $# -lt 2 || -z "${2:-}" ]]; then
+          echo "missing value for --timeout" >&2
+          exit 2
+        fi
+        TIMEOUT_SECS="$2"
+        shift 2
+        ;;
+      *)
+        echo "unknown argument: $1" >&2
+        echo "Usage: python-nomadnet-smoke.sh [--scenario nomadnet_pages|routed_nomadnet_pages] [--timeout SECONDS]" >&2
+        exit 2
+        ;;
+    esac
+  done
+  case "${SCENARIO}" in
+    nomadnet_pages|routed_nomadnet_pages) ;;
+    *)
+      echo "unsupported scenario: ${SCENARIO}" >&2
+      exit 2
+      ;;
+  esac
+}
+parse_args "$@"
+ROUTED=false
+if [[ "${SCENARIO}" == "routed_nomadnet_pages" ]]; then
+  ROUTED=true
+fi
 
 runner_milestone() {
   printf 'STYRENE_EVENT {"kind":"milestone","name":"%s","correlation_id":"%s"}\n' "$1" "${STYRENE_INTEROP_CORRELATION_ID:?}"
@@ -111,6 +155,8 @@ TMP_ROOT="$(mktemp -d "${LOG_DIR}/run.XXXXXX")"
 RUST_DIR="${TMP_ROOT}/rust-host"
 PY_DIR="${TMP_ROOT}/python-client"
 PY_RNS_DIR="${TMP_ROOT}/python-rns"
+PY_HOP_DIR="${TMP_ROOT}/python-hop"
+PY_HOP_LOG="${TMP_ROOT}/python-hop.log"
 RUST_LOG="${TMP_ROOT}/rust-host.log"
 PY_LOG="${TMP_ROOT}/python-client.log"
 PY_RESULTS="${TMP_ROOT}/python-results.json"
@@ -134,6 +180,9 @@ cleanup_child() {
 
 cleanup() {
   local status=$?
+  if [[ -n "${HOP_PID:-}" ]]; then
+    cleanup_child "${HOP_PID}"
+  fi
   if [[ -n "${PY_PID:-}" ]]; then
     cleanup_child "${PY_PID}"
   fi
@@ -189,9 +238,15 @@ cat > "${RUST_DIR}/config.toml" <<EOF
 role = "full_node"
 EOF
 
-cat > "${PY_RNS_DIR}/config" <<EOF
+CLIENT_TARGET_HOST="${RUST_TRANSPORT_HOST}"
+CLIENT_TARGET_PORT="${RUST_TRANSPORT_PORT}"
+if [[ "${ROUTED}" == "true" ]]; then
+  CLIENT_TARGET_HOST="127.0.0.1"
+  CLIENT_TARGET_PORT="${PY_HOP_PORT}"
+  mkdir -p "${PY_HOP_DIR}"
+  cat > "${PY_HOP_DIR}/config" <<EOF
 [reticulum]
-  enable_transport = false
+  enable_transport = true
   share_instance = no
   discover_interfaces = false
   autoconnect_discovered_interfaces = 0
@@ -205,6 +260,31 @@ cat > "${PY_RNS_DIR}/config" <<EOF
     enabled = yes
     target_host = ${RUST_TRANSPORT_HOST}
     target_port = ${RUST_TRANSPORT_PORT}
+
+  [[Client Side]]
+    type = TCPServerInterface
+    enabled = yes
+    listen_ip = 127.0.0.1
+    listen_port = ${PY_HOP_PORT}
+EOF
+fi
+
+cat > "${PY_RNS_DIR}/config" <<EOF
+[reticulum]
+  enable_transport = false
+  share_instance = no
+  discover_interfaces = false
+  autoconnect_discovered_interfaces = 0
+
+[logging]
+  loglevel = 4
+
+[interfaces]
+  [[Upstream]]
+    type = TCPClientInterface
+    enabled = yes
+    target_host = ${CLIENT_TARGET_HOST}
+    target_port = ${CLIENT_TARGET_PORT}
 EOF
 
 cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" -p styrened --bin styrened --quiet
@@ -229,6 +309,31 @@ if ! wait_for_file_pattern "${RUST_LOG}" "listening on http://|delivery destinat
   exit 1
 fi
 runner_milestone "rust-ready"
+
+HOP_PID=""
+if [[ "${ROUTED}" == "true" ]]; then
+  # A pinned Python Reticulum instance with transport enabled forwards
+  # between the client and the Rust host. It has no destinations of its own.
+  (
+    PYTHONUNBUFFERED=1 "${PYTHON_BIN}" - <<'PY' "${PY_HOP_DIR}" > >(bounded_log "${PY_HOP_LOG}" "${LOG_LIMIT_BYTES}") 2>&1
+import sys
+import time
+
+import RNS
+
+RNS.Reticulum(configdir=sys.argv[1], loglevel=4)
+print("transport hop running", flush=True)
+while True:
+    time.sleep(1)
+PY
+  ) &
+  HOP_PID=$!
+  if ! wait_for_file_pattern "${PY_HOP_LOG}" "transport hop running" "${TIMEOUT_SECS}"; then
+    echo "Python transport hop did not start" >&2
+    exit 1
+  fi
+  runner_milestone "transport-hop-ready"
+fi
 
 NODE_HASH="$(destination_hash_from_identity "${RUST_IDENTITY}" "nomadnetwork" "node")"
 
@@ -324,7 +429,16 @@ def text_result(outcome):
     return {"status": outcome["status"], "text": None, "sha256": None}
 
 
-results = {"client_identity": RNS.hexrep(identity.hash, delimit=False).lower()}
+results = {
+    "client_identity": RNS.hexrep(identity.hash, delimit=False).lower(),
+    "hops_to_node": RNS.Transport.hops_to(node_hash),
+    "next_hop": (
+        RNS.hexrep(RNS.Transport.next_hop(node_hash), delimit=False).lower()
+        if RNS.Transport.next_hop(node_hash) is not None
+        else None
+    ),
+    "next_hop_interface": str(RNS.Transport.next_hop_interface(node_hash)),
+}
 
 # Unidentified link: static, dynamic, and a denied allow-listed page.
 public_link = open_link()
@@ -386,13 +500,26 @@ PY_PID=""
   "${PY_IDENTITY_HASH}" \
   "${FILE_SHA256}" \
   "${PROOF_PATH}" \
-  "${STYRENE_INTEROP_CORRELATION_ID}"
+  "${STYRENE_INTEROP_CORRELATION_ID}" \
+  "${SCENARIO}" \
+  "${ROUTED}"
 import hashlib
 import json
 import sys
 from pathlib import Path
 
-results_path, static_content, private_content, client_hash, file_sha256, proof_path, correlation_id = sys.argv[1:8]
+(
+    results_path,
+    static_content,
+    private_content,
+    client_hash,
+    file_sha256,
+    proof_path,
+    correlation_id,
+    scenario,
+    routed,
+) = sys.argv[1:10]
+expected_hops = 2 if routed == "true" else 1
 results = json.loads(Path(results_path).read_text(encoding="utf-8"))
 static_expected = (static_content + "\n").encode("utf-8")
 private_expected = (private_content + "\n").encode("utf-8")
@@ -421,6 +548,7 @@ check("file", results["file"]["status"] == "ready")
 check("file.shape", results["file"]["shape"] == "pair")
 check("file.name", results["file"]["name"] == "manual.bin")
 check("file.sha256", results["file"]["sha256"] == file_sha256)
+check("hops_to_node", results.get("hops_to_node") == expected_hops)
 
 proof = {
     "correlation_id": correlation_id,
@@ -430,9 +558,10 @@ proof = {
         "private_sha256": hashlib.sha256(private_expected).hexdigest(),
         "file_sha256": file_sha256,
         "file_name": "manual.bin",
+        "hops_to_node": expected_hops,
     },
     "results": results,
-    "scenario": "nomadnet_pages",
+    "scenario": scenario,
 }
 with open(proof_path, "w", encoding="utf-8") as handle:
     json.dump(proof, handle, sort_keys=True, separators=(",", ":"))
@@ -445,14 +574,14 @@ runner_milestone "nomadnet-allowed-served"
 runner_milestone "nomadnet-file-served"
 runner_assertion "python-to-rust-nomadnet-pages"
 
-"${PYTHON_BIN}" - <<'PY' "${REPORT_PATH}" "${TMP_ROOT}" "${RUST_LOG}" "${PY_LOG}" "${NODE_HASH}" "${PY_IDENTITY_HASH}" "${STYRENE_INTEROP_CORRELATION_ID}"
+"${PYTHON_BIN}" - <<'PY' "${REPORT_PATH}" "${TMP_ROOT}" "${RUST_LOG}" "${PY_LOG}" "${NODE_HASH}" "${PY_IDENTITY_HASH}" "${STYRENE_INTEROP_CORRELATION_ID}" "${SCENARIO}"
 import json
 import sys
 
-report_path, tmp_root, rust_log, py_log, node_hash, client_hash, correlation_id = sys.argv[1:8]
+report_path, tmp_root, rust_log, py_log, node_hash, client_hash, correlation_id, scenario = sys.argv[1:9]
 report = {
     "status": "pass",
-    "scenario": "nomadnet_pages",
+    "scenario": scenario,
     "correlation_id": correlation_id,
     "proof": {
         "rust_node_destination": node_hash,

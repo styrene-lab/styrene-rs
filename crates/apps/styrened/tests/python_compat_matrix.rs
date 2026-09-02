@@ -8,13 +8,16 @@ use styrene_interop_runner::{
 
 #[test]
 fn compatibility_matrix_covers_first_slice() {
-    assert_eq!(PINNED_SCENARIOS.len(), 9);
+    assert_eq!(PINNED_SCENARIOS.len(), 12);
     assert_case_present("direct");
     assert_case_present("nomadnet_pages");
     assert_case_present("nomadnet_client");
     assert_case_present("propagated_retrieval");
     assert_case_present("propagated_capacity");
     assert_case_present("propagated_expiry");
+    assert_case_present("routed_direct");
+    assert_case_present("routed_direct_resource");
+    assert_case_present("routed_nomadnet_pages");
     assert_case_present("direct_resource");
     assert_case_present("opportunistic");
     assert_case_present("propagated_resource_lxm");
@@ -60,6 +63,24 @@ fn python_compat_propagated_capacity() {
 #[ignore = "requires live Python compatibility harness environment"]
 fn python_compat_propagated_expiry() {
     run_case("propagated_expiry");
+}
+
+#[test]
+#[ignore = "requires live Python compatibility harness environment"]
+fn python_compat_routed_direct() {
+    run_case("routed_direct");
+}
+
+#[test]
+#[ignore = "requires live Python compatibility harness environment"]
+fn python_compat_routed_direct_resource() {
+    run_case("routed_direct_resource");
+}
+
+#[test]
+#[ignore = "requires live Python compatibility harness environment"]
+fn python_compat_routed_nomadnet_pages() {
+    run_case("routed_nomadnet_pages");
 }
 
 #[test]
@@ -126,7 +147,7 @@ fn run_case(case_id: &str) {
 }
 
 fn scenario_id_is_nomadnet(case_id: &str) -> bool {
-    matches!(case_id, "nomadnet_pages" | "nomadnet_client")
+    matches!(case_id, "nomadnet_pages" | "nomadnet_client" | "routed_nomadnet_pages")
 }
 
 fn smoke_script_path() -> PathBuf {
