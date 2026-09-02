@@ -15,6 +15,17 @@ pub fn encode_response_envelope(request_id: RequestId, response: &[u8]) -> Optio
     Some(envelope)
 }
 
+/// Encode the raw bytes of a metadata-bearing response resource as a MessagePack
+/// binary value. Python `Link.response_resource_concluded` hands such responses
+/// (NomadNet file downloads) to the requester as `bytes` without the
+/// `[request_id, response]` envelope, so the receipt keeps the same shape as an
+/// enveloped binary response.
+pub fn encode_raw_response(data: &[u8]) -> Option<Vec<u8>> {
+    let mut encoded = Vec::with_capacity(data.len() + 5);
+    rmp::encode::write_bin(&mut encoded, data).ok()?;
+    Some(encoded)
+}
+
 pub fn decode_response_envelope(payload: &[u8]) -> Result<(RequestId, Vec<u8>), Option<RequestId>> {
     use std::io::Cursor;
 
@@ -133,6 +144,9 @@ pub struct RequestReceipt {
     pub progress: f32,
     pub response_transfer: ResponseTransfer,
     pub response: Option<Vec<u8>>,
+    /// Packed MessagePack metadata carried by a metadata-bearing response
+    /// resource (Python file responses). `None` for enveloped responses.
+    pub response_metadata: Option<Vec<u8>>,
     pub status: RequestStatus,
     pub protocol_error: Option<RequestProtocolError>,
     pub completed_at: Option<Duration>,
@@ -247,6 +261,7 @@ impl RequestTracker {
             progress: 0.0,
             response_transfer: ResponseTransfer::None,
             response: None,
+            response_metadata: None,
             status: RequestStatus::Pending,
             protocol_error: None,
             completed_at: None,
@@ -386,6 +401,7 @@ impl RequestTracker {
         link_id: AddressHash,
         hash: Hash,
         response: Vec<u8>,
+        metadata: Option<Vec<u8>>,
         transfer_size: u64,
     ) -> bool {
         let Some(request_id) = self.resources.get(&hash).copied() else { return false };
@@ -409,6 +425,7 @@ impl RequestTracker {
         receipt.total_bytes = transfer_size;
         receipt.progress = 1.0;
         receipt.response = Some(response);
+        receipt.response_metadata = metadata;
         self.finish(request_id, RequestStatus::Succeeded, None)
     }
 
@@ -619,7 +636,7 @@ mod tests {
         let hash = Hash::new([9; 32]);
         assert!(tracker.resource_advertised(AddressHash::new([2; 16]), [2; 16], hash, 3, 3));
         assert!(tracker.resource_progress(AddressHash::new([2; 16]), hash, 2, 3));
-        assert!(tracker.resource_complete(AddressHash::new([2; 16]), hash, vec![1, 2, 3], 3));
+        assert!(tracker.resource_complete(AddressHash::new([2; 16]), hash, vec![1, 2, 3], None, 3));
         let receipt = tracker.get(&[2; 16]).expect("resource receipt");
         assert_eq!(receipt.status, RequestStatus::Succeeded);
         assert_eq!(receipt.progress, 1.0);
@@ -691,7 +708,7 @@ mod tests {
         assert!(tracker.resource_advertised(link, [1; 16], first, 3, 40));
         assert!(!tracker.resource_advertised(link, [1; 16], extra, 3, 40));
         clock.advance(Duration::from_millis(25));
-        assert!(tracker.resource_complete(link, first, vec![1, 2, 3], 40));
+        assert!(tracker.resource_complete(link, first, vec![1, 2, 3], None, 40));
 
         let snapshot = tracker.snapshot();
         assert_eq!(snapshot.len(), 1);
@@ -721,7 +738,13 @@ mod tests {
         let hash = Hash::new([9; 32]);
         assert!(tracker.resource_advertised(AddressHash::new([2; 16]), [8; 16], hash, 3, 40));
         assert!(tracker.resource_progress(AddressHash::new([2; 16]), hash, 20, 40));
-        assert!(tracker.resource_complete(AddressHash::new([2; 16]), hash, vec![1, 2, 3], 40));
+        assert!(tracker.resource_complete(
+            AddressHash::new([2; 16]),
+            hash,
+            vec![1, 2, 3],
+            None,
+            40
+        ));
 
         assert_eq!(
             tracker.get(&[8; 16]).and_then(|receipt| receipt.correlation_id.as_deref()),
