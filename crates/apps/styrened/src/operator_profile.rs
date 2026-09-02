@@ -2407,3 +2407,132 @@ pub fn copy_snapshot(
     sync_tree(destination)?;
     SnapshotRef::open(destination)
 }
+
+// ── Legacy layout adoption ───────────────────────────────────────────────────
+
+/// The pre-profile on-disk layout: separate configuration and data
+/// directories with global defaults. Every path is optional; only the ones
+/// that exist are adopted.
+#[derive(Clone, Debug, Default)]
+pub struct LegacyLayout {
+    pub config: Option<PathBuf>,
+    pub identity: Option<PathBuf>,
+    pub messages_db: Option<PathBuf>,
+    pub nodes_db: Option<PathBuf>,
+    pub pages_dir: Option<PathBuf>,
+    pub files_dir: Option<PathBuf>,
+}
+
+impl LegacyLayout {
+    /// The layout a daemon used with these configuration and data
+    /// directories.
+    pub fn for_dirs(config_dir: &Path, data_dir: &Path) -> Self {
+        Self {
+            config: Some(config_dir.join("config.toml")),
+            identity: Some(config_dir.join("identity")),
+            messages_db: Some(data_dir.join("messages.db")),
+            nodes_db: Some(data_dir.join("nodes.db")),
+            pages_dir: Some(config_dir.join("pages")),
+            files_dir: Some(data_dir.join("files")),
+        }
+    }
+
+    /// Whether any adoptable state exists.
+    pub fn has_state(&self) -> bool {
+        [
+            &self.config,
+            &self.identity,
+            &self.messages_db,
+            &self.nodes_db,
+            &self.pages_dir,
+            &self.files_dir,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|path| path.exists())
+    }
+}
+
+impl StoppedManagedProfile {
+    /// Create a Local profile at `root` and copy a legacy layout into it. The
+    /// legacy files are read, never moved or changed, so the old layout stays
+    /// usable. The legacy identity becomes the profile identity when present.
+    pub fn adopt_legacy(
+        root: &Path,
+        runtime_parent: &Path,
+        display_name: &str,
+        legacy: &LegacyLayout,
+    ) -> Result<Self, ProfileError> {
+        let profile = Self::create_local(root, runtime_parent, display_name)?;
+        let result = (|| {
+            if let Some(identity) = legacy.identity.as_ref().filter(|path| path.is_file()) {
+                let bytes = read_bounded_file(identity, PRIVATE_IDENTITY_BYTES)?;
+                if bytes.len() as u64 != PRIVATE_IDENTITY_BYTES
+                    || PrivateIdentity::from_private_key_bytes(&bytes).is_err()
+                {
+                    return Err(ProfileError::InvalidIdentity);
+                }
+                crate::identity_store::write_identity_file(&profile.paths.identity, &bytes)
+                    .map_err(|source| ProfileError::Io {
+                        action: "adopt legacy identity",
+                        source,
+                    })?;
+                write_custody(
+                    &profile.paths.custody,
+                    &CustodyRecord::file(profile_identity_hash(&profile.paths.identity)?),
+                )?;
+            }
+            if let Some(config) = legacy.config.as_ref().filter(|path| path.is_file()) {
+                let bytes = fs::read(config)
+                    .map_err(|source| ProfileError::Io { action: "read legacy config", source })?;
+                atomic_write_private(&profile.paths.config, &bytes)
+                    .map_err(|source| ProfileError::Io { action: "adopt legacy config", source })?;
+            }
+            for (source, destination) in [
+                (legacy.messages_db.as_ref(), &profile.paths.messages),
+                (legacy.nodes_db.as_ref(), &profile.paths.nodes),
+            ] {
+                if let Some(source) = source.filter(|path| path.is_file()) {
+                    backup_stopped_database(source, destination)?;
+                    set_private_file(destination).map_err(|source| ProfileError::Io {
+                        action: "secure adopted database",
+                        source,
+                    })?;
+                }
+            }
+            for (source, destination) in [
+                (legacy.pages_dir.as_ref(), &profile.paths.pages),
+                (legacy.files_dir.as_ref(), &profile.paths.files),
+            ] {
+                if let Some(source) = source.filter(|path| path.is_dir()) {
+                    let mut budget = CopyBudget::default();
+                    for entry in fs::read_dir(source).map_err(|source| ProfileError::Io {
+                        action: "read legacy directory",
+                        source,
+                    })? {
+                        let entry = entry.map_err(|source| ProfileError::Io {
+                            action: "read legacy entry",
+                            source,
+                        })?;
+                        copy_tree(
+                            &entry.path(),
+                            &destination.join(entry.file_name()),
+                            &mut budget,
+                        )?;
+                    }
+                }
+            }
+            sync_tree(&profile.paths.root)
+        })();
+        match result {
+            Ok(()) => Ok(profile),
+            Err(error) => {
+                // Publish nothing: the half-adopted root goes away.
+                let root = profile.paths.root.clone();
+                drop(profile);
+                let _ = fs::remove_dir_all(root);
+                Err(error)
+            }
+        }
+    }
+}
