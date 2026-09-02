@@ -89,7 +89,7 @@
 ## 9. Native NomadNet Host
 <!-- specs: nomadnet-pages, reticulum-operations, production-composition -->
 
-- [ ] 9.1 Add canonical Python NomadNet request and response fixtures for pages, fields, files, and authorization
+- [x] 9.1 Add canonical Python NomadNet request and response fixtures for pages, fields, files, and authorization
 - [x] 9.2 Register `/page/...` and `/file/...` through the native destination request registry
 - [x] 9.3 Serve packet-sized content as responses and larger pages/files as verified resources
 - [x] 9.4 Announce `nomadnetwork.node` only after native handlers are active
