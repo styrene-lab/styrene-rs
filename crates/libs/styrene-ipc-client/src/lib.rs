@@ -21,7 +21,7 @@ use styrene_ipc::types::{
 use styrene_ipc_wire::{self as wire, Frame, MessageType, REQUEST_ID_SIZE};
 use thiserror::Error;
 use tokio::net::UnixStream;
-use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
+use tokio::sync::{Mutex, Semaphore, broadcast, mpsc, oneshot};
 use tokio::time::timeout;
 
 pub use styrene_ipc_wire::default_socket_path;
@@ -88,7 +88,85 @@ pub struct ClientDiagnostics {
     pub stale_responses: u64,
     pub dropped_responses: u64,
     pub last_latency_ms: u64,
+    /// Event frames the daemon pushed on this connection.
+    pub events_received: u64,
+    /// Event frames delivered to no subscriber (nobody was listening).
+    pub events_unobserved: u64,
 }
+
+/// A daemon subscription topic. Subscriptions are per connection: the daemon
+/// pushes the topic's event frames on the connection that subscribed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EventTopic {
+    Devices,
+    Messages,
+    Activity,
+    Links,
+    Routes,
+    Requests,
+    NetworkOperations,
+    Resources,
+}
+
+impl EventTopic {
+    /// Every topic, in wire order.
+    pub const ALL: [Self; 8] = [
+        Self::Devices,
+        Self::Messages,
+        Self::Activity,
+        Self::Links,
+        Self::Routes,
+        Self::Requests,
+        Self::NetworkOperations,
+        Self::Resources,
+    ];
+
+    #[must_use]
+    pub const fn message_type(self) -> MessageType {
+        match self {
+            Self::Devices => MessageType::SubDevices,
+            Self::Messages => MessageType::SubMessages,
+            Self::Activity => MessageType::SubActivity,
+            Self::Links => MessageType::SubLinks,
+            Self::Routes => MessageType::SubRoutes,
+            Self::Requests => MessageType::SubRequests,
+            Self::NetworkOperations => MessageType::SubNetworkOperations,
+            Self::Resources => MessageType::SubResources,
+        }
+    }
+}
+
+/// An event frame the daemon pushed on this connection. Events carry the
+/// connection generation they arrived on so a consumer that keeps a receiver
+/// across reconnects can discard frames from an earlier connection.
+#[derive(Clone, Debug)]
+pub struct EventFrame {
+    pub message_type: MessageType,
+    pub payload: HashMap<String, Value>,
+    pub generation: ConnectionGeneration,
+}
+
+impl EventFrame {
+    /// Decode the whole payload as a typed record.
+    pub fn typed<T: DeserializeOwned>(&self) -> Result<T, ClientError> {
+        decode_map(&self.payload, "event payload")
+    }
+
+    /// Decode one typed record stored under `key`.
+    pub fn typed_key<T: DeserializeOwned>(&self, key: &str) -> Result<T, ClientError> {
+        decode_typed_key(&self.payload, key, "event payload")
+    }
+
+    /// A string field, or the empty string when absent.
+    #[must_use]
+    pub fn text(&self, key: &str) -> String {
+        text(&self.payload, key, "")
+    }
+}
+
+/// Default number of event frames buffered per connection before a slow
+/// subscriber starts losing the oldest ones.
+pub const DEFAULT_EVENT_CAPACITY: usize = 256;
 
 struct Request {
     request_id: [u8; REQUEST_ID_SIZE],
@@ -115,11 +193,17 @@ struct Metrics {
     stale_responses: AtomicU64,
     dropped_responses: AtomicU64,
     last_latency_ms: AtomicU64,
+    events_received: AtomicU64,
+    events_unobserved: AtomicU64,
 }
 
 #[derive(Clone)]
 pub struct Client {
     generation: ConnectionGeneration,
+    /// A never-read receiver kept only so `events()` can `resubscribe`. The
+    /// reader task owns the sole sender, so every receiver ends when the
+    /// connection does.
+    events: Arc<broadcast::Receiver<EventFrame>>,
     outbound: mpsc::Sender<Request>,
     pending: Arc<Mutex<HashMap<[u8; REQUEST_ID_SIZE], PendingRequest>>>,
     capacity: Arc<Semaphore>,
@@ -140,8 +224,19 @@ impl Client {
         generation: ConnectionGeneration,
         capacity: usize,
     ) -> Self {
+        Self::from_unix_stream_with_capacities(stream, generation, capacity, DEFAULT_EVENT_CAPACITY)
+    }
+
+    /// Build a client with explicit request and event buffer bounds.
+    pub fn from_unix_stream_with_capacities(
+        stream: UnixStream,
+        generation: ConnectionGeneration,
+        capacity: usize,
+        event_capacity: usize,
+    ) -> Self {
         let capacity = capacity.max(1);
         let (outbound, requests) = mpsc::channel(capacity);
+        let (events, event_prototype) = broadcast::channel(event_capacity.max(1));
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let metrics = Arc::new(Metrics::default());
         let connected = Arc::new(AtomicBool::new(true));
@@ -159,9 +254,11 @@ impl Client {
             pending.clone(),
             metrics.clone(),
             connected.clone(),
+            events,
         ));
         Self {
             generation,
+            events: Arc::new(event_prototype),
             outbound,
             pending,
             capacity: Arc::new(Semaphore::new(capacity)),
@@ -174,6 +271,31 @@ impl Client {
     #[must_use]
     pub fn generation(&self) -> ConnectionGeneration {
         self.generation
+    }
+
+    /// Receive every event frame the daemon pushes on this connection from now
+    /// on. Each receiver sees each frame once; a receiver that falls more than
+    /// the event capacity behind observes a `Lagged` error and skips the
+    /// oldest frames rather than stalling the reader. The receiver ends when
+    /// the connection closes.
+    #[must_use]
+    pub fn events(&self) -> broadcast::Receiver<EventFrame> {
+        self.events.resubscribe()
+    }
+
+    /// Ask the daemon to push a topic's events on this connection. Subscribe
+    /// before the events of interest can occur, and take an `events()`
+    /// receiver first so nothing is missed.
+    pub async fn subscribe(&self, topic: EventTopic) -> Result<(), ClientError> {
+        self.request(topic.message_type(), HashMap::new(), DEFAULT_DEADLINE).await.map(|_| ())
+    }
+
+    /// Subscribe to several topics in order, stopping at the first failure.
+    pub async fn subscribe_all(&self, topics: &[EventTopic]) -> Result<(), ClientError> {
+        for topic in topics {
+            self.subscribe(*topic).await?;
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -624,6 +746,8 @@ impl Client {
             stale_responses: self.metrics.stale_responses.load(Ordering::Relaxed),
             dropped_responses: self.metrics.dropped_responses.load(Ordering::Relaxed),
             last_latency_ms: self.metrics.last_latency_ms.load(Ordering::Relaxed),
+            events_received: self.metrics.events_received.load(Ordering::Relaxed),
+            events_unobserved: self.metrics.events_unobserved.load(Ordering::Relaxed),
         }
     }
 
@@ -703,6 +827,7 @@ async fn reader_task(
     pending: Arc<Mutex<HashMap<[u8; REQUEST_ID_SIZE], PendingRequest>>>,
     metrics: Arc<Metrics>,
     connected: Arc<AtomicBool>,
+    events: broadcast::Sender<EventFrame>,
 ) {
     loop {
         let frame = match wire::read_frame_async(&mut reader).await {
@@ -713,6 +838,20 @@ async fn reader_task(
                 break;
             }
         };
+        // Pushed events are not correlated to a request; fan them out to every
+        // live receiver without touching the pending table.
+        if frame.msg_type.is_event() {
+            metrics.events_received.fetch_add(1, Ordering::Relaxed);
+            let event =
+                EventFrame { message_type: frame.msg_type, payload: frame.payload, generation };
+            // The client keeps one never-read prototype receiver so it can hand
+            // out subscriptions; an event seen by no other receiver is unobserved.
+            if events.receiver_count() <= 1 {
+                metrics.events_unobserved.fetch_add(1, Ordering::Relaxed);
+            }
+            let _ = events.send(event);
+            continue;
+        }
         let mut generation_bytes = [0; 8];
         generation_bytes.copy_from_slice(&frame.request_id[..8]);
         if u64::from_le_bytes(generation_bytes) != generation.0 {
@@ -1054,6 +1193,91 @@ mod tests {
             Err(ClientError::Disconnected { .. })
         ));
         assert_eq!(client.diagnostics().disconnected, 1);
+    }
+
+    #[tokio::test]
+    async fn subscribe_sends_the_topic_request_and_events_fan_out_to_every_receiver() {
+        let (client, mut server) = pair(4);
+        let mut first = client.events();
+        let mut second = client.events();
+        let subscribe = tokio::spawn({
+            let client = client.clone();
+            async move { client.subscribe(EventTopic::Links).await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("subscribe request");
+        assert_eq!(request.msg_type, MessageType::SubLinks);
+        reply(&mut server, MessageType::Result, &request.request_id, &HashMap::new()).await;
+        subscribe.await.expect("join").expect("subscription acknowledged");
+
+        // Events carry no request correlation; the daemon pushes them as they occur.
+        let payload = HashMap::from([
+            ("link_id".to_string(), Value::from("0011223344556677")),
+            ("status".to_string(), Value::from("active")),
+        ]);
+        reply(&mut server, MessageType::EventLink, &[0; REQUEST_ID_SIZE], &payload).await;
+        let event = first.recv().await.expect("first receiver");
+        let mirrored = second.recv().await.expect("second receiver");
+        assert_eq!(event.message_type, MessageType::EventLink);
+        assert_eq!(event.text("link_id"), "0011223344556677");
+        assert_eq!(mirrored.text("status"), "active");
+        assert_eq!(event.generation, ConnectionGeneration(7));
+        let diagnostics = client.diagnostics();
+        assert_eq!(diagnostics.events_received, 1);
+        assert_eq!(diagnostics.dropped_responses, 0);
+    }
+
+    #[tokio::test]
+    async fn events_never_consume_pending_requests_and_unobserved_events_are_counted() {
+        let (client, mut server) = pair(4);
+        let status = tokio::spawn({
+            let client = client.clone();
+            async move {
+                client
+                    .request(MessageType::QueryStatus, HashMap::new(), Duration::from_secs(1))
+                    .await
+            }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("status request");
+        // An event arrives before the response; nobody holds a receiver.
+        reply(&mut server, MessageType::EventDevice, &request.request_id, &HashMap::new()).await;
+        reply(&mut server, MessageType::Result, &request.request_id, &HashMap::new()).await;
+        status.await.expect("join").expect("status response still correlates");
+        let diagnostics = client.diagnostics();
+        assert_eq!(diagnostics.events_received, 1);
+        assert_eq!(diagnostics.events_unobserved, 1);
+        assert_eq!(diagnostics.completed, 1);
+    }
+
+    #[tokio::test]
+    async fn event_receivers_end_when_the_connection_closes() {
+        let (client, server) = pair(4);
+        let mut events = client.events();
+        drop(server);
+        let outcome = events.recv().await;
+        assert!(matches!(outcome, Err(broadcast::error::RecvError::Closed)));
+        assert!(!client.is_connected());
+    }
+
+    #[tokio::test]
+    async fn slow_event_receivers_lag_instead_of_stalling_the_reader() {
+        let (stream, mut server) = UnixStream::pair().expect("Unix stream pair");
+        let client =
+            Client::from_unix_stream_with_capacities(stream, ConnectionGeneration(7), 4, 2);
+        let mut events = client.events();
+        for _ in 0..4 {
+            reply(&mut server, MessageType::EventRoute, &[0; REQUEST_ID_SIZE], &HashMap::new())
+                .await;
+        }
+        // A request still round-trips while the receiver is behind.
+        let ping = tokio::spawn({
+            let client = client.clone();
+            async move { client.ping().await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("ping request");
+        reply(&mut server, MessageType::Pong, &request.request_id, &HashMap::new()).await;
+        ping.await.expect("join").expect("ping");
+        assert!(matches!(events.recv().await, Err(broadcast::error::RecvError::Lagged(_))));
+        assert_eq!(client.diagnostics().events_received, 4);
     }
 
     #[tokio::test]
