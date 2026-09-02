@@ -691,6 +691,8 @@ mod tests {
             request_id: None,
             hops: Some(2),
             interface: None,
+            packet_hash: None,
+            receiving_iface: None,
         };
         mock.inject_inbound(data);
 

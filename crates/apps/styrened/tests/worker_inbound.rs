@@ -143,6 +143,8 @@ async fn trusted_packet_sends_one_correlated_structured_echo() {
         request_id: None,
         hops: None,
         interface: None,
+        packet_hash: None,
+        receiving_iface: None,
     });
 
     let request_id = lxmf::WireMessage::unpack(&wire).unwrap().message_id();
@@ -224,6 +226,8 @@ async fn trusted_protocol_and_marked_response_packets_do_not_echo() {
             request_id: None,
             hops: None,
             interface: None,
+            packet_hash: None,
+            receiving_iface: None,
         });
     }
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
@@ -274,6 +278,8 @@ async fn standard_propagation_packet_is_explicitly_excluded_from_generic_store()
         request_id: None,
         hops: None,
         interface: None,
+        packet_hash: None,
+        receiving_iface: None,
     });
     tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     assert_eq!(propagation.stats().unwrap(), (0, 0));
@@ -321,6 +327,8 @@ async fn duplicate_unknown_identity_is_stored_once_with_trust_and_duplicate_drop
         request_id: None,
         hops: None,
         interface: None,
+        packet_hash: None,
+        receiving_iface: None,
     };
 
     transport.inject_inbound(inbound());
@@ -396,6 +404,8 @@ async fn inbound_worker_decodes_and_persists_message() {
         request_id: None,
         hops: None,
         interface: None,
+        packet_hash: None,
+        receiving_iface: None,
     });
 
     // Wait for worker to process

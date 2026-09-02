@@ -192,6 +192,8 @@ async fn mock_inbound_fanout_reaches_multiple_subscribers() {
         request_id: None,
         hops: None,
         interface: None,
+        packet_hash: None,
+        receiving_iface: None,
     };
     mock.inject_inbound(data);
 
