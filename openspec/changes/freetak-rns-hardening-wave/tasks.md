@@ -70,9 +70,9 @@ Dependency gate: `beechat-rns-corrections-wave` group 2 must be verified complet
 
 Dependency gate: `reticulum-1-5-parity-wave` group 7 must be verified complete before task 10.1 starts.
 
-- [ ] 10.1 Add and run failing exact-limit and one-over-limit tests before allocation plus threshold tests proving advertisements, hashmap updates, and fragments consume the predecessor's effective Link/interface MTU
-- [ ] 10.2 Implement only pre-allocation size/part caps and effective-MTU resource sizing without adding MTU signaling, negotiation, clamping, or proof policy
-- [ ] 10.3 Verify no state/allocation/request for rejected advertisements, every owned resource packet fits the supplied effective MTU, and the predecessor's mixed-interface MTU suite remains green
+- [x] 10.1 Add and run failing exact-limit and one-over-limit tests before allocation plus threshold tests proving advertisements, hashmap updates, and fragments consume the predecessor's effective Link/interface MTU
+- [x] 10.2 Implement only pre-allocation size/part caps and effective-MTU resource sizing without adding MTU signaling, negotiation, clamping, or proof policy
+- [x] 10.3 Verify no state/allocation/request for rejected advertisements, every owned resource packet fits the supplied effective MTU, and the predecessor's mixed-interface MTU suite remains green
 
 ## 11. Split resource construction, metadata, and terminal cleanup
 <!-- specs: rns-resource-hardening -->

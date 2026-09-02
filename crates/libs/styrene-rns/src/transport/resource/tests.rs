@@ -1640,4 +1640,245 @@ mod tests {
         clock.advance(Duration::from_secs(5));
         assert!(manager.poll().cancellations.is_empty());
     }
+
+    fn advertisement_packet(advertisement: &ResourceAdvertisement, link: &Link) -> Packet {
+        resource_packet(
+            PacketContext::ResourceAdvrtisement,
+            &advertisement.pack().expect("advertisement packs"),
+            *link.id(),
+        )
+    }
+
+    /// Every cap is checked at its exact value and one over it before any
+    /// receiver or part storage exists, and a rejected advertisement emits no
+    /// request packet.
+    #[test]
+    fn advertisement_caps_are_exact_and_checked_before_allocation() {
+        let mut link = requested_link("caps");
+        let sdu = link.resource_sdu();
+        let destination_limit = 4 * sdu;
+
+        let cases: Vec<(&str, ResourceAdvertisement, Option<usize>, bool)> = vec![
+            (
+                "destination limit exact",
+                bounded_advertisement(destination_limit, destination_limit, sdu),
+                Some(destination_limit),
+                true,
+            ),
+            (
+                "destination limit one over",
+                bounded_advertisement(destination_limit + 1, destination_limit + 1, sdu),
+                Some(destination_limit),
+                false,
+            ),
+            (
+                "unsolicited limit exact",
+                bounded_advertisement(
+                    MAX_UNSOLICITED_RESOURCE_SIZE,
+                    MAX_UNSOLICITED_RESOURCE_SIZE,
+                    sdu,
+                ),
+                None,
+                true,
+            ),
+            (
+                "unsolicited limit one over",
+                bounded_advertisement(
+                    MAX_UNSOLICITED_RESOURCE_SIZE + 1,
+                    MAX_UNSOLICITED_RESOURCE_SIZE + 1,
+                    sdu,
+                ),
+                None,
+                false,
+            ),
+            (
+                "transfer overhead exact",
+                bounded_advertisement(
+                    MAX_UNSOLICITED_RESOURCE_SIZE + RESOURCE_WIRE_OVERHEAD,
+                    MAX_UNSOLICITED_RESOURCE_SIZE,
+                    sdu,
+                ),
+                None,
+                true,
+            ),
+            (
+                "transfer overhead one over",
+                bounded_advertisement(
+                    MAX_UNSOLICITED_RESOURCE_SIZE + RESOURCE_WIRE_OVERHEAD + 1,
+                    MAX_UNSOLICITED_RESOURCE_SIZE,
+                    sdu,
+                ),
+                None,
+                false,
+            ),
+            (
+                "part count one over",
+                {
+                    let mut advertisement = bounded_advertisement(8 * sdu, 8 * sdu, sdu);
+                    advertisement.parts += 1;
+                    advertisement
+                },
+                None,
+                false,
+            ),
+            (
+                "part count one under",
+                {
+                    let mut advertisement = bounded_advertisement(8 * sdu, 8 * sdu, sdu);
+                    advertisement.parts -= 1;
+                    advertisement
+                },
+                None,
+                false,
+            ),
+            (
+                "hashmap one hash short",
+                {
+                    let mut advertisement = bounded_advertisement(8 * sdu, 8 * sdu, sdu);
+                    advertisement.hashmap.truncate(advertisement.hashmap.len() - MAPHASH_LEN);
+                    advertisement
+                },
+                None,
+                false,
+            ),
+            (
+                "hashmap one hash extra",
+                {
+                    let mut advertisement = bounded_advertisement(8 * sdu, 8 * sdu, sdu);
+                    advertisement.hashmap.extend_from_slice(&[0; MAPHASH_LEN]);
+                    advertisement
+                },
+                None,
+                false,
+            ),
+        ];
+
+        for (case, advertisement, destination_limit, accepted) in cases {
+            let mut manager = ResourceManager::new_with_config(Duration::from_secs(1), 1);
+            let mut responses = Vec::new();
+            manager.handle_packet_into(
+                &advertisement_packet(&advertisement, &link),
+                &mut link,
+                &mut responses,
+                None,
+                destination_limit,
+            );
+            assert_eq!(responses.len(), usize::from(accepted), "{case}: request packets");
+            assert_eq!(manager.incoming.len(), usize::from(accepted), "{case}: receiver state");
+            assert_eq!(manager.state_counts().total(), usize::from(accepted), "{case}: counts");
+            assert!(manager.drain_events().is_empty(), "{case}: no events before transfer");
+            if accepted {
+                let receiver = &manager.incoming[&advertisement.hash];
+                assert_eq!(receiver.parts.len(), advertisement.parts as usize);
+                assert!(receiver.parts.iter().all(Option::is_none), "no part storage is filled");
+            }
+        }
+    }
+
+    #[test]
+    fn negotiated_incoming_limit_is_exact_and_consumed_once() {
+        let mut link = requested_link("negotiated");
+        let sdu = link.resource_sdu();
+        let limit = MAX_UNSOLICITED_RESOURCE_SIZE + 2 * sdu;
+        for (extra, accepted) in [(0, true), (1, false)] {
+            let mut manager = ResourceManager::new_with_config(Duration::from_secs(1), 1);
+            let advertisement = bounded_advertisement(limit + extra, limit + extra, sdu);
+            assert!(manager.set_incoming_limit(advertisement.hash, limit));
+            let responses =
+                manager.handle_packet(&advertisement_packet(&advertisement, &link), &mut link);
+            assert_eq!(responses.len(), usize::from(accepted));
+            assert_eq!(manager.incoming.len(), usize::from(accepted));
+            assert!(
+                !manager.incoming_limits.contains_key(&advertisement.hash),
+                "the negotiated limit is consumed by the advertisement it governs"
+            );
+        }
+        let mut manager = ResourceManager::new_with_config(Duration::from_secs(1), 1);
+        assert!(!manager.set_incoming_limit(Hash::new([1; HASH_SIZE]), 0));
+        assert!(!manager.set_incoming_limit(
+            Hash::new([1; HASH_SIZE]),
+            MAX_NEGOTIATED_RESOURCE_SIZE + 1
+        ));
+        assert!(manager.set_incoming_limit(Hash::new([1; HASH_SIZE]), MAX_NEGOTIATED_RESOURCE_SIZE));
+    }
+
+    /// At the base MTU and at negotiated MTUs, every owned resource packet
+    /// (advertisement, fragment, hashmap update, and the largest request)
+    /// fits the effective Link MDU, and fragments consume the larger MTU.
+    #[test]
+    fn resource_packets_fit_the_effective_link_mtu_at_thresholds() {
+        let base_sdu = requested_link("base").resource_sdu();
+        for (label, mtu) in
+            [("default", None), ("base", Some(crate::packet::MTU)), ("1k", Some(1024)), ("4k", Some(4096))]
+        {
+            let mut link = requested_link("mtu");
+            link.set_request_mtu(mtu);
+            let sdu = link.resource_sdu();
+            let mtu_budget = link.confirmed_mtu();
+            let wire_len = |packet: &Packet| packet.to_bytes().expect("packet serializes").len();
+            let data = vec![0x5a; sdu * (HASHMAP_MAX_LEN + 3)];
+            let sender = ResourceSender::new(
+                &link,
+                data,
+                Some(vec![1; 16]),
+                None,
+                false,
+                Duration::ZERO,
+            )
+            .expect("sender at this MTU");
+
+            assert!(
+                wire_len(&sender.advertisement_packet()) <= mtu_budget,
+                "{label}: advertisement {} > {}",
+                wire_len(&sender.advertisement_packet()),
+                mtu_budget
+            );
+            assert!(sender.parts.len() > HASHMAP_MAX_LEN, "{label}: needs a hashmap update");
+            assert!(sender.parts.iter().all(|part| part.len() <= sdu), "{label}: fragment sdu");
+            if mtu.is_some_and(|mtu| mtu > crate::packet::MTU) {
+                assert!(sdu > base_sdu, "{label}: fragments consume the negotiated MTU");
+                assert!(sender.parts.iter().any(|part| part.len() > base_sdu), "{label}");
+            }
+
+            let mut fragment = Packet::default();
+            build_link_packet_into(
+                &link,
+                PacketType::Data,
+                PacketContext::Resource,
+                &sender.parts[0],
+                &mut fragment,
+            )
+            .expect("fragment packet");
+            assert!(wire_len(&fragment) <= mtu_budget, "{label}: encrypted fragment");
+
+            let update = ResourceHashUpdate {
+                resource_hash: sender.resource_hash,
+                segment: 1,
+                hashmap: slice_hashmap_segment(&sender.map_hashes, 1),
+            };
+            let update = build_link_packet(
+                &link,
+                PacketType::Data,
+                PacketContext::ResourceHashUpdate,
+                &update.encode().expect("hash update encodes"),
+            )
+            .expect("hash update packet");
+            assert!(wire_len(&update) <= mtu_budget, "{label}: hashmap update");
+
+            let request = ResourceRequest {
+                hashmap_exhausted: true,
+                last_map_hash: Some([0xff; MAPHASH_LEN]),
+                resource_hash: sender.resource_hash,
+                requested_hashes: vec![[0xee; MAPHASH_LEN]; WINDOW_MAX],
+            };
+            let request = build_link_packet(
+                &link,
+                PacketType::Data,
+                PacketContext::ResourceRequest,
+                &request.encode(),
+            )
+            .expect("request packet");
+            assert!(wire_len(&request) <= mtu_budget, "{label}: largest request");
+        }
+    }
 }
