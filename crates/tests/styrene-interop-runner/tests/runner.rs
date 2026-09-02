@@ -99,6 +99,8 @@ fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
     assert!(retrieval.required_artifacts.iter().any(|name| name == "rust-retrieval-proof"));
     assert!(retrieval.required_artifacts.iter().any(|name| name == "rust-daemon-restart-log"));
     assert_eq!(PinnedScenarioId::PropagatedRetrieval.expected_python_representation(), "1");
+    assert_eq!(PinnedScenarioId::Opportunistic.expected_python_state(), "8");
+    assert_eq!(PinnedScenarioId::PropagatedRetrieval.expected_python_state(), "4");
     assert!(!scenario.required_artifacts.iter().any(|name| name == "rust-outbound-proof"));
 
     assert_eq!(PinnedScenarioId::Direct.expected_outbound_representation(), "packet");
