@@ -31,6 +31,7 @@ static RUN_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PinnedScenarioId {
     Direct,
+    DirectResource,
     Opportunistic,
     PropagatedResourceLxm,
 }
@@ -39,16 +40,36 @@ impl PinnedScenarioId {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Direct => "direct",
+            Self::DirectResource => "direct_resource",
             Self::Opportunistic => "opportunistic",
             Self::PropagatedResourceLxm => "propagated_resource_lxm",
         }
     }
 
-    /// Direct and Opportunistic gates exercise both endpoints: Python sends to
-    /// Rust, then Rust sends to the same Python peer. The propagated scenario
-    /// proves Python-to-Rust propagation intake only.
+    /// Direct, resource-backed Direct, and Opportunistic gates exercise both
+    /// endpoints: Python sends to Rust, then Rust sends to the same Python
+    /// peer. The propagated scenario proves Python-to-Rust propagation intake
+    /// only.
     pub const fn is_bidirectional(self) -> bool {
-        matches!(self, Self::Direct | Self::Opportunistic)
+        matches!(self, Self::Direct | Self::DirectResource | Self::Opportunistic)
+    }
+
+    /// Wire representation the Rust outbound route must record for the
+    /// Rust-to-Python leg of a bidirectional scenario.
+    pub const fn expected_outbound_representation(self) -> &'static str {
+        match self {
+            Self::DirectResource => "resource",
+            Self::Direct | Self::Opportunistic | Self::PropagatedResourceLxm => "packet",
+        }
+    }
+
+    /// LXMF representation code the Python sender must report for the
+    /// Python-to-Rust leg: 1 is PACKET, 2 is RESOURCE.
+    pub const fn expected_python_representation(self) -> &'static str {
+        match self {
+            Self::DirectResource | Self::PropagatedResourceLxm => "2",
+            Self::Direct | Self::Opportunistic => "1",
+        }
     }
 }
 
@@ -84,6 +105,12 @@ pub const PINNED_SCENARIOS: &[PinnedScenarioDefinition] = &[
         title: "Pinned Direct Interop",
         description: "Runs the shared direct-delivery harness through the supervised runner.",
         controls: &["announce", "send-message", "cancel"],
+    },
+    PinnedScenarioDefinition {
+        id: PinnedScenarioId::DirectResource,
+        title: "Pinned Direct Resource Interop",
+        description: "Runs the shared direct harness with resource-backed messages in both directions.",
+        controls: &["announce", "send-resource", "cancel"],
     },
     PinnedScenarioDefinition {
         id: PinnedScenarioId::Opportunistic,
@@ -963,6 +990,14 @@ fn validate_protocol_artifacts(
     {
         return Some("retained scenario report does not match this passing run".to_string());
     }
+    if let Some(scenario_id) = pinned_scenario(&scenario.id).map(|definition| definition.id)
+        && json_string_field(&report["proof"], "python_message_representation")
+            != scenario_id.expected_python_representation()
+    {
+        return Some(
+            "retained scenario report records an unexpected Python representation".to_string(),
+        );
+    }
 
     let proof = match load("datastore-proof") {
         Ok(proof) => proof,
@@ -1023,8 +1058,11 @@ fn validate_protocol_artifacts(
     let content = json_string_field(&outbound, "expected_content");
     let route_state = json_string_field(route, "state");
     // The Python peer proves both direct and opportunistic deliveries, so the
-    // Rust route must be delivered for every bidirectional scenario.
-    let route_accepted = route_state == "delivered";
+    // Rust route must be delivered for every bidirectional scenario, and it
+    // must have used the representation the scenario exists to prove.
+    let route_accepted = route_state == "delivered"
+        && json_string_field(route, "representation")
+            == scenario_id.expected_outbound_representation();
     let matches = !message_id.is_empty()
         && !content.is_empty()
         && json_string_field(expected, "destination") == json_string_field(selected, "destination")
@@ -1760,6 +1798,7 @@ mod tests {
             "correlation_id": "correlation-1",
             "proof": {
                 "python_message_id": "message-1",
+                "python_message_representation": "1",
                 "python_to_rust_inbound_content": "content-1",
                 "rust_message_id": "message-2",
                 "rust_to_python_outbound_content": "content-2",
@@ -1790,6 +1829,7 @@ mod tests {
             },
             "route": {
                 "actual_method": "direct",
+                "representation": "packet",
                 "requested_method": "direct",
                 "state": "delivered"
             },
