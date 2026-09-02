@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use tokio::net::UnixStream;
 use tokio::sync::{Mutex, mpsc};
-use tokio::time::{Duration, timeout};
+use tokio::time::Duration;
 
 use rmpv::Value as MpValue;
 use styrene_ipc::types::{
@@ -42,7 +42,8 @@ use styrene_ipc::types::{
     RequestObservationInfo, ResourceTransferInfo, StandardPropagationSnapshot,
     StartNetworkOperationInfo, StartRequestInfo,
 };
-use styrene_ipc_server::wire::{self, Frame, MessageType, REQUEST_ID_SIZE};
+use styrene_ipc_client::{Client, ConnectionGeneration};
+use styrene_ipc_wire::{Frame, MessageType, REQUEST_ID_SIZE};
 
 use crate::mesh_state::{ActivityEntry, ActivityKind, PeerRecord, epoch_secs};
 use crate::tui::segments::DeliveryStatus;
@@ -1133,49 +1134,45 @@ fn format_payload_summary(payload: &HashMap<String, MpValue>) -> String {
 
 // ─── Connection ───────────────────────────────────────────────────────────────
 
+/// The TUI's view of one daemon connection. Framing, request correlation,
+/// deadlines, and typed remote errors belong to the shared IPC client; the
+/// TUI keeps only its command surface and presentation decoding here.
 pub struct DaemonHandle {
-    stream: Arc<Mutex<UnixStream>>,
-    next_id: u64,
+    client: Client,
+}
+
+/// Per-request deadline the TUI has always applied to daemon calls.
+const RPC_DEADLINE: Duration = Duration::from_secs(5);
+
+/// Generation numbers for the TUI's own connections. The daemon's reported
+/// `connection_generation` remains the authority for observation freshness.
+fn next_connection_generation() -> ConnectionGeneration {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    ConnectionGeneration(NEXT.fetch_add(1, Ordering::Relaxed))
 }
 
 impl DaemonHandle {
-    fn next_request_id(&mut self) -> [u8; REQUEST_ID_SIZE] {
-        self.next_id = self.next_id.wrapping_add(1);
-        let mut id = [0u8; REQUEST_ID_SIZE];
-        id[..8].copy_from_slice(&self.next_id.to_le_bytes());
-        id
+    /// Wrap an already negotiated shared client.
+    pub fn from_client(client: Client) -> Self {
+        Self { client }
     }
 
-    /// Send a request and receive the response frame.
+    /// The shared client behind this handle.
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Send a request and receive the response frame through the shared client.
     async fn rpc(
         &mut self,
         msg_type: MessageType,
         payload: &HashMap<String, MpValue>,
     ) -> Result<Frame, String> {
-        let req_id = self.next_request_id();
-        let mut stream = self.stream.lock().await;
-
-        // Write frame
-        wire::write_frame_async(&mut *stream, msg_type, &req_id, payload)
+        self.client
+            .request(msg_type, payload.clone(), RPC_DEADLINE)
             .await
-            .map_err(|e| format!("write: {e}"))?;
-
-        // Read response (5s timeout)
-        let frame = timeout(Duration::from_secs(5), wire::read_frame_async(&mut *stream))
-            .await
-            .map_err(|_| "rpc timeout".to_string())?
-            .map_err(|e| format!("read: {e}"))?;
-
-        if frame.request_id != req_id {
-            return Err("IPC response request ID mismatch".into());
-        }
-        if frame.msg_type == MessageType::Error {
-            return Err(mp_str(&frame.payload, "error"));
-        }
-        if !frame.msg_type.is_response() {
-            return Err(format!("unexpected IPC response {:?}", frame.msg_type));
-        }
-        Ok(frame)
+            .map_err(|error| error.to_string())
     }
 
     /// Query local node identity.
@@ -1803,6 +1800,8 @@ pub struct DaemonConnection {
     handle: Option<DaemonHandle>,
     pub events: mpsc::Receiver<TuiEvent>,
     event_reader: tokio::task::JoinHandle<()>,
+    /// The dedicated subscription connection; dropping it ends the event stream.
+    _event_client: Client,
 }
 
 impl DaemonConnection {
@@ -1820,7 +1819,7 @@ impl Drop for DaemonConnection {
 pub async fn connect(socket_path: Option<&Path>) -> Result<DaemonConnection, String> {
     let path = socket_path
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(styrene_ipc_server::default_socket_path);
+        .unwrap_or_else(styrene_ipc_client::default_socket_path);
 
     if !path.exists() {
         return Err(format!("socket not found: {}", path.display()));
@@ -1828,9 +1827,10 @@ pub async fn connect(socket_path: Option<&Path>) -> Result<DaemonConnection, Str
 
     let command_stream =
         UnixStream::connect(&path).await.map_err(|e| format!("connect {}: {e}", path.display()))?;
-
-    let command_stream = Arc::new(Mutex::new(command_stream));
-    let mut handle = DaemonHandle { stream: command_stream, next_id: 0 };
+    let mut handle = DaemonHandle::from_client(Client::from_unix_stream(
+        command_stream,
+        next_connection_generation(),
+    ));
 
     // Verify daemon is alive
     if !handle.ping().await {
@@ -1842,8 +1842,10 @@ pub async fn connect(socket_path: Option<&Path>) -> Result<DaemonConnection, Str
     let event_stream = UnixStream::connect(&path)
         .await
         .map_err(|e| format!("connect event stream {}: {e}", path.display()))?;
-    let event_stream = Arc::new(Mutex::new(event_stream));
-    let mut event_handle = DaemonHandle { stream: event_stream.clone(), next_id: 0 };
+    let event_client = Client::from_unix_stream(event_stream, next_connection_generation());
+    // Take the receiver before subscribing so no pushed event is missed.
+    let event_frames = event_client.events();
+    let mut event_handle = DaemonHandle::from_client(event_client.clone());
     let event_generation = event_handle
         .status()
         .await?
@@ -1868,7 +1870,6 @@ pub async fn connect(socket_path: Option<&Path>) -> Result<DaemonConnection, Str
 
     // Spawn the event reader task
     let (tx, rx) = mpsc::channel::<TuiEvent>(128);
-    let reader_stream = event_stream;
     let _ = tx.send(TuiEvent::Status(status)).await;
     let _ = tx.send(TuiEvent::EventGeneration(event_generation)).await;
     let _ = tx.send(TuiEvent::RouteSnapshot(routes)).await;
@@ -1877,38 +1878,44 @@ pub async fn connect(socket_path: Option<&Path>) -> Result<DaemonConnection, Str
     let _ = tx.send(TuiEvent::NetworkOperationSnapshot(operations)).await;
     let _ = tx.send(TuiEvent::RequestSnapshot(requests)).await;
     let _ = tx.send(TuiEvent::ResourceSnapshot(resources)).await;
-    let event_reader = tokio::spawn(event_reader(reader_stream, tx));
+    let event_reader = tokio::spawn(event_reader(event_frames, tx));
 
-    Ok(DaemonConnection { handle: Some(handle), events: rx, event_reader })
+    Ok(DaemonConnection {
+        handle: Some(handle),
+        events: rx,
+        event_reader,
+        _event_client: event_client,
+    })
 }
 
 // ─── Event reader task ────────────────────────────────────────────────────────
 
-async fn event_reader(stream: Arc<Mutex<UnixStream>>, tx: mpsc::Sender<TuiEvent>) {
+/// Forward pushed daemon events from the shared client to the TUI. A lagging
+/// receiver skips the oldest events rather than stalling the connection; the
+/// stream ending means the subscription connection closed.
+async fn event_reader(
+    mut frames: tokio::sync::broadcast::Receiver<styrene_ipc_client::EventFrame>,
+    tx: mpsc::Sender<TuiEvent>,
+) {
+    use tokio::sync::broadcast::error::RecvError;
     loop {
-        // Lock for one frame read — release immediately so rpc() can also lock
-        let frame_result = {
-            let mut guard = stream.lock().await;
-            timeout(Duration::from_secs(60), wire::read_frame_async(&mut *guard)).await
-        };
-
-        match frame_result {
-            Ok(Ok(frame)) => {
+        match frames.recv().await {
+            Ok(event) => {
+                let frame = Frame {
+                    msg_type: event.message_type,
+                    request_id: [0; REQUEST_ID_SIZE],
+                    payload: event.payload,
+                };
                 if let Some(ev) = frame_to_tui_event(frame)
                     && tx.send(ev).await.is_err()
                 {
                     break; // receiver dropped — TUI exited
                 }
             }
-            Ok(Err(e)) => {
-                let _ = tx.send(TuiEvent::Disconnected(e.to_string())).await;
+            Err(RecvError::Lagged(_)) => continue,
+            Err(RecvError::Closed) => {
+                let _ = tx.send(TuiEvent::Disconnected("event connection closed".into())).await;
                 break;
-            }
-            Err(_) => {
-                // 60s timeout — send a keepalive; daemon may have gone quiet
-                // (the rpc() lock and our lock are the same, so we can't call
-                //  ping() here without deadlock — just continue and wait)
-                continue;
             }
         }
     }
@@ -3235,15 +3242,18 @@ fn parse_observation_payload(payload: &HashMap<String, MpValue>) -> ObservationM
     observation
 }
 
+/// Decode a whole payload through the shared client decoder, which accepts
+/// the daemon's string-spelled enum fields that rmpv's direct enum decoding
+/// rejects.
 fn parse_typed_payload<T: serde::de::DeserializeOwned>(
     payload: &HashMap<String, MpValue>,
 ) -> Result<T, String> {
-    rmpv::ext::from_value(payload_value(payload))
-        .map_err(|error| format!("decode typed IPC payload: {error}"))
+    styrene_ipc_client::decode_payload(payload, "typed IPC payload")
+        .map_err(|error| error.to_string())
 }
 
 fn parse_typed_value<T: serde::de::DeserializeOwned>(value: MpValue) -> Result<T, String> {
-    rmpv::ext::from_value(value).map_err(|error| format!("decode typed IPC value: {error}"))
+    styrene_ipc_client::decode_value(value, "typed IPC value").map_err(|error| error.to_string())
 }
 
 fn parse_mark_read_response(
@@ -3873,6 +3883,36 @@ mod tests {
 
         p.insert("active_capabilities".into(), MpValue::Map(Vec::new()));
         assert!(parse_status(&p).unwrap().active_capabilities.is_none());
+    }
+
+    #[test]
+    fn frame_to_tui_event_decodes_pushed_message_with_string_enum_fields() {
+        let payload = HashMap::from([
+            ("id".to_string(), MpValue::from("m1")),
+            ("kind".to_string(), MpValue::from("new")),
+            ("source_hash".to_string(), MpValue::from("aa")),
+            ("destination_hash".to_string(), MpValue::from("bb")),
+            ("content".to_string(), MpValue::from("hello")),
+            ("authentication_state".to_string(), MpValue::from("verified")),
+            ("lifecycle_state".to_string(), MpValue::from("delivered")),
+            ("stamp_state".to_string(), MpValue::from("not_applicable")),
+            ("connection_generation".to_string(), MpValue::from(3_u64)),
+        ]);
+        let frame = Frame {
+            msg_type: MessageType::EventMessage,
+            request_id: [0; REQUEST_ID_SIZE],
+            payload,
+        };
+        let Some(TuiEvent::Message(message)) = frame_to_tui_event(frame) else {
+            panic!("pushed message events must decode");
+        };
+        assert_eq!(message.id, "m1");
+        assert_eq!(message.content, "hello");
+        assert_eq!(
+            message.authentication_state,
+            styrene_ipc::types::MessageAuthenticationState::Verified
+        );
+        assert_eq!(message.lifecycle_state, styrene_ipc::types::MessageLifecycleState::Delivered);
     }
 
     #[test]

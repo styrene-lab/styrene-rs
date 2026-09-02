@@ -165,9 +165,10 @@ async fn ipc_subscribe_messages_receives_new_event() {
         // Verify payload
         assert_eq!(event.payload.get("kind").and_then(|v| v.as_str()), Some("new"));
         assert_eq!(event.payload.get("content").and_then(|v| v.as_str()), Some("ipc-event-msg"));
+        // LXMF messages carry the sender's delivery destination, not its identity.
         assert_eq!(
             event.payload.get("source_hash").and_then(|v| v.as_str()),
-            Some(alice.identity_hash.as_str())
+            Some(alice.delivery_hash.as_str())
         );
     })
     .await;
