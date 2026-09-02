@@ -49,7 +49,7 @@ authorization.
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
-| Operator profile lifecycle | 0/19 | Current-main implementation from tests through frontend migration |
+| Operator profile lifecycle | 12/19 | Launcher packaging checks, typed IPC, and frontend migration |
 | Operation-scoped authorization | 18/18 | Archive after closure review |
 | Native RNode endpoint transport | 11/11 | Archived on 2026-09-02 |
 
@@ -347,9 +347,32 @@ Authority:
 
 ### Operator profiles
 
-An old branch contains a partial prototype, but it is not implementation
-authority. Work must restart on current `main` by porting failing tests before
-production code.
+An old branch contained a partial prototype that was not implementation
+authority. Its Quick and Local root, lease, path-escape, private-permission,
+managed-daemon, and promotion tests now pass on current `main`. The daemon
+composes a managed profile from explicit paths for configuration, identity,
+database, nodes, pages, files, and the socket, with no global fallback. A
+stopped Quick profile promotes to Local through a staged sibling and one
+atomic rename.
+
+Snapshots are immutable hashed generations. A running profile snapshots
+through SQLite online backup over the live connections. A snapshot restores to
+an unused destination as a new generation and is never modified.
+
+Each profile carries a custody record bound only to the daemon's Reticulum
+identity fingerprint. Operators can enroll passphrase-encrypted recovery
+slots. Hardware abandonment claims continuity only when a slot reproduces the
+recorded fingerprint. Otherwise the profile reports continuity unavailable,
+creates no replacement identity, and refuses to start.
+
+Portable profiles live on media that a media inspector reports as encrypted
+and capable, with the runtime root kept host-private. They resolve by a stable
+volume selector and a profile marker, never by a remembered mount path. Safe
+removal quiesces the daemon, checkpoints and synchronizes durable state, and
+releases ownership before reporting the media removable. Media that vanishes
+under a running daemon stops durable writes with no host fallback. Signed
+launcher packaging checks remain open because no launcher packaging exists in
+this repository yet.
 
 The profile lifecycle covers coherent Quick and Local roots, atomic promotion,
 and coherent snapshots. It also covers verified custody recovery, encrypted

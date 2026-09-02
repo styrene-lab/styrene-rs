@@ -4634,8 +4634,10 @@ name = "styrened"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "argon2",
  "async-trait",
  "base64",
+ "chacha20poly1305",
  "ciborium",
  "clap",
  "dirs",
