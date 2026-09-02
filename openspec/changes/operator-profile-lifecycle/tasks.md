@@ -18,9 +18,9 @@
 ## 3. Identity custody
 <!-- specs: operator-profile-lifecycle -->
 
-- [ ] Define and test the daemon RNS identity custody boundary without conflating SDK metadata or unrelated signer roots
-- [ ] Add failing recovery enrollment, fingerprint match, fingerprint mismatch, unavailable hardware, and abandonment tests
-- [ ] Implement encrypted recovery slots and explicit fail-closed hardware-abandonment outcomes
+- [x] Define and test the daemon RNS identity custody boundary without conflating SDK metadata or unrelated signer roots
+- [x] Add failing recovery enrollment, fingerprint match, fingerprint mismatch, unavailable hardware, and abandonment tests
+- [x] Implement encrypted recovery slots and explicit fail-closed hardware-abandonment outcomes
 
 ## 4. Portable operation
 <!-- specs: operator-profile-lifecycle -->

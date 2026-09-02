@@ -515,8 +515,12 @@ impl StoppedManagedProfile {
             create_profile_directories(&paths)?;
             atomic_write_private(&paths.config, b"")
                 .map_err(|source| ProfileError::Io { action: "create profile config", source })?;
-            load_or_create_identity(&paths.identity)
+            let identity = load_or_create_identity(&paths.identity)
                 .map_err(|source| ProfileError::Io { action: "create profile identity", source })?;
+            write_custody(
+                &paths.custody,
+                &CustodyRecord::file(hex::encode(identity.address_hash().as_slice())),
+            )?;
             let manifest = ProfileManifest {
                 format_version: PROFILE_FORMAT_VERSION,
                 id,
@@ -643,6 +647,16 @@ pub enum ProfileError {
     SnapshotMissingComponent(String),
     #[error("profile database: {0}")]
     Database(String),
+    #[error("invalid identity custody record")]
+    InvalidCustody,
+    #[error("profile identity is unavailable: its private key is held outside the profile")]
+    IdentityUnavailable,
+    #[error("unknown recovery slot {0}")]
+    UnknownRecoverySlot(String),
+    #[error("identity custody is not held by hardware")]
+    NotHardwareCustody,
+    #[error("identity custody cryptography failed: {0}")]
+    Custody(String),
 }
 
 fn validate_manifest(manifest: &ProfileManifest) -> Result<(), ProfileError> {
@@ -756,6 +770,10 @@ fn validate_identity(path: &Path) -> Result<(), ProfileError> {
 }
 
 fn profile_identity_hash(path: &Path) -> Result<String, ProfileError> {
+    if matches!(fs::symlink_metadata(path), Err(ref error) if error.kind() == io::ErrorKind::NotFound)
+    {
+        return Err(ProfileError::IdentityUnavailable);
+    }
     let bytes = read_bounded_file(path, PRIVATE_IDENTITY_BYTES)?;
     if bytes.len() as u64 != PRIVATE_IDENTITY_BYTES {
         return Err(ProfileError::InvalidIdentity);
@@ -1538,4 +1556,327 @@ fn make_files_read_only(_root: &Path) -> Result<(), ProfileError> {
 #[cfg(not(unix))]
 fn make_files_writable(_root: &Path) -> Result<(), ProfileError> {
     Ok(())
+}
+
+// ── Identity custody ─────────────────────────────────────────────────────────
+
+const CUSTODY_FORMAT_VERSION: u32 = 1;
+const MAX_CUSTODY_BYTES: u64 = 256 * 1024;
+const RECOVERY_KDF: &str = "argon2id";
+const RECOVERY_KDF_MEMORY_KIB: u32 = 64 * 1024;
+const RECOVERY_KDF_ITERATIONS: u32 = 3;
+const RECOVERY_KDF_PARALLELISM: u32 = 1;
+const RECOVERY_SALT_BYTES: usize = 16;
+const RECOVERY_NONCE_BYTES: usize = 24;
+
+/// Who holds the daemon's private Reticulum identity key.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CustodyBackend {
+    /// The private key file inside the profile's identity directory.
+    File,
+    /// Key material held by hardware outside the profile. The profile keeps
+    /// only the public fingerprint and any enrolled recovery slots.
+    Hardware,
+}
+
+/// One passphrase-encrypted copy of the private identity key, bound to the
+/// public fingerprint it must reproduce.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverySlot {
+    pub id: String,
+    pub created_at_unix: u64,
+    pub fingerprint: String,
+    pub kdf: String,
+    pub memory_kib: u32,
+    pub iterations: u32,
+    pub parallelism: u32,
+    pub salt: String,
+    pub nonce: String,
+    pub ciphertext: String,
+}
+
+/// The custody record of the daemon RNS identity. It names one public
+/// fingerprint, the backend holding the private key, and enrolled recovery
+/// slots. It carries no SDK identity metadata and no unrelated signer root.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustodyRecord {
+    pub format_version: u32,
+    pub backend: CustodyBackend,
+    /// Hex address hash of the daemon RNS identity.
+    pub fingerprint: String,
+    pub hardware_locator: Option<String>,
+    pub recovery_slots: Vec<RecoverySlot>,
+}
+
+impl CustodyRecord {
+    fn file(fingerprint: String) -> Self {
+        Self {
+            format_version: CUSTODY_FORMAT_VERSION,
+            backend: CustodyBackend::File,
+            fingerprint,
+            hardware_locator: None,
+            recovery_slots: Vec::new(),
+        }
+    }
+}
+
+/// Why a recovery slot could not prove continuity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContinuityFailure {
+    /// No recovery slot is enrolled, or none was offered.
+    NoRecoverySlot,
+    /// The slot did not decrypt with the offered passphrase.
+    WrongPassphrase,
+    /// The slot decrypted to an identity with a different fingerprint.
+    FingerprintMismatch,
+    /// The slot's stored material is malformed.
+    SlotCorrupt,
+}
+
+/// The outcome of a recovery or abandonment attempt. Continuity is claimed
+/// only after a recovered identity reproduces the recorded fingerprint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RecoveryOutcome {
+    Continuity { fingerprint: String },
+    ContinuityUnavailable { fingerprint: String, reason: ContinuityFailure },
+}
+
+impl RecoveryOutcome {
+    pub fn is_continuity(&self) -> bool {
+        matches!(self, Self::Continuity { .. })
+    }
+}
+
+impl StoppedManagedProfile {
+    /// The custody record. A profile created before custody records existed
+    /// receives a file-backed record derived from its identity.
+    pub fn custody(&self) -> Result<CustodyRecord, ProfileError> {
+        if !self.paths.custody.exists() {
+            let record = CustodyRecord::file(profile_identity_hash(&self.paths.identity)?);
+            write_custody(&self.paths.custody, &record)?;
+            return Ok(record);
+        }
+        read_custody(&self.paths.custody)
+    }
+
+    /// Enroll a passphrase-protected recovery slot holding the private
+    /// identity key. Requires the key to be readable now.
+    pub fn enroll_recovery_slot(&self, passphrase: &[u8]) -> Result<String, ProfileError> {
+        let mut record = self.custody()?;
+        let key_bytes = read_bounded_file(&self.paths.identity, PRIVATE_IDENTITY_BYTES)?;
+        let fingerprint = profile_identity_hash(&self.paths.identity)?;
+        if fingerprint != record.fingerprint {
+            return Err(ProfileError::InvalidCustody);
+        }
+        let slot = seal_recovery_slot(&key_bytes, passphrase, &fingerprint)?;
+        let id = slot.id.clone();
+        record.recovery_slots.push(slot);
+        write_custody(&self.paths.custody, &record)?;
+        Ok(id)
+    }
+
+    /// Check whether a slot reproduces the recorded fingerprint. Writes nothing.
+    pub fn verify_recovery_slot(
+        &self,
+        slot_id: &str,
+        passphrase: &[u8],
+    ) -> Result<RecoveryOutcome, ProfileError> {
+        let record = self.custody()?;
+        let slot = record
+            .recovery_slots
+            .iter()
+            .find(|slot| slot.id == slot_id)
+            .ok_or_else(|| ProfileError::UnknownRecoverySlot(slot_id.to_string()))?;
+        Ok(match open_recovery_slot(slot, passphrase, &record.fingerprint) {
+            Ok(_) => RecoveryOutcome::Continuity { fingerprint: record.fingerprint.clone() },
+            Err(reason) => RecoveryOutcome::ContinuityUnavailable {
+                fingerprint: record.fingerprint.clone(),
+                reason,
+            },
+        })
+    }
+
+    /// Hand the private key to hardware custody: the profile keeps the
+    /// fingerprint and recovery slots and drops its plaintext key file.
+    pub fn move_to_hardware_custody(&self, locator: &str) -> Result<(), ProfileError> {
+        let mut record = self.custody()?;
+        if profile_identity_hash(&self.paths.identity)? != record.fingerprint {
+            return Err(ProfileError::InvalidCustody);
+        }
+        record.backend = CustodyBackend::Hardware;
+        record.hardware_locator = Some(locator.to_string());
+        write_custody(&self.paths.custody, &record)?;
+        fs::remove_file(&self.paths.identity)
+            .map_err(|source| ProfileError::Io { action: "release plaintext identity", source })?;
+        sync_directory(self.paths.identity.parent().expect("identity has parent"))
+            .map_err(|source| ProfileError::Io { action: "sync identity directory", source })?;
+        Ok(())
+    }
+
+    /// Whether the private key is available to start the daemon right now.
+    pub fn identity_available(&self) -> bool {
+        validate_identity(&self.paths.identity).is_ok()
+    }
+
+    /// Abandon hardware custody. Continuity is claimed only when an enrolled
+    /// slot decrypts with `passphrase` to the recorded fingerprint, in which
+    /// case the key returns to file custody. Otherwise nothing is written and
+    /// no replacement identity is created under this profile.
+    pub fn abandon_hardware_custody(
+        &self,
+        passphrase: Option<&[u8]>,
+    ) -> Result<RecoveryOutcome, ProfileError> {
+        let mut record = self.custody()?;
+        if record.backend != CustodyBackend::Hardware {
+            return Err(ProfileError::NotHardwareCustody);
+        }
+        let fingerprint = record.fingerprint.clone();
+        let Some(passphrase) = passphrase else {
+            return Ok(RecoveryOutcome::ContinuityUnavailable {
+                fingerprint,
+                reason: ContinuityFailure::NoRecoverySlot,
+            });
+        };
+        if record.recovery_slots.is_empty() {
+            return Ok(RecoveryOutcome::ContinuityUnavailable {
+                fingerprint,
+                reason: ContinuityFailure::NoRecoverySlot,
+            });
+        }
+        let mut last_failure = ContinuityFailure::NoRecoverySlot;
+        for slot in &record.recovery_slots {
+            match open_recovery_slot(slot, passphrase, &fingerprint) {
+                Ok(key_bytes) => {
+                    crate::identity_store::write_identity_file(&self.paths.identity, &key_bytes)
+                        .map_err(|source| ProfileError::Io {
+                            action: "restore identity file",
+                            source,
+                        })?;
+                    validate_identity(&self.paths.identity)?;
+                    record.backend = CustodyBackend::File;
+                    record.hardware_locator = None;
+                    write_custody(&self.paths.custody, &record)?;
+                    return Ok(RecoveryOutcome::Continuity { fingerprint });
+                }
+                Err(reason) => last_failure = reason,
+            }
+        }
+        Ok(RecoveryOutcome::ContinuityUnavailable { fingerprint, reason: last_failure })
+    }
+}
+
+fn read_custody(path: &Path) -> Result<CustodyRecord, ProfileError> {
+    let bytes = read_bounded_file(path, MAX_CUSTODY_BYTES)?;
+    let record: CustodyRecord =
+        toml::from_str(std::str::from_utf8(&bytes).map_err(|_| ProfileError::InvalidCustody)?)
+            .map_err(|_| ProfileError::InvalidCustody)?;
+    if record.format_version != CUSTODY_FORMAT_VERSION {
+        return Err(ProfileError::UnsupportedFormat(record.format_version));
+    }
+    if record.fingerprint.len() != 32 || !record.fingerprint.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(ProfileError::InvalidCustody);
+    }
+    Ok(record)
+}
+
+fn write_custody(path: &Path, record: &CustodyRecord) -> Result<(), ProfileError> {
+    let bytes = toml::to_string_pretty(record).map_err(ProfileError::SerializeManifest)?;
+    atomic_write_private(path, bytes.as_bytes())
+        .map_err(|source| ProfileError::Io { action: "write identity custody", source })
+}
+
+fn derive_recovery_key(
+    passphrase: &[u8],
+    salt: &[u8],
+    memory_kib: u32,
+    iterations: u32,
+    parallelism: u32,
+) -> Result<zeroize::Zeroizing<[u8; 32]>, ProfileError> {
+    use argon2::{Algorithm, Argon2, Params, Version};
+    let params = Params::new(memory_kib, iterations, parallelism, Some(32))
+        .map_err(|error| ProfileError::Custody(error.to_string()))?;
+    let mut key = zeroize::Zeroizing::new([0_u8; 32]);
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
+        .hash_password_into(passphrase, salt, key.as_mut())
+        .map_err(|error| ProfileError::Custody(error.to_string()))?;
+    Ok(key)
+}
+
+fn seal_recovery_slot(
+    key_bytes: &[u8],
+    passphrase: &[u8],
+    fingerprint: &str,
+) -> Result<RecoverySlot, ProfileError> {
+    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+    use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+    let mut salt = [0_u8; RECOVERY_SALT_BYTES];
+    OsRng.fill_bytes(&mut salt);
+    let mut nonce = [0_u8; RECOVERY_NONCE_BYTES];
+    OsRng.fill_bytes(&mut nonce);
+    let key = derive_recovery_key(
+        passphrase,
+        &salt,
+        RECOVERY_KDF_MEMORY_KIB,
+        RECOVERY_KDF_ITERATIONS,
+        RECOVERY_KDF_PARALLELISM,
+    )?;
+    let cipher = XChaCha20Poly1305::new(key.as_ref().into());
+    let ciphertext = cipher
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload { msg: key_bytes, aad: fingerprint.as_bytes() },
+        )
+        .map_err(|_| ProfileError::Custody("seal recovery slot".into()))?;
+    Ok(RecoverySlot {
+        id: random_id(),
+        created_at_unix: now_unix(),
+        fingerprint: fingerprint.to_string(),
+        kdf: RECOVERY_KDF.into(),
+        memory_kib: RECOVERY_KDF_MEMORY_KIB,
+        iterations: RECOVERY_KDF_ITERATIONS,
+        parallelism: RECOVERY_KDF_PARALLELISM,
+        salt: hex::encode(salt),
+        nonce: hex::encode(nonce),
+        ciphertext: hex::encode(ciphertext),
+    })
+}
+
+/// Decrypt a slot and prove it reproduces `expected_fingerprint`.
+fn open_recovery_slot(
+    slot: &RecoverySlot,
+    passphrase: &[u8],
+    expected_fingerprint: &str,
+) -> Result<zeroize::Zeroizing<Vec<u8>>, ContinuityFailure> {
+    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+    use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+    if slot.kdf != RECOVERY_KDF || slot.fingerprint != expected_fingerprint {
+        return Err(ContinuityFailure::FingerprintMismatch);
+    }
+    let salt = hex::decode(&slot.salt).map_err(|_| ContinuityFailure::SlotCorrupt)?;
+    let nonce = hex::decode(&slot.nonce).map_err(|_| ContinuityFailure::SlotCorrupt)?;
+    let ciphertext = hex::decode(&slot.ciphertext).map_err(|_| ContinuityFailure::SlotCorrupt)?;
+    if nonce.len() != RECOVERY_NONCE_BYTES || salt.is_empty() {
+        return Err(ContinuityFailure::SlotCorrupt);
+    }
+    let key =
+        derive_recovery_key(passphrase, &salt, slot.memory_kib, slot.iterations, slot.parallelism)
+            .map_err(|_| ContinuityFailure::SlotCorrupt)?;
+    let cipher = XChaCha20Poly1305::new(key.as_ref().into());
+    let key_bytes = cipher
+        .decrypt(
+            XNonce::from_slice(&nonce),
+            Payload { msg: &ciphertext, aad: expected_fingerprint.as_bytes() },
+        )
+        .map_err(|_| ContinuityFailure::WrongPassphrase)?;
+    let key_bytes = zeroize::Zeroizing::new(key_bytes);
+    let identity = PrivateIdentity::from_private_key_bytes(&key_bytes)
+        .map_err(|_| ContinuityFailure::SlotCorrupt)?;
+    if hex::encode(identity.address_hash().as_slice()) != expected_fingerprint {
+        return Err(ContinuityFailure::FingerprintMismatch);
+    }
+    Ok(key_bytes)
 }

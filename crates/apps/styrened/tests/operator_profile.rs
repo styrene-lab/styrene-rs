@@ -720,3 +720,176 @@ fn tampered_snapshot_is_rejected_before_restore_publishes_anything() {
         })
     );
 }
+
+// ── Identity custody ─────────────────────────────────────────────────────────
+
+use styrened::operator_profile::{ContinuityFailure, CustodyBackend, RecoveryOutcome};
+
+fn identity_fingerprint(path: &Path) -> String {
+    let bytes = fs::read(path).unwrap();
+    let identity = rns_core::identity::PrivateIdentity::from_private_key_bytes(&bytes).unwrap();
+    hex::encode(identity.address_hash().as_slice())
+}
+
+#[test]
+fn custody_record_binds_only_the_daemon_rns_identity() {
+    let (_temp, profiles, runtime) = roots("custody-boundary");
+    let root = profiles.join("operator-home");
+    let profile = StoppedManagedProfile::create_local(&root, &runtime, "Home node").unwrap();
+    let custody = profile.custody().expect("custody record");
+    assert_eq!(custody.backend, CustodyBackend::File);
+    assert_eq!(custody.fingerprint, identity_fingerprint(&profile.paths().identity));
+    assert!(custody.recovery_slots.is_empty());
+    assert!(custody.hardware_locator.is_none());
+    let text = fs::read_to_string(&profile.paths().custody).unwrap();
+    for foreign in ["sdk", "signer", "root_secret", "identity_id", "vault"] {
+        assert!(!text.contains(foreign), "custody record must not carry {foreign}: {text}");
+    }
+    assert_beneath(&profile.paths().custody, &profile.paths().root);
+    // A snapshot carries the custody record beside the identity it describes.
+    let snapshot = profile.snapshot().unwrap();
+    assert!(snapshot.manifest().components.contains_key("identity/custody.toml"));
+    assert_eq!(snapshot.manifest().identity_hash, custody.fingerprint);
+}
+
+#[test]
+fn recovery_enrollment_reproduces_the_fingerprint_and_rejects_wrong_passphrases() {
+    let (_temp, profiles, runtime) = roots("custody-enroll");
+    let root = profiles.join("operator-home");
+    let profile = StoppedManagedProfile::create_local(&root, &runtime, "Home node").unwrap();
+    let key = fs::read(&profile.paths().identity).unwrap();
+    let slot = profile.enroll_recovery_slot(b"correct horse").expect("enroll");
+    let custody = profile.custody().unwrap();
+    assert_eq!(custody.recovery_slots.len(), 1);
+    let stored = &custody.recovery_slots[0];
+    assert_eq!(stored.id, slot);
+    assert_eq!(stored.kdf, "argon2id");
+    assert!(
+        !hex::decode(&stored.ciphertext)
+            .unwrap()
+            .windows(16)
+            .any(|w| key.windows(16).any(|k| k == w))
+    );
+    assert_eq!(
+        profile.verify_recovery_slot(&slot, b"correct horse").unwrap(),
+        RecoveryOutcome::Continuity { fingerprint: custody.fingerprint.clone() }
+    );
+    assert_eq!(
+        profile.verify_recovery_slot(&slot, b"wrong").unwrap(),
+        RecoveryOutcome::ContinuityUnavailable {
+            fingerprint: custody.fingerprint.clone(),
+            reason: ContinuityFailure::WrongPassphrase,
+        }
+    );
+    assert!(profile.verify_recovery_slot("missing", b"correct horse").is_err());
+    assert_eq!(fs::read(&profile.paths().identity).unwrap(), key, "verification writes nothing");
+}
+
+#[test]
+fn recovery_slot_with_mismatched_fingerprint_cannot_claim_continuity() {
+    let (_temp, profiles, runtime) = roots("custody-mismatch");
+    let root = profiles.join("operator-home");
+    let profile = StoppedManagedProfile::create_local(&root, &runtime, "Home node").unwrap();
+    let slot = profile.enroll_recovery_slot(b"pass").unwrap();
+    let custody_path = profile.paths().custody.clone();
+    let other = rns_core::identity::PrivateIdentity::new_from_rand(rand_core::OsRng);
+    let other_fingerprint = hex::encode(other.address_hash().as_slice());
+    let original = profile.custody().unwrap();
+    // Only the record's own fingerprint changes; the slot keeps its binding.
+    let text = fs::read_to_string(&custody_path).unwrap().replacen(
+        &original.fingerprint,
+        &other_fingerprint,
+        1,
+    );
+    fs::write(&custody_path, text).unwrap();
+    let outcome = profile.verify_recovery_slot(&slot, b"pass").unwrap();
+    assert_eq!(
+        outcome,
+        RecoveryOutcome::ContinuityUnavailable {
+            fingerprint: other_fingerprint,
+            reason: ContinuityFailure::FingerprintMismatch,
+        }
+    );
+    assert!(!outcome.is_continuity());
+}
+
+#[tokio::test]
+async fn hardware_custody_unavailable_without_a_recovery_slot_fails_closed() {
+    let (_temp, profiles, runtime) = roots("custody-hardware-unavailable");
+    let root = profiles.join("operator-home");
+    let profile = StoppedManagedProfile::create_local(&root, &runtime, "Home node").unwrap();
+    let fingerprint = profile.custody().unwrap().fingerprint;
+    profile.move_to_hardware_custody("token:serial-1").expect("hardware custody");
+    let custody = profile.custody().unwrap();
+    assert_eq!(custody.backend, CustodyBackend::Hardware);
+    assert_eq!(custody.hardware_locator.as_deref(), Some("token:serial-1"));
+    assert!(!profile.paths().identity.exists(), "plaintext key left the profile");
+    assert!(!profile.identity_available());
+
+    let outcome = profile.abandon_hardware_custody(None).unwrap();
+    assert_eq!(
+        outcome,
+        RecoveryOutcome::ContinuityUnavailable {
+            fingerprint: fingerprint.clone(),
+            reason: ContinuityFailure::NoRecoverySlot,
+        }
+    );
+    let outcome = profile.abandon_hardware_custody(Some(b"anything")).unwrap();
+    assert!(!outcome.is_continuity());
+    assert!(!profile.paths().identity.exists(), "no replacement identity is created");
+    assert_eq!(
+        profile.custody().unwrap().fingerprint,
+        fingerprint,
+        "old identity is not overwritten"
+    );
+    let failure = profile.start().await.err().expect("profile without its key must not start");
+    assert!(failure.to_string().contains("identity"), "unexpected error: {failure}");
+    let profile = failure.into_profile();
+    assert!(!profile.paths().identity.exists());
+}
+
+#[tokio::test]
+async fn hardware_abandonment_with_enrolled_recovery_restores_verified_continuity() {
+    let (_temp, profiles, runtime) = roots("custody-hardware-recover");
+    let root = profiles.join("operator-home");
+    let profile = StoppedManagedProfile::create_local(&root, &runtime, "Home node").unwrap();
+    fs::write(&profile.paths().config, "role = \"propagation_client\"\n").unwrap();
+    let fingerprint = profile.custody().unwrap().fingerprint;
+    let key = fs::read(&profile.paths().identity).unwrap();
+    profile.enroll_recovery_slot(b"field passphrase").unwrap();
+    profile.move_to_hardware_custody("token:serial-2").unwrap();
+    assert!(!profile.identity_available());
+
+    let wrong = profile.abandon_hardware_custody(Some(b"not it")).unwrap();
+    assert_eq!(
+        wrong,
+        RecoveryOutcome::ContinuityUnavailable {
+            fingerprint: fingerprint.clone(),
+            reason: ContinuityFailure::WrongPassphrase,
+        }
+    );
+    assert!(!profile.paths().identity.exists());
+    assert_eq!(profile.custody().unwrap().backend, CustodyBackend::Hardware);
+
+    let recovered = profile.abandon_hardware_custody(Some(b"field passphrase")).unwrap();
+    assert_eq!(recovered, RecoveryOutcome::Continuity { fingerprint: fingerprint.clone() });
+    assert_eq!(fs::read(&profile.paths().identity).unwrap(), key);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&profile.paths().identity).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    let custody = profile.custody().unwrap();
+    assert_eq!(custody.backend, CustodyBackend::File);
+    assert_eq!(custody.recovery_slots.len(), 1, "slots survive recovery");
+    assert!(profile.identity_available());
+    assert!(
+        profile.abandon_hardware_custody(Some(b"field passphrase")).is_err(),
+        "not hardware custody any more"
+    );
+    let running = profile.start().await.expect("recovered profile starts");
+    assert_eq!(running.identity_hash(), fingerprint);
+    let profile = running.shutdown().await;
+    drop(profile);
+}
