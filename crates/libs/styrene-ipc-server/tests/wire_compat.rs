@@ -302,6 +302,15 @@ fn identity_backup_request_discriminants_are_additive_and_round_trip() {
         (MessageType::QueryIdentityBackupMetadata, 0xAD),
         (MessageType::CmdExportIdentityBackup, 0xAE),
         (MessageType::CmdRestoreIdentityBackup, 0xAF),
+        (MessageType::QueryProfileInventory, 0xB0),
+        (MessageType::CmdProfileCreate, 0xB1),
+        (MessageType::CmdProfilePromote, 0xB2),
+        (MessageType::CmdProfileSnapshot, 0xB3),
+        (MessageType::CmdProfileRestore, 0xB4),
+        (MessageType::CmdProfileExport, 0xB5),
+        (MessageType::CmdProfileImport, 0xB6),
+        (MessageType::CmdProfileAdopt, 0xB7),
+        (MessageType::QueryProfileOperation, 0xB8),
     ] {
         let encoded =
             styrene_ipc_server::wire::encode_frame(msg_type, &FIXED_REQUEST_ID, &HashMap::new())

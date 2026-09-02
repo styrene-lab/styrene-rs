@@ -19,10 +19,13 @@ use styrene_ipc::types::{
     IdentityBackupMetadata, IdentityInfo, IdentityRestoreOutcome, InterfaceDetail, LinkSnapshot,
     MessageInfo, MessagePage, MessagingDisposition, MessagingOperationOutcome,
     NetworkOperationInfo, ObservationMetadata, ObservationSource, PageContent, PageInfo,
-    PageNavigationRequest, PathInfo, PropagationQuery, PropagationSnapshot, RebootResult,
-    RemoteStatusInfo, RequestObservationInfo, ResourceTransferInfo, RouteEventInfo, RouteEventKind,
-    RouteLossReason, SendChatOutcome, SendChatRequest, StandardPropagationSnapshot,
-    StartNetworkOperationInfo, StartRequestInfo, TunnelInfo, TunnelOperationInfo,
+    PageNavigationRequest, PathInfo, ProfileAdoptRequest, ProfileCreateRequest,
+    ProfileExportRequest, ProfileInventory, ProfileOperationOutcome, ProfileOperationProgress,
+    ProfilePromoteRequest, ProfileRestoreRequest, ProfileSnapshotRequest, PropagationQuery,
+    PropagationSnapshot, RebootResult, RemoteStatusInfo, RequestObservationInfo,
+    ResourceTransferInfo, RouteEventInfo, RouteEventKind, RouteLossReason, SendChatOutcome,
+    SendChatRequest, StandardPropagationSnapshot, StartNetworkOperationInfo, StartRequestInfo,
+    TunnelInfo, TunnelOperationInfo,
 };
 use styrene_ipc_wire::{self as wire, Frame, MessageType, REQUEST_ID_SIZE};
 use thiserror::Error;
@@ -720,6 +723,85 @@ impl Client {
         let deadline = Duration::from_secs(timeout_secs.unwrap_or(5).saturating_add(5));
         let frame = self.request(MessageType::CmdPageListSites, payload, deadline).await?;
         decode_key(&frame.payload, &["pages"], "page inventory")
+    }
+
+    // ── Operator profiles ───────────────────────────────────────────────
+
+    pub async fn profile_inventory(&self) -> Result<ProfileInventory, ClientError> {
+        let frame = self
+            .request(MessageType::QueryProfileInventory, HashMap::new(), DEFAULT_DEADLINE)
+            .await?;
+        decode_typed_key(&frame.payload, "inventory", "profile inventory")
+    }
+
+    async fn profile_command<T: serde::Serialize>(
+        &self,
+        message_type: MessageType,
+        request: &T,
+    ) -> Result<ProfileOperationOutcome, ClientError> {
+        let payload =
+            HashMap::from([("request".into(), encode_typed(request, "profile request")?)]);
+        let frame = self.request(message_type, payload, SEND_DEADLINE).await?;
+        decode_typed_key(&frame.payload, "outcome", "profile outcome")
+    }
+
+    pub async fn create_profile(
+        &self,
+        request: &ProfileCreateRequest,
+    ) -> Result<ProfileOperationOutcome, ClientError> {
+        self.profile_command(MessageType::CmdProfileCreate, request).await
+    }
+
+    pub async fn promote_profile(
+        &self,
+        request: &ProfilePromoteRequest,
+    ) -> Result<ProfileOperationOutcome, ClientError> {
+        self.profile_command(MessageType::CmdProfilePromote, request).await
+    }
+
+    pub async fn snapshot_profile(
+        &self,
+        request: &ProfileSnapshotRequest,
+    ) -> Result<ProfileOperationOutcome, ClientError> {
+        self.profile_command(MessageType::CmdProfileSnapshot, request).await
+    }
+
+    pub async fn restore_profile(
+        &self,
+        request: &ProfileRestoreRequest,
+    ) -> Result<ProfileOperationOutcome, ClientError> {
+        self.profile_command(MessageType::CmdProfileRestore, request).await
+    }
+
+    pub async fn export_profile(
+        &self,
+        request: &ProfileExportRequest,
+    ) -> Result<ProfileOperationOutcome, ClientError> {
+        self.profile_command(MessageType::CmdProfileExport, request).await
+    }
+
+    pub async fn import_profile(
+        &self,
+        request: &ProfileRestoreRequest,
+    ) -> Result<ProfileOperationOutcome, ClientError> {
+        self.profile_command(MessageType::CmdProfileImport, request).await
+    }
+
+    pub async fn adopt_profile(
+        &self,
+        request: &ProfileAdoptRequest,
+    ) -> Result<ProfileOperationOutcome, ClientError> {
+        self.profile_command(MessageType::CmdProfileAdopt, request).await
+    }
+
+    pub async fn profile_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<ProfileOperationProgress, ClientError> {
+        let payload = HashMap::from([("operation_id".into(), Value::from(operation_id))]);
+        let frame =
+            self.request(MessageType::QueryProfileOperation, payload, DEFAULT_DEADLINE).await?;
+        decode_typed_key(&frame.payload, "progress", "profile operation")
     }
 
     pub async fn standard_propagation(&self) -> Result<StandardPropagationSnapshot, ClientError> {
@@ -1892,6 +1974,12 @@ mod tests {
         rmpv::ext::to_value(json).expect("project typed value")
     }
 
+    fn typed_bin<T: serde::Serialize>(value: &T) -> Value {
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &typed_value(value)).expect("encode typed bin");
+        Value::Binary(bytes)
+    }
+
     fn typed_payload<T: serde::Serialize>(value: &T) -> HashMap<String, Value> {
         typed_value(value)
             .as_map()
@@ -2395,6 +2483,59 @@ mod tests {
             generation: ConnectionGeneration(1),
         };
         assert!(other.route_event().is_err());
+    }
+
+    #[tokio::test]
+    async fn profile_operations_encode_typed_requests_and_decode_typed_outcomes() {
+        use styrene_ipc::types::{
+            ProfileCreateRequest, ProfileInfo, ProfileInventory, ProfileOperationOutcome,
+            ProfileOperationProgress, ProfileOperationState, ProfileStorageKind,
+        };
+        let (client, mut server) = pair(2);
+        let mut request = ProfileCreateRequest::default();
+        request.storage = ProfileStorageKind::Quick;
+        request.display_name = "Field session".into();
+        let create = tokio::spawn({
+            let client = client.clone();
+            async move { client.create_profile(&request).await }
+        });
+        let frame = wire::read_frame_async(&mut server).await.expect("create request");
+        assert_eq!(frame.msg_type, MessageType::CmdProfileCreate);
+        let encoded =
+            frame.payload.get("request").and_then(Value::as_slice).expect("typed request");
+        let decoded: ProfileCreateRequest = decode_value(
+            rmpv::decode::read_value(&mut &encoded[..]).expect("msgpack request"),
+            "request",
+        )
+        .expect("server decodes");
+        assert_eq!(decoded.storage, ProfileStorageKind::Quick);
+        assert_eq!(decoded.display_name, "Field session");
+        let mut outcome = ProfileOperationOutcome::default();
+        let mut progress = ProfileOperationProgress::default();
+        progress.operation_id = "op-1".into();
+        progress.kind = "create".into();
+        progress.state = ProfileOperationState::Completed;
+        outcome.progress = progress;
+        let mut profile = ProfileInfo::default();
+        profile.id = "p1".into();
+        profile.storage = ProfileStorageKind::Quick;
+        outcome.profile = Some(profile);
+        let payload = HashMap::from([("outcome".to_string(), typed_bin(&outcome))]);
+        reply(&mut server, MessageType::Result, &frame.request_id, &payload).await;
+        let received = create.await.expect("task").expect("outcome");
+        assert_eq!(received, outcome);
+
+        let inventory_task = tokio::spawn({
+            let client = client.clone();
+            async move { client.profile_inventory().await }
+        });
+        let frame = wire::read_frame_async(&mut server).await.expect("inventory request");
+        assert_eq!(frame.msg_type, MessageType::QueryProfileInventory);
+        let mut inventory = ProfileInventory::default();
+        inventory.active_profile_id = Some("p1".into());
+        let payload = HashMap::from([("inventory".to_string(), typed_bin(&inventory))]);
+        reply(&mut server, MessageType::Result, &frame.request_id, &payload).await;
+        assert_eq!(inventory_task.await.expect("task").expect("inventory"), inventory);
     }
 
     #[tokio::test]

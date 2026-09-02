@@ -2945,3 +2945,207 @@ mod capability_tests {
         }
     }
 }
+
+// ── Operator profiles ────────────────────────────────────────────────────────
+
+/// Where a profile's durable state lives and who owns its daemon.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ProfileStorageKind {
+    /// Temporary managed root, removed when its owner closes it.
+    Quick,
+    /// Persistent managed root.
+    #[default]
+    Local,
+    /// Encrypted removable root resolved by a stable selector.
+    Portable,
+    /// An external daemon owns the profile; nothing here is managed.
+    Connected,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Who holds the profile lease right now.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileOwnership {
+    /// Another owner holds the exclusive writer lease.
+    pub leased_elsewhere: bool,
+    /// This daemon holds the lease.
+    pub held_by_daemon: bool,
+    /// This daemon runs from the profile.
+    pub active: bool,
+}
+
+/// How the profile persists.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfilePersistence {
+    pub durable: bool,
+    /// The root is removed when its owner releases it.
+    pub removed_on_release: bool,
+    pub snapshot_count: u32,
+}
+
+/// The daemon identity custody summary of a profile.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileCustodyInfo {
+    /// `file` or `hardware`.
+    pub backend: String,
+    /// Hex address hash of the daemon RNS identity.
+    pub fingerprint: String,
+    pub recovery_slots: u32,
+    pub identity_available: bool,
+}
+
+/// Network defaults the profile's daemon applies.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileNetworkPolicy {
+    /// Managed profiles bind loopback ephemeral listeners unless configured.
+    pub conservative_defaults: bool,
+}
+
+/// One profile as the backend knows it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileInfo {
+    pub id: String,
+    pub display_name: String,
+    pub storage: ProfileStorageKind,
+    pub generation: u64,
+    pub root: String,
+    pub created_at_unix: u64,
+    pub ownership: ProfileOwnership,
+    pub persistence: ProfilePersistence,
+    pub custody: ProfileCustodyInfo,
+    pub network_policy: ProfileNetworkPolicy,
+    /// Present for Portable profiles: the stable volume selector.
+    pub volume_selector: Option<String>,
+}
+
+/// Every profile the backend can see plus the one it runs from.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileInventory {
+    pub profiles: Vec<ProfileInfo>,
+    pub active_profile_id: Option<String>,
+    pub profiles_root: String,
+}
+
+/// Create a managed profile.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileCreateRequest {
+    pub storage: ProfileStorageKind,
+    pub display_name: String,
+    /// Local profiles: the root directory to create. Quick profiles ignore it.
+    pub root: Option<String>,
+    /// Portable profiles: the mount point of the encrypted media.
+    pub media_root: Option<String>,
+}
+
+/// Promote a stopped Quick profile to a Local destination.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfilePromoteRequest {
+    pub profile_id: String,
+    pub destination: String,
+}
+
+/// Snapshot a profile in place.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileSnapshotRequest {
+    pub profile_id: String,
+}
+
+/// One snapshot generation.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileSnapshotInfo {
+    pub snapshot_id: String,
+    pub profile_id: String,
+    pub profile_generation: u64,
+    pub identity_fingerprint: String,
+    pub created_at_unix: u64,
+    pub root: String,
+    pub component_count: u32,
+}
+
+/// Restore a snapshot, or import an external snapshot, to an unused destination.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileRestoreRequest {
+    pub snapshot_root: String,
+    pub destination: String,
+}
+
+/// Export a profile as a verified snapshot outside the profile.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileExportRequest {
+    pub profile_id: String,
+    pub destination: String,
+}
+
+/// Adopt an existing profile root into the inventory.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileAdoptRequest {
+    pub root: String,
+}
+
+/// Where a profile operation stands.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ProfileOperationState {
+    #[default]
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Progress of one profile operation.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileOperationProgress {
+    pub operation_id: String,
+    pub kind: String,
+    pub state: ProfileOperationState,
+    pub detail: Option<String>,
+    pub profile_id: Option<String>,
+}
+
+/// The typed result of a profile mutation.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+#[non_exhaustive]
+pub struct ProfileOperationOutcome {
+    pub progress: ProfileOperationProgress,
+    pub profile: Option<ProfileInfo>,
+    pub snapshot: Option<ProfileSnapshotInfo>,
+    /// The change takes effect only after the daemon restarts from the
+    /// resulting profile.
+    pub restart_required: bool,
+}

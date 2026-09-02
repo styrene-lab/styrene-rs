@@ -464,6 +464,9 @@ impl DaemonEvents for StubDaemon {
     }
 }
 
+#[async_trait]
+impl DaemonProfiles for StubDaemon {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

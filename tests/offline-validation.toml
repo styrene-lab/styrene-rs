@@ -48,6 +48,7 @@ selected_targets = [
   "styrened:test/nomadnet_pages_offline",
   "styrened:test/nomadnet_fixtures",
   "styrened:test/operator_profile",
+  "styrened:test/profile_ipc",
   "styrened:test/receipt_bridge",
   "styrened:test/receipt_mapping",
   "styrened:test/rns_crypto",
