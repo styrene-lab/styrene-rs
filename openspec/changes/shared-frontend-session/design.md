@@ -16,6 +16,12 @@ and no frontend imports server wire internals.
   `ecbac266b8bf743958df659bbc75f015d197221b`, pins that revision for the
   desktop and mobile applications.
 
+The pair advanced on 2026-09-02. `styrene-rs` moved to
+`5895790f8005426a1c62287ca75bfafe904ead7a` (merge of #57). `styrene-ui` moved
+to pull request #17, head `a074376dee29740279b96e84e0798edcd258be72`. That
+pair adds Quick, Local, and Connected profile selection and backend profile
+truth.
+
 Desktop validation at that pair covered `cargo test -p styrene-dx` with 115
 passing tests and the ignored Live-failure smoke run explicitly. It also
 covered warning-denied Clippy with the CI exclusions, workspace tests, and the

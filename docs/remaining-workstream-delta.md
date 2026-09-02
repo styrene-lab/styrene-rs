@@ -49,7 +49,7 @@ authorization.
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
-| Operator profile lifecycle | 14/19 | Launcher packaging checks, frontend migration, and verification |
+| Operator profile lifecycle | 16/19 | Launcher packaging checks, removal of the remaining unmanaged runtime path, and packaging validation |
 | Operation-scoped authorization | 18/18 | Archive after closure review |
 | Native RNode endpoint transport | 11/11 | Archived on 2026-09-02 |
 
@@ -384,9 +384,15 @@ source is released.
 The session layer now opens Quick, Local, Portable, and Connected sessions and
 reads profile truth from the daemon's inventory. Live is an observed condition
 rather than a profile. The TUI runs its ephemeral mode as a managed Quick
-session and labels the profile from backend truth. Its Standard mode still
-composes an unmanaged runtime on the legacy paths, and the desktop migration
-follows in `styrene-ui`.
+session and labels the profile from backend truth. The `styrene-ui` desktop
+selects Quick, Local, and Connected profiles through the same session layer.
+It renders ownership, persistence, custody, and network policy from the
+daemon's record.
+
+A parity test shows a managed session and a Connected session report
+identical profile records. The TUI's Standard mode still composes an
+unmanaged runtime on the legacy paths, so the duplicate lifecycle removal
+stays open.
 
 The profile lifecycle covers coherent Quick and Local roots, atomic promotion,
 and coherent snapshots. It also covers verified custody recovery, encrypted
