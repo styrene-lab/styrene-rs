@@ -45,7 +45,7 @@ authorization.
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
 | Shared frontend session | 9/29 | Negotiation, event/reconnect behavior, TUI migration, common sessions, desktop migration, and revision-pair verification |
-| Reticulum/LXMF/NomadNet parity | 79/85 | Canonical NomadNet fixtures, propagation policy gates, and routed RNS gates |
+| Reticulum/LXMF/NomadNet parity | 80/85 | Propagation policy gates and routed RNS gates |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
@@ -172,6 +172,17 @@ name in resource metadata and the raw file as data. The transport rejected that
 shape as malformed because it expected the request envelope. A form submission
 without a Micron link directive sent no fields at all, so a scripted post could
 never reach a dynamic page.
+
+The canonical NomadNet fixture set comes from the pinned Python node handlers
+and RNS request packing. The generator runs them against a fixed page tree, two
+identities, a link id, and submitted fields. Offline tests replay the same
+inputs through the Rust native host and request layer. They require
+byte-identical request envelopes, page and file responses, dynamic page
+environment, allow-list policy, response envelopes, and resource metadata
+framing.
+
+The fixture provenance recorded the pinned NomadNet revision as release 1.2.8.
+That revision carries version 1.2.3, and the record now says so.
 
 Remaining propagation gates cover expiry and capacity policy. Remaining live
 gates also require pinned runs for routed RNS request and resource paths.
