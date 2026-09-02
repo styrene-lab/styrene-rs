@@ -9,7 +9,8 @@
 
 pub mod action;
 mod app;
-mod daemon;
+/// Daemon connection, command surface, and event decoding over the shared IPC client.
+pub mod daemon;
 mod ghost;
 mod ghost_preferences;
 mod mesh_state;
