@@ -225,6 +225,21 @@
       }
     },
     {
+      "id": "rns-1.5.1-link-rtt-vectors",
+      "authority_id": "rns-1.5.1",
+      "kind": "link-rtt-matrix",
+      "artifact": "tests/interop/fixtures/rns/rns-1.5.1/link-rtt-vectors.json",
+      "sha256": "bb8eb494e03ec875f170b1e0f134b915a9e75a71566cacfe973fb7c07fad837d",
+      "generator": "tests/interop/python/generate_rns_1_5_fixtures.py",
+      "source_symbols": [
+        "RNS.Link.Link.validate_proof",
+        "RNS.Link.Link.rtt_packet",
+        "RNS.vendor.umsgpack._pack_float",
+        "RNS.vendor.umsgpack.unpackb"
+      ],
+      "expected": {"type": "link-rtt-matrix", "float_marker_hex": "cb", "cases": 15, "accepted_cases": 7}
+    },
+    {
       "id": "rns-1.5.2-empty-carrier-input",
       "authority_id": "rns-1.5.2",
       "kind": "empty-carrier-admission-matrix",

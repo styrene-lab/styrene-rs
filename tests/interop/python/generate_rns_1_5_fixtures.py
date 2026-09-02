@@ -194,7 +194,65 @@ def main() -> int:
             }
         )
 
+    # LinkRTT payloads: canonical Python packs the measured RTT float with
+    # umsgpack, which emits a 64-bit float on double-precision hosts, and
+    # unpacks whatever numeric value arrives without validating it. The
+    # ``python_unpack`` field records what canonical Python does with each
+    # payload; ``rust_accepts`` records the corrected Rust domain: a finite,
+    # non-negative 32-bit or 64-bit float that consumes the whole payload.
+    def python_unpack(payload: bytes) -> dict:
+        try:
+            value = msgpack.unpackb(payload)
+        except Exception as error:  # noqa: BLE001
+            return {"outcome": "error", "error": type(error).__name__}
+        return {"outcome": "value", "repr": repr(value)}
+
+    link_rtt_vectors = []
+    for case_id, seconds in [
+        ("zero", 0.0),
+        ("fast-lan", 0.0032),
+        ("typical", 0.1875),
+        ("one-second", 1.0),
+        ("lora-slow", 12.345678901234567),
+        ("sub-microsecond", 1e-9),
+    ]:
+        packed = msgpack.packb(seconds)
+        assert packed[0] == 0xCB, "canonical Python must emit a 64-bit float"
+        link_rtt_vectors.append(
+            {
+                "id": f"f64-{case_id}",
+                "seconds": seconds,
+                "packed_hex": packed.hex(),
+                "python_unpack": python_unpack(packed),
+                "rust_accepts": True,
+                "expected_nanos": round(seconds * 1_000_000_000),
+            }
+        )
+    for case_id, packed, accepted in [
+        ("f32-legacy-width", msgpack.packb(0.1875, force_float_precision="single"), True),
+        ("f64-negative", msgpack.packb(-0.5), False),
+        ("f64-nan", msgpack.packb(float("nan")), False),
+        ("f64-positive-infinity", msgpack.packb(float("inf")), False),
+        ("f64-trailing-byte", msgpack.packb(0.25) + b"\x00", False),
+        ("f64-truncated", msgpack.packb(0.25)[:-1], False),
+        ("integer-marker", msgpack.packb(1), False),
+        ("string-marker", msgpack.packb("0.25"), False),
+        ("empty", b"", False),
+    ]:
+        link_rtt_vectors.append(
+            {
+                "id": case_id,
+                "packed_hex": packed.hex(),
+                "python_unpack": python_unpack(packed),
+                "rust_accepts": accepted,
+            }
+        )
+
     args.output.mkdir(parents=True, exist_ok=True)
+    (args.output / "link-rtt-vectors.json").write_text(
+        json.dumps({"vectors": link_rtt_vectors}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     (args.output / "packet-type1-hop127.bin").write_bytes(TYPE1)
     (args.output / "packet-type2-hop127.bin").write_bytes(TYPE2)
     (args.output / "token-valid.bin").write_bytes(encrypted)
