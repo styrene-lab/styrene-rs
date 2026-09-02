@@ -356,6 +356,9 @@ pub(crate) async fn path_info(socket: Option<&Path>, destination: &str) -> anyho
     if let Some(hops) = info.as_ref().and_then(|info| info.hops) {
         println!("hops={hops}");
     }
+    if let Some(next_hop) = info.as_ref().and_then(|info| info.next_hop.as_deref()) {
+        println!("next_hop={next_hop}");
+    }
     if let Some(interface) = info.as_ref().and_then(|info| info.interface.as_deref()) {
         println!("interface={interface}");
     }
