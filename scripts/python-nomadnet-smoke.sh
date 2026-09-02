@@ -68,9 +68,16 @@ parse_args() {
 }
 parse_args "$@"
 ROUTED=false
+RUST_ANNOUNCE_INTERVAL_SECS="${RUST_ANNOUNCE_INTERVAL_SECS:-1}"
 if [[ "${SCENARIO}" == "routed_nomadnet_pages" ]]; then
   ROUTED=true
+  # A pinned Python transport hop permits about one announce per hour per
+  # destination and cancels a pending path response whenever another announce
+  # for that destination arrives, so the routed host announces rarely and is
+  # triggered once the hop is up.
+  RUST_ANNOUNCE_INTERVAL_SECS=120
 fi
+STYRENE_CLI_BIN="${STYRENE_CLI_BIN:-${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/debug/styrene}"
 
 runner_milestone() {
   printf 'STYRENE_EVENT {"kind":"milestone","name":"%s","correlation_id":"%s"}\n' "$1" "${STYRENE_INTEROP_CORRELATION_ID:?}"
@@ -287,7 +294,7 @@ cat > "${PY_RNS_DIR}/config" <<EOF
     target_port = ${CLIENT_TARGET_PORT}
 EOF
 
-cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" -p styrened --bin styrened --quiet
+cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" -p styrened -p styrene --bin styrened --bin styrene --quiet
 
 RUST_IDENTITY="${RUST_DIR}/identity"
 (
@@ -300,7 +307,7 @@ RUST_IDENTITY="${RUST_DIR}/identity"
     --config "${RUST_DIR}/config.toml" \
     --socket "${RUST_SOCKET}" \
     --transport "${RUST_TRANSPORT_ADDR}" \
-    --announce-interval-secs 1 > >(bounded_log "${RUST_LOG}" "${LOG_LIMIT_BYTES}") 2>&1
+    --announce-interval-secs "${RUST_ANNOUNCE_INTERVAL_SECS}" > >(bounded_log "${RUST_LOG}" "${LOG_LIMIT_BYTES}") 2>&1
 ) &
 RUST_PID=$!
 
@@ -315,13 +322,13 @@ if [[ "${ROUTED}" == "true" ]]; then
   # A pinned Python Reticulum instance with transport enabled forwards
   # between the client and the Rust host. It has no destinations of its own.
   (
-    PYTHONUNBUFFERED=1 "${PYTHON_BIN}" - <<'PY' "${PY_HOP_DIR}" > >(bounded_log "${PY_HOP_LOG}" "${LOG_LIMIT_BYTES}") 2>&1
+    PYTHONUNBUFFERED=1 exec "${PYTHON_BIN}" - <<'PY' "${PY_HOP_DIR}" "${PY_HOP_LOGLEVEL:-4}" > >(bounded_log "${PY_HOP_LOG}" "${LOG_LIMIT_BYTES}") 2>&1
 import sys
 import time
 
 import RNS
 
-RNS.Reticulum(configdir=sys.argv[1], loglevel=4)
+RNS.Reticulum(configdir=sys.argv[1], loglevel=int(sys.argv[2]))
 print("transport hop running", flush=True)
 while True:
     time.sleep(1)
@@ -333,12 +340,18 @@ PY
     exit 1
   fi
   runner_milestone "transport-hop-ready"
+  # The hop connected after the host's startup announce; announce again so
+  # the hop learns the node destination and can answer client path requests.
+  for _ in 1 2; do
+    "${STYRENE_CLI_BIN}" --socket "${RUST_SOCKET}" announce >/dev/null 2>&1 || true
+    sleep 3
+  done
 fi
 
 NODE_HASH="$(destination_hash_from_identity "${RUST_IDENTITY}" "nomadnetwork" "node")"
 
 (
-"${PYTHON_BIN}" - <<'PY' \
+exec "${PYTHON_BIN}" - <<'PY' \
   "${PY_RNS_DIR}" \
   "${PY_DIR}/identity" \
   "${NODE_HASH}" \
@@ -347,6 +360,7 @@ NODE_HASH="$(destination_hash_from_identity "${RUST_IDENTITY}" "nomadnetwork" "n
   "${PY_LOG}" >"${PY_LOG}.stdout" 2>&1
 import hashlib
 import json
+import os
 import sys
 import threading
 import time
@@ -359,7 +373,7 @@ node_hash = bytes.fromhex(node_hash_hex)
 
 RNS.logdest = RNS.LOG_FILE
 RNS.logfile = log_path
-RNS.Reticulum(configdir=rns_config, loglevel=6)
+RNS.Reticulum(configdir=rns_config, loglevel=int(os.environ.get("PY_CLIENT_LOGLEVEL", "6")))
 identity = RNS.Identity.from_file(identity_path)
 if identity is None:
     raise SystemExit("client identity is unavailable")
@@ -369,7 +383,9 @@ while time.time() < deadline:
     if RNS.Transport.has_path(node_hash) and RNS.Identity.recall(node_hash) is not None:
         break
     RNS.Transport.request_path(node_hash)
-    time.sleep(0.5)
+    # A transport node answers a path request after a short grace period and
+    # re-arms that timer on every repeated request, so ask at a client's pace.
+    time.sleep(2.5)
 else:
     raise SystemExit("timed out waiting for the Rust NomadNet node path")
 
