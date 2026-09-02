@@ -3,7 +3,10 @@
 use std::path::Path;
 
 use console::style;
-use styrene_ipc::types::{SendChatDisposition, SendChatRequest};
+use styrene_ipc::types::{
+    FileDownloadRequest, FileDownloadState, PageBrowseOutcome, PageContent, PageFormSubmission,
+    PageNavigationAction, PageNavigationRequest, SendChatDisposition, SendChatRequest,
+};
 use styrene_ipc_client::TunnelStatus;
 
 use crate::ipc_client::connect;
@@ -131,6 +134,127 @@ pub(crate) async fn send(
     }
 
     Ok(())
+}
+
+/// Browse a page and print a JSON projection of the daemon's authoritative
+/// outcome. The projection carries the canonical source bytes as UTF-8 text and
+/// digest so harnesses can compare them without re-parsing Micron.
+pub(crate) async fn page(
+    socket: Option<&Path>,
+    host: &str,
+    path: &str,
+    timeout: u64,
+    fields: &[String],
+) -> anyhow::Result<()> {
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
+    let page = if fields.is_empty() {
+        client.browse_page(host, path, Some(timeout)).await.map_err(anyhow::Error::msg)?
+    } else {
+        let mut submission = PageFormSubmission::default();
+        for field in fields {
+            let (name, value) = field
+                .split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("field must be name=value: {field}"))?;
+            submission.values.entry(name.to_owned()).or_default().push(value.to_owned());
+        }
+        let mut request = PageNavigationRequest::default();
+        request.action = PageNavigationAction::Navigate;
+        request.target = Some(format!("{host}:{path}"));
+        request.timeout_secs = Some(timeout);
+        request.submission = Some(submission);
+        client.navigate_page(&request).await.map_err(anyhow::Error::msg)?
+    };
+    println!("{}", serde_json::to_string_pretty(&page_projection(&page))?);
+    if page.outcome == PageBrowseOutcome::Succeeded {
+        Ok(())
+    } else {
+        anyhow::bail!("page browse ended with outcome {}", outcome_label(page.outcome))
+    }
+}
+
+fn page_projection(page: &PageContent) -> serde_json::Value {
+    use sha2::Digest as _;
+    let digest = hex::encode(sha2::Sha256::digest(&page.source_bytes));
+    serde_json::json!({
+        "outcome": outcome_label(page.outcome),
+        "host_hash": page.host_hash,
+        "title": page.title,
+        "correlation_id": page.correlation_id,
+        "failure": page.failure.as_ref().map(|failure| serde_json::json!({
+            "stage": format!("{:?}", failure.stage),
+            "code": failure.code,
+            "message": failure.message,
+            "retryable": failure.retryable,
+        })),
+        "stages": page.stages.iter().map(|stage| format!("{:?}:{:?}", stage.kind, stage.state)).collect::<Vec<_>>(),
+        "links": page.links,
+        "source_len": page.source_bytes.len(),
+        "source_sha256": digest,
+        "source_text": String::from_utf8_lossy(&page.source_bytes),
+        "rendered_text": page.rendered_text,
+        "elapsed_ms": page.elapsed_ms,
+    })
+}
+
+const fn outcome_label(outcome: PageBrowseOutcome) -> &'static str {
+    match outcome {
+        PageBrowseOutcome::Running => "running",
+        PageBrowseOutcome::Succeeded => "succeeded",
+        PageBrowseOutcome::Failed => "failed",
+        PageBrowseOutcome::TimedOut => "timed_out",
+        PageBrowseOutcome::Cancelled => "cancelled",
+        _ => "unknown",
+    }
+}
+
+/// Download a file through the daemon and print its terminal state as JSON.
+pub(crate) async fn file(
+    socket: Option<&Path>,
+    target: &str,
+    timeout: u64,
+    expected_sha256: Option<&str>,
+) -> anyhow::Result<()> {
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
+    let mut request = FileDownloadRequest::default();
+    request.target = target.to_owned();
+    request.expected_sha256 = expected_sha256.map(str::to_owned);
+    request.timeout_secs = Some(timeout);
+    let mut download = client.start_file_download(&request).await.map_err(anyhow::Error::msg)?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout + 5);
+    while matches!(download.state, FileDownloadState::Pending | FileDownloadState::Receiving)
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        download = client.file_download(&download.download_id).await.map_err(anyhow::Error::msg)?;
+    }
+    let state = match download.state {
+        FileDownloadState::Pending => "pending",
+        FileDownloadState::Receiving => "receiving",
+        FileDownloadState::Completed => "completed",
+        FileDownloadState::Cancelled => "cancelled",
+        FileDownloadState::Failed => "failed",
+        FileDownloadState::Saved => "saved",
+        _ => "unknown",
+    };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "download_id": download.download_id,
+            "host_hash": download.host_hash,
+            "native_path": download.native_path,
+            "state": state,
+            "received_bytes": download.received_bytes,
+            "total_bytes": download.total_bytes,
+            "sha256": download.sha256,
+            "integrity_verified": download.integrity_verified,
+            "error": download.error,
+        }))?
+    );
+    if matches!(download.state, FileDownloadState::Completed | FileDownloadState::Saved) {
+        Ok(())
+    } else {
+        anyhow::bail!("file download ended in state {state}")
+    }
 }
 
 pub(crate) async fn messages(socket: Option<&Path>, peer: &str, limit: u32) -> anyhow::Result<()> {

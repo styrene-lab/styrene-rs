@@ -89,6 +89,16 @@ async fn main() -> anyhow::Result<()> {
         }
 
         #[cfg(feature = "cli")]
+        Some(Command::Page { ref host, ref path, timeout, ref fields }) => {
+            commands::page(socket, host, path, timeout, fields).await
+        }
+
+        #[cfg(feature = "cli")]
+        Some(Command::File { ref target, timeout, ref expected_sha256 }) => {
+            commands::file(socket, target, timeout, expected_sha256.as_deref()).await
+        }
+
+        #[cfg(feature = "cli")]
         Some(Command::Messages { ref peer, limit }) => {
             commands::messages(socket, peer, limit).await
         }

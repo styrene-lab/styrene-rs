@@ -8,9 +8,10 @@ use styrene_interop_runner::{
 
 #[test]
 fn compatibility_matrix_covers_first_slice() {
-    assert_eq!(PINNED_SCENARIOS.len(), 6);
+    assert_eq!(PINNED_SCENARIOS.len(), 7);
     assert_case_present("direct");
     assert_case_present("nomadnet_pages");
+    assert_case_present("nomadnet_client");
     assert_case_present("propagated_retrieval");
     assert_case_present("direct_resource");
     assert_case_present("opportunistic");
@@ -51,6 +52,12 @@ fn python_compat_propagated_retrieval() {
 #[ignore = "requires live Python compatibility harness environment"]
 fn python_compat_nomadnet_pages() {
     run_case("nomadnet_pages");
+}
+
+#[test]
+#[ignore = "requires live Python compatibility harness environment"]
+fn python_compat_nomadnet_client() {
+    run_case("nomadnet_client");
 }
 
 fn run_case(case_id: &str) {
@@ -105,7 +112,7 @@ fn run_case(case_id: &str) {
 }
 
 fn scenario_id_is_nomadnet(case_id: &str) -> bool {
-    case_id == "nomadnet_pages"
+    matches!(case_id, "nomadnet_pages" | "nomadnet_client")
 }
 
 fn smoke_script_path() -> PathBuf {

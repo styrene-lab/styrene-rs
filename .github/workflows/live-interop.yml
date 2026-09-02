@@ -22,6 +22,7 @@ jobs:
           - propagated_resource_lxm
           - propagated_retrieval
           - nomadnet_pages
+          - nomadnet_client
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0

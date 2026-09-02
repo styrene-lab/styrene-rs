@@ -13,8 +13,9 @@ use serde::de::DeserializeOwned;
 use styrene_ipc::IpcError;
 use styrene_ipc::types::{
     ConfigApplyResult, ConfigSnapshot, ConversationInfo, DaemonStatusInfo, DeviceInfo, ExecResult,
-    IdentityBackupExport, IdentityBackupImport, IdentityBackupMetadata, IdentityInfo,
-    IdentityRestoreOutcome, MessageInfo, PathInfo, RebootResult, RemoteStatusInfo, SendChatOutcome,
+    FileDownloadInfo, FileDownloadRequest, IdentityBackupExport, IdentityBackupImport,
+    IdentityBackupMetadata, IdentityInfo, IdentityRestoreOutcome, MessageInfo, PageContent,
+    PageNavigationRequest, PathInfo, RebootResult, RemoteStatusInfo, SendChatOutcome,
     SendChatRequest, StandardPropagationSnapshot, TunnelInfo, TunnelOperationInfo,
 };
 use styrene_ipc_wire::{self as wire, Frame, MessageType, REQUEST_ID_SIZE};
@@ -325,6 +326,55 @@ impl Client {
         ]);
         let frame = self.request(MessageType::QueryMessages, payload, DEFAULT_DEADLINE).await?;
         decode_key(&frame.payload, &["messages", "result"], "messages")
+    }
+
+    /// Browse a NomadNet page through the daemon coordinator.
+    pub async fn browse_page(
+        &self,
+        host: &str,
+        path: &str,
+        timeout_secs: Option<u64>,
+    ) -> Result<PageContent, ClientError> {
+        let mut payload =
+            HashMap::from([("host".into(), Value::from(host)), ("path".into(), Value::from(path))]);
+        if let Some(timeout_secs) = timeout_secs {
+            payload.insert("timeout".into(), Value::from(timeout_secs));
+        }
+        let deadline = Duration::from_secs(timeout_secs.unwrap_or(30).saturating_add(15));
+        let frame = self.request(MessageType::QueryPage, payload, deadline).await?;
+        decode_typed_key(&frame.payload, "page", "page")
+    }
+
+    /// Navigate a daemon-owned page session, optionally submitting form values.
+    pub async fn navigate_page(
+        &self,
+        request: &PageNavigationRequest,
+    ) -> Result<PageContent, ClientError> {
+        let payload = HashMap::from([("navigation".into(), encode_typed(request, "navigation")?)]);
+        let deadline = Duration::from_secs(request.timeout_secs.unwrap_or(30).saturating_add(15));
+        let frame = self.request(MessageType::CmdPageNavigate, payload, deadline).await?;
+        decode_typed_key(&frame.payload, "page", "page")
+    }
+
+    /// Start a NomadNet file download owned by the daemon.
+    pub async fn start_file_download(
+        &self,
+        request: &FileDownloadRequest,
+    ) -> Result<FileDownloadInfo, ClientError> {
+        let payload = HashMap::from([(
+            "download_request".into(),
+            encode_typed(request, "download_request")?,
+        )]);
+        let frame =
+            self.request(MessageType::CmdFileDownloadStart, payload, DEFAULT_DEADLINE).await?;
+        decode_typed_key(&frame.payload, "download", "download")
+    }
+
+    /// Observe a daemon-owned file download.
+    pub async fn file_download(&self, download_id: &str) -> Result<FileDownloadInfo, ClientError> {
+        let payload = HashMap::from([("download_id".into(), Value::from(download_id))]);
+        let frame = self.request(MessageType::QueryFileDownload, payload, DEFAULT_DEADLINE).await?;
+        decode_typed_key(&frame.payload, "download", "download")
     }
 
     pub async fn send_chat_outcome(
@@ -707,6 +757,34 @@ fn parse_remote_error(payload: &HashMap<String, Value>) -> ClientError {
         code: text(payload, "code", "internal"),
         message: text(payload, "message", "daemon request failed"),
     }
+}
+
+/// Decode a typed daemon payload: a named-map MessagePack document carried as
+/// a binary value under `key`.
+fn decode_typed_key<T: DeserializeOwned>(
+    payload: &HashMap<String, Value>,
+    key: &str,
+    context: &str,
+) -> Result<T, ClientError> {
+    let bytes = payload.get(key).and_then(Value::as_slice).ok_or_else(|| {
+        ClientError::Protocol { message: format!("{context} response omitted typed {key}") }
+    })?;
+    let mut cursor = bytes;
+    let value = rmpv::decode::read_value(&mut cursor).map_err(|error| ClientError::Protocol {
+        message: format!("invalid typed {context} payload: {error}"),
+    })?;
+    decode_value(value, context)
+}
+
+fn encode_typed<T: serde::Serialize>(value: &T, context: &str) -> Result<Value, ClientError> {
+    let json = serde_json::to_value(value)
+        .map_err(|error| ClientError::Protocol { message: format!("encode {context}: {error}") })?;
+    let value = rmpv::ext::to_value(json)
+        .map_err(|error| ClientError::Protocol { message: format!("encode {context}: {error}") })?;
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value)
+        .map_err(|error| ClientError::Protocol { message: format!("encode {context}: {error}") })?;
+    Ok(Value::Binary(bytes))
 }
 
 fn decode_map<T: DeserializeOwned>(
