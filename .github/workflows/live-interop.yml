@@ -17,6 +17,7 @@ jobs:
       matrix:
         scenario:
           - direct
+          - direct_resource
           - opportunistic
           - propagated_resource_lxm
     steps:
