@@ -801,6 +801,17 @@ print(payload.get("transient_id") or "")
 PY
 )"
 
+# LXMF message state reported by the Python sender: 4 = SENT, 8 = DELIVERED.
+PY_MESSAGE_STATE="$("${PYTHON_BIN}" - <<'PY' "${PY_SEND_LOG}"
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(payload.get("state") if payload.get("state") is not None else "")
+PY
+)"
+
 # LXMF representations: 1 = PACKET, 2 = RESOURCE. The resource scenarios exist
 # to prove resource-backed transfer, so the Python sender must have used it.
 PY_MESSAGE_REPRESENTATION="$("${PYTHON_BIN}" - <<'PY' "${PY_SEND_LOG}"
@@ -1278,6 +1289,7 @@ fi
     "${PY_MESSAGE_ID}" \
     "${PY_MESSAGE_TRANSIENT_ID}" \
   "${PY_MESSAGE_REPRESENTATION}" \
+  "${PY_MESSAGE_STATE}" \
   "${RUST_MESSAGE_CONTENT}" \
   "${RUST_MESSAGE_ID}" \
   "${RUST_OUTBOUND_STATE}" \
@@ -1302,6 +1314,7 @@ import sys
     py_message_id,
     py_message_transient_id,
     py_message_representation,
+    py_message_state,
     rust_message_content,
     rust_message_id,
     rust_outbound_state,
@@ -1309,7 +1322,7 @@ import sys
     rust_item_state,
     scenario,
     correlation_id,
-) = sys.argv[1:21]
+) = sys.argv[1:22]
 
 report = {
     "status": "pass",
@@ -1321,6 +1334,7 @@ report = {
         "python_message_id": py_message_id,
         "python_message_transient_id": py_message_transient_id,
         "python_message_representation": py_message_representation,
+        "python_message_state": py_message_state,
         "rust_to_python_outbound_content": rust_message_content,
         "rust_message_id": rust_message_id,
         "rust_outbound_state": rust_outbound_state,

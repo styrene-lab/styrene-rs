@@ -80,6 +80,16 @@ impl PinnedScenarioId {
         }
     }
 
+    /// LXMF message state the Python sender must reach for the Python-to-Rust
+    /// leg: 8 is DELIVERED, which requires a Rust delivery proof. Propagated
+    /// messages stop at 4 (SENT) once the node has accepted them.
+    pub const fn expected_python_state(self) -> &'static str {
+        match self {
+            Self::Direct | Self::DirectResource | Self::Opportunistic => "8",
+            Self::PropagatedResourceLxm | Self::PropagatedRetrieval => "4",
+        }
+    }
+
     /// LXMF representation code the Python sender must report for the
     /// Python-to-Rust leg: 1 is PACKET, 2 is RESOURCE.
     pub const fn expected_python_representation(self) -> &'static str {
@@ -1041,13 +1051,21 @@ fn validate_protocol_artifacts(
     {
         return Some("retained scenario report does not match this passing run".to_string());
     }
-    if let Some(scenario_id) = pinned_scenario(&scenario.id).map(|definition| definition.id)
-        && json_string_field(&report["proof"], "python_message_representation")
+    if let Some(scenario_id) = pinned_scenario(&scenario.id).map(|definition| definition.id) {
+        if json_string_field(&report["proof"], "python_message_representation")
             != scenario_id.expected_python_representation()
-    {
-        return Some(
-            "retained scenario report records an unexpected Python representation".to_string(),
-        );
+        {
+            return Some(
+                "retained scenario report records an unexpected Python representation".to_string(),
+            );
+        }
+        if json_string_field(&report["proof"], "python_message_state")
+            != scenario_id.expected_python_state()
+        {
+            return Some(
+                "retained scenario report records an unexpected Python message state".to_string(),
+            );
+        }
     }
 
     let proof = match load("datastore-proof") {
@@ -1896,6 +1914,7 @@ mod tests {
             "proof": {
                 "python_message_id": "message-1",
                 "python_message_representation": "1",
+                "python_message_state": "8",
                 "python_to_rust_inbound_content": "content-1",
                 "rust_message_id": "message-2",
                 "rust_to_python_outbound_content": "content-2",

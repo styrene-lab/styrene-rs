@@ -140,7 +140,8 @@ The Direct, resource-backed Direct, and Opportunistic LXMF gates are
 bidirectional. One dispatch of the live workflow runs every pinned scenario.
 Each run retains proof that both implementations sent, received, and confirmed
 delivery of a canonical message, and records the wire representation each side
-used.
+used. The Rust node proves received single delivery packets the way LXMF does,
+so Python senders reach `DELIVERED` for opportunistic messages as well.
 
 Enabling those gates exposed five defects, all fixed. Reopening the message
 store released the process's SQLite locks, so an external reader could delete
