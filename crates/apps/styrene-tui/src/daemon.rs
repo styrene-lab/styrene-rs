@@ -34,11 +34,10 @@ use tokio::time::Duration;
 
 use rmpv::Value as MpValue;
 use styrene_ipc::types::{
-    ActiveCapabilitiesInfo, ConversationInfo, DaemonStatusInfo, DegradedCapabilityInfo, DeviceInfo,
-    IdentityInfo, InterfaceDetail, LinkActivity, LinkEvent as IpcLinkEvent, LinkEventKind,
-    LinkLifecycleReason, LinkSnapshot, MessageInfo, MessagingOperationOutcome,
-    NetworkOperationInfo, NetworkOperationKind, ObservationMetadata, ObservationSource, PathInfo,
-    RequestObservationInfo, ResourceTransferInfo, StandardPropagationSnapshot,
+    ConversationInfo, DaemonStatusInfo, DeviceInfo, IdentityInfo, InterfaceDetail, LinkActivity,
+    LinkEvent as IpcLinkEvent, LinkEventKind, LinkLifecycleReason, LinkSnapshot, MessageInfo,
+    MessagingOperationOutcome, NetworkOperationInfo, NetworkOperationKind, ObservationMetadata,
+    PathInfo, RequestObservationInfo, ResourceTransferInfo, StandardPropagationSnapshot,
     StartNetworkOperationInfo, StartRequestInfo,
 };
 use styrene_ipc_client::{Client, ConnectionGeneration};
@@ -1176,14 +1175,12 @@ impl DaemonHandle {
 
     /// Query local node identity.
     pub async fn identity(&mut self) -> Result<IdentityInfo, String> {
-        let frame = self.rpc(MessageType::QueryIdentity, &HashMap::new()).await?;
-        parse_identity(&frame.payload)
+        self.client.identity().await.map_err(|error| error.to_string())
     }
 
     /// Query daemon status.
     pub async fn status(&mut self) -> Result<DaemonStatusInfo, String> {
-        let frame = self.rpc(MessageType::QueryStatus, &HashMap::new()).await?;
-        parse_status(&frame.payload)
+        self.client.status().await.map_err(|error| error.to_string())
     }
 
     pub async fn standard_propagation(&mut self) -> Result<StandardPropagationSnapshot, String> {
@@ -1196,10 +1193,7 @@ impl DaemonHandle {
 
     /// Query known devices (announces).
     pub async fn devices(&mut self, styrene_only: bool) -> Result<Vec<DeviceInfo>, String> {
-        let mut p = HashMap::new();
-        p.insert("styrene_only".into(), MpValue::Boolean(styrene_only));
-        let frame = self.rpc(MessageType::QueryDevices, &p).await?;
-        parse_devices(&frame.payload)
+        self.client.devices(styrene_only).await.map_err(|error| error.to_string())
     }
 
     /// Subscribe to message events. Must be called before the read loop.
@@ -1218,8 +1212,7 @@ impl DaemonHandle {
     }
 
     pub async fn links(&mut self) -> Result<LinkSnapshot, String> {
-        let frame = self.rpc(MessageType::QueryLinks, &HashMap::new()).await?;
-        parse_link_snapshot(&frame.payload)
+        self.client.links().await.map_err(|error| error.to_string())
     }
 
     pub async fn path_table(&mut self) -> Result<Vec<PathInfo>, String> {
@@ -1915,7 +1908,10 @@ async fn event_reader(
 fn frame_to_tui_event(frame: Frame) -> Option<TuiEvent> {
     match frame.msg_type {
         MessageType::EventDevice => {
-            let device = parse_device_from_payload(&frame.payload)?;
+            let device: DeviceInfo = parse_typed_payload(&frame.payload).ok()?;
+            if device.destination_hash.is_empty() {
+                return None;
+            }
             let now = epoch_secs();
             let mut peer = PeerRecord::new(
                 device.destination_hash.clone(),
@@ -1928,7 +1924,7 @@ fn frame_to_tui_event(frame: Frame) -> Option<TuiEvent> {
             Some(TuiEvent::PeerAnnounce(peer))
         }
         MessageType::EventLink => {
-            let event = parse_link_event(&frame.payload)?;
+            let event: IpcLinkEvent = parse_typed_payload(&frame.payload).ok()?;
             let IpcLinkEvent {
                 link_id,
                 peer_hash,
@@ -1969,7 +1965,8 @@ fn frame_to_tui_event(frame: Frame) -> Option<TuiEvent> {
             let loss_reason =
                 frame.payload.get("loss_reason").and_then(MpValue::as_str).map(ToOwned::to_owned);
             let expires = frame.payload.get("expires").and_then(MpValue::as_i64);
-            let observation = parse_observation_payload(&frame.payload);
+            let observation: ObservationMetadata =
+                parse_typed_payload(&frame.payload).unwrap_or_default();
             Some(TuiEvent::RouteLifecycle {
                 kind,
                 destination_hash,
@@ -3204,34 +3201,6 @@ fn link_update_event(event: IpcLinkEvent) -> TuiEvent {
     }
 }
 
-fn parse_observation_payload(payload: &HashMap<String, MpValue>) -> ObservationMetadata {
-    let mut observation = ObservationMetadata::default();
-    observation.source = match payload.get("source").and_then(MpValue::as_str) {
-        Some("runtime_interface_registry") => ObservationSource::RuntimeInterfaceRegistry,
-        Some("transport_path_table") => ObservationSource::TransportPathTable,
-        Some("transport_link_state") => ObservationSource::TransportLinkState,
-        Some("transport_request_state") => ObservationSource::TransportRequestState,
-        Some("transport_resource_state") => ObservationSource::TransportResourceState,
-        Some("operation_coordinator") => ObservationSource::OperationCoordinator,
-        Some("fixture") => ObservationSource::Fixture,
-        _ => ObservationSource::Unknown,
-    };
-    observation.observed_at = payload.get("observed_at").and_then(MpValue::as_i64);
-    observation.connection_generation =
-        payload.get("connection_generation").and_then(MpValue::as_u64);
-    observation.ipc_connection_generation =
-        payload.get("ipc_connection_generation").and_then(MpValue::as_u64);
-    observation.interface_generation =
-        payload.get("interface_generation").and_then(MpValue::as_u64);
-    observation.age_secs = payload.get("age_secs").and_then(MpValue::as_u64);
-    observation.freshness_threshold_secs =
-        payload.get("freshness_threshold_secs").and_then(MpValue::as_u64);
-    observation.stale = payload.get("stale").and_then(MpValue::as_bool).unwrap_or(false);
-    observation.correlation_id =
-        payload.get("correlation_id").and_then(MpValue::as_str).map(ToOwned::to_owned);
-    observation
-}
-
 /// Decode a whole payload through the shared client decoder, which accepts
 /// the daemon's string-spelled enum fields that rmpv's direct enum decoding
 /// rejects.
@@ -3311,7 +3280,9 @@ fn parse_typed_array<T: serde::de::DeserializeOwned>(
         .ok_or_else(|| format!("daemon response omitted {key}"))?
         .iter()
         .cloned()
-        .map(|value| rmpv::ext::from_value(value).map_err(|error| format!("decode {key}: {error}")))
+        .map(|value| {
+            styrene_ipc_client::decode_value(value, key).map_err(|error| error.to_string())
+        })
         .collect()
 }
 
@@ -3341,259 +3312,6 @@ fn mp_i64(payload: &HashMap<String, MpValue>, key: &str) -> i64 {
     payload.get(key).and_then(|v| v.as_i64()).unwrap_or(0)
 }
 
-fn parse_identity(p: &HashMap<String, MpValue>) -> Result<IdentityInfo, String> {
-    let mut info = IdentityInfo::default();
-    info.identity_hash = mp_str(p, "identity_hash");
-    info.destination_hash = mp_str(p, "destination_hash");
-    info.lxmf_destination_hash = mp_str(p, "lxmf_destination_hash");
-    info.display_name = mp_str(p, "display_name");
-    info.icon = p.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string());
-    info.short_name = p.get("short_name").and_then(|v| v.as_str()).map(|s| s.to_string());
-    info.custody = p
-        .get("custody")
-        .cloned()
-        .map(rmpv::ext::from_value)
-        .transpose()
-        .map_err(|error| format!("invalid identity custody: {error}"))?;
-    Ok(info)
-}
-
-fn parse_status(p: &HashMap<String, MpValue>) -> Result<DaemonStatusInfo, String> {
-    let mut s = DaemonStatusInfo::default();
-    s.uptime = mp_u64(p, "uptime");
-    s.daemon_version = mp_str(p, "daemon_version");
-    s.rns_initialized = mp_bool(p, "rns_initialized");
-    s.lxmf_initialized = mp_bool(p, "lxmf_initialized");
-    s.device_count = p.get("device_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    s.interface_count = p.get("interface_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    s.hub_status = p.get("hub_status").and_then(|v| v.as_str()).map(|s| s.to_string());
-    s.propagation_enabled = mp_bool(p, "propagation_enabled");
-    s.standard_lxmf_propagation_destination_registered =
-        mp_bool(p, "standard_lxmf_propagation_destination_registered");
-    s.standard_lxmf_propagation_active = mp_bool(p, "standard_lxmf_propagation_active");
-    s.propagation_count = p.get("propagation_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    s.propagation_size_bytes =
-        p.get("propagation_size_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
-    s.transport_enabled = mp_bool(p, "transport_enabled");
-    s.active_links = p.get("active_links").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    s.active_capabilities = p.get("active_capabilities").and_then(parse_capabilities);
-    s.connection_generation = p.get("connection_generation").and_then(MpValue::as_u64);
-    Ok(s)
-}
-
-fn parse_link_snapshot(p: &HashMap<String, MpValue>) -> Result<LinkSnapshot, String> {
-    let parse_events = |key: &str| -> Result<Vec<IpcLinkEvent>, String> {
-        p.get(key)
-            .and_then(MpValue::as_array)
-            .ok_or_else(|| format!("missing {key}"))?
-            .iter()
-            .map(|value| {
-                let map = value.as_map().ok_or_else(|| format!("invalid {key} entry"))?;
-                let payload = map
-                    .iter()
-                    .filter_map(|(key, value)| {
-                        key.as_str().map(|key| (key.to_string(), value.clone()))
-                    })
-                    .collect();
-                parse_link_event(&payload).ok_or_else(|| format!("invalid {key} link"))
-            })
-            .collect()
-    };
-    let mut snapshot = LinkSnapshot::default();
-    snapshot.active = parse_events("active")?;
-    snapshot.history = parse_events("history")?;
-    Ok(snapshot)
-}
-
-fn parse_link_event(p: &HashMap<String, MpValue>) -> Option<IpcLinkEvent> {
-    let parse_kind = |value: &str| match value {
-        "established" => LinkEventKind::Established,
-        "identified" => LinkEventKind::Identified,
-        "activity" => LinkEventKind::Activity,
-        "rtt_updated" => LinkEventKind::RttUpdated,
-        "teardown" => LinkEventKind::Teardown,
-        "timeout" => LinkEventKind::Timeout,
-        _ => LinkEventKind::Unknown,
-    };
-    let parse_activity = |value: &str| match value {
-        "active" => LinkActivity::Active,
-        "historical" => LinkActivity::Historical,
-        _ => LinkActivity::Unknown,
-    };
-    let reason = p.get("reason").and_then(MpValue::as_str).map(|value| match value {
-        "local_teardown" => LinkLifecycleReason::LocalTeardown,
-        "stale_timeout" => LinkLifecycleReason::StaleTimeout,
-        "establishment_timeout" => LinkLifecycleReason::EstablishmentTimeout,
-        "channel_timeout" => LinkLifecycleReason::ChannelTimeout,
-        "send_failure" => LinkLifecycleReason::SendFailure,
-        _ => LinkLifecycleReason::Unknown,
-    });
-    let source = match p.get("source").and_then(MpValue::as_str).unwrap_or("unknown") {
-        "runtime_interface_registry" => ObservationSource::RuntimeInterfaceRegistry,
-        "transport_path_table" => ObservationSource::TransportPathTable,
-        "transport_link_state" => ObservationSource::TransportLinkState,
-        "fixture" => ObservationSource::Fixture,
-        _ => ObservationSource::Unknown,
-    };
-    let mut event = IpcLinkEvent::default();
-    event.link_id = p.get("link_id")?.as_str()?.to_string();
-    event.peer_hash = mp_str(p, "peer_hash");
-    event.peer_name = p.get("peer_name").and_then(MpValue::as_str).map(ToOwned::to_owned);
-    event.interface = p.get("interface").and_then(MpValue::as_str).map(ToOwned::to_owned);
-    event.status = mp_str(p, "status");
-    event.kind = parse_kind(p.get("kind").and_then(MpValue::as_str).unwrap_or("unknown"));
-    event.activity =
-        parse_activity(p.get("activity").and_then(MpValue::as_str).unwrap_or("unknown"));
-    event.reason = reason;
-    event.identified = p.get("identified").and_then(MpValue::as_bool).unwrap_or(false);
-    event.remote_identity_hash =
-        p.get("remote_identity_hash").and_then(MpValue::as_str).map(ToOwned::to_owned);
-    event.rtt_ms = p.get("rtt_ms").and_then(MpValue::as_f64);
-    event.timestamp = p.get("timestamp").and_then(MpValue::as_i64).unwrap_or(0);
-    event.observation.source = source;
-    event.observation.observed_at = p.get("observed_at").and_then(MpValue::as_i64);
-    event.observation.connection_generation =
-        p.get("connection_generation").and_then(MpValue::as_u64);
-    event.observation.age_secs = p.get("age_secs").and_then(MpValue::as_u64);
-    event.observation.freshness_threshold_secs =
-        p.get("freshness_threshold_secs").and_then(MpValue::as_u64);
-    event.observation.stale = p.get("stale").and_then(MpValue::as_bool).unwrap_or(false);
-    event.observation.correlation_id =
-        p.get("correlation_id").and_then(MpValue::as_str).map(ToOwned::to_owned);
-    Some(event)
-}
-
-fn parse_capabilities(value: &MpValue) -> Option<ActiveCapabilitiesInfo> {
-    let map = value.as_map()?;
-    let item = |key: &str| map.iter().find(|(k, _)| k.as_str() == Some(key)).map(|(_, v)| v);
-    let strings = |key: &str| {
-        item(key)?
-            .as_array()?
-            .iter()
-            .map(|value| value.as_str().map(ToOwned::to_owned))
-            .collect::<Option<Vec<_>>>()
-    };
-    let degraded = item("degraded")?
-        .as_array()?
-        .iter()
-        .map(|value| {
-            let map = value.as_map()?;
-            let get = |key: &str| {
-                map.iter()
-                    .find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, value)| value.as_str())
-                    .map(ToOwned::to_owned)
-            };
-            let mut degraded = DegradedCapabilityInfo::default();
-            degraded.id = get("id")?;
-            degraded.reason = get("reason")?;
-            Some(degraded)
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let mut capabilities = ActiveCapabilitiesInfo::default();
-    capabilities.version = u16::try_from(item("version")?.as_u64()?).ok()?;
-    capabilities.runtime = strings("runtime")?;
-    capabilities.degraded = degraded;
-    capabilities.authorized_operations = strings("authorized_operations")?;
-    Some(capabilities)
-}
-
-fn parse_devices(p: &HashMap<String, MpValue>) -> Result<Vec<DeviceInfo>, String> {
-    let arr = p
-        .get("devices")
-        .or_else(|| p.get("result"))
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "no 'devices' array in response".to_string())?;
-
-    Ok(arr
-        .iter()
-        .filter_map(|v| {
-            let m = v.as_map()?;
-            let get = |key: &str| -> String {
-                m.iter()
-                    .find(|(k, _)| k.as_str() == Some(key))
-                    .and_then(|(_, v)| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
-            };
-            let mut dev = DeviceInfo::default();
-            dev.destination_hash = get("destination_hash");
-            dev.identity_hash = get("identity_hash");
-            dev.name = get("name");
-            dev.device_type = get("device_type");
-            dev.status = get("status");
-            dev.is_styrene_node = m
-                .iter()
-                .find(|(k, _)| k.as_str() == Some("is_styrene_node"))
-                .and_then(|(_, v)| v.as_bool())
-                .unwrap_or(false);
-            dev.lxmf_destination_hash = get("lxmf_destination_hash");
-            dev.last_announce = m
-                .iter()
-                .find(|(key, _)| key.as_str() == Some("last_announce"))
-                .and_then(|(_, value)| value.as_i64());
-            dev.discovered_capabilities = parse_discovered_capabilities(m);
-            dev.standard_lxmf_propagation_active = m
-                .iter()
-                .find(|(key, _)| key.as_str() == Some("standard_lxmf_propagation_active"))
-                .and_then(|(_, value)| value.as_bool());
-            Some(dev)
-        })
-        .collect())
-}
-
-fn parse_device_from_payload(p: &HashMap<String, MpValue>) -> Option<DeviceInfo> {
-    let mut dev = DeviceInfo::default();
-    dev.destination_hash = mp_str(p, "destination_hash");
-    dev.identity_hash = mp_str(p, "identity_hash");
-    dev.name = mp_str(p, "name");
-    dev.device_type = mp_str(p, "device_type");
-    dev.status = mp_str(p, "status");
-    dev.is_styrene_node = mp_bool(p, "is_styrene_node");
-    dev.lxmf_destination_hash = mp_str(p, "lxmf_destination_hash");
-    dev.last_announce = Some(mp_i64(p, "last_announce"));
-    dev.announce_count = p.get("announce_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    dev.short_name = p.get("short_name").and_then(|v| v.as_str()).map(|s| s.to_string());
-    dev.discovered_capabilities = p
-        .get("discovered_capabilities")
-        .and_then(MpValue::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|value| match value.as_str() {
-            Some("native_nomadnet_host") => {
-                Some(styrene_ipc::types::DiscoveredCapability::NativeNomadNetHost)
-            }
-            Some("standard_lxmf_propagation_host") => {
-                Some(styrene_ipc::types::DiscoveredCapability::StandardLxmfPropagationHost)
-            }
-            _ => None,
-        })
-        .collect();
-    dev.standard_lxmf_propagation_active =
-        p.get("standard_lxmf_propagation_active").and_then(|value| value.as_bool());
-    Some(dev)
-}
-
-fn parse_discovered_capabilities(
-    map: &[(MpValue, MpValue)],
-) -> Vec<styrene_ipc::types::DiscoveredCapability> {
-    map.iter()
-        .find(|(key, _)| key.as_str() == Some("discovered_capabilities"))
-        .and_then(|(_, value)| value.as_array())
-        .into_iter()
-        .flatten()
-        .filter_map(|value| match value.as_str() {
-            Some("native_nomadnet_host") => {
-                Some(styrene_ipc::types::DiscoveredCapability::NativeNomadNetHost)
-            }
-            Some("standard_lxmf_propagation_host") => {
-                Some(styrene_ipc::types::DiscoveredCapability::StandardLxmfPropagationHost)
-            }
-            _ => None,
-        })
-        .collect()
-}
-
 fn parse_message_from_payload(p: &HashMap<String, MpValue>) -> Option<MessageInfo> {
     let message = parse_typed_payload::<MessageInfo>(p).ok()?;
     (!message.id.is_empty()).then_some(message)
@@ -3605,6 +3323,7 @@ fn parse_message_from_payload(p: &HashMap<String, MpValue>) -> Option<MessageInf
 mod tests {
     use super::*;
     use crate::tui::segments::{DeliveryStatus, Segment};
+    use styrene_ipc::types::{ActiveCapabilitiesInfo, DegradedCapabilityInfo, ObservationSource};
 
     #[test]
     fn device_decoders_preserve_only_known_announce_capabilities() {
@@ -3619,10 +3338,14 @@ mod tests {
             ),
         ]);
         let snapshot = HashMap::from([("devices".into(), MpValue::Array(vec![device]))]);
-        let parsed = parse_devices(&snapshot).expect("device snapshot");
+        let parsed: Vec<DeviceInfo> =
+            parse_typed_array(&snapshot, "devices").expect("device snapshot");
         assert_eq!(
             parsed[0].discovered_capabilities,
-            [styrene_ipc::types::DiscoveredCapability::NativeNomadNetHost]
+            [
+                styrene_ipc::types::DiscoveredCapability::NativeNomadNetHost,
+                styrene_ipc::types::DiscoveredCapability::Unknown
+            ]
         );
 
         let pushed = HashMap::from([
@@ -3632,8 +3355,9 @@ mod tests {
                 MpValue::Array(vec![MpValue::from("native_nomadnet_host")]),
             ),
         ]);
+        let device: DeviceInfo = parse_typed_payload(&pushed).expect("pushed device");
         assert_eq!(
-            parse_device_from_payload(&pushed).expect("pushed device").discovered_capabilities,
+            device.discovered_capabilities,
             [styrene_ipc::types::DiscoveredCapability::NativeNomadNetHost]
         );
     }
@@ -3821,7 +3545,7 @@ mod tests {
         let mut p = HashMap::new();
         p.insert("destination_hash".into(), MpValue::String("deadbeef".into()));
         p.insert("display_name".into(), MpValue::String("Test Node".into()));
-        let id = parse_identity(&p).unwrap();
+        let id: IdentityInfo = parse_typed_payload(&p).unwrap();
         assert_eq!(id.destination_hash, "deadbeef");
         assert_eq!(id.display_name, "Test Node");
         assert!(id.icon.is_none());
@@ -3832,7 +3556,7 @@ mod tests {
         let mut p = HashMap::new();
         p.insert("uptime".into(), MpValue::Integer(42.into()));
         p.insert("rns_initialized".into(), MpValue::Boolean(true));
-        let s = parse_status(&p).unwrap();
+        let s: DaemonStatusInfo = parse_typed_payload(&p).unwrap();
         assert_eq!(s.uptime, 42);
         assert!(s.rns_initialized);
         assert_eq!(s.active_links, 0);
@@ -3865,14 +3589,19 @@ mod tests {
             ]),
         );
 
-        let status = parse_status(&p).unwrap();
+        let status: DaemonStatusInfo = parse_typed_payload(&p).unwrap();
         let capabilities = status.active_capabilities.unwrap();
         assert_eq!(status.connection_generation, Some(4));
         assert_eq!(capabilities.version, 1);
         assert_eq!(capabilities.degraded[0].reason, "handler unavailable");
 
+        // An empty capability map decodes to a version the TUI refuses to act on.
         p.insert("active_capabilities".into(), MpValue::Map(Vec::new()));
-        assert!(parse_status(&p).unwrap().active_capabilities.is_none());
+        let status: DaemonStatusInfo = parse_typed_payload(&p).unwrap();
+        assert_ne!(
+            status.active_capabilities.unwrap().version,
+            styrene_ipc::types::ACTIVE_CAPABILITIES_VERSION
+        );
     }
 
     #[test]
@@ -3993,7 +3722,7 @@ mod tests {
         payload.insert("active".into(), MpValue::Array(vec![event("active", "established")]));
         payload.insert("history".into(), MpValue::Array(vec![event("historical", "teardown")]));
 
-        let snapshot = parse_link_snapshot(&payload).expect("valid link snapshot");
+        let snapshot: LinkSnapshot = parse_typed_payload(&payload).expect("valid link snapshot");
         assert_eq!(snapshot.active[0].activity, LinkActivity::Active);
         assert_eq!(snapshot.history[0].activity, LinkActivity::Historical);
         assert_eq!(snapshot.history[0].kind, LinkEventKind::Teardown);
