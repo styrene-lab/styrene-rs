@@ -35,7 +35,12 @@ fn every_drop_reason_changes_exactly_one_typed_counter() {
         (
             InterfaceDropReason::ValidBlackhole,
             InterfaceViolationSnapshot::default(),
-            InterfaceFilterSnapshot { valid_blackhole: 1 },
+            InterfaceFilterSnapshot { valid_blackhole: 1, ..Default::default() },
+        ),
+        (
+            InterfaceDropReason::NotNextHop,
+            InterfaceViolationSnapshot::default(),
+            InterfaceFilterSnapshot { not_next_hop: 1, ..Default::default() },
         ),
     ];
 

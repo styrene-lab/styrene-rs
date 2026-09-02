@@ -170,7 +170,7 @@ impl LinkTable {
         });
     }
 
-    #[cfg(feature = "testing")]
+    #[cfg(any(test, feature = "testing"))]
     pub fn len(&self) -> usize {
         self.entries.len()
     }

@@ -4,8 +4,8 @@
 <!-- specs: rns-wire-corrections, interface-failure-policy, embedded-time -->
 
 - [x] 1.1 Depend on `reticulum-1-5-parity-wave` tasks 1.1-1.2 and consume its Reticulum 1.5.1 fixture manifest/corpus at `149e4151095adf098b8f53eab0c03b37169e8559` without creating another top-level pin; Task 1.3 verifies this consumption and must not be a prerequisite
-- [ ] 1.2 Depend on its tasks 2.1-2.3 for raw Type-1/Type-2 frame admission and received hops, and identify the current-branch insertion point before queueing
-- [ ] 1.3 Coordinate with its tasks 4.1-4.3 so bounded ingress consumes this change's Type-2 next-hop result without duplicating correction ownership
+- [x] 1.2 Depend on its tasks 2.1-2.3 for raw Type-1/Type-2 frame admission and received hops, and identify the current-branch insertion point before queueing
+- [x] 1.3 Coordinate with its tasks 4.1-4.3 so bounded ingress consumes this change's Type-2 next-hop result without duplicating correction ownership
 
 ## 2. LinkRTT Wire Precision
 <!-- specs: rns-wire-corrections -->
@@ -17,9 +17,9 @@
 ## 3. Type-2 Admission And Forwarding
 <!-- specs: rns-wire-corrections -->
 
-- [ ] 3.1 Add failing prequeue tests for mismatched and matching transport IDs across Data, LinkRequest, Proof, and Link packets, plus a deterministic shared-medium LinkRequest loop topology
-- [ ] 3.2 Enforce the solely owned canonical non-announce next-hop decision at the current-branch Reticulum admission boundary before queues, caches, or mutable routing state, and remove any surviving generic ingress rebroadcast path
-- [ ] 3.3 Run focused ingress, routing, link-proof, and three-node shared-medium tests, verifying zero state/egress on overhearers and one forwarding action by the designated relay
+- [x] 3.1 Add failing prequeue tests for mismatched and matching transport IDs across Data, LinkRequest, Proof, and Link packets, plus a deterministic shared-medium LinkRequest loop topology
+- [x] 3.2 Enforce the solely owned canonical non-announce next-hop decision at the current-branch Reticulum admission boundary before queues, caches, or mutable routing state, and remove any surviving generic ingress rebroadcast path
+- [x] 3.3 Run focused ingress, routing, link-proof, and three-node shared-medium tests, verifying zero state/egress on overhearers and one forwarding action by the designated relay
 
 ## 4. Embedded Time Contract
 <!-- specs: embedded-time -->
