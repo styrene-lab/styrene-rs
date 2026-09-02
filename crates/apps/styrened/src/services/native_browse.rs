@@ -2144,6 +2144,19 @@ fn encode_submission(
         }
     }
 
+    // A submission without any link field directive is an explicit request to
+    // send exactly these values (CLI and harness form posts). Interactive links
+    // only attach a submission when the Micron link declares fields, so this
+    // never widens what an ordinary link sends.
+    if link_fields.is_empty() {
+        for (name, values) in &submission.values {
+            entries.push((
+                rmpv::Value::from(format!("field_{name}")),
+                rmpv::Value::from(values.join(",")),
+            ));
+        }
+    }
+
     let mut emitted = std::collections::HashSet::new();
     for field in fields {
         if !(all_fields || selected.iter().any(|name| *name == field.name)) {
@@ -2933,6 +2946,24 @@ mod tests {
         );
         let decoded = rmpv::decode::read_value(&mut std::io::Cursor::new(encoded)).unwrap();
         assert!(matches!(decoded, rmpv::Value::Map(values) if values.len() == 4));
+    }
+
+    #[test]
+    fn explicit_submission_without_link_directive_sends_named_fields() {
+        let mut submission = PageFormSubmission::default();
+        submission.values.insert("name".into(), vec!["rust".into()]);
+        submission.values.insert("opts".into(), vec!["red".into(), "blue".into()]);
+        let encoded = encode_submission(Some(&submission), &[], &[]).expect("native map");
+        let decoded = rmpv::decode::read_value(&mut std::io::Cursor::new(encoded)).unwrap();
+        let rmpv::Value::Map(values) = decoded else { panic!("map") };
+        assert_eq!(
+            values,
+            vec![
+                (rmpv::Value::from("field_name"), rmpv::Value::from("rust")),
+                (rmpv::Value::from("field_opts"), rmpv::Value::from("red,blue")),
+            ]
+        );
+        assert_eq!(encode_submission(None, &[], &[]).expect("nil"), vec![0xc0]);
     }
 
     #[tokio::test]
