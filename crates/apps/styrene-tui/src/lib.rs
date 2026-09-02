@@ -97,7 +97,26 @@ pub async fn run(options: TuiOptions) -> Result<()> {
     result
 }
 
-async fn connect_with_retry(socket: &std::path::Path) -> Result<daemon::DaemonConnection, String> {
+/// Start the embedded `styrened` runtime the TUI owns for the length of a
+/// terminal session, listening on the configured daemon socket.
+pub async fn start_embedded_runtime(
+    options: &TuiOptions,
+) -> Result<styrened::daemon::DaemonHandle, String> {
+    styrened::daemon::start(styrened::daemon::DaemonConfig2 {
+        db: Some(options.paths.data_dir.join("messages.db")),
+        config: options.paths.config_path().exists().then(|| options.paths.config_path()),
+        identity: (!options.runtime_profile.is_ephemeral()).then(|| options.paths.identity_path()),
+        socket: Some(options.paths.daemon_socket.clone()),
+        ephemeral: options.runtime_profile.is_ephemeral(),
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
+/// Connect to a daemon socket that may still be coming up, retrying briefly.
+pub async fn connect_with_retry(
+    socket: &std::path::Path,
+) -> Result<daemon::DaemonConnection, String> {
     let mut last_error = "socket not ready".to_string();
     for _ in 0..30 {
         match daemon::connect(Some(socket)).await {
@@ -237,16 +256,7 @@ async fn run_terminal(
     app.connection_tx = Some(connection_tx);
 
     let embedded_daemon = if daemon_mode == onboarding::setup::DaemonMode::Embedded {
-        match styrened::daemon::start(styrened::daemon::DaemonConfig2 {
-            db: Some(options.paths.data_dir.join("messages.db")),
-            config: options.paths.config_path().exists().then(|| options.paths.config_path()),
-            identity: (!options.runtime_profile.is_ephemeral())
-                .then(|| options.paths.identity_path()),
-            socket: Some(options.paths.daemon_socket.clone()),
-            ephemeral: options.runtime_profile.is_ephemeral(),
-        })
-        .await
-        {
+        match start_embedded_runtime(options).await {
             Ok(handle) => {
                 app.conversation.push_system("⬡ embedded runtime ready");
                 Some(handle)
