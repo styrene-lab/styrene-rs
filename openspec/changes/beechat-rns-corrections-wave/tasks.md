@@ -3,15 +3,15 @@
 ## 1. Authority And Admission Dependencies
 <!-- specs: rns-wire-corrections, interface-failure-policy, embedded-time -->
 
-- [ ] 1.1 Depend on `reticulum-1-5-parity-wave` tasks 1.1-1.2 and consume its Reticulum 1.5.1 fixture manifest/corpus at `149e4151095adf098b8f53eab0c03b37169e8559` without creating another top-level pin; Task 1.3 verifies this consumption and must not be a prerequisite
+- [x] 1.1 Depend on `reticulum-1-5-parity-wave` tasks 1.1-1.2 and consume its Reticulum 1.5.1 fixture manifest/corpus at `149e4151095adf098b8f53eab0c03b37169e8559` without creating another top-level pin; Task 1.3 verifies this consumption and must not be a prerequisite
 - [ ] 1.2 Depend on its tasks 2.1-2.3 for raw Type-1/Type-2 frame admission and received hops, and identify the current-branch insertion point before queueing
 - [ ] 1.3 Coordinate with its tasks 4.1-4.3 so bounded ingress consumes this change's Type-2 next-hop result without duplicating correction ownership
 
 ## 2. LinkRTT Wire Precision
 <!-- specs: rns-wire-corrections -->
 
-- [ ] 2.1 Add failing link tests using the shared 1.5.1 fixture authority, proving Rust cannot decode canonical MessagePack `f64`, emits the wrong width, accepts an invalid numeric value, or ignores trailing bytes
-- [ ] 2.2 Change the current-branch LinkRTT codec to encode `f64`, accept only finite non-negative values with complete payload consumption, and preserve internal `Duration` and lifecycle semantics
+- [x] 2.1 Add failing link tests using the shared 1.5.1 fixture authority, proving Rust cannot decode canonical MessagePack `f64`, emits the wrong width, accepts an invalid numeric value, or ignores trailing bytes
+- [x] 2.2 Change the current-branch LinkRTT codec to encode `f64`, accept only finite non-negative values with complete payload consumption, and preserve internal `Duration` and lifecycle semantics
 - [ ] 2.3 Run focused fixture/link tests and the existing bidirectional pinned-Python link gate, retaining the shared authority revision and exact assertions
 
 ## 3. Type-2 Admission And Forwarding

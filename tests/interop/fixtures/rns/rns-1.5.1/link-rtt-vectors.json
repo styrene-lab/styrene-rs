@@ -1,0 +1,151 @@
+{
+  "vectors": [
+    {
+      "expected_nanos": 0,
+      "id": "f64-zero",
+      "packed_hex": "cb0000000000000000",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "0.0"
+      },
+      "rust_accepts": true,
+      "seconds": 0.0
+    },
+    {
+      "expected_nanos": 3200000,
+      "id": "f64-fast-lan",
+      "packed_hex": "cb3f6a36e2eb1c432d",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "0.0032"
+      },
+      "rust_accepts": true,
+      "seconds": 0.0032
+    },
+    {
+      "expected_nanos": 187500000,
+      "id": "f64-typical",
+      "packed_hex": "cb3fc8000000000000",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "0.1875"
+      },
+      "rust_accepts": true,
+      "seconds": 0.1875
+    },
+    {
+      "expected_nanos": 1000000000,
+      "id": "f64-one-second",
+      "packed_hex": "cb3ff0000000000000",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "1.0"
+      },
+      "rust_accepts": true,
+      "seconds": 1.0
+    },
+    {
+      "expected_nanos": 12345678901,
+      "id": "f64-lora-slow",
+      "packed_hex": "cb4028b0fcd32f707a",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "12.345678901234567"
+      },
+      "rust_accepts": true,
+      "seconds": 12.345678901234567
+    },
+    {
+      "expected_nanos": 1,
+      "id": "f64-sub-microsecond",
+      "packed_hex": "cb3e112e0be826d695",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "1e-09"
+      },
+      "rust_accepts": true,
+      "seconds": 1e-09
+    },
+    {
+      "id": "f32-legacy-width",
+      "packed_hex": "ca3e400000",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "0.1875"
+      },
+      "rust_accepts": true
+    },
+    {
+      "id": "f64-negative",
+      "packed_hex": "cbbfe0000000000000",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "-0.5"
+      },
+      "rust_accepts": false
+    },
+    {
+      "id": "f64-nan",
+      "packed_hex": "cb7ff8000000000000",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "nan"
+      },
+      "rust_accepts": false
+    },
+    {
+      "id": "f64-positive-infinity",
+      "packed_hex": "cb7ff0000000000000",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "inf"
+      },
+      "rust_accepts": false
+    },
+    {
+      "id": "f64-trailing-byte",
+      "packed_hex": "cb3fd000000000000000",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "0.25"
+      },
+      "rust_accepts": false
+    },
+    {
+      "id": "f64-truncated",
+      "packed_hex": "cb3fd00000000000",
+      "python_unpack": {
+        "error": "InsufficientDataException",
+        "outcome": "error"
+      },
+      "rust_accepts": false
+    },
+    {
+      "id": "integer-marker",
+      "packed_hex": "01",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "1"
+      },
+      "rust_accepts": false
+    },
+    {
+      "id": "string-marker",
+      "packed_hex": "a4302e3235",
+      "python_unpack": {
+        "outcome": "value",
+        "repr": "'0.25'"
+      },
+      "rust_accepts": false
+    },
+    {
+      "id": "empty",
+      "packed_hex": "",
+      "python_unpack": {
+        "error": "InsufficientDataException",
+        "outcome": "error"
+      },
+      "rust_accepts": false
+    }
+  ]
+}
