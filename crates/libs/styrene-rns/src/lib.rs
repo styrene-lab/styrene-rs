@@ -17,6 +17,8 @@ pub mod serde;
 
 #[cfg(feature = "std")]
 pub mod diagnostics;
+#[cfg(feature = "std")]
+pub mod private_file;
 
 #[cfg(feature = "transport")]
 pub mod transport;
