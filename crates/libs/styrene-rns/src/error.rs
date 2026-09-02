@@ -7,4 +7,7 @@ pub enum RnsError {
     CryptoError,
     PacketError,
     ConnectionError,
+    /// No wall-clock time is available for a timestamp-dependent operation.
+    /// Without `std` the embedding must supply Unix time first.
+    TimeUnavailable,
 }

@@ -12,6 +12,7 @@ pub mod identity;
 pub mod key_manager;
 pub mod packet;
 pub mod ratchets;
+pub mod time_source;
 
 pub mod serde;
 
