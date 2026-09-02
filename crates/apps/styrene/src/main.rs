@@ -79,6 +79,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Status) => commands::status(socket).await,
 
         #[cfg(feature = "cli")]
+        Some(Command::Propagation) => commands::propagation(socket).await,
+
+        #[cfg(feature = "cli")]
         Some(Command::Peers { ref query, styrene_only }) => {
             commands::peers(socket, query.as_deref(), styrene_only).await
         }
