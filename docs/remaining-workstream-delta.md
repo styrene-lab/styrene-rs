@@ -51,7 +51,7 @@ authorization.
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
 | Operator profile lifecycle | 0/19 | Current-main implementation from tests through frontend migration |
 | Operation-scoped authorization | 0/18 | Principal, grant, constraint, issuer, decision, discovery, and compatibility contracts |
-| Native RNode endpoint transport | 11/11 | Archive-ready; no implementation delta |
+| Native RNode endpoint transport | 11/11 | Archived on 2026-09-02 |
 
 ## Mobile Product Delta
 
@@ -339,10 +339,10 @@ Repository-signing vectors remain candidates until a publication commit marks
 them released. Latest, previous-supported, and Identity-main compatibility lanes
 also remain open.
 
-The native RNode endpoint transport has no remaining implementation task. Its
-OpenSpec passes an archive dry run and can be archived as a separate closure
-change. Other 100-percent ledgers should be archived only after their validation
-and evidence records satisfy the same closure review.
+The native RNode endpoint transport had no remaining implementation task. Its
+OpenSpec change was archived on 2026-09-02 and its baseline now records the
+native RNode transport. Other 100-percent ledgers should be archived only after
+their validation and evidence records satisfy the same closure review.
 
 ## Recommended Execution Order
 
