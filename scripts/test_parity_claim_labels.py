@@ -22,7 +22,7 @@ class ParityClaimLabelTests(unittest.TestCase):
     def test_native_transport_claims_follow_hosted_live_evidence(self) -> None:
         claims = {entry["id"]: entry for entry in self.registry["parity_claims"]}
         gates = {entry["id"]: entry for entry in self.registry["parity_gates"]}
-        for claim_id in ("lxmf.direct", "lxmf.resources", "lxmf.propagation", "nomadnet.transport"):
+        for claim_id in ("rns.operations", "lxmf.direct", "lxmf.resources", "lxmf.propagation", "nomadnet.transport"):
             self.assertEqual(claims[claim_id]["level"], "verified", claim_id)
             for gate_id in claims[claim_id]["required_gates"]:
                 gate = gates[gate_id]
@@ -38,8 +38,7 @@ class ParityClaimLabelTests(unittest.TestCase):
             if gate["kind"] == "live":
                 self.assertFalse(gate["enabled"], gate["id"])
                 self.assertIn("--ignored", gate["command"], gate["id"])
-        self.assertEqual(claims["rns.operations"]["level"], "degraded")
-        self.assertIn("channel", claims["rns.operations"]["reason"])
+        self.assertEqual(claims["rns.operations"]["level"], "verified")
 
     def test_styrene_specific_evidence_is_labelled(self) -> None:
         gates = {entry["id"]: entry for entry in self.registry["parity_gates"]}
