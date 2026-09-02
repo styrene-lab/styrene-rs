@@ -40,9 +40,9 @@ Every behavior group uses strict test-first ordering. Do not begin its implement
 
 Dependency gate: `beechat-rns-corrections-wave` group 2 must be verified complete before task 6.1 starts. RTT bytes, precision, parsing, validation, and Python RTT interoperability are excluded from this group.
 
-- [ ] 6.1 Add and run failing adversarial tests for exact identify length and Link binding, every-byte identify corruption, repeated malformed controls, stale liveness under invalid identify/keepalive/close/channel traffic, corrupt channel ciphertext, and verified identity event ordering
-- [ ] 6.2 Minimally reorder non-RTT validation before mutation/proof, enforce owned exact framing, and retain verified peer identity without replacing handshake identity
-- [ ] 6.3 Verify the non-RTT adversarial matrix, valid controls after hostile traffic, channel proof behavior, teardown cleanup, existing Link interoperability, and no changes to the predecessor's LinkRTT contract
+- [x] 6.1 Add and run failing adversarial tests for exact identify length and Link binding, every-byte identify corruption, repeated malformed controls, stale liveness under invalid identify/keepalive/close/channel traffic, corrupt channel ciphertext, and verified identity event ordering
+- [x] 6.2 Minimally reorder non-RTT validation before mutation/proof, enforce owned exact framing, and retain verified peer identity without replacing handshake identity
+- [x] 6.3 Verify the non-RTT adversarial matrix, valid controls after hostile traffic, channel proof behavior, teardown cleanup, existing Link interoperability, and no changes to the predecessor's LinkRTT contract
 
 ## 7. Bound-interface Link sends
 <!-- specs: rns-link-transport-hardening -->
