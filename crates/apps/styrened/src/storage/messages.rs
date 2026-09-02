@@ -2779,6 +2779,18 @@ impl MessagesStore {
         })
     }
 
+    /// Copy this store's committed state into a fresh database file through
+    /// SQLite's online backup API. Safe while this connection stays open and
+    /// in use; the destination never contains a torn page or a partial WAL.
+    pub fn backup_to(&self, destination: &std::path::Path) -> rusqlite::Result<()> {
+        let mut target = Connection::open(destination)?;
+        let backup = rusqlite::backup::Backup::new(&self.conn, &mut target)?;
+        backup.run_to_completion(64, std::time::Duration::from_millis(5), None)?;
+        drop(backup);
+        target.pragma_update(None, "journal_mode", "delete")?;
+        Ok(())
+    }
+
     pub fn insert_message(&self, record: &MessageRecord) -> rusqlite::Result<()> {
         self.upsert_message(record).map(|_| ())
     }

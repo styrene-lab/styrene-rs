@@ -542,3 +542,181 @@ fn stale_lease_file_without_a_live_owner_is_reclaimed_and_release_is_idempotent(
     drop(reclaimed);
     assert_eq!(fs::read_dir(&runtime).unwrap().count(), 0, "release removes the runtime root");
 }
+
+// ── Snapshots ────────────────────────────────────────────────────────────────
+
+use styrened::operator_profile::SnapshotRef;
+
+fn sha256_hex(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(fs::read(path).unwrap()))
+}
+
+#[test]
+fn stopped_profile_snapshot_records_component_hashes_in_an_immutable_generation() {
+    let (_temp, profiles, runtime) = roots("snapshot-stopped");
+    let root = profiles.join("operator-home");
+    let profile = StoppedManagedProfile::create_local(&root, &runtime, "Home node").unwrap();
+    fs::write(&profile.paths().config, "role = \"client\"\n").unwrap();
+    fs::write(profile.paths().pages.join("index.mu"), b"page-state").unwrap();
+    fs::write(profile.paths().files.join("attachment.bin"), b"file-state").unwrap();
+    MessagesStore::open(&profile.paths().messages).unwrap();
+
+    let snapshot = profile.snapshot().expect("stopped snapshot");
+    let manifest = snapshot.manifest();
+    assert_eq!(manifest.profile_id, profile.manifest().id);
+    assert_eq!(manifest.profile_generation, 1);
+    assert_beneath(snapshot.root(), &profile.paths().snapshots);
+    for component in [
+        "config/config.toml",
+        "config/pages/index.mu",
+        "identity/identity",
+        "data/files/attachment.bin",
+        "data/messages.db",
+    ] {
+        let record =
+            manifest.components.get(component).unwrap_or_else(|| panic!("{component} recorded"));
+        assert_eq!(record.sha256, sha256_hex(&snapshot.root().join(component)), "{component}");
+    }
+    assert!(!manifest.components.keys().any(|key| key.ends_with("-wal") || key.ends_with("-shm")));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode =
+            fs::metadata(snapshot.root().join("identity/identity")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o400, "snapshot files are read-only");
+    }
+    assert!(
+        fs::write(snapshot.root().join("config/config.toml"), b"x").is_err(),
+        "generation is immutable"
+    );
+    assert_eq!(profile.snapshots().unwrap().len(), 1);
+    let reopened = SnapshotRef::open(snapshot.root()).expect("snapshot verifies");
+    assert_eq!(reopened.manifest(), manifest);
+}
+
+#[tokio::test]
+async fn running_profile_snapshot_uses_online_backup_and_captures_committed_state() {
+    let (_temp, profiles, runtime) = roots("snapshot-running");
+    let profile =
+        StoppedManagedProfile::create_quick(&profiles, &runtime, "Field session").unwrap();
+    fs::write(&profile.paths().config, "role = \"propagation_client\"\n").unwrap();
+    let running = profile.start().await.expect("start managed daemon");
+    let identity_hash = running.identity_hash().to_string();
+    running
+        .app_context()
+        .store()
+        .lock()
+        .unwrap()
+        .insert_message(&MessageRecord {
+            id: "live-message".into(),
+            source: "source".into(),
+            destination: "destination".into(),
+            title: "Snapshot".into(),
+            content: "Committed while running".into(),
+            timestamp: 1_788_194_121,
+            direction: "in".into(),
+            fields: None,
+            receipt_status: None,
+            read: false,
+        })
+        .expect("commit live message");
+    assert!(running.paths().messages.with_extension("db-wal").exists(), "live store has WAL state");
+
+    let snapshot = running.snapshot().expect("running snapshot");
+    assert_eq!(snapshot.manifest().identity_hash, identity_hash);
+    assert!(snapshot.manifest().components.contains_key("data/messages.db"));
+    assert!(snapshot.manifest().components.contains_key("data/nodes.db"));
+    // The daemon keeps running and the live store stays usable after the backup.
+    assert_eq!(running.identity_hash(), identity_hash);
+    assert!(
+        running
+            .app_context()
+            .store()
+            .lock()
+            .unwrap()
+            .get_message("live-message")
+            .unwrap()
+            .is_some()
+    );
+    let stopped = running.shutdown().await;
+
+    let destination = profiles.join("restored");
+    let restored = StoppedManagedProfile::restore_snapshot(&snapshot, &destination, &runtime)
+        .expect("restore");
+    let message = MessagesStore::open(&restored.paths().messages)
+        .unwrap()
+        .get_message("live-message")
+        .unwrap();
+    assert_eq!(message.map(|m| m.content).as_deref(), Some("Committed while running"));
+    drop(restored);
+    drop(stopped);
+}
+
+#[test]
+fn snapshot_restores_as_a_new_generation_without_modifying_the_snapshot() {
+    let (_temp, profiles, runtime) = roots("snapshot-restore");
+    let root = profiles.join("operator-home");
+    let profile = StoppedManagedProfile::create_local(&root, &runtime, "Home node").unwrap();
+    fs::write(&profile.paths().config, "role = \"client\"\n").unwrap();
+    fs::write(profile.paths().files.join("attachment.bin"), b"file-state").unwrap();
+    let identity = fs::read(&profile.paths().identity).unwrap();
+    let snapshot = profile.snapshot().unwrap();
+    let before: Vec<(String, String)> = snapshot
+        .manifest()
+        .components
+        .keys()
+        .map(|key| (key.clone(), sha256_hex(&snapshot.root().join(key))))
+        .collect();
+
+    let destination = profiles.join("restored");
+    let restored = StoppedManagedProfile::restore_snapshot(&snapshot, &destination, &runtime)
+        .expect("restore");
+    assert_eq!(restored.manifest().storage, ProfileStorage::Local);
+    assert_eq!(restored.manifest().generation, 2);
+    assert_eq!(restored.manifest().id, profile.manifest().id);
+    assert_eq!(fs::read(&restored.paths().identity).unwrap(), identity);
+    assert_eq!(fs::read_to_string(&restored.paths().config).unwrap(), "role = \"client\"\n");
+    assert_eq!(fs::read(restored.paths().files.join("attachment.bin")).unwrap(), b"file-state");
+    assert!(restored.paths().snapshots.is_dir());
+    // Restored files are writable again; the snapshot is untouched.
+    fs::write(&restored.paths().config, "role = \"full_node\"\n").unwrap();
+    let after: Vec<(String, String)> = before
+        .iter()
+        .map(|(key, _)| (key.clone(), sha256_hex(&snapshot.root().join(key))))
+        .collect();
+    assert_eq!(before, after);
+    snapshot.verify().expect("snapshot still verifies");
+    assert!(
+        StoppedManagedProfile::restore_snapshot(&snapshot, &destination, &runtime).is_err(),
+        "existing destination is rejected"
+    );
+}
+
+#[test]
+fn tampered_snapshot_is_rejected_before_restore_publishes_anything() {
+    let (_temp, profiles, runtime) = roots("snapshot-tamper");
+    let root = profiles.join("operator-home");
+    let profile = StoppedManagedProfile::create_local(&root, &runtime, "Home node").unwrap();
+    let snapshot = profile.snapshot().unwrap();
+    let config = snapshot.root().join("config/config.toml");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&config, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    fs::write(&config, "role = \"hub\"\n").unwrap();
+    let error = SnapshotRef::open(snapshot.root()).expect_err("tampered snapshot must not open");
+    assert!(error.to_string().contains("does not match"), "unexpected error: {error}");
+    let destination = profiles.join("restored");
+    let error = StoppedManagedProfile::restore_snapshot(&snapshot, &destination, &runtime)
+        .expect_err("tampered snapshot must not restore");
+    assert!(error.to_string().contains("does not match"), "unexpected error: {error}");
+    assert!(!destination.exists());
+    let stage_prefix = ".restored.restore-";
+    assert!(
+        fs::read_dir(&profiles).unwrap().all(|entry| {
+            !entry.unwrap().file_name().to_string_lossy().starts_with(stage_prefix)
+        })
+    );
+}

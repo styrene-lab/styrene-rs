@@ -12,8 +12,8 @@
 
 - [x] Add failing promotion tests for identity continuity, complete bounded state, destination collision, and pre-commit cleanup
 - [x] Implement stopped-profile Quick-to-Local promotion through a validated staged sibling and atomic commit
-- [ ] Add failing stopped and running snapshot tests for hashes, immutable generations, live-owner coordination, and restore-as-new-generation
-- [ ] Implement coherent snapshots with authoritative SQLite online backup for running profiles
+- [x] Add failing stopped and running snapshot tests for hashes, immutable generations, live-owner coordination, and restore-as-new-generation
+- [x] Implement coherent snapshots with authoritative SQLite online backup for running profiles
 
 ## 3. Identity custody
 <!-- specs: operator-profile-lifecycle -->
