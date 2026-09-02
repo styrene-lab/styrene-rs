@@ -448,6 +448,28 @@ pub fn spawn_inbound_worker_with_auto_reply(
                         );
                     }
 
+                    // LXMF proves every delivery packet on receipt, before it
+                    // inspects the payload, so the sender's receipt concludes
+                    // whether or not the message is later accepted.
+                    if is_local
+                        && event.link_id.is_none()
+                        && let Some(packet_hash) = event.packet_hash
+                    {
+                        let proved = transport
+                            .prove_received_packet(
+                                event.destination,
+                                packet_hash,
+                                event.receiving_iface,
+                            )
+                            .await;
+                        crate::daemon_diagnostic!(
+                            "[messaging-flow] stage=inbound_packet_proved destination={} packet={} dispatched={}",
+                            dest_hex,
+                            hex::encode(packet_hash),
+                            proved
+                        );
+                    }
+
                     if !is_local && propagation.is_enabled() {
                         match propagation.store_for_propagation(&dest_hex, data, None) {
                             Ok(true) => {

@@ -266,6 +266,18 @@ pub trait MeshTransport: Send + Sync {
         })
     }
 
+    /// Prove receipt of a single packet delivered to one of this node's input
+    /// destinations, so the sender's receipt can conclude. Transports without
+    /// a proving path report `false`.
+    async fn prove_received_packet(
+        &self,
+        _destination: AddressHash,
+        _packet_hash: [u8; 32],
+        _receiving_iface: Option<AddressHash>,
+    ) -> bool {
+        false
+    }
+
     /// Link-based reliable send (with resource fallback for large payloads).
     /// Caller must provide a fully-resolved `DestinationDesc` (includes peer Identity).
     async fn send_via_link(

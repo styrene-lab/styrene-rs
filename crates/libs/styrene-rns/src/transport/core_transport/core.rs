@@ -168,6 +168,8 @@ impl Transport {
                                     request_id: payload.request_id(),
                                     hops: None,
                                     interface: None,
+                                    packet_hash: None,
+                                    receiving_iface: None,
                                 });
                             }
                         }
@@ -373,6 +375,35 @@ impl Transport {
             .await
             .send(TxMessage { tx_type: TxMessageType::Broadcast(from_iface), packet })
             .await;
+    }
+
+    /// Prove receipt of a single packet delivered to one of this transport's
+    /// input destinations. The proof is signed by that destination's identity
+    /// and returned on the receiving interface when it is known. Returns
+    /// whether the proof was dispatched.
+    pub async fn prove_received_packet(
+        &self,
+        destination: AddressHash,
+        packet_hash: [u8; HASH_SIZE],
+        receiving_iface: Option<AddressHash>,
+    ) -> bool {
+        let mut handler = self.handler.lock().await;
+        let Some(input) = handler.single_in_destinations.get(&destination).cloned() else {
+            return false;
+        };
+        let proof = {
+            let input = input.lock().await;
+            super::wire::build_implicit_packet_proof(&input.identity, packet_hash)
+        };
+        let dispatch = match receiving_iface {
+            Some(iface) => {
+                handler
+                    .send(TxMessage { tx_type: TxMessageType::Direct(iface), packet: proof })
+                    .await
+            }
+            None => handler.send_packet_with_trace(proof).await.dispatch,
+        };
+        dispatch.sent_ifaces > 0
     }
 
     pub async fn send_direct(&self, addr: AddressHash, packet: Packet) -> TxDispatchTrace {
