@@ -154,6 +154,12 @@ pub struct ReceivedData {
     pub request_id: Option<[u8; 16]>,
     pub hops: Option<u8>,
     pub interface: Option<Vec<u8>>,
+    /// Hash of the received wire packet for single-destination deliveries, so
+    /// the application can prove receipt to the sender the way Reticulum
+    /// destinations do. `None` for link-delivered payloads.
+    pub packet_hash: Option<[u8; HASH_SIZE]>,
+    /// Interface the packet arrived on; proofs are returned the same way.
+    pub receiving_iface: Option<AddressHash>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
