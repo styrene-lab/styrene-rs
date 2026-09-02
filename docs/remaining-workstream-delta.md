@@ -45,7 +45,7 @@ authorization.
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
 | Shared frontend session | 9/29 | Negotiation, event/reconnect behavior, TUI migration, common sessions, desktop migration, and revision-pair verification |
-| Reticulum/LXMF/NomadNet parity | 83/85 | Routed channel evidence and final support claims |
+| Reticulum/LXMF/NomadNet parity | 84/85 | Routed channel evidence |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
@@ -228,11 +228,25 @@ transports.
 The same hop re-arms its path response timer on every repeated path request.
 The harness clients now ask at a real client's pace instead of twice a second.
 
+Support claims now follow hosted evidence. The committed record
+`tests/interop/handoffs/pinned-live-evidence.json` lists every
+`live-interop.yml` dispatch whose scenarios all passed, with the styrene-rs
+revision and the pinned upstream revisions. Live gates stay isolated in the
+capability registry, as repository policy requires. Fixture gates verify the
+record offline instead. Each claim group needs a passing hosted run for every
+scenario its live gates opt into. The record must also match the runner's pins
+and the workflow matrix.
+
+On that evidence the LXMF direct, resource, and propagation claims and the
+NomadNet transport claim are verified. Reticulum operations stay degraded
+until routed channel evidence exists.
+
 The remaining live evidence is a routed channel exchange. No pinned Python
 application speaks a channel protocol the Rust daemon exposes, so that
 evidence needs a Rust-to-Rust channel across a pinned transport hop.
 Repository policy keeps live Python runs manual and scheduled workflows
-fixture-only.
+fixture-only, so each hosted dispatch is an operator action recorded in the
+evidence file.
 
 Authority:
 
