@@ -218,7 +218,7 @@ version = "1.5.1"
 id = "python-nomadnet"
 repository = "https://github.com/markqvist/NomadNet"
 revision = "ad10301569a39d4f43b3d21ae9fc392602c937ca"
-version = "1.2.8"
+version = "1.2.3"
 
 [[parity_gates]]
 id = "rns-python-fixtures"
@@ -274,14 +274,16 @@ evidence = [
 
 [[parity_gates]]
 id = "rns-live-operations"
-kind = "manual"
-automated = false
-enabled = false
-ignored = true
+kind = "live"
+automated = true
+enabled = true
+ignored = false
 protocol = "native"
-upstreams = ["python-rns"]
-command = "python3 tests/compliance/lxmf_interop.py"
-evidence = ["tests/compliance/lxmf_interop.py"]
+upstreams = ["python-rns", "python-lxmf", "python-nomadnet"]
+command = "./target/debug/styrene-interop routed_direct --timeout 300 --evidence target/interop/routed_direct.json && ./target/debug/styrene-interop routed_direct_resource --timeout 300 --evidence target/interop/routed_direct_resource.json && ./target/debug/styrene-interop routed_nomadnet_pages --timeout 300 --evidence target/interop/routed_nomadnet_pages.json"
+evidence = [
+  "scripts/python-lxmf-smoke.sh", "scripts/python-nomadnet-smoke.sh", "crates/tests/styrene-interop-runner/src/lib.rs", ".github/workflows/live-interop.yml", "tests/interop/handoffs/pinned-live-evidence.json",
+]
 
 [[parity_gates]]
 id = "lxmf-rust-codec"
@@ -309,34 +311,40 @@ evidence = ["crates/tests/styrene-e2e/tests/lxmf_delivery.rs"]
 id = "lxmf-python-direct"
 kind = "live"
 automated = true
-enabled = false
-ignored = true
+enabled = true
+ignored = false
 protocol = "native"
 upstreams = ["python-rns", "python-lxmf"]
-command = "cargo test -p styrened --test python_compat_matrix python_compat_direct -- --ignored"
-evidence = ["crates/apps/styrened/tests/python_compat_matrix.rs", "scripts/python-lxmf-smoke.sh"]
+command = "./target/debug/styrene-interop direct --timeout 300 --evidence target/interop/direct.json"
+evidence = [
+  "scripts/python-lxmf-smoke.sh", "crates/tests/styrene-interop-runner/src/lib.rs", ".github/workflows/live-interop.yml", "tests/interop/handoffs/pinned-live-evidence.json",
+]
 
 [[parity_gates]]
 id = "lxmf-python-opportunistic"
 kind = "live"
 automated = true
-enabled = false
-ignored = true
+enabled = true
+ignored = false
 protocol = "native"
 upstreams = ["python-rns", "python-lxmf"]
-command = "cargo test -p styrened --test python_compat_matrix python_compat_opportunistic -- --ignored"
-evidence = ["crates/apps/styrened/tests/python_compat_matrix.rs", "scripts/python-lxmf-smoke.sh"]
+command = "./target/debug/styrene-interop opportunistic --timeout 300 --evidence target/interop/opportunistic.json"
+evidence = [
+  "scripts/python-lxmf-smoke.sh", "crates/tests/styrene-interop-runner/src/lib.rs", ".github/workflows/live-interop.yml", "tests/interop/handoffs/pinned-live-evidence.json",
+]
 
 [[parity_gates]]
 id = "lxmf-python-resources"
 kind = "live"
-automated = false
-enabled = false
-ignored = true
+automated = true
+enabled = true
+ignored = false
 protocol = "native"
 upstreams = ["python-rns", "python-lxmf"]
-command = ""
-evidence = ["crates/apps/styrened/tests/python_compat_matrix.rs"]
+command = "./target/debug/styrene-interop direct_resource --timeout 300 --evidence target/interop/direct_resource.json && ./target/debug/styrene-interop propagated_resource_lxm --timeout 300 --evidence target/interop/propagated_resource_lxm.json"
+evidence = [
+  "scripts/python-lxmf-smoke.sh", "crates/tests/styrene-interop-runner/src/lib.rs", ".github/workflows/live-interop.yml", "tests/interop/handoffs/pinned-live-evidence.json",
+]
 
 [[parity_gates]]
 id = "lxmf-styrene-propagation"
@@ -352,13 +360,15 @@ evidence = ["crates/tests/styrene-e2e/tests/propagation.rs"]
 [[parity_gates]]
 id = "lxmf-python-propagation"
 kind = "live"
-automated = false
-enabled = false
-ignored = true
+automated = true
+enabled = true
+ignored = false
 protocol = "native"
 upstreams = ["python-rns", "python-lxmf"]
-command = "cargo test -p styrened --test python_compat_matrix python_compat_propagated_resource_lxm -- --ignored"
-evidence = ["crates/apps/styrened/tests/python_compat_matrix.rs", "scripts/python-lxmf-smoke.sh"]
+command = "./target/debug/styrene-interop propagated_resource_lxm --timeout 300 --evidence target/interop/propagated_resource_lxm.json && ./target/debug/styrene-interop propagated_retrieval --timeout 300 --evidence target/interop/propagated_retrieval.json && ./target/debug/styrene-interop propagated_capacity --timeout 300 --evidence target/interop/propagated_capacity.json && ./target/debug/styrene-interop propagated_expiry --timeout 300 --evidence target/interop/propagated_expiry.json"
+evidence = [
+  "scripts/python-lxmf-smoke.sh", "crates/tests/styrene-interop-runner/src/lib.rs", ".github/workflows/live-interop.yml", "tests/interop/handoffs/pinned-live-evidence.json",
+]
 
 [[parity_gates]]
 id = "micron-conformance"
@@ -386,15 +396,32 @@ command = "cargo test -p styrened --test nomadnet_pages_offline"
 evidence = ["crates/apps/styrened/src/services/pages.rs", "crates/apps/styrened/tests/nomadnet_pages_offline.rs"]
 
 [[parity_gates]]
-id = "nomadnet-native-transport"
-kind = "live"
-automated = false
-enabled = false
-ignored = true
+id = "nomadnet-python-fixtures"
+kind = "fixture"
+automated = true
+enabled = true
+ignored = false
 protocol = "native"
 upstreams = ["python-rns", "python-nomadnet"]
-command = ""
-evidence = ["crates/apps/styrened/src/services/pages.rs"]
+command = "cargo test -p styrened --test nomadnet_fixtures"
+evidence = [
+  "crates/apps/styrened/tests/nomadnet_fixtures.rs",
+  "tests/interop/fixtures/nomadnet-v1/index.json",
+  "tests/interop/python/generate_nomadnet_fixtures.py",
+]
+
+[[parity_gates]]
+id = "nomadnet-native-transport"
+kind = "live"
+automated = true
+enabled = true
+ignored = false
+protocol = "native"
+upstreams = ["python-rns", "python-nomadnet"]
+command = "./target/debug/styrene-interop nomadnet_pages --timeout 300 --evidence target/interop/nomadnet_pages.json && ./target/debug/styrene-interop nomadnet_client --timeout 300 --evidence target/interop/nomadnet_client.json && ./target/debug/styrene-interop routed_nomadnet_pages --timeout 300 --evidence target/interop/routed_nomadnet_pages.json"
+evidence = [
+  "scripts/python-nomadnet-smoke.sh", "scripts/rust-nomadnet-client-smoke.sh", "crates/tests/styrene-interop-runner/src/lib.rs", ".github/workflows/live-interop.yml", "tests/interop/handoffs/pinned-live-evidence.json",
+]
 
 [[parity_claims]]
 id = "rns.primitives"
@@ -405,10 +432,10 @@ reason = "Fixture provenance and deterministic regeneration are not yet release-
 
 [[parity_claims]]
 id = "rns.operations"
-level = "experimental"
+level = "degraded"
 required_gates = ["rns-live-operations"]
 evidence_gates = ["rns-rust-e2e", "rns-live-operations"]
-reason = "No automated pinned Python/Rust routed request, resource, loss, and recovery gate exists."
+reason = "Routed link, request, and resource gates pass across a pinned Python transport hop; routed channel evidence is not yet automated."
 
 [[parity_claims]]
 id = "lxmf.codec"
@@ -419,24 +446,21 @@ reason = "Codec tests are Rust-only and lack Python LXMF canonical vectors."
 
 [[parity_claims]]
 id = "lxmf.direct"
-level = "degraded"
+level = "verified"
 required_gates = ["lxmf-python-direct", "lxmf-python-opportunistic"]
 evidence_gates = ["lxmf-rust-direct", "lxmf-python-direct", "lxmf-python-opportunistic"]
-reason = "Python interoperability is ignored, manual, and Python-to-Rust only."
 
 [[parity_claims]]
 id = "lxmf.resources"
-level = "experimental"
+level = "verified"
 required_gates = ["lxmf-python-resources"]
 evidence_gates = ["lxmf-rust-direct", "lxmf-python-resources"]
-reason = "No bidirectional Python/Rust resource-backed delivery gate exists."
 
 [[parity_claims]]
 id = "lxmf.propagation"
-level = "unsupported"
+level = "verified"
 required_gates = ["lxmf-python-propagation"]
 evidence_gates = ["lxmf-styrene-propagation", "lxmf-python-propagation"]
-reason = "Standard propagation handlers and persistence exist, but no enabled pinned Python/Rust discovery, offer, fetch, offline-delivery, expiry, capacity, and restart gate exists."
 
 [[parity_claims]]
 id = "micron.rendering"
@@ -447,7 +471,6 @@ reason = "Parser coverage is substantial, but fixture provenance and renderer as
 
 [[parity_claims]]
 id = "nomadnet.transport"
-level = "unsupported"
-required_gates = ["nomadnet-native-transport"]
-evidence_gates = ["nomadnet-styrene-pages", "nomadnet-native-transport"]
-reason = "Native request paths are implemented, but revision-attested Python host/client fixtures and live interoperability gates remain unavailable."
+level = "verified"
+required_gates = ["nomadnet-python-fixtures", "nomadnet-native-transport"]
+evidence_gates = ["nomadnet-styrene-pages", "nomadnet-python-fixtures", "nomadnet-native-transport"]

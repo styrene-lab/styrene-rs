@@ -131,4 +131,4 @@
 - [x] 12.6 Enable routed Reticulum, standard propagation, and native NomadNet gates
 - [x] 12.7 Keep ordinary workspace validation offline and deterministic
 - [x] 12.8 Run warning-denied Clippy, formatting, unit, component, fixture, property, restart, and migration tests
-- [ ] 12.9 Generate final support claims only from passing non-ignored gate evidence
+- [x] 12.9 Generate final support claims only from passing non-ignored gate evidence

@@ -26,6 +26,7 @@ selected_targets = [
   "styrene-amcp:*",
   "styrene-interop-runner:test/rns_fixtures",
   "styrene-interop-runner:test/rns_handoff_manifests",
+  "styrene-interop-runner:test/live_evidence",
   "styrene-ipc-server:lib",
   "styrene-ipc-server:test/wire_compat",
   "styrened:lib",

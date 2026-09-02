@@ -34,7 +34,7 @@ test:
         crates/libs/styrene-identity/tests/test-vectors.json \
         crates/libs/styrene-identity/tests/vectors/repository-signing-v1/positive.json \
         crates/libs/styrene-identity/tests/vectors/repository-signing-v1/negative.json
-    cargo test -p styrene-interop-runner --test rns_fixtures --test rns_handoff_manifests
+    cargo test -p styrene-interop-runner --test rns_fixtures --test rns_handoff_manifests --test live_evidence
     cargo test -p styrene-ipc-server --lib --test wire_compat
     cargo test -p styrened --lib \
         --test announce_names --test config --test identity_store \
