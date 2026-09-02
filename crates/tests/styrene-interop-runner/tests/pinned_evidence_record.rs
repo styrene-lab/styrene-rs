@@ -242,7 +242,7 @@ fn nomadnet_transport_scenarios_have_passing_hosted_runs() {
 #[test]
 fn rns_operations_scenarios_have_passing_hosted_runs() {
     assert_group(
-        &["routed_direct", "routed_direct_resource", "routed_nomadnet_pages"],
+        &["routed_direct", "routed_direct_resource", "routed_nomadnet_pages", "routed_channel"],
         &["rns-live-operations"],
     );
 }
