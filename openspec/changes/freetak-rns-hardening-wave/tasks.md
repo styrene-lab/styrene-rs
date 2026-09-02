@@ -95,17 +95,17 @@ Dependency gate: `reticulum-1-5-parity-wave` group 8 must be verified complete b
 
 Dependency gate: `reticulum-1-5-parity-wave` groups 2-6 must all be verified complete and their final admission/path architecture must be present before task 13.1 starts.
 
-- [ ] 13.1 Add and run failing tier-size tests for passive, transport-enabled, shared-instance, path-response, rate-limited, cache-refresh, and path-persistence announce cases through the predecessor's final admission/path boundary
-- [ ] 13.2 Add only the queue-admission guard and bounded-cache fallback after canonical admission while preserving the newest packet needed by path persistence
-- [ ] 13.3 Verify queue/cache bounds, transport retransmission, shared-instance exceptions, path-response suppression, refresh behavior, persisted-path availability, and the predecessor's admission/path suites
+- [x] 13.1 Add and run failing tier-size tests for passive, transport-enabled, shared-instance, path-response, rate-limited, cache-refresh, and path-persistence announce cases through the predecessor's final admission/path boundary
+- [x] 13.2 Add only the queue-admission guard and bounded-cache fallback after canonical admission while preserving the newest packet needed by path persistence
+- [x] 13.3 Verify queue/cache bounds, transport retransmission, shared-instance exceptions, path-response suppression, refresh behavior, persisted-path availability, and the predecessor's admission/path suites
 
 ## 14. Internal-interface announce policy
 <!-- specs: rns-interface-policy -->
 
 Dependency gate: `reticulum-1-5-parity-wave` groups 2-6 must all be verified complete and their final admission/path architecture must be present before task 14.1 starts.
 
-- [ ] 14.1 Add and run a failing authority-derived decision table plus startup, child-inheritance, and hot-apply round-trip tests for both internal flags at the predecessor's final egress-policy boundary
-- [ ] 14.2 Implement only `announces_from_internal` and `announces_to_internal` propagation and decisions with authority defaults and no parallel admission, queue, path, or deadline architecture
+- [x] 14.1 Add and run a failing authority-derived decision table plus startup, child-inheritance, and hot-apply round-trip tests for both internal flags at the predecessor's final egress-policy boundary
+- [x] 14.2 Implement only `announces_from_internal` and `announces_to_internal` propagation and decisions with authority defaults and no parallel admission, queue, path, or deadline architecture
 - [ ] 14.3 Verify the policy was introduced at Reticulum 1.5.0 `e32d4df754a7b87b1bf1bb0d08675d12ff505ae6`, remains authoritative at 1.5.1 `149e4151095adf098b8f53eab0c03b37169e8559`, and preserves predecessor admission/path tests
 
 ## 15. Low-level ordered-byte attempt and shared RNode engine

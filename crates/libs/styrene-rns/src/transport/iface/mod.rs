@@ -312,6 +312,59 @@ pub struct InterfaceDescriptor {
     pub remote_endpoint: Option<InterfaceEndpoint>,
     pub ingress_control: bool,
     pub egress_control: bool,
+    /// The interface serves local client instances of this node. Announces
+    /// learned through it are retransmitted even when transport forwarding
+    /// is disabled, the same way a shared instance serves its local clients.
+    pub shared_instance: bool,
+    /// Whether this outgoing interface carries announces whose next hop is an
+    /// internal-mode interface. Absent means permissive.
+    pub announces_from_internal: Option<bool>,
+    /// Whether an announce learned through this boundary-mode interface may
+    /// cross to an internal-mode outgoing interface. Absent grants no
+    /// override, so such announces stay off internal interfaces.
+    pub announces_to_internal: Option<bool>,
+}
+
+impl InterfaceDescriptor {
+    /// Fill fields a child interface did not set from its parent: the mode
+    /// when unknown, the shared-instance marker, and both internal announce
+    /// policy flags when absent.
+    pub fn inherit_from(&mut self, parent: &InterfaceDescriptor) {
+        if self.mode == InterfaceMode::Unknown {
+            self.mode = parent.mode;
+        }
+        self.shared_instance |= parent.shared_instance;
+        self.announces_from_internal =
+            self.announces_from_internal.or(parent.announces_from_internal);
+        self.announces_to_internal = self.announces_to_internal.or(parent.announces_to_internal);
+    }
+}
+
+/// Internal-interface announce policy for one outgoing interface.
+///
+/// `next_hop` is the interface a non-local announce was learned through;
+/// `None` means a local announcement, which is always permitted. An outgoing
+/// interface that explicitly disables announces from internal blocks
+/// announces learned through an internal-mode next hop. An internal-mode
+/// outgoing interface blocks announces learned through a boundary-mode next
+/// hop unless that next hop explicitly permits announces to internal.
+pub fn announce_egress_permitted(
+    outgoing: &InterfaceDescriptor,
+    next_hop: Option<&InterfaceDescriptor>,
+) -> bool {
+    let Some(next_hop) = next_hop else {
+        return true;
+    };
+    if next_hop.mode == InterfaceMode::Internal && outgoing.announces_from_internal == Some(false) {
+        return false;
+    }
+    if outgoing.mode == InterfaceMode::Internal
+        && next_hop.mode == InterfaceMode::Boundary
+        && next_hop.announces_to_internal != Some(true)
+    {
+        return false;
+    }
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -410,6 +463,21 @@ impl InterfaceRuntime {
         let mut metadata = self.metadata.lock().expect("interface runtime lock");
         metadata.descriptor.local_endpoint = None;
         metadata.descriptor.remote_endpoint = None;
+    }
+
+    pub(crate) fn descriptor(&self) -> InterfaceDescriptor {
+        self.metadata.lock().expect("interface runtime lock").descriptor.clone()
+    }
+
+    /// Hot-apply both internal announce policy flags.
+    pub(crate) fn set_announce_policy(
+        &self,
+        announces_from_internal: Option<bool>,
+        announces_to_internal: Option<bool>,
+    ) {
+        let mut metadata = self.metadata.lock().expect("interface runtime lock");
+        metadata.descriptor.announces_from_internal = announces_from_internal;
+        metadata.descriptor.announces_to_internal = announces_to_internal;
     }
 
     fn should_egress_limit_path_request(&self, now: Instant) -> bool {
@@ -760,7 +828,12 @@ impl InterfaceManager {
         inner: T,
         parent: Option<AddressHash>,
     ) -> InterfaceContext<T> {
-        let descriptor = inner.descriptor();
+        let mut descriptor = inner.descriptor();
+        if let Some(parent) = parent
+            && let Some(parent_descriptor) = self.descriptor_of(&parent)
+        {
+            descriptor.inherit_from(&parent_descriptor);
+        }
         let bitrate = inner.bitrate();
         let hardware_mtu = inner.hardware_mtu();
         let link_mtu_capable = inner.supports_link_mtu_discovery();
@@ -890,6 +963,45 @@ impl InterfaceManager {
 
     pub fn subscribe_state_changes(&self) -> broadcast::Receiver<InterfaceStateEvent> {
         self.state_tx.subscribe()
+    }
+
+    pub fn descriptor_of(&self, hash: &AddressHash) -> Option<InterfaceDescriptor> {
+        self.ifaces
+            .iter()
+            .find(|interface| interface.address == *hash)
+            .map(|interface| interface.runtime.descriptor())
+    }
+
+    /// Whether the interface serves local client instances, which keeps
+    /// announces learned through it in the retransmission queue on a node
+    /// that does not otherwise forward.
+    pub fn is_shared_instance(&self, hash: &AddressHash) -> bool {
+        self.descriptor_of(hash).is_some_and(|descriptor| descriptor.shared_instance)
+    }
+
+    /// Both internal announce policy flags of one interface.
+    pub fn announce_policy(&self, hash: &AddressHash) -> Option<(Option<bool>, Option<bool>)> {
+        self.descriptor_of(hash).map(|descriptor| {
+            (descriptor.announces_from_internal, descriptor.announces_to_internal)
+        })
+    }
+
+    /// Hot-apply both internal announce policy flags to one interface.
+    pub fn set_announce_policy(
+        &self,
+        hash: &AddressHash,
+        announces_from_internal: Option<bool>,
+        announces_to_internal: Option<bool>,
+    ) -> bool {
+        match self.ifaces.iter().find(|interface| interface.address == *hash) {
+            Some(interface) => {
+                interface
+                    .runtime
+                    .set_announce_policy(announces_from_internal, announces_to_internal);
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn interface_mode(&self, hash: &AddressHash) -> InterfaceMode {
@@ -1107,12 +1219,26 @@ impl InterfaceManager {
         let pkt_bytes = message.packet.data.len() as u64;
         let is_path_request = message.packet.header.packet_type == crate::packet::PacketType::Data
             && message.packet.destination == self.path_request_destination;
+        // A rebroadcast announce carries the interface it was learned through;
+        // the internal-interface policy is decided per outgoing interface.
+        let announce_next_hop = match message.tx_type {
+            TxMessageType::Broadcast(Some(address))
+                if message.packet.header.packet_type == crate::packet::PacketType::Announce =>
+            {
+                self.descriptor_of(&address)
+            }
+            _ => None,
+        };
         for iface in &self.ifaces {
             let should_send = match message.tx_type {
                 TxMessageType::Broadcast(address) => {
                     let mut should_send = true;
                     if let Some(address) = address {
                         should_send = address != iface.address;
+                    }
+                    if should_send && let Some(next_hop) = announce_next_hop.as_ref() {
+                        should_send =
+                            announce_egress_permitted(&iface.runtime.descriptor(), Some(next_hop));
                     }
 
                     should_send
@@ -1423,5 +1549,176 @@ mod tests {
             }
             assert_eq!(manager.lowest_online_positive_bitrate(), case.expected_lowest);
         }
+    }
+
+    fn descriptor(mode: InterfaceMode) -> InterfaceDescriptor {
+        InterfaceDescriptor { mode, ..Default::default() }
+    }
+
+    #[test]
+    fn internal_announce_policy_decision_table() {
+        let internal = descriptor(InterfaceMode::Internal);
+        let boundary = descriptor(InterfaceMode::Boundary);
+        let full = descriptor(InterfaceMode::Full);
+        let permit_to_internal = InterfaceDescriptor {
+            announces_to_internal: Some(true),
+            ..descriptor(InterfaceMode::Boundary)
+        };
+        let deny_to_internal = InterfaceDescriptor {
+            announces_to_internal: Some(false),
+            ..descriptor(InterfaceMode::Boundary)
+        };
+        let full_no_from_internal = InterfaceDescriptor {
+            announces_from_internal: Some(false),
+            ..descriptor(InterfaceMode::Full)
+        };
+        let full_from_internal = InterfaceDescriptor {
+            announces_from_internal: Some(true),
+            ..descriptor(InterfaceMode::Full)
+        };
+        let internal_no_from_internal = InterfaceDescriptor {
+            announces_from_internal: Some(false),
+            ..descriptor(InterfaceMode::Internal)
+        };
+
+        let rows: [(&str, &InterfaceDescriptor, Option<&InterfaceDescriptor>, bool); 11] = [
+            ("local announce on any interface", &internal_no_from_internal, None, true),
+            ("absent from-internal is permissive", &full, Some(&internal), true),
+            ("explicit from-internal true permits", &full_from_internal, Some(&internal), true),
+            (
+                "explicit from-internal false blocks internal next hop",
+                &full_no_from_internal,
+                Some(&internal),
+                false,
+            ),
+            (
+                "from-internal false ignores non-internal next hop",
+                &full_no_from_internal,
+                Some(&full),
+                true,
+            ),
+            (
+                "internal outgoing blocks boundary next hop by default",
+                &internal,
+                Some(&boundary),
+                false,
+            ),
+            (
+                "internal outgoing blocks boundary next hop denying override",
+                &internal,
+                Some(&deny_to_internal),
+                false,
+            ),
+            (
+                "internal outgoing accepts boundary next hop with override",
+                &internal,
+                Some(&permit_to_internal),
+                true,
+            ),
+            ("internal outgoing accepts full next hop", &internal, Some(&full), true),
+            ("full outgoing accepts boundary next hop", &full, Some(&boundary), true),
+            ("internal to internal stays permissive by default", &internal, Some(&internal), true),
+        ];
+        for (row, outgoing, next_hop, expected) in rows {
+            assert_eq!(announce_egress_permitted(outgoing, next_hop), expected, "{row}");
+        }
+    }
+
+    struct PlainInterface;
+
+    impl Interface for PlainInterface {
+        fn mtu() -> usize {
+            500
+        }
+    }
+
+    #[test]
+    fn announce_policy_is_carried_from_startup_through_children_and_hot_apply() {
+        let mut manager = InterfaceManager::new(4);
+        let (parent, _control) = manager.new_host_channel(
+            4,
+            InterfaceDescriptor {
+                mode: InterfaceMode::Internal,
+                announces_from_internal: Some(false),
+                announces_to_internal: None,
+                shared_instance: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(manager.announce_policy(&parent.address), Some((Some(false), None)));
+        assert!(manager.is_shared_instance(&parent.address));
+
+        let child = manager.new_context_with_parent(PlainInterface, Some(parent.address));
+        let child_address = *child.channel.address();
+        assert_eq!(manager.interface_mode(&child_address), InterfaceMode::Internal);
+        assert_eq!(manager.announce_policy(&child_address), Some((Some(false), None)));
+        assert!(manager.is_shared_instance(&child_address));
+
+        assert!(manager.set_announce_policy(&parent.address, None, Some(true)));
+        assert_eq!(manager.announce_policy(&parent.address), Some((None, Some(true))));
+        assert_eq!(
+            manager.announce_policy(&child_address),
+            Some((Some(false), None)),
+            "hot apply changes only the addressed interface"
+        );
+        assert!(!manager.set_announce_policy(&AddressHash::new([9; 16]), None, None));
+        assert_eq!(manager.announce_policy(&AddressHash::new([9; 16])), None);
+    }
+
+    fn rebroadcast_announce(next_hop: AddressHash) -> TxMessage {
+        TxMessage {
+            tx_type: TxMessageType::Broadcast(Some(next_hop)),
+            packet: Packet {
+                header: crate::packet::Header {
+                    packet_type: crate::packet::PacketType::Announce,
+                    ..Default::default()
+                },
+                destination: AddressHash::new([0x51; 16]),
+                data: crate::packet::PacketDataBuffer::new_from_slice(b"announce"),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn announce_rebroadcast_applies_the_internal_policy_per_outgoing_interface() {
+        let mut manager = InterfaceManager::new(4);
+        let (internal_hop, _a) = manager.new_host_channel(4, descriptor(InterfaceMode::Internal));
+        let (boundary_hop, _b) = manager.new_host_channel(4, descriptor(InterfaceMode::Boundary));
+        let (mut full_out, _c) = manager.new_host_channel(4, descriptor(InterfaceMode::Full));
+        let (mut internal_out, _d) =
+            manager.new_host_channel(4, descriptor(InterfaceMode::Internal));
+
+        let trace = manager.send(rebroadcast_announce(internal_hop.address)).await;
+        assert_eq!(trace.sent_ifaces, 3, "permissive default sends everywhere but the hop");
+        assert!(full_out.tx_channel.try_recv().is_ok());
+        assert!(internal_out.tx_channel.try_recv().is_ok());
+
+        assert!(manager.set_announce_policy(&full_out.address, Some(false), None));
+        let trace = manager.send(rebroadcast_announce(internal_hop.address)).await;
+        assert_eq!(trace.sent_ifaces, 2);
+        assert!(full_out.tx_channel.try_recv().is_err(), "from-internal false blocks the announce");
+        assert!(internal_out.tx_channel.try_recv().is_ok());
+
+        let trace = manager.send(rebroadcast_announce(boundary_hop.address)).await;
+        assert_eq!(trace.sent_ifaces, 1, "both internal-mode interfaces block the boundary hop");
+        assert!(full_out.tx_channel.try_recv().is_ok(), "the boundary hop is not internal");
+        assert!(
+            internal_out.tx_channel.try_recv().is_err(),
+            "boundary to internal needs an override"
+        );
+
+        assert!(manager.set_announce_policy(&boundary_hop.address, None, Some(true)));
+        let trace = manager.send(rebroadcast_announce(boundary_hop.address)).await;
+        assert_eq!(trace.sent_ifaces, 3);
+        assert!(internal_out.tx_channel.try_recv().is_ok(), "the override admits the announce");
+
+        let local = TxMessage {
+            tx_type: TxMessageType::Broadcast(None),
+            ..rebroadcast_announce(boundary_hop.address)
+        };
+        assert!(manager.set_announce_policy(&boundary_hop.address, None, None));
+        let trace = manager.send(local).await;
+        assert_eq!(trace.sent_ifaces, 4, "local announcements ignore the policy");
     }
 }

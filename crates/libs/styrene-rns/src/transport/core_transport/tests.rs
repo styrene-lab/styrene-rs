@@ -1892,3 +1892,150 @@ async fn single_link_packet_send_uses_the_bound_interface_and_rejects_inactive_l
     );
     fixture.expect_quiet();
 }
+
+fn remote_announce(name: &str) -> (SingleInputDestination, Packet) {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut remote = SingleInputDestination::new(identity, DestinationName::new("lxmf", name));
+    let packet = remote.announce(OsRng, None).expect("valid announce");
+    (remote, packet)
+}
+
+async fn accept_announce(transport: &Transport, iface: AddressHash, packet: &Packet) {
+    handle_announce(packet, transport.handler.lock().await, iface).await;
+}
+
+#[tokio::test]
+async fn passive_node_retains_announces_in_the_bounded_cache_without_queueing() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("passive", &identity, false);
+    config.set_retransmit(false);
+    config.set_announce_cache_capacity(4);
+    let transport = Transport::new(config);
+    let channel = test_interface_channel(&transport).await;
+    let mut announce_events = transport.recv_announces().await;
+
+    let mut destinations = Vec::new();
+    for index in 0..6 {
+        let (_, packet) = remote_announce(&format!("passive-{index}"));
+        // The per-interface rate limiter holds a burst of unknown destinations,
+        // so each distinct announce arrives on its own interface.
+        let ingress = test_interface_channel(&transport).await;
+        accept_announce(&transport, ingress.address, &packet).await;
+        destinations.push((packet.destination, packet));
+        timeout(Duration::from_millis(200), announce_events.recv())
+            .await
+            .expect("announce event deadline")
+            .expect("accepted announce is still published");
+    }
+
+    let (queued, cached) = transport.announce_table_sizes().await;
+    assert_eq!(queued, 0, "a passive node never fills the retransmission queue");
+    assert!(cached <= 4, "the persistence cache stays bounded");
+    for (destination, packet) in &destinations[destinations.len() - 2..] {
+        assert_eq!(
+            transport.cached_announce(destination).await.map(|cached| cached.data),
+            Some(packet.data),
+            "the newest accepted packets remain available"
+        );
+        assert!(transport.handler.lock().await.path_table.get(destination).is_some());
+    }
+    assert!(
+        transport.handler.lock().await.announce_table.add_response(
+            destinations[5].0,
+            channel.address,
+            2
+        ),
+        "a retained announce still serves a path response"
+    );
+}
+
+#[tokio::test]
+async fn transport_node_queues_ordinary_announces_but_never_path_responses() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("transport", &identity, true);
+    config.set_retransmit(true);
+    let transport = Transport::new(config);
+    let channel = test_interface_channel(&transport).await;
+
+    let (_, ordinary) = remote_announce("ordinary");
+    accept_announce(&transport, channel.address, &ordinary).await;
+    assert_eq!(transport.announce_table_sizes().await, (1, 0));
+
+    let (mut responder, _) = remote_announce("path-response");
+    let response =
+        responder.path_response_with_tag(OsRng, None, Some(&[7; 16])).expect("valid path response");
+    assert_eq!(response.context, PacketContext::PathResponse);
+    let second_ingress = test_interface_channel(&transport).await;
+    accept_announce(&transport, second_ingress.address, &response).await;
+    assert_eq!(
+        transport.announce_table_sizes().await,
+        (1, 1),
+        "a path response is retained for persistence but never re-queued"
+    );
+    assert!(transport.cached_announce(&response.destination).await.is_some());
+}
+
+#[tokio::test]
+async fn shared_instance_ingress_queues_announces_on_a_passive_node() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("shared", &identity, false);
+    config.set_retransmit(false);
+    let transport = Transport::new(config);
+    let (shared, _control) = {
+        let handler = transport.get_handler();
+        let manager = handler.lock().await.iface_manager.clone();
+        let mut manager = manager.lock().await;
+        manager.new_host_channel(
+            8,
+            crate::transport::iface::InterfaceDescriptor {
+                shared_instance: true,
+                ..Default::default()
+            },
+        )
+    };
+    let physical = test_interface_channel(&transport).await;
+
+    let (_, from_client) = remote_announce("client");
+    accept_announce(&transport, shared.address, &from_client).await;
+    assert_eq!(transport.announce_table_sizes().await, (1, 0), "local clients are served");
+
+    let (_, from_network) = remote_announce("network");
+    accept_announce(&transport, physical.address, &from_network).await;
+    assert_eq!(transport.announce_table_sizes().await, (1, 1));
+}
+
+#[tokio::test]
+async fn rate_limited_release_and_refresh_follow_the_same_cache_bound() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let mut config = TransportConfig::new("released", &identity, false);
+    config.set_retransmit(false);
+    let transport = Transport::new(config);
+    let channel = test_interface_channel(&transport).await;
+
+    let (mut remote, first) = remote_announce("refresh");
+    super::announce::handle_ingress_limited_announce(
+        &first,
+        transport.handler.lock().await,
+        channel.address,
+    )
+    .await;
+    assert_eq!(
+        transport.announce_table_sizes().await,
+        (0, 1),
+        "released announces do not bypass the bound"
+    );
+
+    let second = remote.announce(OsRng, Some(b"refreshed")).expect("refreshed announce");
+    assert_ne!(first.data, second.data);
+    accept_announce(&transport, channel.address, &second).await;
+    assert_eq!(
+        transport.announce_table_sizes().await,
+        (0, 1),
+        "a refresh replaces, never duplicates"
+    );
+    assert_eq!(
+        transport.cached_announce(&second.destination).await.map(|cached| cached.data),
+        Some(second.data),
+        "the newest accepted packet is the one retained"
+    );
+}
