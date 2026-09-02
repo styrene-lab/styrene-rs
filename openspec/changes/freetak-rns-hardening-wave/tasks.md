@@ -47,9 +47,9 @@ Dependency gate: `beechat-rns-corrections-wave` group 2 must be verified complet
 ## 7. Bound-interface Link sends
 <!-- specs: rns-link-transport-hardening -->
 
-- [ ] 7.1 Add and run failing in-memory-interface tests for data and channel sends to inbound, outbound, and all active Links on a non-broadcast transport, including inactive-Link exclusion
-- [ ] 7.2 Route each Link-context packet through that Link's bound interface with the smallest shared dispatch path and no destination-table lookup
-- [ ] 7.3 Verify all Link fan-out helpers enqueue on the expected interface, preserve Link destination/context, and do not hold the transport handler during interface dispatch
+- [x] 7.1 Add and run failing in-memory-interface tests for data and channel sends to inbound, outbound, and all active Links on a non-broadcast transport, including inactive-Link exclusion
+- [x] 7.2 Route each Link-context packet through that Link's bound interface with the smallest shared dispatch path and no destination-table lookup
+- [x] 7.3 Verify all Link fan-out helpers enqueue on the expected interface, preserve Link destination/context, and do not hold the transport handler during interface dispatch
 
 ## 8. Resource retry and round accounting
 <!-- specs: rns-resource-hardening -->

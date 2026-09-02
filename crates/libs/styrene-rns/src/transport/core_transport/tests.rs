@@ -1684,3 +1684,166 @@ async fn receipt_callback_reenters_send_and_duplicate_expiry_race_is_terminal() 
     assert_eq!(callbacks.load(Ordering::SeqCst), 1);
     assert_eq!(sends.load(Ordering::SeqCst), 1);
 }
+
+/// Two registered interfaces on a non-broadcast transport, one active outbound
+/// Link and one active inbound Link bound to the first interface, and one
+/// pending outbound Link bound to the second interface. The destination path
+/// table stays empty on purpose: established Link sends must not consult it.
+struct BoundLinkFixture {
+    transport: Transport,
+    bound: crate::transport::iface::InterfaceChannel,
+    other: crate::transport::iface::InterfaceChannel,
+    destination: AddressHash,
+    inactive_destination: AddressHash,
+    out_link_id: AddressHash,
+    in_link_id: AddressHash,
+}
+
+async fn bound_link_fixture() -> BoundLinkFixture {
+    let local = PrivateIdentity::new_from_rand(OsRng);
+    let transport = Transport::new(TransportConfig::new("bound-links", &local, false));
+    let bound = test_interface_channel(&transport).await;
+    let other = test_interface_channel(&transport).await;
+
+    let signer = PrivateIdentity::new_from_rand(OsRng);
+    let identity = *signer.as_identity();
+    let destination = DestinationDesc {
+        identity,
+        address_hash: identity.address_hash,
+        name: DestinationName::new("test", "bound"),
+    };
+    let tx = transport.link_out_event_tx.clone();
+    let mut outbound = Link::new(destination, tx.clone());
+    let request = outbound.request();
+    let mut inbound =
+        Link::new_from_request(&request, signer.sign_key().clone(), destination, tx.clone())
+            .expect("link request should parse");
+    assert!(matches!(
+        outbound.handle_packet(&inbound.prove(), bound.address),
+        LinkHandleResult::Activated
+    ));
+    inbound.set_ingress_iface(bound.address);
+    outbound.open_channel();
+    inbound.open_channel();
+    assert_eq!(outbound.status(), LinkStatus::Active);
+    assert_eq!(inbound.status(), LinkStatus::Active);
+    let out_link_id = *outbound.id();
+    let in_link_id = *inbound.id();
+
+    let inactive_signer = PrivateIdentity::new_from_rand(OsRng);
+    let inactive_identity = *inactive_signer.as_identity();
+    let inactive_destination = DestinationDesc {
+        identity: inactive_identity,
+        address_hash: inactive_identity.address_hash,
+        name: DestinationName::new("test", "inactive"),
+    };
+    let mut pending = Link::new(inactive_destination, tx);
+    pending.set_ingress_iface(other.address);
+    assert_eq!(pending.status(), LinkStatus::Pending);
+
+    {
+        let mut handler = transport.handler.lock().await;
+        handler.out_links.insert(destination.address_hash, Arc::new(Mutex::new(outbound)));
+        handler.out_links.insert(inactive_destination.address_hash, Arc::new(Mutex::new(pending)));
+        handler.in_links.insert(in_link_id, Arc::new(Mutex::new(inbound)));
+    }
+
+    BoundLinkFixture {
+        transport,
+        bound,
+        other,
+        destination: destination.address_hash,
+        inactive_destination: inactive_destination.address_hash,
+        out_link_id,
+        in_link_id,
+    }
+}
+
+impl BoundLinkFixture {
+    async fn expect_bound_send(&mut self, link_id: AddressHash, context: PacketContext) {
+        let message = timeout(Duration::from_millis(200), self.bound.tx_channel.recv())
+            .await
+            .expect("bound interface must receive the Link packet")
+            .expect("bound interface channel open");
+        assert_eq!(message.tx_type, TxMessageType::Direct(self.bound.address));
+        assert_eq!(message.packet.destination, link_id);
+        assert_eq!(message.packet.header.destination_type, DestinationType::Link);
+        assert_eq!(message.packet.header.packet_type, PacketType::Data);
+        assert_eq!(message.packet.context, context);
+    }
+
+    fn expect_quiet(&mut self) {
+        assert!(
+            self.bound.tx_channel.try_recv().is_err(),
+            "bound interface must not receive extra packets"
+        );
+        assert!(
+            self.other.tx_channel.try_recv().is_err(),
+            "the inactive Link's interface must receive nothing"
+        );
+    }
+}
+
+#[tokio::test]
+async fn data_send_to_all_out_links_uses_each_active_links_bound_interface() {
+    let mut fixture = bound_link_fixture().await;
+    fixture.transport.send_to_all_out_links(b"fan-out").await;
+    let link_id = fixture.out_link_id;
+    fixture.expect_bound_send(link_id, PacketContext::None).await;
+    fixture.expect_quiet();
+}
+
+#[tokio::test]
+async fn channel_send_to_all_out_links_uses_each_active_links_bound_interface() {
+    let mut fixture = bound_link_fixture().await;
+    fixture.transport.send_channel_to_all_out_links(b"channel").await;
+    let link_id = fixture.out_link_id;
+    fixture.expect_bound_send(link_id, PacketContext::Channel).await;
+    fixture.expect_quiet();
+}
+
+#[tokio::test]
+async fn data_send_to_out_links_for_a_destination_uses_the_bound_interface() {
+    let mut fixture = bound_link_fixture().await;
+    let destination = fixture.destination;
+    fixture.transport.send_to_out_links(&destination, b"targeted").await;
+    let link_id = fixture.out_link_id;
+    fixture.expect_bound_send(link_id, PacketContext::None).await;
+    fixture.expect_quiet();
+
+    let inactive = fixture.inactive_destination;
+    fixture.transport.send_to_out_links(&inactive, b"never").await;
+    fixture.expect_quiet();
+}
+
+#[tokio::test]
+async fn data_send_to_in_links_for_a_destination_uses_the_bound_interface() {
+    let mut fixture = bound_link_fixture().await;
+    let destination = fixture.destination;
+    fixture.transport.send_to_in_links(&destination, b"inbound").await;
+    let link_id = fixture.in_link_id;
+    fixture.expect_bound_send(link_id, PacketContext::None).await;
+    fixture.expect_quiet();
+}
+
+#[tokio::test]
+async fn established_link_sends_ignore_the_destination_path_table() {
+    let mut fixture = bound_link_fixture().await;
+    let wrong_route = fixture.other.address;
+    let out_link_id = fixture.out_link_id;
+    let announce = Packet {
+        header: Header { packet_type: PacketType::Announce, ..Default::default() },
+        destination: out_link_id,
+        ..Default::default()
+    };
+    fixture.transport.handler.lock().await.path_table.handle_announce(
+        &announce,
+        None,
+        wrong_route,
+        InterfaceMode::AccessPoint,
+        [3; crate::destination::RAND_HASH_LENGTH],
+    );
+    fixture.transport.send_to_all_out_links(b"bound wins").await;
+    fixture.expect_bound_send(out_link_id, PacketContext::None).await;
+    fixture.expect_quiet();
+}
