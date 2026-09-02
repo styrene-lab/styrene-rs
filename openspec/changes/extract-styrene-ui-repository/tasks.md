@@ -5,7 +5,7 @@
 
 - [ ] 1.1 Confirm `styrene-lab/styrene-ui` ownership, visibility, licensing, maintainers, and branch protections
 - [x] 1.2 Record the immutable `styrene-rs` source revision and extraction path set
-- [ ] 1.3 Verify `styrene-dx` uses only public shared client, session, IPC, and runner boundaries
+- [x] 1.3 Verify `styrene-dx` uses only public shared client, session, IPC, and runner boundaries
 - [ ] 1.4 Define desktop acceptance commands and the authority-switch rollback condition
 
 ## 2. History-Preserving Extraction
@@ -28,8 +28,8 @@
 ## 4. Desktop And Lab Validation
 <!-- specs: gui-repository/spec -->
 
-- [ ] 4.1 Run formatting, warning-denied Clippy, unit, reducer, and component tests
-- [ ] 4.2 Run desktop Fixture, Live-failure, and Embedded smoke scenarios
+- [x] 4.1 Run formatting, warning-denied Clippy, unit, reducer, and component tests
+- [x] 4.2 Run desktop Fixture, Live-failure, and Embedded smoke scenarios
 - [x] 4.3 Verify Fixture opens no daemon process or external network interface
 - [x] 4.4 Verify Lab uses the declared runner boundary and retains bounded cancellation and cleanup
 - [x] 4.5 Verify a clean checkout resolves without local path dependencies
