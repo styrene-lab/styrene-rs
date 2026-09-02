@@ -302,6 +302,7 @@ pub(crate) struct TransportHandler {
     fixed_dest_path_requests: AddressHash,
 
     cancel: CancellationToken,
+    supervision: Option<SupervisionOutcome>,
     receipt_handler: Option<Arc<dyn ReceiptHandler>>,
     terminal_receipt_history: VecDeque<[u8; HASH_SIZE]>,
     pending_packet_receipts: VecDeque<PendingPacketReceipt>,
@@ -420,6 +421,8 @@ pub use links::LinkDispatch;
 mod path;
 // requests: native Reticulum server request decoding and destination dispatch.
 mod requests;
+mod supervisor;
+pub use supervisor::{SupervisionOutcome, WorkerExit, WorkerFailure};
 // wire: inbound packet handlers and wire-level packet logic.
 mod wire;
 

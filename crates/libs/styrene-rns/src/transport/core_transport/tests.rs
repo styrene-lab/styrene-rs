@@ -1196,6 +1196,26 @@ async fn protocol_scheduler_is_owned_and_joined_by_transport() {
         .expect("manager shutdown deadline")
         .expect("manager task must not panic");
     assert!(transport.manager_task_finished());
+    assert_eq!(
+        transport.supervision_outcome().await,
+        Some(SupervisionOutcome::Shutdown { drained: true }),
+        "ordinary cancellation must drain every worker and report no failure"
+    );
+    assert_eq!(transport.worker_failure().await, None);
+}
+
+#[tokio::test]
+async fn transport_supervision_is_pending_while_workers_run() {
+    let identity = PrivateIdentity::new_from_rand(OsRng);
+    let transport = Transport::new(TransportConfig::new("supervision-live", &identity, false));
+    tokio::task::yield_now().await;
+    assert_eq!(transport.supervision_outcome().await, None);
+    assert!(!transport.manager_task_finished());
+    timeout(Duration::from_secs(1), transport.shutdown_manager())
+        .await
+        .expect("manager shutdown deadline")
+        .expect("manager task must not panic");
+    assert_eq!(transport.worker_failure().await, None);
 }
 
 #[test]
@@ -1845,5 +1865,30 @@ async fn established_link_sends_ignore_the_destination_path_table() {
     );
     fixture.transport.send_to_all_out_links(b"bound wins").await;
     fixture.expect_bound_send(out_link_id, PacketContext::None).await;
+    fixture.expect_quiet();
+}
+
+#[tokio::test]
+async fn single_link_packet_send_uses_the_bound_interface_and_rejects_inactive_links() {
+    let mut fixture = bound_link_fixture().await;
+    let destination = fixture.destination;
+    let inactive = fixture.inactive_destination;
+    let (active, pending) = {
+        let handler = fixture.transport.handler.lock().await;
+        (handler.out_links[&destination].clone(), handler.out_links[&inactive].clone())
+    };
+    let packet = active.lock().await.data_packet(b"single").expect("active link packet");
+    assert_eq!(
+        fixture.transport.send_link_packet(&active, packet).await,
+        SendPacketOutcome::SentDirect
+    );
+    let link_id = fixture.out_link_id;
+    fixture.expect_bound_send(link_id, PacketContext::None).await;
+    fixture.expect_quiet();
+
+    assert_eq!(
+        fixture.transport.send_link_packet(&pending, packet).await,
+        SendPacketOutcome::DroppedNoRoute
+    );
     fixture.expect_quiet();
 }

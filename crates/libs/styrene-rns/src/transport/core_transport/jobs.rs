@@ -1,10 +1,14 @@
 use super::announce::{handle_announce, handle_ingress_limited_announce, retransmit_announces};
 use super::path::{dispatch_pending_path_requests, handle_fixed_destinations, handle_link_request};
+use super::supervisor::WorkerSupervisor;
 use super::wire::{handle_data, handle_proof};
 use super::*;
 use crate::transport::destination_ext::link::{LinkCloseReason, LinkWatchdogAction};
 use crate::transport::iface::InterfaceDropReason;
 use alloc::collections::BTreeSet;
+
+/// Bound on draining supervised workers after cancellation or a worker failure.
+const WORKER_DRAIN_BOUND: Duration = Duration::from_secs(5);
 
 pub(super) async fn protocol_drop_reason(
     packet: &Packet,
@@ -340,14 +344,18 @@ pub(super) async fn manage_transport(
 ) {
     let cancel = handler_arc.lock().await.cancel.clone();
     let retransmit = handler_arc.lock().await.config.retransmit;
+    let mut supervisor = {
+        let name = handler_arc.lock().await.config.name.clone();
+        WorkerSupervisor::new(name, cancel.clone(), WORKER_DRAIN_BOUND)
+    };
 
-    let _packet_task = {
+    {
         let handler_arc = handler_arc.clone();
         let cancel = cancel.clone();
 
         log::trace!("tp({}): start packet task", handler_arc.lock().await.config.name);
 
-        tokio::spawn(async move {
+        supervisor.spawn("packet", async move {
             loop {
                 let mut rx_receiver = rx_receiver.lock().await;
 
@@ -438,14 +446,14 @@ pub(super) async fn manage_transport(
                     }
                 };
             }
-        })
-    };
+        });
+    }
 
     {
         let handler = handler_arc.clone();
         let cancel = cancel.clone();
 
-        tokio::spawn(async move {
+        supervisor.spawn("links", async move {
             loop {
                 if cancel.is_cancelled() {
                     break;
@@ -467,7 +475,7 @@ pub(super) async fn manage_transport(
         let handler = handler_arc.clone();
         let cancel = cancel.clone();
 
-        tokio::spawn(async move {
+        supervisor.spawn("paths", async move {
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => break,
@@ -483,7 +491,7 @@ pub(super) async fn manage_transport(
         let handler = handler_arc.clone();
         let cancel = cancel.clone();
 
-        tokio::spawn(async move {
+        supervisor.spawn("ifaces", async move {
             loop {
                 if cancel.is_cancelled() {
                     break;
@@ -505,7 +513,7 @@ pub(super) async fn manage_transport(
         let handler = handler_arc.clone();
         let cancel = cancel.clone();
 
-        tokio::spawn(async move {
+        supervisor.spawn("cache", async move {
             loop {
                 if cancel.is_cancelled() {
                     break;
@@ -535,7 +543,7 @@ pub(super) async fn manage_transport(
         let handler = handler_arc.clone();
         let cancel = cancel.clone();
 
-        tokio::spawn(async move {
+        supervisor.spawn("announces", async move {
             let mut last_old_retransmit = time::Instant::now();
             loop {
                 if cancel.is_cancelled() {
@@ -560,34 +568,43 @@ pub(super) async fn manage_transport(
         });
     }
 
-    loop {
-        tokio::select! {
-            _ = cancel.cancelled() => break,
-            _ = time::sleep(INTERVAL_PROTOCOL_SCHEDULER) => {
-                let (ingress_sender, released_announces) = {
-                    let mut handler = handler_arc.lock().await;
-                    let released = handler.announce_limits.release_ready();
-                    let sender = handler.iface_manager.lock().await.ingress_sender();
-                    dispatch_pending_path_requests(&mut handler).await;
-                    handle_protocol_deadlines(handler).await;
-                    (sender, released)
-                };
-                for released in released_announces {
-                    match ingress_sender
-                        .send(RxMessage::local(released.iface, released.packet).ingress_limited())
-                        .await
-                    {
-                        Ok(crate::transport::iface::IngressEnqueueOutcome::Accepted) => {}
-                        Ok(crate::transport::iface::IngressEnqueueOutcome::Dropped) => {
-                            log::debug!("tp: dropping released announce because ingress-limited queue is full");
+    {
+        let handler_arc = handler_arc.clone();
+        let cancel = cancel.clone();
+        supervisor.spawn("scheduler", async move {
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                _ = time::sleep(INTERVAL_PROTOCOL_SCHEDULER) => {
+                    let (ingress_sender, released_announces) = {
+                        let mut handler = handler_arc.lock().await;
+                        let released = handler.announce_limits.release_ready();
+                        let sender = handler.iface_manager.lock().await.ingress_sender();
+                        dispatch_pending_path_requests(&mut handler).await;
+                        handle_protocol_deadlines(handler).await;
+                        (sender, released)
+                    };
+                    for released in released_announces {
+                        match ingress_sender
+                            .send(RxMessage::local(released.iface, released.packet).ingress_limited())
+                            .await
+                        {
+                            Ok(crate::transport::iface::IngressEnqueueOutcome::Accepted) => {}
+                            Ok(crate::transport::iface::IngressEnqueueOutcome::Dropped) => {
+                                log::debug!("tp: dropping released announce because ingress-limited queue is full");
+                            }
+                            Ok(crate::transport::iface::IngressEnqueueOutcome::Rejected) => {
+                                log::debug!("tp: released announce no longer passes ingress admission");
+                            }
+                            Err(_) => break,
                         }
-                        Ok(crate::transport::iface::IngressEnqueueOutcome::Rejected) => {
-                            log::debug!("tp: released announce no longer passes ingress admission");
-                        }
-                        Err(_) => break,
                     }
                 }
             }
         }
+        });
     }
+
+    let outcome = supervisor.supervise().await;
+    handler_arc.lock().await.supervision = Some(outcome);
 }

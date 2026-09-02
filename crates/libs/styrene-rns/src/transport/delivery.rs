@@ -72,7 +72,7 @@ pub async fn send_via_link(
 
     match packet {
         Ok(packet) => {
-            let outcome = transport.send_packet_with_outcome(packet).await;
+            let outcome = transport.send_link_packet(&link, packet).await;
             if !send_outcome_is_sent(outcome) {
                 return Err(io::Error::other(format!(
                     "link packet not sent: {}",
@@ -111,7 +111,7 @@ pub async fn send_over_link(
     };
     match packet {
         Ok(packet) => {
-            let outcome = transport.send_packet_with_outcome(packet).await;
+            let outcome = transport.send_link_packet(&link, packet).await;
             if !send_outcome_is_sent(outcome) {
                 return Err(io::Error::other(format!(
                     "link packet not sent: {}",
@@ -184,7 +184,7 @@ where
     match packet {
         Ok(packet) => {
             before_dispatch(LinkSendKind::Packet)?;
-            let outcome = transport.send_packet_with_outcome(packet).await;
+            let outcome = transport.send_link_packet(&link, packet).await;
             if !send_outcome_is_sent(outcome) {
                 return Err(io::Error::other(format!(
                     "link packet not sent: {}",
