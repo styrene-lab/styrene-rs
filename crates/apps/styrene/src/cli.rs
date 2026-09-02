@@ -107,6 +107,34 @@ pub enum Command {
         limit: u32,
     },
 
+    /// Fetch a NomadNet page from a remote node and print the browse outcome as JSON
+    #[cfg(feature = "cli")]
+    Page {
+        /// Hosting node destination hash (32 hexadecimal characters) or "local"
+        host: String,
+        /// Native request path such as /page/index.mu
+        path: String,
+        /// Browse timeout in seconds
+        #[arg(long, default_value = "30")]
+        timeout: u64,
+        /// Submitted Micron field values as name=value, repeatable
+        #[arg(long = "field")]
+        fields: Vec<String>,
+    },
+
+    /// Download a NomadNet file through the daemon and print the outcome as JSON
+    #[cfg(feature = "cli")]
+    File {
+        /// Target as <host hash>:/file/<path>
+        target: String,
+        /// Download timeout in seconds
+        #[arg(long, default_value = "60")]
+        timeout: u64,
+        /// Expected SHA-256 of the file content
+        #[arg(long)]
+        expected_sha256: Option<String>,
+    },
+
     /// Show daemon identity
     #[cfg(feature = "cli")]
     Identity,
