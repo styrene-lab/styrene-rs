@@ -12,7 +12,8 @@ and no frontend imports server wire internals.
 
 - `styrene-rs`: `be869620b792a3d1610438b6c3b1deb2d40448e8` (merge of #53).
 - `styrene-ui`: pull request #16 from `feat/shared-client-sessions`, head
-  `f00fb20da8ba8e7a31609d6a8b4888cd5595ed00`, pins that revision for the
+  `f00fb20da8ba8e7a31609d6a8b4888cd5595ed00`, merged as
+  `ecbac266b8bf743958df659bbc75f015d197221b`, pins that revision for the
   desktop and mobile applications.
 
 Desktop validation at that pair covered `cargo test -p styrene-dx` with 115
