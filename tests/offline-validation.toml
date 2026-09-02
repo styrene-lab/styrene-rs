@@ -9,6 +9,7 @@ selected_targets = [
   "styrene-content:*",
   "styrene-telemetry:*",
   "styrene-rns:*",
+  "styrene-rns:test/embedded_time",
   "styrene-lxmf:*",
   "styrene-lxmf:lib",
   "styrene-mesh:*",
