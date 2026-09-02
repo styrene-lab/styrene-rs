@@ -31,9 +31,9 @@
 ## 5. UDP Broadcast Capability
 <!-- specs: interface-failure-policy -->
 
-- [ ] 5.1 Add a failing IPv4 UDP socket test proving a configured forwarding socket lacks `SO_BROADCAST`, with receive-only and IPv6 controls
-- [ ] 5.2 Enable broadcast on IPv4 UDP forwarding sockets before use through the current-branch socket construction path, without adding transport-wide broadcast policy
-- [ ] 5.3 Run focused UDP bind/send tests and transport interface tests on supported host platforms
+- [x] 5.1 Add a failing IPv4 UDP socket test proving a configured forwarding socket lacks `SO_BROADCAST`, with receive-only and IPv6 controls
+- [x] 5.2 Enable broadcast on IPv4 UDP forwarding sockets before use through the current-branch socket construction path, without adding transport-wide broadcast policy
+- [x] 5.3 Run focused UDP bind/send tests and transport interface tests on supported host platforms (loopback socket tests run locally on macOS with `--ignored` on 2026-09-02)
 
 ## 6. Disconnected TCP Queue Policy
 <!-- specs: interface-failure-policy -->

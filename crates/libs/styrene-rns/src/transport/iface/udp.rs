@@ -1,6 +1,7 @@
 // Upstream code — unwrap on mutex locks and task joins is conventional in tokio drivers
 #![allow(clippy::unwrap_used)]
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::net::UdpSocket;
@@ -50,6 +51,25 @@ impl UdpInterface {
             .map_err(|_| InterfaceDropReason::MalformedFrame)
     }
 
+    /// Whether a bound socket needs operating-system broadcast permission:
+    /// only an IPv4 socket that forwards somewhere, because the forwarding
+    /// target may be a broadcast address. Receive-only and IPv6 sockets keep
+    /// their default capability.
+    fn needs_broadcast(local: &SocketAddr, forward_addr: Option<&str>) -> bool {
+        forward_addr.is_some() && local.is_ipv4()
+    }
+
+    /// Apply the socket capability the configuration requires before the
+    /// first send. Returns whether broadcast permission was enabled.
+    fn configure_socket(socket: &UdpSocket, forward_addr: Option<&str>) -> std::io::Result<bool> {
+        let local = socket.local_addr()?;
+        if !Self::needs_broadcast(&local, forward_addr) {
+            return Ok(false);
+        }
+        socket2::SockRef::from(socket).set_broadcast(true)?;
+        Ok(true)
+    }
+
     fn admit_datagram(
         raw: &[u8],
         ifac: Option<&IfacConfig>,
@@ -95,6 +115,16 @@ impl UdpInterface {
             let stop = CancellationToken::new();
 
             let socket = socket.unwrap();
+            if let Err(error) = Self::configure_socket(&socket, forward_addr.as_deref()) {
+                runtime.set_state(InterfaceState::Retrying);
+                log::warn!(
+                    "udp_interface: couldn't enable broadcast on <{}>: {}",
+                    bind_addr,
+                    error
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
+            }
             if let Ok(local_addr) = socket.local_addr() {
                 runtime.set_local_endpoint(InterfaceEndpoint::Socket(local_addr));
             }
@@ -356,5 +386,46 @@ mod tests {
                 .expect("UDP shutdown deadline")
                 .expect("UDP worker join");
         }
+    }
+
+    fn broadcast_enabled(socket: &UdpSocket) -> bool {
+        socket2::SockRef::from(socket).broadcast().expect("read SO_BROADCAST")
+    }
+
+    #[test]
+    fn broadcast_permission_is_required_only_for_ipv4_forwarding_sockets() {
+        let v4: SocketAddr = "127.0.0.1:4242".parse().expect("v4");
+        let v6: SocketAddr = "[::1]:4242".parse().expect("v6");
+        assert!(UdpInterface::needs_broadcast(&v4, Some("255.255.255.255:4242")));
+        assert!(UdpInterface::needs_broadcast(&v4, Some("10.0.0.7:4242")));
+        assert!(!UdpInterface::needs_broadcast(&v4, None), "receive-only sockets stay default");
+        assert!(!UdpInterface::needs_broadcast(&v6, Some("[ff02::1]:4242")), "IPv6 is unchanged");
+        assert!(!UdpInterface::needs_broadcast(&v6, None));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires loopback UDP sockets"]
+    async fn ipv4_forwarding_socket_gains_broadcast_before_use_and_controls_do_not() {
+        let forwarding = UdpSocket::bind("127.0.0.1:0").await.expect("bind v4");
+        assert!(!broadcast_enabled(&forwarding), "a fresh socket has no broadcast permission");
+        assert!(
+            UdpInterface::configure_socket(&forwarding, Some("255.255.255.255:4242"))
+                .expect("configure forwarding socket")
+        );
+        assert!(broadcast_enabled(&forwarding));
+        forwarding
+            .send_to(b"probe", "127.255.255.255:4242")
+            .await
+            .expect("broadcast datagram is permitted");
+
+        let receive_only = UdpSocket::bind("127.0.0.1:0").await.expect("bind receive-only");
+        assert!(
+            !UdpInterface::configure_socket(&receive_only, None).expect("configure receive-only")
+        );
+        assert!(!broadcast_enabled(&receive_only));
+
+        let v6 = UdpSocket::bind("[::1]:0").await.expect("bind v6");
+        assert!(!UdpInterface::configure_socket(&v6, Some("[::1]:4242")).expect("configure v6"));
+        assert!(!broadcast_enabled(&v6));
     }
 }
