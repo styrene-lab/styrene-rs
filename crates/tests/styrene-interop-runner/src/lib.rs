@@ -42,6 +42,7 @@ pub enum PinnedScenarioId {
     RoutedDirect,
     RoutedDirectResource,
     RoutedNomadnetPages,
+    RoutedChannel,
 }
 
 impl PinnedScenarioId {
@@ -57,6 +58,7 @@ impl PinnedScenarioId {
             Self::RoutedDirect => "routed_direct",
             Self::RoutedDirectResource => "routed_direct_resource",
             Self::RoutedNomadnetPages => "routed_nomadnet_pages",
+            Self::RoutedChannel => "routed_channel",
             Self::NomadnetPages => "nomadnet_pages",
             Self::NomadnetClient => "nomadnet_client",
         }
@@ -72,7 +74,19 @@ impl PinnedScenarioId {
     /// Rust node, so every exchange crosses two hops and both sides must
     /// record the same route.
     pub const fn is_routed(self) -> bool {
-        matches!(self, Self::RoutedDirect | Self::RoutedDirectResource | Self::RoutedNomadnetPages)
+        matches!(
+            self,
+            Self::RoutedDirect
+                | Self::RoutedDirectResource
+                | Self::RoutedNomadnetPages
+                | Self::RoutedChannel
+        )
+    }
+
+    /// Two Rust nodes open a link and a reliable channel across a pinned Python
+    /// transport hop. No LXMF message is exchanged.
+    pub const fn is_channel(self) -> bool {
+        matches!(self, Self::RoutedChannel)
     }
 
     /// The Rust native client browsing a pinned Python NomadNet node.
@@ -139,7 +153,8 @@ impl PinnedScenarioId {
             | Self::PropagatedExpiry
             | Self::NomadnetPages
             | Self::NomadnetClient
-            | Self::RoutedNomadnetPages => "packet",
+            | Self::RoutedNomadnetPages
+            | Self::RoutedChannel => "packet",
         }
     }
 
@@ -159,7 +174,8 @@ impl PinnedScenarioId {
             | Self::PropagatedExpiry
             | Self::NomadnetPages
             | Self::NomadnetClient
-            | Self::RoutedNomadnetPages => "4",
+            | Self::RoutedNomadnetPages
+            | Self::RoutedChannel => "4",
             Self::PropagatedCapacity => "1",
         }
     }
@@ -177,7 +193,8 @@ impl PinnedScenarioId {
             | Self::PropagatedExpiry
             | Self::NomadnetPages
             | Self::NomadnetClient
-            | Self::RoutedNomadnetPages => "1",
+            | Self::RoutedNomadnetPages
+            | Self::RoutedChannel => "1",
         }
     }
 }
@@ -280,6 +297,12 @@ pub const PINNED_SCENARIOS: &[PinnedScenarioDefinition] = &[
         title: "Pinned Routed NomadNet Host Interop",
         description: "Fetches every NomadNet host path from the Rust node through a pinned Python transport hop and proves the request crossed two hops.",
         controls: &["announce", "request", "cancel"],
+    },
+    PinnedScenarioDefinition {
+        id: PinnedScenarioId::RoutedChannel,
+        title: "Pinned Routed Channel Interop",
+        description: "Two Rust nodes reach each other only through a pinned Python transport hop, open a link and a reliable channel across it, and prove echoed messages both ways.",
+        controls: &["announce", "channel", "cancel"],
     },
 ];
 
@@ -656,6 +679,7 @@ pub fn python_lxmf_scenario(
     let capacity = scenario_id.is_capacity();
     let expiry = scenario_id.is_expiry();
     let routed = scenario_id.is_routed();
+    let channel = scenario_id.is_channel();
     let nomadnet = scenario_id.is_nomadnet();
     let nomadnet_client = scenario_id.is_nomadnet_client();
     let scenario_id = scenario_id.as_str();
@@ -721,7 +745,13 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
         correlation_id: correlation_id.clone(),
         revision_probes,
         program: PathBuf::from("bash"),
-        args: if nomadnet_client {
+        args: if channel {
+            vec![
+                repo_root.join("scripts/rust-channel-hop-smoke.sh").display().to_string(),
+                "--scenario".to_string(),
+                scenario_id.to_string(),
+            ]
+        } else if nomadnet_client {
             vec![repo_root.join("scripts/rust-nomadnet-client-smoke.sh").display().to_string()]
         } else if nomadnet {
             vec![
@@ -743,7 +773,18 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
             ("REMOTE_STATUS_TIMEOUT_SECS".to_string(), remote_status_timeout_secs.to_string()),
         ]),
         timeout,
-        required_milestones: if nomadnet_client {
+        required_milestones: if channel {
+            vec![
+                "topology-configured".to_string(),
+                "transport-hop-ready".to_string(),
+                "rust-nodes-ready".to_string(),
+                "routed-path-verified".to_string(),
+                "link-active".to_string(),
+                "channel-delivered".to_string(),
+                "channel-echoed".to_string(),
+                "child-cleanup-complete".to_string(),
+            ]
+        } else if nomadnet_client {
             vec![
                 "topology-configured".to_string(),
                 "rust-ready".to_string(),
@@ -831,7 +872,9 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
                 "child-cleanup-complete".to_string(),
             ]
         },
-        required_assertions: if nomadnet_client {
+        required_assertions: if channel {
+            vec!["rust-to-rust-routed-channel".to_string()]
+        } else if nomadnet_client {
             vec!["rust-to-python-nomadnet-pages".to_string()]
         } else if nomadnet {
             vec!["python-to-rust-nomadnet-pages".to_string()]
@@ -857,7 +900,14 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
         } else {
             vec!["python-to-rust-propagation-item".to_string()]
         },
-        required_artifacts: if nomadnet_client {
+        required_artifacts: if channel {
+            vec![
+                "scenario-report".to_string(),
+                "routed-channel-proof".to_string(),
+                "channel-probe-log".to_string(),
+                "python-hop-log".to_string(),
+            ]
+        } else if nomadnet_client {
             vec![
                 "scenario-report".to_string(),
                 "nomadnet-client-proof".to_string(),
@@ -1302,6 +1352,11 @@ fn validate_protocol_artifacts(
         return Some("retained scenario report does not match this passing run".to_string());
     }
     if let Some(scenario_id) = pinned_scenario(&scenario.id).map(|definition| definition.id)
+        && scenario_id.is_channel()
+    {
+        return validate_channel_proof(scenario, &load);
+    }
+    if let Some(scenario_id) = pinned_scenario(&scenario.id).map(|definition| definition.id)
         && scenario_id.is_nomadnet()
     {
         if scenario_id.is_nomadnet_client() {
@@ -1574,6 +1629,43 @@ fn validate_retrieval_proof(
 /// The capacity proof must show the Rust queue bounded below the message, the
 /// upload refused with a recorded `capacity` failure, nothing queued on either
 /// side's view of the store, and the Python message back in OUTBOUND.
+/// The routed channel proof must show two Rust nodes two hops apart through
+/// the pinned Python transport, an active link, and every channel message
+/// delivered, echoed, and intact in both directions.
+fn validate_channel_proof(
+    scenario: &LiveScenario,
+    load: &dyn Fn(&str) -> Result<serde_json::Value, String>,
+) -> Option<String> {
+    let proof = match load("routed-channel-proof") {
+        Ok(proof) => proof,
+        Err(error) => return Some(error),
+    };
+    if json_string_field(&proof, "scenario") != scenario.id
+        || json_string_field(&proof, "correlation_id") != scenario.correlation_id
+    {
+        return Some("retained routed channel proof does not match this run".to_string());
+    }
+    let hop = json_string_field(&proof, "hop_transport_identity");
+    let route = &proof["route"];
+    let channel = &proof["channel"];
+    let messages = channel["messages"].as_u64();
+    let leg = |name: &str| {
+        route[name]["hops"].as_u64() == Some(2)
+            && json_string_field(&route[name], "next_hop") == hop
+    };
+    let matches = json_string_field(&proof, "status") == "passed"
+        && hop.len() == 32
+        && leg("a_to_b")
+        && leg("b_to_a")
+        && json_string_field(&proof["link"], "id").len() == 32
+        && messages.is_some_and(|count| count >= 1)
+        && ["sent", "delivered_to_b", "received_by_b", "echoed_to_a", "echoes_delivered_to_a"]
+            .iter()
+            .all(|key| channel[*key].as_u64() == messages)
+        && channel["integrity_verified"].as_bool() == Some(true);
+    (!matches).then(|| "retained routed channel proof does not match expected values".to_string())
+}
+
 /// The routed proof must show both nodes two hops apart through the same
 /// transport identity, with the Rust route record naming its interface.
 fn validate_routed_proof(

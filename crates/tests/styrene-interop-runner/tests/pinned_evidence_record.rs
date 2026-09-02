@@ -102,8 +102,25 @@ fn every_pinned_scenario_has_a_passing_hosted_run() {
         }
     }
     let passing = passing_scenarios(&record);
+    // A scenario added since the last hosted dispatch is listed as pending
+    // with a reason; nothing may claim it until a passing run is recorded.
+    let pending: BTreeSet<&str> = record["pending"]
+        .as_object()
+        .map(|entries| entries.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    for scenario in &pending {
+        assert!(pinned.contains(scenario), "pending scenario {scenario} is not pinned");
+        assert!(!passing.contains(*scenario), "{scenario} is pending but already has evidence");
+        assert!(
+            !record["pending"][scenario].as_str().unwrap_or_default().is_empty(),
+            "pending scenario {scenario} needs a reason"
+        );
+    }
     for scenario in pinned {
-        assert!(passing.contains(scenario), "no passing hosted run recorded for {scenario}");
+        assert!(
+            passing.contains(scenario) || pending.contains(scenario),
+            "no passing hosted run recorded for {scenario}"
+        );
     }
 }
 

@@ -21,6 +21,9 @@
       "version": "1.2.3"
     }
   },
+  "pending": {
+    "routed_channel": "Added on 2026-09-02; awaiting the first hosted live-interop.yml dispatch that includes it."
+  },
   "runs": [
     {
       "run_id": 33582749453,
