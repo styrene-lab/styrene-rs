@@ -44,10 +44,39 @@ async fn register_entry(
             let content = pages
                 .serve_native(&entry, data, remote_identity, link.link_id)
                 .unwrap_or_else(|| EXECUTION_ERROR_PAGE.to_vec());
-            encode_binary(&content)
+            encode_native_response(&entry.request_path, &content)
         }),
     )?;
     Ok(())
+}
+
+/// Encode a native response the way NomadNet clients expect.
+///
+/// Pages are a single binary value. Files are a `[name, data]` pair: NomadNet
+/// saves a file response from its request metadata when present and otherwise
+/// from a two-element list, and this host does not attach response metadata.
+fn encode_native_response(request_path: &str, content: &[u8]) -> Vec<u8> {
+    match file_name_for_request(request_path) {
+        Some(name) => encode_file_pair(name, content),
+        None => encode_binary(content),
+    }
+}
+
+fn file_name_for_request(request_path: &str) -> Option<&str> {
+    let relative = request_path.strip_prefix("/file/")?;
+    relative.rsplit('/').next().filter(|name| !name.is_empty())
+}
+
+fn encode_file_pair(name: &str, content: &[u8]) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(content.len() + name.len() + 8);
+    let value = rmpv::Value::Array(vec![
+        rmpv::Value::String(name.into()),
+        rmpv::Value::Binary(content.to_vec()),
+    ]);
+    if rmpv::encode::write_value(&mut encoded, &value).is_err() {
+        return Vec::new();
+    }
+    encoded
 }
 
 fn encode_binary(content: &[u8]) -> Vec<u8> {
@@ -173,19 +202,43 @@ mod tests {
         };
 
         for (path, request_id, expected) in [
-            ("/page/small.mu", [2; 16], b"small".as_slice()),
-            ("/file/small.bin", [3; 16], b"file".as_slice()),
+            ("/page/small.mu", [2; 16], rmpv::Value::Binary(b"small".to_vec())),
+            (
+                "/file/small.bin",
+                [3; 16],
+                rmpv::Value::Array(vec![
+                    rmpv::Value::String("small.bin".into()),
+                    rmpv::Value::Binary(b"file".to_vec()),
+                ]),
+            ),
         ] {
             let response = destination
                 .lock()
                 .await
                 .dispatch_request(&request_path_hash(path), &[0xc0], None, &context, request_id)
                 .unwrap();
-            assert_eq!(
-                rmpv::decode::read_value(&mut response.as_slice()).unwrap(),
-                rmpv::Value::Binary(expected.to_vec())
-            );
+            assert_eq!(rmpv::decode::read_value(&mut response.as_slice()).unwrap(), expected);
         }
+    }
+
+    #[test]
+    fn file_responses_use_the_nomadnet_name_and_data_pair() {
+        assert_eq!(file_name_for_request("/file/docs/manual.bin"), Some("manual.bin"));
+        assert_eq!(file_name_for_request("/file/"), None);
+        assert_eq!(file_name_for_request("/page/index.mu"), None);
+        let encoded = encode_native_response("/file/manual.bin", b"payload");
+        assert_eq!(
+            rmpv::decode::read_value(&mut encoded.as_slice()).unwrap(),
+            rmpv::Value::Array(vec![
+                rmpv::Value::String("manual.bin".into()),
+                rmpv::Value::Binary(b"payload".to_vec()),
+            ])
+        );
+        let page = encode_native_response("/page/index.mu", b"page");
+        assert_eq!(
+            rmpv::decode::read_value(&mut page.as_slice()).unwrap(),
+            rmpv::Value::Binary(b"page".to_vec())
+        );
     }
 
     #[tokio::test]

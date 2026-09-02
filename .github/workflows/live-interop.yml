@@ -21,6 +21,7 @@ jobs:
           - opportunistic
           - propagated_resource_lxm
           - propagated_retrieval
+          - nomadnet_pages
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.97.0
@@ -43,9 +44,14 @@ jobs:
           repository: markqvist/LXMF
           ref: 795fdaa2b0777c13033787d933d1afc94a2377cb
           path: .live-upstream/LXMF
+      - uses: actions/checkout@v5
+        with:
+          repository: markqvist/NomadNet
+          ref: ad10301569a39d4f43b3d21ae9fc392602c937ca
+          path: .live-upstream/NomadNet
       - name: Run supervised live scenario
         env:
-          PYTHONPATH: ${{ github.workspace }}/.live-upstream/Reticulum:${{ github.workspace }}/.live-upstream/LXMF
+          PYTHONPATH: ${{ github.workspace }}/.live-upstream/Reticulum:${{ github.workspace }}/.live-upstream/LXMF:${{ github.workspace }}/.live-upstream/NomadNet
           LXMF_PYTHON_BIN: python3
         run: >-
           cargo run -p styrene-interop-runner --bin styrene-interop --

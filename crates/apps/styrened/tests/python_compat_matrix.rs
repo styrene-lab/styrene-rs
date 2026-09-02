@@ -8,8 +8,9 @@ use styrene_interop_runner::{
 
 #[test]
 fn compatibility_matrix_covers_first_slice() {
-    assert_eq!(PINNED_SCENARIOS.len(), 5);
+    assert_eq!(PINNED_SCENARIOS.len(), 6);
     assert_case_present("direct");
+    assert_case_present("nomadnet_pages");
     assert_case_present("propagated_retrieval");
     assert_case_present("direct_resource");
     assert_case_present("opportunistic");
@@ -46,6 +47,12 @@ fn python_compat_propagated_retrieval() {
     run_case("propagated_retrieval");
 }
 
+#[test]
+#[ignore = "requires live Python compatibility harness environment"]
+fn python_compat_nomadnet_pages() {
+    run_case("nomadnet_pages");
+}
+
 fn run_case(case_id: &str) {
     let script = smoke_script_path();
     let python_bin = env::var("LXMF_PYTHON_BIN").unwrap_or_else(|_| "python3".to_string());
@@ -65,7 +72,9 @@ fn run_case(case_id: &str) {
         &python_bin,
     );
     scenario.program = PathBuf::from("bash");
-    scenario.args[0] = script.display().to_string();
+    if env::var_os("LXMF_PY_COMPAT_SMOKE").is_some() && !scenario_id_is_nomadnet(case_id) {
+        scenario.args[0] = script.display().to_string();
+    }
     scenario.env.insert("PYTHON_BIN".to_string(), python_bin);
     scenario.env.insert("TIMEOUT_SECS".to_string(), timeout_secs.to_string());
     if let Some(path) = python_path {
@@ -93,6 +102,10 @@ fn run_case(case_id: &str) {
         evidence.logs[0].text,
         evidence.logs[1].text,
     );
+}
+
+fn scenario_id_is_nomadnet(case_id: &str) -> bool {
+    case_id == "nomadnet_pages"
 }
 
 fn smoke_script_path() -> PathBuf {

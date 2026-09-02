@@ -45,7 +45,7 @@ authorization.
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
 | Shared frontend session | 9/29 | Negotiation, event/reconnect behavior, TUI migration, common sessions, desktop migration, and revision-pair verification |
-| Reticulum/LXMF/NomadNet parity | 77/85 | Canonical NomadNet fixtures, propagation gates, routed RNS gates, and NomadNet gates |
+| Reticulum/LXMF/NomadNet parity | 78/85 | Canonical NomadNet fixtures, propagation policy gates, routed RNS gates, and the Rust-to-Python NomadNet client gate |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
@@ -159,9 +159,13 @@ failed at random until the buffer covered a fully escaped frame.
 
 The propagation retrieval gate queues a Python message on the Rust
 propagation node, restarts the node, and has the recipient identity retrieve
-and acknowledge it. Remaining propagation gates cover expiry and capacity
-policy. Remaining live gates also require pinned runs for routed RNS and native
-NomadNet. Repository policy keeps live
+and acknowledge it. The NomadNet host gate has a pinned Python client fetch
+static, dynamic, allow-listed, denied, and file paths from the Rust native
+host. Enabling it exposed a sixth defect: file responses lacked the name and
+data pair NomadNet expects, so downloads could not be saved. Remaining
+propagation gates cover expiry and capacity policy. Remaining live gates also
+require pinned runs for routed RNS and the Rust NomadNet client against a
+Python node. Repository policy keeps live
 Python runs manual and scheduled workflows fixture-only.
 
 Authority:
