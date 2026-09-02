@@ -6,6 +6,7 @@ use crate::transport::channel::{
 use crate::transport::destination_ext::link::{
     LinkCloseReason, LinkLifecycleSnapshot, LinkStateSnapshot,
 };
+use crate::transport::resource::{PreparedSegment, ResourceFailure};
 
 const TERMINAL_LINK_HISTORY_CAPACITY: usize = 200;
 
@@ -388,107 +389,145 @@ impl Transport {
         self.handler.lock().await.record_terminal_link(snapshot);
     }
 
+    /// Build one Link-context packet per active Link in `links`, optionally
+    /// restricted to one destination, paired with that Link's bound interface.
+    ///
+    /// An established Link always carries the interface its proof or request
+    /// arrived on, and the destination path table never learns ephemeral Link
+    /// IDs, so a Link without a bound interface is skipped rather than routed.
+    async fn collect_bound_link_packets<F>(
+        links: &HashMap<AddressHash, Arc<Mutex<Link>>>,
+        destination: Option<&AddressHash>,
+        build: F,
+    ) -> Vec<(AddressHash, Packet)>
+    where
+        F: Fn(&Link) -> Result<Packet, RnsError>,
+    {
+        let mut packets = Vec::new();
+        for link in links.values() {
+            let link = link.lock().await;
+            if link.status() != LinkStatus::Active {
+                continue;
+            }
+            if let Some(destination) = destination
+                && link.destination().address_hash != *destination
+            {
+                continue;
+            }
+            let Some(iface) = link.ingress_iface() else {
+                log::trace!("tp: active link {} has no bound interface", link.id());
+                continue;
+            };
+            if let Ok(packet) = build(&link) {
+                packets.push((iface, packet));
+            }
+        }
+        packets
+    }
+
+    /// Enqueue already-built Link packets directly on their bound interfaces.
+    ///
+    /// The transport handler is held only to record the packets in the
+    /// duplicate cache; interface dispatch runs without it so a slow interface
+    /// queue cannot stall protocol processing. Returns the number of packets
+    /// accepted by an interface.
+    async fn dispatch_bound_link_packets(&self, packets: Vec<(AddressHash, Packet)>) -> usize {
+        if packets.is_empty() {
+            return 0;
+        }
+        {
+            let handler = self.handler.lock().await;
+            let mut cache = handler.packet_cache.lock().await;
+            for (_, packet) in &packets {
+                cache.update(packet);
+            }
+        }
+        let mut sent = 0usize;
+        for (iface, packet) in packets {
+            let dispatch = self
+                .iface_manager
+                .lock()
+                .await
+                .send(TxMessage { tx_type: TxMessageType::Direct(iface), packet })
+                .await;
+            if dispatch.sent_ifaces > 0 {
+                sent += 1;
+            }
+        }
+        sent
+    }
+
+    /// Send one already-built packet on an established Link's bound interface.
+    ///
+    /// Link IDs are ephemeral and never enter the destination path table, so
+    /// routing a Link packet by destination would drop it on a non-broadcast
+    /// transport or steer it by a stale entry. The Link must be active.
+    pub async fn send_link_packet(
+        &self,
+        link: &Arc<Mutex<Link>>,
+        packet: Packet,
+    ) -> SendPacketOutcome {
+        let iface = {
+            let link = link.lock().await;
+            if link.status() != LinkStatus::Active {
+                return SendPacketOutcome::DroppedNoRoute;
+            }
+            link.ingress_iface()
+        };
+        let Some(iface) = iface else {
+            return SendPacketOutcome::DroppedNoRoute;
+        };
+        if self.dispatch_bound_link_packets(vec![(iface, packet)]).await == 1 {
+            SendPacketOutcome::SentDirect
+        } else {
+            SendPacketOutcome::DroppedNoRoute
+        }
+    }
+
     pub async fn send_channel_to_all_out_links(&self, payload: &[u8]) {
         let packets = {
             let handler = self.handler.lock().await;
-            let mut packets = Vec::new();
-            for link in handler.out_links.values() {
-                let link = link.lock().await;
-                if link.status() == LinkStatus::Active
-                    && let Ok(packet) = link.channel_packet(payload)
-                {
-                    packets.push(packet);
-                }
-            }
-            packets
+            Self::collect_bound_link_packets(&handler.out_links, None, |link| {
+                link.channel_packet(payload)
+            })
+            .await
         };
-        if packets.is_empty() {
-            return;
-        }
-        let mut handler = self.handler.lock().await;
-        for packet in packets {
-            handler.send_packet(packet).await;
-        }
+        self.dispatch_bound_link_packets(packets).await;
     }
 
     pub async fn send_to_all_out_links(&self, payload: &[u8]) {
         let packets = {
             let handler = self.handler.lock().await;
-            let mut packets = Vec::new();
-            for link in handler.out_links.values() {
-                let link = link.lock().await;
-                if link.status() == LinkStatus::Active
-                    && let Ok(packet) = link.data_packet(payload)
-                {
-                    packets.push(packet);
-                }
-            }
-            packets
+            Self::collect_bound_link_packets(&handler.out_links, None, |link| {
+                link.data_packet(payload)
+            })
+            .await
         };
-        if packets.is_empty() {
-            return;
-        }
-        let mut handler = self.handler.lock().await;
-        for packet in packets {
-            handler.send_packet(packet).await;
-        }
+        self.dispatch_bound_link_packets(packets).await;
     }
 
     pub async fn send_to_out_links(&self, destination: &AddressHash, payload: &[u8]) {
-        let mut count = 0usize;
         let packets = {
             let handler = self.handler.lock().await;
-            let mut packets = Vec::new();
-            for link in handler.out_links.values() {
-                let link = link.lock().await;
-                if link.destination().address_hash == *destination
-                    && link.status() == LinkStatus::Active
-                    && let Ok(packet) = link.data_packet(payload)
-                {
-                    packets.push(packet);
-                }
-            }
-            packets
+            Self::collect_bound_link_packets(&handler.out_links, Some(destination), |link| {
+                link.data_packet(payload)
+            })
+            .await
         };
-        if !packets.is_empty() {
-            let mut handler = self.handler.lock().await;
-            for packet in packets {
-                handler.send_packet(packet).await;
-                count += 1;
-            }
-        }
-
-        if count == 0 {
+        if self.dispatch_bound_link_packets(packets).await == 0 {
             log::trace!("tp({}): no output links for {} destination", self.name, destination);
         }
     }
 
     pub async fn send_to_in_links(&self, destination: &AddressHash, payload: &[u8]) {
-        let mut count = 0usize;
         let packets = {
             let handler = self.handler.lock().await;
-            let mut packets = Vec::new();
-            for link in handler.in_links.values() {
-                let link = link.lock().await;
-
-                if link.destination().address_hash == *destination
-                    && link.status() == LinkStatus::Active
-                    && let Ok(packet) = link.data_packet(payload)
-                {
-                    packets.push(packet);
-                }
-            }
-            packets
+            Self::collect_bound_link_packets(&handler.in_links, Some(destination), |link| {
+                link.data_packet(payload)
+            })
+            .await
         };
-        if !packets.is_empty() {
-            let mut handler = self.handler.lock().await;
-            for packet in packets {
-                handler.send_packet(packet).await;
-                count += 1;
-            }
-        }
-
-        if count == 0 {
+        if self.dispatch_bound_link_packets(packets).await == 0 {
             log::trace!("tp({}): no input links for {} destination", self.name, destination);
         }
     }
@@ -902,6 +941,79 @@ impl Transport {
     }
 }
 
+/// Prepare and dispatch every split segment whose predecessor was proved.
+///
+/// Segment construction (encryption and fragmentation) runs with only the
+/// Link locked; the transport handler is locked briefly to hand out bytes,
+/// adopt the prepared segment, and confirm dispatch. A segment that cannot be
+/// built or dispatched fails its whole split exactly once.
+pub(super) async fn advance_due_split_segments(handler_arc: &Arc<Mutex<TransportHandler>>) {
+    let due = handler_arc.lock().await.resource_manager.take_due_segments();
+    for pending in due {
+        let original = pending.original_hash;
+        let (link, iface_manager, now) = {
+            let handler = handler_arc.lock().await;
+            (
+                find_link_in_handler(&handler, pending.link_id).await,
+                handler.iface_manager.clone(),
+                handler.resource_manager.now(),
+            )
+        };
+        let prepared = match link {
+            Some(link) => {
+                let link = link.lock().await;
+                if link.status() != LinkStatus::Active {
+                    Err(ResourceFailure::LinkClosed)
+                } else {
+                    match link.ingress_iface() {
+                        Some(iface) => PreparedSegment::build(&link, pending, now)
+                            .map(|prepared| (prepared, iface))
+                            .map_err(|_| ResourceFailure::Integrity),
+                        None => Err(ResourceFailure::LinkClosed),
+                    }
+                }
+            }
+            None => Err(ResourceFailure::LinkClosed),
+        };
+        let (prepared, iface) = match prepared {
+            Ok(prepared) => prepared,
+            Err(failure) => {
+                let mut handler = handler_arc.lock().await;
+                let _ = handler.resource_manager.fail_split_outbound(original, failure);
+                let events = handler.resource_manager.drain_events();
+                handler.publish_resource_events(events).await;
+                continue;
+            }
+        };
+        let adopted = {
+            let mut handler = handler_arc.lock().await;
+            let adopted = handler.resource_manager.adopt_segment(prepared);
+            if let Some((_, packet)) = adopted.as_ref() {
+                handler.packet_cache.lock().await.update(packet);
+            }
+            adopted
+        };
+        let Some((segment_hash, packet)) = adopted else {
+            continue;
+        };
+        let sent = iface_manager
+            .lock()
+            .await
+            .send(TxMessage { tx_type: TxMessageType::Direct(iface), packet })
+            .await
+            .sent_ifaces
+            > 0;
+        let mut handler = handler_arc.lock().await;
+        let confirmed = handler.resource_manager.confirm_outbound_dispatch(segment_hash, sent);
+        if !sent || !confirmed {
+            let _ =
+                handler.resource_manager.fail_split_outbound(original, ResourceFailure::LinkClosed);
+        }
+        let events = handler.resource_manager.drain_events();
+        handler.publish_resource_events(events).await;
+    }
+}
+
 pub(super) async fn find_link_in_handler(
     handler: &TransportHandler,
     link_id: AddressHash,
@@ -956,6 +1068,29 @@ impl Transport {
             .ok()
             .and_then(|task| task.as_ref().map(tokio::task::JoinHandle::is_finished))
             .unwrap_or(true)
+    }
+
+    /// The most recent accepted announce packet known for a destination,
+    /// for path persistence on nodes that do not retransmit.
+    pub async fn cached_announce(&self, destination: &AddressHash) -> Option<Packet> {
+        self.handler.lock().await.announce_table.cached_announce(destination)
+    }
+
+    /// Announces queued for retransmission and retained for persistence.
+    pub async fn announce_table_sizes(&self) -> (usize, usize) {
+        let handler = self.handler.lock().await;
+        (handler.announce_table.queued_len(), handler.announce_table.cached_len())
+    }
+
+    /// Outcome of worker supervision once the manager task has ended.
+    pub async fn supervision_outcome(&self) -> Option<SupervisionOutcome> {
+        self.handler.lock().await.supervision
+    }
+
+    /// The attributable failure of a supervised worker that exited before
+    /// shutdown, if any.
+    pub async fn worker_failure(&self) -> Option<WorkerFailure> {
+        self.supervision_outcome().await.and_then(|outcome| outcome.failure())
     }
 
     pub async fn shutdown_manager(&self) -> Result<(), tokio::task::JoinError> {

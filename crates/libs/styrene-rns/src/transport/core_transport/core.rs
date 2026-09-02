@@ -109,6 +109,7 @@ impl Transport {
             protocol_clock: protocol_clock.clone(),
             fixed_dest_path_requests: path_request_dest,
             cancel: cancel.clone(),
+            supervision: None,
             receipt_handler: None,
             terminal_receipt_history: VecDeque::new(),
             pending_packet_receipts: VecDeque::new(),

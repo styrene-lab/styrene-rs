@@ -47,8 +47,21 @@ async fn process_announce<'a>(
         handler.single_out_destinations.insert(packet.destination, destination.clone());
     }
 
-    handler.announce_table.add(packet, dest_hash, iface);
-    let mode = handler.iface_manager.lock().await.interface_mode(&iface);
+    // Only a node that drains the retransmission queue may fill it: transport
+    // forwarding is enabled, or the announce arrived from a local client
+    // instance this node serves. Path responses are never re-queued. Every
+    // other accepted announce stays available to path persistence through
+    // the bounded cache.
+    let (mode, shared_instance) = {
+        let manager = handler.iface_manager.lock().await;
+        (manager.interface_mode(&iface), manager.is_shared_instance(&iface))
+    };
+    let drains_queue = handler.config.retransmit || shared_instance;
+    if drains_queue && packet.context != PacketContext::PathResponse {
+        handler.announce_table.add(packet, dest_hash, iface);
+    } else {
+        handler.announce_table.retain(packet, dest_hash, iface);
+    }
     if let Some(event) = handler.path_table.handle_announce(
         packet,
         packet.transport,

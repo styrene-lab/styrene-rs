@@ -3,6 +3,7 @@ mod tests {
     use super::*;
     use crate::destination::{DestinationDesc, DestinationName};
     use crate::identity::PrivateIdentity;
+    use crate::transport::destination_ext::link::LinkHandleResult;
     use crate::transport::time::ManualMonotonicClock;
     use rand_core::OsRng;
     use std::sync::{
@@ -488,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn resource_manager_rejects_split_flag() {
+    fn single_segment_split_flag_is_accepted_as_a_plain_resource() {
         let signer = PrivateIdentity::new_from_rand(OsRng);
         let identity = *signer.as_identity();
         let destination = DestinationDesc {
@@ -520,8 +521,9 @@ mod tests {
         let mut manager = ResourceManager::new_with_config(Duration::from_secs(1), 1);
         let responses = manager.handle_packet(&packet, &mut link);
 
-        assert!(responses.is_empty());
-        assert!(manager.incoming.is_empty());
+        assert_eq!(responses.len(), 1, "a lone segment is an ordinary resource");
+        assert_eq!(manager.incoming.len(), 1);
+        assert!(manager.split_incoming.is_empty());
     }
 
     #[test]
@@ -564,7 +566,8 @@ mod tests {
         assert_eq!(manager.incoming.len(), 1);
         assert_eq!(
             manager.incoming.get(&adv.hash).expect("receiver").retry_count,
-            1
+            0,
+            "the initial request is not a retry"
         );
 
         let second = manager.handle_packet(&packet, &mut link);
@@ -572,7 +575,7 @@ mod tests {
         assert_eq!(manager.incoming.len(), 1);
         assert_eq!(
             manager.incoming.get(&adv.hash).expect("receiver").retry_count,
-            1
+            0
         );
     }
 
@@ -673,7 +676,7 @@ mod tests {
             random_hash: [0x32; RANDOM_HASH_SIZE],
             original_hash: Hash::new_from_slice(&[0x31; 32]),
             segment_index: 1,
-            total_segments: parts.div_ceil(HASHMAP_MAX_LEN) as u32,
+            total_segments: 1,
             request_id: None,
             flags: 0,
             hashmap: vec![0; parts.min(HASHMAP_MAX_LEN) * MAPHASH_LEN],
@@ -695,8 +698,8 @@ mod tests {
         .is_err());
 
         let mut overflow = bounded_advertisement(resource_sdu, resource_sdu, resource_sdu);
-        overflow.segment_index = u32::MAX;
-        overflow.total_segments = u32::MAX;
+        overflow.segment_index = 2;
+        overflow.total_segments = 1;
         assert!(ResourceReceiver::new(
             &overflow,
             AddressHash::new([0; 16]),
@@ -1187,5 +1190,1210 @@ mod tests {
             data: PacketDataBuffer::new_from_slice(payload),
             ..Default::default()
         }
+    }
+
+    /// A plain, uncompressed resource of `part_count` fragments of `sdu`
+    /// bytes whose advertisement hash matches the assembled payload, so a
+    /// receiver can run to verified completion.
+    fn windowed_resource(
+        part_count: usize,
+        sdu: usize,
+        seed: u8,
+    ) -> (Vec<Vec<u8>>, Vec<[u8; MAPHASH_LEN]>, ResourceAdvertisement) {
+        let random_hash = [seed; RANDOM_HASH_SIZE];
+        let parts = (0..part_count)
+            .map(|index| vec![index as u8 ^ seed; sdu])
+            .collect::<Vec<_>>();
+        let hashes = parts.iter().map(|part| map_hash(part, &random_hash)).collect::<Vec<_>>();
+        let stream = parts.concat();
+        let payload = &stream[RANDOM_HASH_SIZE..];
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(payload);
+        hasher.update(random_hash);
+        let hash = Hash::new(copy_hash(&hasher.finalize()).expect("hash size"));
+        let advertisement = ResourceAdvertisement {
+            transfer_size: stream.len() as u64,
+            data_size: payload.len() as u64,
+            parts: part_count as u32,
+            hash,
+            random_hash,
+            original_hash: hash,
+            segment_index: 1,
+            total_segments: 1,
+            request_id: None,
+            flags: 0,
+            hashmap: hashes[..part_count.min(HASHMAP_MAX_LEN)].iter().flatten().copied().collect(),
+        };
+        (parts, hashes, advertisement)
+    }
+
+    fn hashmap_continuation(
+        resource_hash: Hash,
+        hashes: &[[u8; MAPHASH_LEN]],
+        segment: usize,
+    ) -> ResourceHashUpdate {
+        let start = segment * HASHMAP_MAX_LEN;
+        let end = (start + HASHMAP_MAX_LEN).min(hashes.len());
+        ResourceHashUpdate {
+            resource_hash,
+            segment: segment as u32,
+            hashmap: hashes[start..end].iter().flatten().copied().collect(),
+        }
+    }
+
+    /// Deliver `parts[..count]` in order without any request accounting so the
+    /// receiver's consecutive height advances to `count`.
+    fn advance_receiver(receiver: &mut ResourceReceiver, link: &Link, parts: &[Vec<u8>], count: usize) {
+        for (offset, part) in parts[..count].iter().enumerate() {
+            assert!(matches!(
+                receiver.handle_part(part, link, Duration::from_millis(offset as u64)),
+                PartOutcome::Incomplete
+            ));
+        }
+        assert_eq!(receiver.consecutive_completed, count);
+    }
+
+    fn requested_link(name: &str) -> Link {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", name),
+        };
+        let (tx, _) = tokio::sync::broadcast::channel(1);
+        let mut link = Link::new(destination, tx);
+        link.request();
+        link
+    }
+
+    #[test]
+    fn fragment_progress_never_consumes_retries_and_requests_once_per_drained_round() {
+        let link = requested_link("rounds");
+        let (parts, hashes, advertisement) = windowed_resource(12, 4, 0x41);
+        let mut receiver =
+            ResourceReceiver::new(&advertisement, *link.id(), 4, 1024, Duration::ZERO)
+                .expect("bounded receiver");
+
+        let initial = receiver
+            .request_round(RequestRound::Initial, Duration::ZERO)
+            .expect("initial request");
+        assert_eq!(initial.requested_hashes, hashes[..4]);
+        assert_eq!(receiver.retry_count, 0);
+        assert!(!receiver.round_drained());
+
+        for (offset, part) in parts[..3].iter().enumerate() {
+            let now = Duration::from_millis(100 * (offset as u64 + 1));
+            assert!(matches!(receiver.handle_part(part, &link, now), PartOutcome::Incomplete));
+            assert!(!receiver.round_drained(), "round drains only once every fragment arrived");
+            assert_eq!(receiver.retry_count, 0, "arriving fragments never consume retries");
+        }
+        assert!(matches!(
+            receiver.handle_part(&parts[3], &link, Duration::from_millis(400)),
+            PartOutcome::Incomplete
+        ));
+        assert!(receiver.round_drained());
+        assert!(matches!(
+            receiver.handle_part(&parts[3], &link, Duration::from_millis(450)),
+            PartOutcome::NoMatch
+        ));
+        assert!(receiver.round_drained(), "a duplicate fragment does not reopen the round");
+
+        let next = receiver
+            .request_round(RequestRound::Drained, Duration::from_millis(500))
+            .expect("drained round request");
+        assert_eq!(receiver.window, WINDOW + 1, "a clean round grows the window by one");
+        assert_eq!(next.requested_hashes, hashes[4..9]);
+        assert_eq!(receiver.retry_count, 0);
+    }
+
+    #[test]
+    fn clean_rounds_grow_the_window_to_its_ceiling_and_complete_the_transfer() {
+        let link = requested_link("ceiling");
+        let (parts, hashes, advertisement) = windowed_resource(64, 4, 0x17);
+        let mut receiver =
+            ResourceReceiver::new(&advertisement, *link.id(), 4, 1024, Duration::ZERO)
+                .expect("bounded receiver");
+        let mut now = Duration::ZERO;
+        let mut request =
+            receiver.request_round(RequestRound::Initial, now).expect("initial request");
+        let mut windows = vec![receiver.window];
+        let mut next_index = 0usize;
+        loop {
+            assert_eq!(request.requested_hashes.len(), receiver.window.min(64 - next_index));
+            assert_eq!(
+                request.requested_hashes,
+                hashes[next_index..next_index + request.requested_hashes.len()]
+            );
+            let mut completed = false;
+            for _ in 0..request.requested_hashes.len() {
+                now += Duration::from_millis(10);
+                match receiver.handle_part(&parts[next_index], &link, now) {
+                    PartOutcome::Incomplete => {}
+                    PartOutcome::Complete(proof, payload) => {
+                        assert_eq!(proof.context, PacketContext::ResourceProof);
+                        assert_eq!(payload.data, parts.concat()[RANDOM_HASH_SIZE..].to_vec());
+                        completed = true;
+                    }
+                    other => panic!("unexpected outcome {:?}", std::mem::discriminant(&other)),
+                }
+                next_index += 1;
+            }
+            if completed {
+                break;
+            }
+            assert!(receiver.round_drained());
+            request =
+                receiver.request_round(RequestRound::Drained, now).expect("drained round request");
+            windows.push(receiver.window);
+        }
+        assert_eq!(next_index, 64);
+        assert_eq!(receiver.retry_count, 0);
+        assert_eq!(windows, vec![4, 5, 6, 7, 8, 9, 10, 10, 10]);
+        assert_eq!(receiver.status, ResourceStatus::Complete);
+    }
+
+    #[test]
+    fn timed_out_rounds_shrink_the_window_to_its_floor_and_exhaust_retries() {
+        let mut link = requested_link("timeouts");
+        let sdu = link.resource_sdu();
+        let (_, hashes, advertisement) = windowed_resource(16, sdu, 0x23);
+        let clock = Arc::new(ManualMonotonicClock::default());
+        let mut manager = ResourceManager::new_with_config_and_clock(
+            Duration::from_secs(1),
+            4,
+            clock.clone(),
+        );
+        let packet = resource_packet(
+            PacketContext::ResourceAdvrtisement,
+            &advertisement.pack().expect("advertisement"),
+            *link.id(),
+        );
+        let responses = manager.handle_packet(&packet, &mut link);
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].context, PacketContext::ResourceRequest);
+        assert_eq!(manager.incoming[&advertisement.hash].outstanding.len(), 4);
+
+        let mut expected_windows = Vec::new();
+        for (retry, expected_window) in [(1_u8, 3_usize), (2, 2), (3, 1), (4, 1)] {
+            clock.advance(Duration::from_millis(999));
+            assert!(manager.poll().requests.is_empty(), "no retry before the interval");
+            clock.advance(Duration::from_millis(1));
+            let actions = manager.poll();
+            assert_eq!(actions.requests.len(), 1);
+            assert_eq!(actions.requests[0].request.requested_hashes, hashes[..expected_window]);
+            let receiver = manager.incoming.get(&advertisement.hash).expect("receiver");
+            assert_eq!(receiver.retry_count, retry);
+            expected_windows.push(receiver.window);
+        }
+        assert_eq!(expected_windows, vec![3, 2, 1, 1], "the window never shrinks below its floor");
+
+        clock.advance(Duration::from_secs(1));
+        let actions = manager.poll();
+        assert!(actions.requests.is_empty());
+        assert_eq!(actions.cancellations.len(), 1);
+        assert!(!manager.incoming.contains_key(&advertisement.hash));
+        assert!(matches!(
+            manager.drain_events().as_slice(),
+            [ResourceEvent { kind: ResourceEventKind::Failed(ResourceFailure::TimedOut), .. }]
+        ));
+    }
+
+    #[test]
+    fn progress_resets_the_retry_budget_and_the_manager_requests_once_per_round() {
+        let mut link = requested_link("budget");
+        let sdu = link.resource_sdu();
+        let (parts, hashes, advertisement) = windowed_resource(16, sdu, 0x59);
+        let clock = Arc::new(ManualMonotonicClock::default());
+        let mut manager = ResourceManager::new_with_config_and_clock(
+            Duration::from_secs(1),
+            2,
+            clock.clone(),
+        );
+        let packet = resource_packet(
+            PacketContext::ResourceAdvrtisement,
+            &advertisement.pack().expect("advertisement"),
+            *link.id(),
+        );
+        assert_eq!(manager.handle_packet(&packet, &mut link).len(), 1);
+
+        clock.advance(Duration::from_secs(1));
+        let retry = manager.poll();
+        assert_eq!(retry.requests.len(), 1);
+        assert_eq!(retry.requests[0].request.requested_hashes, hashes[..3]);
+        assert_eq!(manager.incoming[&advertisement.hash].retry_count, 1);
+
+        clock.advance(Duration::from_millis(100));
+        for part in &parts[..2] {
+            let part = resource_packet(PacketContext::Resource, part, *link.id());
+            assert!(
+                manager.handle_packet(&part, &mut link).is_empty(),
+                "fragments still in flight are not requested again"
+            );
+            assert_eq!(manager.incoming[&advertisement.hash].retry_count, 0);
+        }
+        let events = manager.drain_events();
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|event| matches!(event.kind, ResourceEventKind::Progress(_))));
+
+        let part = resource_packet(PacketContext::Resource, &parts[2], *link.id());
+        let responses = manager.handle_packet(&part, &mut link);
+        assert_eq!(responses.len(), 1, "one request per drained round");
+        assert_eq!(responses[0].context, PacketContext::ResourceRequest);
+        assert_eq!(manager.incoming[&advertisement.hash].window, 4);
+        assert_eq!(manager.incoming[&advertisement.hash].outstanding.len(), 4);
+
+        clock.advance(Duration::from_secs(1));
+        let poll = manager.poll();
+        assert_eq!(poll.requests.len(), 1, "a stalled round retries again");
+        assert_eq!(manager.incoming[&advertisement.hash].retry_count, 1);
+    }
+
+    #[test]
+    fn continuation_refill_never_requests_an_in_flight_fragment_twice() {
+        let boundary = HASHMAP_MAX_LEN;
+        let link = requested_link("refill");
+        let (parts, hashes, advertisement) = windowed_resource(boundary + 6, 4, 0x61);
+        let mut receiver =
+            ResourceReceiver::new(&advertisement, *link.id(), 4, 4096, Duration::ZERO)
+                .expect("multi-segment receiver");
+        advance_receiver(&mut receiver, &link, &parts, boundary - 2);
+
+        let request = receiver
+            .request_round(RequestRound::Drained, Duration::from_secs(1))
+            .expect("window reaches the segment boundary");
+        assert_eq!(receiver.window, WINDOW + 1);
+        assert_eq!(request.requested_hashes, hashes[boundary - 2..boundary]);
+        assert!(request.hashmap_exhausted, "the active window reached unmapped fragments");
+        assert_eq!(request.last_map_hash, Some(hashes[boundary - 1]));
+        assert!(receiver.continuation_pending);
+
+        assert!(matches!(
+            receiver.handle_part(&parts[boundary - 2], &link, Duration::from_millis(1100)),
+            PartOutcome::Incomplete
+        ));
+        assert!(!receiver.round_drained(), "one requested fragment is still in flight");
+
+        receiver.handle_hash_update(&hashmap_continuation(advertisement.hash, &hashes, 1));
+        assert!(!receiver.continuation_pending);
+        let refill = receiver
+            .request_round(RequestRound::Continuation, Duration::from_millis(1200))
+            .expect("continuation refills the window");
+        assert!(!refill.requested_hashes.contains(&hashes[boundary - 1]), "in flight, not re-requested");
+        assert_eq!(refill.requested_hashes, hashes[boundary..boundary + 4], "refill stays within the window");
+        assert!(!refill.hashmap_exhausted);
+        assert_eq!(receiver.outstanding.len(), receiver.window);
+        assert_eq!(receiver.retry_count, 0);
+    }
+
+    #[test]
+    fn one_continuation_stays_outstanding_until_it_arrives_or_expires() {
+        let boundary = HASHMAP_MAX_LEN;
+        let link = requested_link("continuation");
+        let (parts, hashes, advertisement) = windowed_resource(boundary + 2, 4, 0x77);
+        let mut receiver =
+            ResourceReceiver::new(&advertisement, *link.id(), 4, 4096, Duration::ZERO)
+                .expect("multi-segment receiver");
+        advance_receiver(&mut receiver, &link, &parts, boundary - 1);
+
+        let request = receiver
+            .request_round(RequestRound::Drained, Duration::from_secs(1))
+            .expect("first continuation request");
+        assert_eq!(request.requested_hashes, hashes[boundary - 1..boundary]);
+        assert!(request.hashmap_exhausted);
+
+        assert!(matches!(
+            receiver.handle_part(&parts[boundary - 1], &link, Duration::from_millis(1100)),
+            PartOutcome::Incomplete
+        ));
+        assert!(receiver.round_drained());
+        assert!(
+            receiver.request_round(RequestRound::Drained, Duration::from_millis(1200)).is_none(),
+            "no second continuation while one is outstanding"
+        );
+        assert_eq!(receiver.last_request, Duration::from_secs(1), "nothing was sent");
+        assert!(receiver.continuation_pending);
+
+        let retry = receiver
+            .request_round(RequestRound::Retry, Duration::from_millis(2200))
+            .expect("an expired continuation is requested again");
+        assert!(retry.hashmap_exhausted);
+        assert_eq!(retry.last_map_hash, Some(hashes[boundary - 1]));
+        assert!(retry.requested_hashes.is_empty());
+        assert_eq!(receiver.retry_count, 1);
+        assert!(receiver.continuation_pending);
+
+        receiver.handle_hash_update(&hashmap_continuation(advertisement.hash, &hashes, 1));
+        let refill = receiver
+            .request_round(RequestRound::Continuation, Duration::from_millis(2300))
+            .expect("continuation arrived");
+        assert_eq!(refill.requested_hashes, hashes[boundary..]);
+        assert!(!refill.hashmap_exhausted);
+    }
+
+    #[test]
+    fn lost_continuation_expires_into_bounded_re_requests_and_one_terminal_timeout() {
+        let boundary = HASHMAP_MAX_LEN;
+        let mut link = requested_link("lost-continuation");
+        let sdu = link.resource_sdu();
+        let (parts, hashes, advertisement) = windowed_resource(boundary + 2, sdu, 0x13);
+        let clock = Arc::new(ManualMonotonicClock::default());
+        let mut manager = ResourceManager::new_with_config_and_clock(
+            Duration::from_secs(1),
+            2,
+            clock.clone(),
+        );
+        let packet = resource_packet(
+            PacketContext::ResourceAdvrtisement,
+            &advertisement.pack().expect("advertisement"),
+            *link.id(),
+        );
+        assert_eq!(manager.handle_packet(&packet, &mut link).len(), 1);
+
+        let mut requests = 0usize;
+        for part in &parts[..boundary] {
+            clock.advance(Duration::from_millis(1));
+            let packet = resource_packet(PacketContext::Resource, part, *link.id());
+            let responses = manager.handle_packet(&packet, &mut link);
+            assert!(responses.len() <= 1);
+            requests += responses.len();
+            let receiver = &manager.incoming[&advertisement.hash];
+            assert!(receiver.outstanding.len() <= receiver.window, "requests stay bounded");
+        }
+        assert!(requests > 0);
+        let receiver = &manager.incoming[&advertisement.hash];
+        assert_eq!(receiver.consecutive_completed, boundary);
+        assert!(receiver.continuation_pending, "the window reached the next segment");
+        assert!(receiver.round_drained());
+        let _ = manager.drain_events();
+
+        for retry in 1..=2_u8 {
+            clock.advance(Duration::from_secs(1));
+            let actions = manager.poll();
+            assert_eq!(actions.requests.len(), 1, "the expired continuation is requested again");
+            assert!(actions.requests[0].request.hashmap_exhausted);
+            assert_eq!(actions.requests[0].request.last_map_hash, Some(hashes[boundary - 1]));
+            assert_eq!(manager.incoming[&advertisement.hash].retry_count, retry);
+        }
+        clock.advance(Duration::from_secs(1));
+        let actions = manager.poll();
+        assert!(actions.requests.is_empty());
+        assert_eq!(actions.cancellations.len(), 1);
+        assert!(!manager.incoming.contains_key(&advertisement.hash), "owned state released");
+        assert!(matches!(
+            manager.drain_events().as_slice(),
+            [ResourceEvent { kind: ResourceEventKind::Failed(ResourceFailure::TimedOut), .. }]
+        ));
+        assert!(manager.poll().cancellations.is_empty(), "exactly one terminal failure");
+    }
+
+    #[test]
+    fn multi_segment_transfer_completes_and_releases_request_state() {
+        let boundary = HASHMAP_MAX_LEN;
+        let mut link = requested_link("multi-segment");
+        let sdu = link.resource_sdu();
+        let (parts, hashes, advertisement) = windowed_resource(boundary + 3, sdu, 0x2b);
+        let clock = Arc::new(ManualMonotonicClock::default());
+        let mut manager = ResourceManager::new_with_config_and_clock(
+            Duration::from_secs(1),
+            2,
+            clock.clone(),
+        );
+        let packet = resource_packet(
+            PacketContext::ResourceAdvrtisement,
+            &advertisement.pack().expect("advertisement"),
+            *link.id(),
+        );
+        assert_eq!(manager.handle_packet(&packet, &mut link).len(), 1);
+        for part in &parts[..boundary] {
+            let packet = resource_packet(PacketContext::Resource, part, *link.id());
+            manager.handle_packet(&packet, &mut link);
+        }
+        assert!(manager.incoming[&advertisement.hash].continuation_pending);
+
+        let update = hashmap_continuation(advertisement.hash, &hashes, 1);
+        let packet = resource_packet(
+            PacketContext::ResourceHashUpdate,
+            &update.encode().expect("hash update encodes"),
+            *link.id(),
+        );
+        let responses = manager.handle_packet(&packet, &mut link);
+        assert_eq!(responses.len(), 1, "the continuation refills the window once");
+        assert_eq!(responses[0].context, PacketContext::ResourceRequest);
+        {
+            let receiver = &manager.incoming[&advertisement.hash];
+            assert!(!receiver.continuation_pending);
+            assert_eq!(receiver.outstanding.len(), 3);
+            assert_eq!(receiver.retry_count, 0);
+        }
+
+        let mut responses = Vec::new();
+        for part in &parts[boundary..] {
+            let packet = resource_packet(PacketContext::Resource, part, *link.id());
+            responses = manager.handle_packet(&packet, &mut link);
+        }
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].context, PacketContext::ResourceProof);
+        assert!(manager.incoming.is_empty(), "completion releases owned request state");
+        assert!(manager
+            .drain_events()
+            .iter()
+            .any(|event| matches!(event.kind, ResourceEventKind::Complete(_))));
+        clock.advance(Duration::from_secs(5));
+        assert!(manager.poll().cancellations.is_empty());
+    }
+
+    fn advertisement_packet(advertisement: &ResourceAdvertisement, link: &Link) -> Packet {
+        resource_packet(
+            PacketContext::ResourceAdvrtisement,
+            &advertisement.pack().expect("advertisement packs"),
+            *link.id(),
+        )
+    }
+
+    /// Every cap is checked at its exact value and one over it before any
+    /// receiver or part storage exists, and a rejected advertisement emits no
+    /// request packet.
+    #[test]
+    fn advertisement_caps_are_exact_and_checked_before_allocation() {
+        let mut link = requested_link("caps");
+        let sdu = link.resource_sdu();
+        let destination_limit = 4 * sdu;
+
+        let cases: Vec<(&str, ResourceAdvertisement, Option<usize>, bool)> = vec![
+            (
+                "destination limit exact",
+                bounded_advertisement(destination_limit, destination_limit, sdu),
+                Some(destination_limit),
+                true,
+            ),
+            (
+                "destination limit one over",
+                bounded_advertisement(destination_limit + 1, destination_limit + 1, sdu),
+                Some(destination_limit),
+                false,
+            ),
+            (
+                "unsolicited limit exact",
+                bounded_advertisement(
+                    MAX_UNSOLICITED_RESOURCE_SIZE,
+                    MAX_UNSOLICITED_RESOURCE_SIZE,
+                    sdu,
+                ),
+                None,
+                true,
+            ),
+            (
+                "unsolicited limit one over",
+                bounded_advertisement(
+                    MAX_UNSOLICITED_RESOURCE_SIZE + 1,
+                    MAX_UNSOLICITED_RESOURCE_SIZE + 1,
+                    sdu,
+                ),
+                None,
+                false,
+            ),
+            (
+                "transfer overhead exact",
+                bounded_advertisement(
+                    MAX_UNSOLICITED_RESOURCE_SIZE + RESOURCE_WIRE_OVERHEAD,
+                    MAX_UNSOLICITED_RESOURCE_SIZE,
+                    sdu,
+                ),
+                None,
+                true,
+            ),
+            (
+                "transfer overhead one over",
+                bounded_advertisement(
+                    MAX_UNSOLICITED_RESOURCE_SIZE + RESOURCE_WIRE_OVERHEAD + 1,
+                    MAX_UNSOLICITED_RESOURCE_SIZE,
+                    sdu,
+                ),
+                None,
+                false,
+            ),
+            (
+                "part count one over",
+                {
+                    let mut advertisement = bounded_advertisement(8 * sdu, 8 * sdu, sdu);
+                    advertisement.parts += 1;
+                    advertisement
+                },
+                None,
+                false,
+            ),
+            (
+                "part count one under",
+                {
+                    let mut advertisement = bounded_advertisement(8 * sdu, 8 * sdu, sdu);
+                    advertisement.parts -= 1;
+                    advertisement
+                },
+                None,
+                false,
+            ),
+            (
+                "hashmap one hash short",
+                {
+                    let mut advertisement = bounded_advertisement(8 * sdu, 8 * sdu, sdu);
+                    advertisement.hashmap.truncate(advertisement.hashmap.len() - MAPHASH_LEN);
+                    advertisement
+                },
+                None,
+                false,
+            ),
+            (
+                "hashmap one hash extra",
+                {
+                    let mut advertisement = bounded_advertisement(8 * sdu, 8 * sdu, sdu);
+                    advertisement.hashmap.extend_from_slice(&[0; MAPHASH_LEN]);
+                    advertisement
+                },
+                None,
+                false,
+            ),
+        ];
+
+        for (case, advertisement, destination_limit, accepted) in cases {
+            let mut manager = ResourceManager::new_with_config(Duration::from_secs(1), 1);
+            let mut responses = Vec::new();
+            manager.handle_packet_into(
+                &advertisement_packet(&advertisement, &link),
+                &mut link,
+                &mut responses,
+                None,
+                destination_limit,
+            );
+            assert_eq!(responses.len(), usize::from(accepted), "{case}: request packets");
+            assert_eq!(manager.incoming.len(), usize::from(accepted), "{case}: receiver state");
+            assert_eq!(manager.state_counts().total(), usize::from(accepted), "{case}: counts");
+            assert!(manager.drain_events().is_empty(), "{case}: no events before transfer");
+            if accepted {
+                let receiver = &manager.incoming[&advertisement.hash];
+                assert_eq!(receiver.parts.len(), advertisement.parts as usize);
+                assert!(receiver.parts.iter().all(Option::is_none), "no part storage is filled");
+            }
+        }
+    }
+
+    #[test]
+    fn negotiated_incoming_limit_is_exact_and_consumed_once() {
+        let mut link = requested_link("negotiated");
+        let sdu = link.resource_sdu();
+        let limit = MAX_UNSOLICITED_RESOURCE_SIZE + 2 * sdu;
+        for (extra, accepted) in [(0, true), (1, false)] {
+            let mut manager = ResourceManager::new_with_config(Duration::from_secs(1), 1);
+            let advertisement = bounded_advertisement(limit + extra, limit + extra, sdu);
+            assert!(manager.set_incoming_limit(advertisement.hash, limit));
+            let responses =
+                manager.handle_packet(&advertisement_packet(&advertisement, &link), &mut link);
+            assert_eq!(responses.len(), usize::from(accepted));
+            assert_eq!(manager.incoming.len(), usize::from(accepted));
+            assert!(
+                !manager.incoming_limits.contains_key(&advertisement.hash),
+                "the negotiated limit is consumed by the advertisement it governs"
+            );
+        }
+        let mut manager = ResourceManager::new_with_config(Duration::from_secs(1), 1);
+        assert!(!manager.set_incoming_limit(Hash::new([1; HASH_SIZE]), 0));
+        assert!(!manager.set_incoming_limit(
+            Hash::new([1; HASH_SIZE]),
+            MAX_NEGOTIATED_RESOURCE_SIZE + 1
+        ));
+        assert!(manager.set_incoming_limit(Hash::new([1; HASH_SIZE]), MAX_NEGOTIATED_RESOURCE_SIZE));
+    }
+
+    /// At the base MTU and at negotiated MTUs, every owned resource packet
+    /// (advertisement, fragment, hashmap update, and the largest request)
+    /// fits the effective Link MDU, and fragments consume the larger MTU.
+    #[test]
+    fn resource_packets_fit_the_effective_link_mtu_at_thresholds() {
+        let base_sdu = requested_link("base").resource_sdu();
+        for (label, mtu) in
+            [("default", None), ("base", Some(crate::packet::MTU)), ("1k", Some(1024)), ("4k", Some(4096))]
+        {
+            let mut link = requested_link("mtu");
+            link.set_request_mtu(mtu);
+            let sdu = link.resource_sdu();
+            let mtu_budget = link.confirmed_mtu();
+            let wire_len = |packet: &Packet| packet.to_bytes().expect("packet serializes").len();
+            let data = vec![0x5a; sdu * (HASHMAP_MAX_LEN + 3)];
+            let sender = ResourceSender::new(
+                &link,
+                data,
+                Some(vec![1; 16]),
+                None,
+                false,
+                Duration::ZERO,
+            )
+            .expect("sender at this MTU");
+
+            assert!(
+                wire_len(&sender.advertisement_packet()) <= mtu_budget,
+                "{label}: advertisement {} > {}",
+                wire_len(&sender.advertisement_packet()),
+                mtu_budget
+            );
+            assert!(sender.parts.len() > HASHMAP_MAX_LEN, "{label}: needs a hashmap update");
+            assert!(sender.parts.iter().all(|part| part.len() <= sdu), "{label}: fragment sdu");
+            if mtu.is_some_and(|mtu| mtu > crate::packet::MTU) {
+                assert!(sdu > base_sdu, "{label}: fragments consume the negotiated MTU");
+                assert!(sender.parts.iter().any(|part| part.len() > base_sdu), "{label}");
+            }
+
+            let mut fragment = Packet::default();
+            build_link_packet_into(
+                &link,
+                PacketType::Data,
+                PacketContext::Resource,
+                &sender.parts[0],
+                &mut fragment,
+            )
+            .expect("fragment packet");
+            assert!(wire_len(&fragment) <= mtu_budget, "{label}: encrypted fragment");
+
+            let update = ResourceHashUpdate {
+                resource_hash: sender.resource_hash,
+                segment: 1,
+                hashmap: slice_hashmap_segment(&sender.map_hashes, 1),
+            };
+            let update = build_link_packet(
+                &link,
+                PacketType::Data,
+                PacketContext::ResourceHashUpdate,
+                &update.encode().expect("hash update encodes"),
+            )
+            .expect("hash update packet");
+            assert!(wire_len(&update) <= mtu_budget, "{label}: hashmap update");
+
+            let request = ResourceRequest {
+                hashmap_exhausted: true,
+                last_map_hash: Some([0xff; MAPHASH_LEN]),
+                resource_hash: sender.resource_hash,
+                requested_hashes: vec![[0xee; MAPHASH_LEN]; WINDOW_MAX],
+            };
+            let request = build_link_packet(
+                &link,
+                PacketType::Data,
+                PacketContext::ResourceRequest,
+                &request.encode(),
+            )
+            .expect("request packet");
+            assert!(wire_len(&request) <= mtu_budget, "{label}: largest request");
+        }
+    }
+
+    fn active_link_pair(name: &str) -> (Link, Link) {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", name),
+        };
+        let (tx, _) = tokio::sync::broadcast::channel(8);
+        let mut outbound = Link::new(destination, tx.clone());
+        let request = outbound.request();
+        let mut inbound =
+            Link::new_from_request(&request, signer.sign_key().clone(), destination, tx)
+                .expect("link request should parse");
+        let iface = AddressHash::new_from_rand(OsRng);
+        assert!(matches!(
+            outbound.handle_packet(&inbound.prove(), iface),
+            LinkHandleResult::Activated
+        ));
+        inbound.set_ingress_iface(iface);
+        (outbound, inbound)
+    }
+
+    /// Turn a link packet built by one side into the plaintext packet the
+    /// peer's manager consumes, mirroring the transport's decrypt step.
+    fn relay(packet: &Packet, peer: &Link) -> Packet {
+        let link_encrypted = packet.context != PacketContext::Resource
+            && !(packet.header.packet_type == PacketType::Proof
+                && packet.context == PacketContext::ResourceProof);
+        if !link_encrypted {
+            return *packet;
+        }
+        let mut buffer = PacketDataBuffer::new();
+        let len = peer
+            .decrypt(packet.data.as_slice(), buffer.accuire_buf_max())
+            .expect("peer decrypts link packet")
+            .len();
+        buffer.resize(len);
+        let mut plain = *packet;
+        plain.data = buffer;
+        plain
+    }
+
+    struct SplitHarness {
+        out_link: Link,
+        in_link: Link,
+        sender: ResourceManager,
+        receiver: ResourceManager,
+        clock: Arc<ManualMonotonicClock>,
+        advertisements: Vec<ResourceAdvertisement>,
+        to_receiver: Vec<Packet>,
+        to_sender: Vec<Packet>,
+        /// Prepare due segments inside the exchange, as the transport does.
+        auto_advance: bool,
+    }
+
+    impl SplitHarness {
+        fn new(name: &str, segment_size: usize) -> Self {
+            let (out_link, in_link) = active_link_pair(name);
+            let clock = Arc::new(ManualMonotonicClock::default());
+            let mut sender = ResourceManager::new_with_config_and_clock(
+                Duration::from_secs(1),
+                2,
+                clock.clone(),
+            );
+            sender.set_split_segment_size(segment_size);
+            let receiver = ResourceManager::new_with_config_and_clock(
+                Duration::from_secs(1),
+                2,
+                clock.clone(),
+            );
+            Self {
+                out_link,
+                in_link,
+                sender,
+                receiver,
+                clock,
+                advertisements: Vec::new(),
+                to_receiver: Vec::new(),
+                to_sender: Vec::new(),
+                auto_advance: true,
+            }
+        }
+
+        fn start(&mut self, data: Vec<u8>, metadata: Option<Vec<u8>>) -> Hash {
+            let (original, advertisement) = self
+                .sender
+                .start_send(&self.out_link, data, metadata)
+                .expect("split send starts");
+            assert!(self.sender.confirm_outbound_dispatch(original, true));
+            self.to_receiver.push(advertisement);
+            original
+        }
+
+        /// Prepare and dispatch due later segments the way the transport does.
+        fn advance_sender(&mut self) {
+            for pending in self.sender.take_due_segments() {
+                let prepared = PreparedSegment::build(&self.out_link, pending, self.clock.now())
+                    .expect("later segment builds");
+                let (hash, packet) =
+                    self.sender.adopt_segment(prepared).expect("split still active");
+                assert!(self.sender.confirm_outbound_dispatch(hash, true));
+                self.to_receiver.push(packet);
+            }
+        }
+
+        /// Exchange packets until nothing is queued or `stop` holds.
+        fn pump(&mut self, stop: impl Fn(&Self) -> bool) {
+            for _ in 0..10_000 {
+                if stop(self) {
+                    return;
+                }
+                if let Some(packet) = self.to_receiver.first().cloned() {
+                    self.to_receiver.remove(0);
+                    let plain = relay(&packet, &self.in_link);
+                    if plain.context == PacketContext::ResourceAdvrtisement {
+                        self.advertisements
+                            .push(ResourceAdvertisement::unpack(plain.data.as_slice()).expect("adv"));
+                    }
+                    self.clock.advance(Duration::from_millis(1));
+                    let responses = self.receiver.handle_packet(&plain, &mut self.in_link);
+                    self.to_sender.extend(responses);
+                    continue;
+                }
+                if let Some(packet) = self.to_sender.first().cloned() {
+                    self.to_sender.remove(0);
+                    let plain = relay(&packet, &self.out_link);
+                    self.clock.advance(Duration::from_millis(1));
+                    let responses = self.sender.handle_packet(&plain, &mut self.out_link);
+                    self.to_receiver.extend(responses);
+                    if self.auto_advance {
+                        self.advance_sender();
+                    }
+                    continue;
+                }
+                return;
+            }
+            panic!("split exchange did not settle");
+        }
+
+        fn maps_are_empty(&self) -> bool {
+            self.sender.split_outgoing.is_empty()
+                && self.sender.outbound_owner.is_empty()
+                && self.sender.pending_outgoing.is_empty()
+                && self.sender.outgoing.is_empty()
+                && self.sender.due_segments.is_empty()
+                && self.receiver.split_incoming.is_empty()
+                && self.receiver.inbound_owner.is_empty()
+                && self.receiver.incoming.is_empty()
+        }
+    }
+
+    fn split_payload(len: usize) -> Vec<u8> {
+        (0..len).map(|index| (index * 7 % 251) as u8).collect()
+    }
+
+    #[test]
+    fn split_send_prepares_only_the_first_segment_eagerly() {
+        let mut harness = SplitHarness::new("eager", 1000);
+        let data = split_payload(2500);
+        let metadata = vec![0xab; 20];
+        let original = harness.start(data.clone(), Some(metadata));
+
+        assert_eq!(harness.sender.pending_outgoing.len(), 0, "first segment is advertised");
+        assert_eq!(harness.sender.outgoing.len(), 1);
+        let split = &harness.sender.split_outgoing[&original];
+        assert_eq!(split.total_segments, 3);
+        assert_eq!(split.next_index, 2);
+        assert_eq!(split.remaining, data[977..].to_vec(), "later bytes stay unprepared");
+        assert!(split.active.is_some());
+        assert!(harness.sender.take_due_segments().is_empty(), "nothing is due while in flight");
+
+        let advertisement = ResourceAdvertisement::unpack(
+            relay(&harness.to_receiver[0], &harness.in_link).data.as_slice(),
+        )
+        .expect("advertisement");
+        assert_eq!(advertisement.original_hash, original);
+        assert_eq!(advertisement.segment_index, 1);
+        assert_eq!(advertisement.total_segments, 3);
+        assert_eq!(advertisement.flags & (FLAG_SPLIT | FLAG_METADATA), FLAG_SPLIT | FLAG_METADATA);
+        assert_eq!(advertisement.data_size, 1000, "the first segment fills to the segment size");
+        assert_ne!(advertisement.hash, original);
+    }
+
+    #[test]
+    fn short_payloads_and_oversized_metadata_do_not_split() {
+        let mut harness = SplitHarness::new("unsplit", 1000);
+        let (hash, packet) = harness
+            .sender
+            .start_send(&harness.out_link, split_payload(900), Some(vec![1; 50]))
+            .expect("single resource");
+        let advertisement =
+            ResourceAdvertisement::unpack(relay(&packet, &harness.in_link).data.as_slice())
+                .expect("advertisement");
+        assert_eq!(advertisement.flags & FLAG_SPLIT, 0);
+        assert_eq!(advertisement.hash, hash);
+        assert!(harness.sender.split_outgoing.is_empty());
+
+        assert!(matches!(
+            harness.sender.start_send(&harness.out_link, split_payload(10), Some(vec![1; 1000])),
+            Err(RnsError::InvalidArgument)
+        ));
+    }
+
+    #[test]
+    fn multi_segment_transfer_assembles_byte_exact_data_and_strips_metadata_once() {
+        let mut harness = SplitHarness::new("assemble", 1000);
+        let data = split_payload(2500);
+        let metadata = vec![0xcd; 20];
+        let original = harness.start(data.clone(), Some(metadata.clone()));
+        harness.pump(|_| false);
+
+        let advertisements = &harness.advertisements;
+        assert_eq!(advertisements.len(), 3);
+        assert_eq!(
+            advertisements.iter().map(|adv| adv.segment_index).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert!(advertisements.iter().all(|adv| adv.original_hash == original));
+        assert!(advertisements.iter().all(|adv| adv.flags & FLAG_SPLIT == FLAG_SPLIT));
+        assert_eq!(advertisements[0].flags & FLAG_METADATA, FLAG_METADATA);
+        assert!(advertisements[1..].iter().all(|adv| adv.flags & FLAG_METADATA == 0));
+        assert_eq!(advertisements[1].data_size, 1000);
+        assert_eq!(advertisements[2].data_size, 523);
+
+        let receiver_events = harness.receiver.drain_events();
+        let completes = receiver_events
+            .iter()
+            .filter(|event| matches!(event.kind, ResourceEventKind::Complete(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(completes.len(), 1, "one verified completion");
+        assert_eq!(completes[0].hash, original);
+        let ResourceEventKind::Complete(complete) = &completes[0].kind else { unreachable!() };
+        assert_eq!(complete.data, data, "byte-exact original data");
+        assert_eq!(complete.metadata, Some(metadata), "metadata carried once");
+        assert!(complete.checksum_verified);
+        let split_progress = receiver_events
+            .iter()
+            .filter(|event| {
+                event.hash == original && matches!(event.kind, ResourceEventKind::Progress(_))
+            })
+            .count();
+        assert_eq!(split_progress, 2, "one split progress per completed earlier segment");
+        assert!(receiver_events.iter().all(|event| {
+            !matches!(event.kind, ResourceEventKind::Failed(_))
+        }));
+
+        let sender_events = harness.sender.drain_events();
+        let outbound_completes = sender_events
+            .iter()
+            .filter(|event| matches!(event.kind, ResourceEventKind::OutboundComplete))
+            .collect::<Vec<_>>();
+        assert_eq!(outbound_completes.len(), 1, "one outbound completion for the whole split");
+        assert_eq!(outbound_completes[0].hash, original);
+        assert!(harness.maps_are_empty(), "both sides release all segment state");
+    }
+
+    fn second_segment_in_flight(harness: &SplitHarness, original: Hash) -> bool {
+        harness
+            .receiver
+            .split_incoming
+            .get(&original)
+            .is_some_and(|record| record.next_index == 2 && record.active.is_some())
+    }
+
+    #[test]
+    fn initiator_cancellation_of_an_active_segment_is_one_terminal_outcome_on_both_sides() {
+        let mut harness = SplitHarness::new("initiator-cancel", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| second_segment_in_flight(harness, original));
+        let _ = harness.sender.drain_events();
+        let _ = harness.receiver.drain_events();
+
+        let cancellation =
+            harness.sender.cancel_local(original).expect("split is cancellable by original hash");
+        assert_eq!(cancellation.context, PacketContext::ResourceInitiatorCancel);
+        assert_ne!(cancellation.hash, original, "the peer is told about the active segment");
+        let sender_events = harness.sender.drain_events();
+        assert_eq!(sender_events.len(), 1);
+        assert_eq!(sender_events[0].hash, original);
+        assert!(matches!(
+            sender_events[0].kind,
+            ResourceEventKind::Failed(ResourceFailure::Cancelled)
+        ));
+        let progress = sender_events[0].progress.as_ref().expect("accumulated progress");
+        assert_eq!((progress.received_parts, progress.total_parts), (1, 3));
+        assert!(progress.received_bytes > 0);
+        assert!(harness.sender.cancel_local(original).is_none(), "cancelled once");
+
+        let cancel = build_resource_cancel_packet(
+            &harness.out_link,
+            cancellation.hash,
+            cancellation.context,
+        )
+        .expect("cancel packet");
+        let responses = harness.receiver.handle_packet(&relay(&cancel, &harness.in_link), &mut harness.in_link);
+        assert!(responses.is_empty());
+        let receiver_events = harness.receiver.drain_events();
+        assert_eq!(receiver_events.len(), 1);
+        assert_eq!(receiver_events[0].hash, original);
+        assert!(matches!(
+            receiver_events[0].kind,
+            ResourceEventKind::Failed(ResourceFailure::Cancelled)
+        ));
+        let progress = receiver_events[0].progress.as_ref().expect("accumulated progress");
+        assert_eq!((progress.received_parts, progress.total_parts), (1, 3));
+        assert!(harness.maps_are_empty());
+    }
+
+    #[test]
+    fn receiver_cancellation_and_between_segment_cancellation_release_original_state() {
+        let mut harness = SplitHarness::new("receiver-cancel", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| second_segment_in_flight(harness, original));
+        let _ = harness.sender.drain_events();
+        let _ = harness.receiver.drain_events();
+
+        let cancellation = harness.receiver.cancel_local(original).expect("receiver cancels");
+        assert_eq!(cancellation.context, PacketContext::ResourceReceiverCancel);
+        let receiver_events = harness.receiver.drain_events();
+        assert_eq!(receiver_events.len(), 1);
+        assert_eq!(receiver_events[0].hash, original);
+        let cancel = build_resource_cancel_packet(
+            &harness.in_link,
+            cancellation.hash,
+            cancellation.context,
+        )
+        .expect("cancel packet");
+        harness.sender.handle_packet(&relay(&cancel, &harness.out_link), &mut harness.out_link);
+        let sender_events = harness.sender.drain_events();
+        assert_eq!(sender_events.len(), 1);
+        assert_eq!(sender_events[0].hash, original);
+        assert!(matches!(
+            sender_events[0].kind,
+            ResourceEventKind::Failed(ResourceFailure::Cancelled)
+        ));
+        assert!(harness.maps_are_empty());
+
+        // A split caught between segments is cancelled by its original hash.
+        let mut harness = SplitHarness::new("between", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| {
+            harness
+                .receiver
+                .split_incoming
+                .get(&original)
+                .is_some_and(|record| record.next_index == 2 && record.active.is_none())
+        });
+        let _ = harness.receiver.drain_events();
+        let cancel = build_resource_cancel_packet(
+            &harness.out_link,
+            original,
+            PacketContext::ResourceInitiatorCancel,
+        )
+        .expect("cancel packet");
+        harness.receiver.handle_packet(&relay(&cancel, &harness.in_link), &mut harness.in_link);
+        let receiver_events = harness.receiver.drain_events();
+        assert_eq!(receiver_events.len(), 1);
+        assert_eq!(receiver_events[0].hash, original);
+        assert!(harness.receiver.split_incoming.is_empty());
+        assert!(harness.receiver.inbound_owner.is_empty());
+    }
+
+    #[test]
+    fn segment_timeouts_fail_the_split_once_on_either_side() {
+        let mut harness = SplitHarness::new("timeout", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| second_segment_in_flight(harness, original));
+        let _ = harness.sender.drain_events();
+        let _ = harness.receiver.drain_events();
+
+        let mut receiver_cancellations = Vec::new();
+        for _ in 0..4 {
+            harness.clock.advance(Duration::from_secs(1));
+            receiver_cancellations.extend(harness.receiver.poll().cancellations);
+        }
+        assert_eq!(receiver_cancellations.len(), 1, "one cancellation names the segment");
+        assert_ne!(receiver_cancellations[0].hash, original);
+        let receiver_events = harness.receiver.drain_events();
+        assert_eq!(receiver_events.len(), 1);
+        assert_eq!(receiver_events[0].hash, original);
+        assert!(matches!(
+            receiver_events[0].kind,
+            ResourceEventKind::Failed(ResourceFailure::TimedOut)
+        ));
+        assert_eq!(receiver_events[0].progress.as_ref().map(|p| p.received_parts), Some(1));
+        assert!(harness.receiver.split_incoming.is_empty());
+        assert!(harness.receiver.incoming.is_empty());
+
+        let mut sender_cancellations = Vec::new();
+        for _ in 0..8 {
+            harness.clock.advance(Duration::from_secs(1));
+            sender_cancellations.extend(harness.sender.poll().cancellations);
+        }
+        assert_eq!(sender_cancellations.len(), 1);
+        let sender_events = harness.sender.drain_events();
+        assert_eq!(sender_events.len(), 1);
+        assert_eq!(sender_events[0].hash, original);
+        assert!(matches!(
+            sender_events[0].kind,
+            ResourceEventKind::Failed(ResourceFailure::TimedOut)
+        ));
+        assert!(harness.maps_are_empty());
+    }
+
+    #[test]
+    fn segment_build_or_dispatch_failure_fails_the_split_once() {
+        let mut harness = SplitHarness::new("build-failure", 1000);
+        harness.auto_advance = false;
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| !harness.sender.due_segments.is_empty());
+        let _ = harness.sender.drain_events();
+        assert_eq!(harness.sender.due_segments, vec![original]);
+        assert!(harness.sender.split_outgoing[&original].active.is_none());
+
+        let due = harness.sender.take_due_segments();
+        assert_eq!(due.len(), 1, "the second segment is handed out once");
+        assert!(harness.sender.split_outgoing[&original].building);
+        assert!(harness.sender.take_due_segments().is_empty());
+        let cancellation = harness
+            .sender
+            .fail_split_outbound(original, ResourceFailure::Integrity)
+            .expect("split fails once");
+        assert_eq!(cancellation.hash, original, "no segment is active, so the original is named");
+        let events = harness.sender.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].hash, original);
+        assert!(matches!(events[0].kind, ResourceEventKind::Failed(ResourceFailure::Integrity)));
+        assert_eq!(events[0].progress.as_ref().map(|p| p.received_parts), Some(1));
+        assert!(harness.sender.fail_split_outbound(original, ResourceFailure::Integrity).is_none());
+        assert!(harness.sender.split_outgoing.is_empty());
+        assert!(harness.sender.outbound_owner.is_empty());
+
+        // A prepared segment whose split was released is dropped, not adopted.
+        for pending in due {
+            let prepared = PreparedSegment::build(&harness.out_link, pending, harness.clock.now())
+                .expect("segment builds");
+            assert!(harness.sender.adopt_segment(prepared).is_none());
+        }
+
+        // Dispatch failure of a first segment releases the split as well.
+        let (original, _) = harness
+            .sender
+            .start_send(&harness.out_link, split_payload(2500), None)
+            .expect("split starts");
+        assert!(!harness.sender.confirm_outbound_dispatch(original, false));
+        assert!(harness.sender.split_outgoing.is_empty());
+        assert!(harness.sender.pending_outgoing.is_empty());
+    }
+
+    #[test]
+    fn assembly_mismatch_fails_the_split_once_without_new_state() {
+        let mut harness = SplitHarness::new("mismatch", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| {
+            harness
+                .receiver
+                .split_incoming
+                .get(&original)
+                .is_some_and(|record| record.next_index == 2 && record.active.is_none())
+        });
+        let _ = harness.receiver.drain_events();
+        // The real second-segment advertisement is next in line; corrupt its position.
+        harness.pump(|harness| !harness.to_receiver.is_empty());
+        let packet = harness.to_receiver.remove(0);
+        let plain = relay(&packet, &harness.in_link);
+        let mut advertisement =
+            ResourceAdvertisement::unpack(plain.data.as_slice()).expect("advertisement");
+        assert_eq!(advertisement.segment_index, 2);
+        advertisement.segment_index = 3;
+        let skipped = resource_packet(
+            PacketContext::ResourceAdvrtisement,
+            &advertisement.pack().expect("packs"),
+            *harness.in_link.id(),
+        );
+        let responses = harness.receiver.handle_packet(&skipped, &mut harness.in_link);
+        assert!(responses.is_empty(), "no request for a segment that does not continue");
+        assert!(harness.receiver.incoming.is_empty(), "no receiver state");
+        let events = harness.receiver.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].hash, original);
+        assert!(matches!(events[0].kind, ResourceEventKind::Failed(ResourceFailure::Integrity)));
+        assert_eq!(events[0].progress.as_ref().map(|p| p.received_parts), Some(1));
+        assert!(harness.receiver.split_incoming.is_empty());
+
+        // A later segment for an unknown original is ignored without state or events.
+        let responses = harness.receiver.handle_packet(&skipped, &mut harness.in_link);
+        assert!(responses.is_empty());
+        assert!(harness.receiver.incoming.is_empty());
+        assert!(harness.receiver.drain_events().is_empty());
+    }
+
+    #[test]
+    fn link_release_reports_a_split_once_including_between_segments() {
+        let mut harness = SplitHarness::new("link-release", 1000);
+        let original = harness.start(split_payload(2500), None);
+        harness.pump(|harness| second_segment_in_flight(harness, original));
+        let _ = harness.sender.drain_events();
+        let _ = harness.receiver.drain_events();
+        let link_id = *harness.out_link.id();
+        harness.sender.cancel_link(link_id);
+        harness.receiver.remove_orphaned(&[]);
+        for events in [harness.sender.drain_events(), harness.receiver.drain_events()] {
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].hash, original);
+            assert!(matches!(
+                events[0].kind,
+                ResourceEventKind::Failed(ResourceFailure::LinkClosed)
+            ));
+        }
+        assert!(harness.maps_are_empty());
     }
 }

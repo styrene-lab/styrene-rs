@@ -85,74 +85,58 @@ fn retry_window() -> Duration {
     Duration::from_millis(u64::from(rng.next_u32()) % (window_ms + 1))
 }
 
+/// Bounded cache of the newest accepted announce per destination.
+///
+/// Insertion order is tracked by a sequence number so that, at capacity, the
+/// least recently accepted destination is evicted and a refreshed destination
+/// moves to the newest position.
 pub struct AnnounceCache {
-    newer: Option<BTreeMap<AddressHash, AnnounceEntry>>,
-    older: Option<BTreeMap<AddressHash, AnnounceEntry>>,
+    entries: BTreeMap<AddressHash, (u64, AnnounceEntry)>,
+    by_sequence: BTreeMap<u64, AddressHash>,
+    next_sequence: u64,
     capacity: usize,
 }
 
 impl AnnounceCache {
     pub fn new(capacity: usize) -> Self {
-        Self { newer: Some(BTreeMap::new()), older: None, capacity }
+        Self { entries: BTreeMap::new(), by_sequence: BTreeMap::new(), next_sequence: 0, capacity }
     }
 
     pub fn insert(&mut self, destination: AddressHash, entry: AnnounceEntry) {
-        if self.capacity > 0 && self.len() >= self.capacity {
-            self.evict_one();
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        if let Some((previous, _)) = self.entries.insert(destination, (sequence, entry)) {
+            self.by_sequence.remove(&previous);
         }
-
-        let newer = self.newer.get_or_insert_with(BTreeMap::new);
-        if newer.len() >= self.capacity {
-            self.older = self.newer.take();
-            self.newer = Some(BTreeMap::new());
+        self.by_sequence.insert(sequence, destination);
+        while self.capacity > 0 && self.entries.len() > self.capacity {
+            let Some((oldest, evicted)) = self.by_sequence.pop_first() else {
+                break;
+            };
+            debug_assert!(oldest < sequence);
+            self.entries.remove(&evicted);
         }
-
-        self.newer.get_or_insert_with(BTreeMap::new).insert(destination, entry);
     }
 
     fn get(&self, destination: &AddressHash) -> Option<AnnounceEntry> {
-        if let Some(entry) = self.newer.as_ref().and_then(|newer| newer.get(destination)) {
-            return Some(entry.clone());
-        }
-
-        if let Some(ref older) = self.older {
-            return older.get(destination).cloned();
-        }
-
-        None
+        self.entries.get(destination).map(|(_, entry)| entry.clone())
     }
 
     pub fn len(&self) -> usize {
-        let newer_len = self.newer.as_ref().map(|m| m.len()).unwrap_or(0);
-        let older_len = self.older.as_ref().map(|m| m.len()).unwrap_or(0);
-        newer_len + older_len
+        self.entries.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.entries.is_empty()
     }
 
-    fn evict_one(&mut self) {
-        if let Some(ref mut older) = self.older
-            && let Some(first_key) = older.keys().next().cloned()
-        {
-            older.remove(&first_key);
-            if older.is_empty() {
-                self.older = None;
-            }
-            return;
-        }
-
-        if let Some(ref mut newer) = self.newer
-            && let Some(first_key) = newer.keys().next().cloned()
-        {
-            newer.remove(&first_key);
-        }
+    fn entries_mut(&mut self) -> impl Iterator<Item = &mut AnnounceEntry> {
+        self.entries.values_mut().map(|(_, entry)| entry)
     }
 
     fn clear(&mut self) {
-        self.newer = Some(BTreeMap::new());
-        self.older = None;
+        self.entries.clear();
+        self.by_sequence.clear();
     }
 }
 
@@ -175,6 +159,47 @@ impl AnnounceTable {
 
     pub fn is_empty(&self) -> bool {
         self.map.is_empty() && self.responses.is_empty() && self.cache.is_empty()
+    }
+
+    /// Keep an accepted announce available for path persistence without
+    /// queueing it for retransmission. The cache is bounded and the newest
+    /// accepted packet for a destination wins.
+    pub fn retain(
+        &mut self,
+        announce: &Packet,
+        destination: AddressHash,
+        received_from: AddressHash,
+    ) {
+        let now = Instant::now();
+        let entry = AnnounceEntry {
+            packet: *announce,
+            timestamp: now,
+            timeout: now,
+            received_from,
+            retries: 0,
+            hops: announce.header.hops,
+            response_to_iface: None,
+        };
+        self.cache.insert(destination, entry);
+    }
+
+    /// The most recent accepted announce packet known for a destination,
+    /// whether it is queued for retransmission or only retained.
+    pub fn cached_announce(&self, destination: &AddressHash) -> Option<Packet> {
+        if let Some(entry) = self.map.get(destination) {
+            return Some(entry.packet);
+        }
+        self.cache.get(destination).map(|entry| entry.packet)
+    }
+
+    /// Announces currently queued for retransmission.
+    pub fn queued_len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Announces retained only for persistence and path responses.
+    pub fn cached_len(&self) -> usize {
+        self.cache.len()
     }
 
     pub fn add(&mut self, announce: &Packet, destination: AddressHash, received_from: AddressHash) {
@@ -341,15 +366,12 @@ impl AnnounceTable {
         let mut messages = vec![];
         let now = Instant::now();
 
-        // Iterate over both cache generations
-        for map in [self.cache.newer.as_mut(), self.cache.older.as_mut()].into_iter().flatten() {
-            for entry in map.values_mut() {
-                if now.duration_since(entry.timeout) < Duration::from_secs(300) {
-                    continue;
-                }
-                if let Some(message) = entry.retransmit(transport_id) {
-                    messages.push(message);
-                }
+        for entry in self.cache.entries_mut() {
+            if now.duration_since(entry.timeout) < Duration::from_secs(300) {
+                continue;
+            }
+            if let Some(message) = entry.retransmit(transport_id) {
+                messages.push(message);
             }
         }
 

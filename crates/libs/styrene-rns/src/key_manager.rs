@@ -13,11 +13,29 @@ pub enum KeyPurpose {
     Custom(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredKey {
     pub key_id: String,
     pub purpose: KeyPurpose,
     pub material: Vec<u8>,
+}
+
+/// Debug output never includes key material.
+impl core::fmt::Debug for StoredKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("StoredKey")
+            .field("key_id", &self.key_id)
+            .field("purpose", &self.purpose)
+            .field("material", &format_args!("<{} bytes redacted>", self.material.len()))
+            .finish()
+    }
+}
+
+/// Whether a backend error means the backend itself was unavailable, as
+/// opposed to rejecting the argument or the stored data. Only availability
+/// failures may consult a fallback backend.
+pub fn is_availability_failure(error: &RnsError) -> bool {
+    matches!(error, RnsError::ConnectionError)
 }
 
 pub trait KeyManagerBackend {
@@ -79,7 +97,7 @@ pub struct FileKeyManager {
 impl FileKeyManager {
     pub fn new(root: impl Into<std::path::PathBuf>) -> Result<Self, RnsError> {
         let root = root.into();
-        std::fs::create_dir_all(&root).map_err(|_| RnsError::ConnectionError)?;
+        crate::private_file::ensure_private_dir(&root).map_err(|_| RnsError::ConnectionError)?;
         Ok(Self { root })
     }
 
@@ -109,11 +127,9 @@ impl KeyManagerBackend for FileKeyManager {
 
     fn put(&self, key: StoredKey) -> Result<(), RnsError> {
         let path = self.path_for_key(key.key_id.as_str())?;
-        let tmp_path = path.with_extension("tmp");
         let bytes = rmp_serde::to_vec_named(&key).map_err(|_| RnsError::PacketError)?;
-        std::fs::write(&tmp_path, bytes).map_err(|_| RnsError::ConnectionError)?;
-        std::fs::rename(&tmp_path, &path).map_err(|_| RnsError::ConnectionError)?;
-        Ok(())
+        crate::private_file::write_private_atomic(&path, &bytes)
+            .map_err(|_| RnsError::ConnectionError)
     }
 
     fn delete(&self, key_id: &str) -> Result<(), RnsError> {
@@ -241,18 +257,25 @@ where
         "fallback"
     }
 
+    /// A missing primary key or an unavailable primary consults the
+    /// secondary; every other primary failure surfaces unchanged.
     fn get(&self, key_id: &str) -> Result<Option<StoredKey>, RnsError> {
         match self.primary.get(key_id) {
             Ok(Some(key)) => Ok(Some(key)),
             Ok(None) => self.secondary.get(key_id),
-            Err(_) => self.secondary.get(key_id),
+            Err(error) if is_availability_failure(&error) => self.secondary.get(key_id),
+            Err(error) => Err(error),
         }
     }
 
+    /// Only an unavailable primary lets a write land in the secondary. A
+    /// primary that rejected the argument or the data keeps that error and
+    /// the secondary stays untouched.
     fn put(&self, key: StoredKey) -> Result<(), RnsError> {
         match self.primary.put(key.clone()) {
-            Ok(_) => Ok(()),
-            Err(_) => self.secondary.put(key),
+            Ok(()) => Ok(()),
+            Err(error) if is_availability_failure(&error) => self.secondary.put(key),
+            Err(error) => Err(error),
         }
     }
 
@@ -267,11 +290,15 @@ where
     }
 
     fn list_ids(&self) -> Result<Vec<String>, RnsError> {
-        match (self.primary.list_ids(), self.secondary.list_ids()) {
-            (Ok(primary_ids), Ok(secondary_ids)) => Ok(merge_key_ids(primary_ids, secondary_ids)),
-            (Ok(primary_ids), Err(_)) => Ok(primary_ids),
-            (Err(_), Ok(secondary_ids)) => Ok(secondary_ids),
-            (Err(_), Err(_)) => Err(RnsError::ConnectionError),
+        let primary_ids = match self.primary.list_ids() {
+            Ok(ids) => ids,
+            Err(error) if is_availability_failure(&error) => return self.secondary.list_ids(),
+            Err(error) => return Err(error),
+        };
+        match self.secondary.list_ids() {
+            Ok(secondary_ids) => Ok(merge_key_ids(primary_ids, secondary_ids)),
+            Err(error) if is_availability_failure(&error) => Ok(primary_ids),
+            Err(error) => Err(error),
         }
     }
 }
@@ -477,5 +504,131 @@ mod tests {
 
         let ids = manager.list_ids().expect("list ids");
         assert_eq!(ids, vec!["secondary-a".to_owned(), "secondary-b".to_owned()]);
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod hardening_tests {
+    use super::*;
+
+    /// A backend whose every operation fails with one configured error.
+    struct Failing(RnsError);
+
+    impl KeyManagerBackend for Failing {
+        fn backend_id(&self) -> &'static str {
+            "failing"
+        }
+        fn get(&self, _key_id: &str) -> Result<Option<StoredKey>, RnsError> {
+            Err(self.0)
+        }
+        fn put(&self, _key: StoredKey) -> Result<(), RnsError> {
+            Err(self.0)
+        }
+        fn delete(&self, _key_id: &str) -> Result<(), RnsError> {
+            Err(self.0)
+        }
+        fn list_ids(&self) -> Result<Vec<String>, RnsError> {
+            Err(self.0)
+        }
+    }
+
+    impl<B: KeyManagerBackend> KeyManagerBackend for &B {
+        fn backend_id(&self) -> &'static str {
+            (**self).backend_id()
+        }
+        fn get(&self, key_id: &str) -> Result<Option<StoredKey>, RnsError> {
+            (**self).get(key_id)
+        }
+        fn put(&self, key: StoredKey) -> Result<(), RnsError> {
+            (**self).put(key)
+        }
+        fn delete(&self, key_id: &str) -> Result<(), RnsError> {
+            (**self).delete(key_id)
+        }
+        fn list_ids(&self) -> Result<Vec<String>, RnsError> {
+            (**self).list_ids()
+        }
+    }
+
+    fn key(id: &str) -> StoredKey {
+        StoredKey { key_id: id.into(), purpose: KeyPurpose::TransportDh, material: vec![7; 32] }
+    }
+
+    #[test]
+    fn stored_key_debug_redacts_material() {
+        let rendered = format!("{:?}", key("k1"));
+        assert!(rendered.contains("k1"));
+        assert!(rendered.contains("<32 bytes redacted>"));
+        assert!(!rendered.contains("[7, 7"));
+    }
+
+    #[test]
+    fn fallback_get_consults_secondary_only_for_missing_or_unavailable_primary() {
+        let secondary = InMemoryKeyManager::new();
+        secondary.put(key("shared")).unwrap();
+        let manager = FallbackKeyManager::new(InMemoryKeyManager::new(), &secondary);
+        assert_eq!(manager.get("shared").unwrap().map(|k| k.key_id), Some("shared".into()));
+        let manager = FallbackKeyManager::new(Failing(RnsError::ConnectionError), &secondary);
+        assert!(manager.get("shared").unwrap().is_some());
+        for error in [
+            RnsError::InvalidArgument,
+            RnsError::PacketError,
+            RnsError::IncorrectHash,
+            RnsError::CryptoError,
+            RnsError::OutOfMemory,
+        ] {
+            let manager = FallbackKeyManager::new(Failing(error), &secondary);
+            assert_eq!(manager.get("shared"), Err(error), "{error:?} must surface");
+            assert_eq!(manager.list_ids(), Err(error), "{error:?} must surface on list");
+        }
+    }
+
+    #[test]
+    fn fallback_put_lands_in_secondary_only_when_primary_is_unavailable() {
+        let secondary = InMemoryKeyManager::new();
+        let manager = FallbackKeyManager::new(Failing(RnsError::ConnectionError), &secondary);
+        manager.put(key("unavailable")).unwrap();
+        assert!(secondary.get("unavailable").unwrap().is_some());
+        for error in [RnsError::InvalidArgument, RnsError::PacketError, RnsError::IncorrectHash] {
+            let manager = FallbackKeyManager::new(Failing(error), &secondary);
+            assert_eq!(manager.put(key("rejected")), Err(error));
+            assert!(secondary.get("rejected").unwrap().is_none(), "rejected write never lands");
+        }
+        let primary = InMemoryKeyManager::new();
+        let manager = FallbackKeyManager::new(&primary, &secondary);
+        manager.put(key("primary-only")).unwrap();
+        assert!(primary.get("primary-only").unwrap().is_some());
+        assert!(secondary.get("primary-only").unwrap().is_none());
+    }
+
+    #[test]
+    fn fallback_list_merges_available_backends() {
+        let primary = InMemoryKeyManager::new();
+        let secondary = InMemoryKeyManager::new();
+        primary.put(key("a")).unwrap();
+        secondary.put(key("b")).unwrap();
+        let manager = FallbackKeyManager::new(&primary, &secondary);
+        assert_eq!(manager.list_ids().unwrap(), vec!["a".to_string(), "b".to_string()]);
+        let manager = FallbackKeyManager::new(&primary, Failing(RnsError::ConnectionError));
+        assert_eq!(manager.list_ids().unwrap(), vec!["a".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_keys_are_private_and_never_follow_a_planted_temporary_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("styrene-rns-keys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let manager = FileKeyManager::new(&root).unwrap();
+        let victim = root.join("victim");
+        std::fs::write(&victim, b"untouched").unwrap();
+        std::os::unix::fs::symlink(&victim, root.join("k1.tmp")).unwrap();
+        manager.put(key("k1")).unwrap();
+        assert_eq!(std::fs::read(&victim).unwrap(), b"untouched");
+        assert_eq!(manager.get("k1").unwrap().unwrap().material, vec![7; 32]);
+        let file = root.join("k1.key");
+        assert_eq!(std::fs::metadata(&file).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::metadata(&root).unwrap().permissions().mode() & 0o777, 0o700);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

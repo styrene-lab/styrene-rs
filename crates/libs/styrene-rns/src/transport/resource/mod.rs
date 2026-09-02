@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,6 +18,10 @@ use crate::transport::error::RnsError;
 use crate::transport::time::{MonotonicClock, SystemMonotonicClock};
 
 pub const WINDOW: usize = 4;
+/// Smallest request window an inbound resource shrinks to after timed-out rounds.
+pub const WINDOW_MIN: usize = 1;
+/// Largest request window an inbound resource grows to through clean rounds.
+pub const WINDOW_MAX: usize = 10;
 pub const MAPHASH_LEN: usize = 4;
 pub const RANDOM_HASH_SIZE: usize = 4;
 pub const ADVERTISEMENT_OVERHEAD: usize = 134;
@@ -34,6 +38,9 @@ pub const HASHMAP_MAX_LEN: usize =
     (LINK_PACKET_MDU.saturating_sub(ADVERTISEMENT_OVERHEAD)) / MAPHASH_LEN;
 pub const MAX_UNSOLICITED_RESOURCE_SIZE: usize = 4 * 1024 * 1024;
 pub const MAX_NEGOTIATED_RESOURCE_SIZE: usize = 32 * 1024 * 1024 + 64;
+/// Largest payload one resource segment carries. Longer outbound payloads are
+/// split into consecutive segments that share one original resource hash.
+pub const SPLIT_SEGMENT_SIZE: usize = 16 * 1024 * 1024 - 1;
 const RESOURCE_WIRE_OVERHEAD: usize = 64 * 1024 + RANDOM_HASH_SIZE + 128;
 
 const FLAG_ENCRYPTED: u8 = 0x01;
@@ -75,6 +82,15 @@ pub struct ResourceEvent {
     pub hash: Hash,
     pub link_id: AddressHash,
     pub kind: ResourceEventKind,
+    /// Progress accumulated by a split resource when it reaches a terminal
+    /// failure; `None` for single-segment resources.
+    pub progress: Option<ResourceProgress>,
+}
+
+impl ResourceEvent {
+    pub fn new(hash: Hash, link_id: AddressHash, kind: ResourceEventKind) -> Self {
+        Self { hash, link_id, kind, progress: None }
+    }
 }
 
 #[derive(Debug, Clone)]

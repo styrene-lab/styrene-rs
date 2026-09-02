@@ -14,15 +14,38 @@ struct ResourceReceiver {
     maximum_data_size: usize,
     encrypted: bool,
     compressed: bool,
-    split: bool,
     has_metadata: bool,
     request_id: Option<[u8; ADDRESS_HASH_SIZE]>,
     is_request: bool,
     is_response: bool,
     last_progress: Duration,
     last_request: Duration,
+    /// Timeout-driven retries since the last progress; arriving fragments
+    /// never consume this budget.
     retry_count: u8,
+    /// Map hashes of fragments requested and not yet received. A fragment in
+    /// this set is never requested a second time before its round times out.
+    outstanding: BTreeSet<[u8; MAPHASH_LEN]>,
+    /// A hashmap continuation has been requested and neither arrived nor
+    /// expired; at most one continuation is outstanding at a time.
+    continuation_pending: bool,
+    /// Current bounded request window, grown by clean rounds and shrunk by
+    /// timed-out rounds.
+    window: usize,
     status: ResourceStatus,
+}
+
+/// Why an inbound resource emits a request round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequestRound {
+    /// First request after the advertisement.
+    Initial,
+    /// Every outstanding fragment of the previous round arrived.
+    Drained,
+    /// The previous round timed out without progress.
+    Retry,
+    /// A hashmap continuation arrived and the active window can refill.
+    Continuation,
 }
 
 #[derive(Debug, Clone)]
@@ -83,20 +106,17 @@ impl ResourceReceiver {
         let data_size = usize::try_from(adv.data_size).map_err(|_| RnsError::InvalidArgument)?;
         let expected_parts = transfer_size.div_ceil(resource_sdu);
         let total_parts = usize::try_from(adv.parts).map_err(|_| RnsError::InvalidArgument)?;
-        let expected_segments = expected_parts.div_ceil(HASHMAP_MAX_LEN);
-        let segment_index = usize::try_from(adv.segment_index).map_err(|_| RnsError::InvalidArgument)?;
-        let segment_start = segment_index
-            .checked_sub(1)
-            .and_then(|segment| segment.checked_mul(HASHMAP_MAX_LEN))
-            .ok_or(RnsError::InvalidArgument)?;
-        let expected_segment_hashes = expected_parts.saturating_sub(segment_start).min(HASHMAP_MAX_LEN);
+        // `segment_index` and `total_segments` describe this resource's place
+        // in a split transfer, never the hashmap: an advertisement always
+        // carries the first hashmap segment of its own resource, and later
+        // hashmap segments arrive as hashmap updates.
+        let expected_advertised_hashes = expected_parts.min(HASHMAP_MAX_LEN);
         if total_parts == 0
             || total_parts != expected_parts
-            || expected_segments == 0
-            || usize::try_from(adv.total_segments).ok() != Some(expected_segments)
-            || segment_index == 0
-            || segment_index > expected_segments
-            || adv.hashmap.len() != expected_segment_hashes.saturating_mul(MAPHASH_LEN)
+            || adv.total_segments == 0
+            || adv.segment_index == 0
+            || adv.segment_index > adv.total_segments
+            || adv.hashmap.len() != expected_advertised_hashes.saturating_mul(MAPHASH_LEN)
         {
             return Err(RnsError::InvalidArgument);
         }
@@ -115,7 +135,6 @@ impl ResourceReceiver {
             maximum_data_size,
             encrypted: adv.encrypted(),
             compressed: adv.compressed(),
-            split: (adv.flags & FLAG_SPLIT) == FLAG_SPLIT,
             has_metadata: (adv.flags & FLAG_METADATA) == FLAG_METADATA,
             request_id: adv.request_id.as_ref().and_then(|id| id.as_slice().try_into().ok()),
             is_request: adv.is_request(),
@@ -123,9 +142,12 @@ impl ResourceReceiver {
             last_progress: now,
             last_request: now,
             retry_count: 0,
+            outstanding: BTreeSet::new(),
+            continuation_pending: false,
+            window: WINDOW,
             status: ResourceStatus::Advertised,
         };
-        receiver.apply_hashmap_segment(adv.segment_index.saturating_sub(1) as usize, &adv.hashmap);
+        receiver.apply_hashmap_segment(0, &adv.hashmap);
         Ok(receiver)
     }
 
@@ -142,31 +164,39 @@ impl ResourceReceiver {
         }
     }
 
+    /// Missing fragments of the active window that are not already in
+    /// flight, plus a hashmap continuation when the window reaches unmapped
+    /// fragments and no continuation is outstanding.
     fn build_request(&self) -> ResourceRequest {
         let mut requested = Vec::new();
-        let mut last_known: Option<[u8; MAPHASH_LEN]> = None;
-        let mut hashmap_exhausted = false;
+        let mut exhausted_at = None;
 
-        let end = (self.consecutive_completed + WINDOW).min(self.hashmap.len());
+        let end = (self.consecutive_completed + self.window).min(self.hashmap.len());
         for idx in self.consecutive_completed..end {
-            let entry = &self.hashmap[idx];
-            if let Some(hash) = entry {
-                last_known = Some(*hash);
-                if self.parts[idx].is_none() {
-                    requested.push(*hash);
-                    if requested.len() >= WINDOW {
+            if let Some(hash) = &self.hashmap[idx] {
+                if self.parts[idx].is_none() && !self.outstanding.contains(hash) {
+                    if requested.len() + self.outstanding.len() >= self.window {
                         break;
                     }
+                    requested.push(*hash);
                 }
             } else {
-                hashmap_exhausted = true;
+                exhausted_at = Some(idx);
                 break;
             }
         }
 
+        // The continuation is anchored at the last mapped hash before the
+        // gap, which may precede the consecutive height once a whole segment
+        // has been received.
+        let last_map_hash = exhausted_at
+            .filter(|_| !self.continuation_pending)
+            .and_then(|idx| self.hashmap[..idx].iter().rev().find_map(|entry| *entry));
+        let hashmap_exhausted = last_map_hash.is_some();
+
         ResourceRequest {
             hashmap_exhausted,
-            last_map_hash: if hashmap_exhausted { last_known } else { None },
+            last_map_hash,
             resource_hash: self.resource_hash,
             requested_hashes: requested,
         }
@@ -177,17 +207,13 @@ impl ResourceReceiver {
             return;
         }
         self.apply_hashmap_segment(update.segment as usize, &update.hashmap);
+        self.continuation_pending = false;
     }
 
     fn handle_part(&mut self, part: &[u8], link: &Link, now: Duration) -> PartOutcome {
-        if self.split {
-            self.status = ResourceStatus::Failed;
-            return PartOutcome::Failed;
-        }
-
         let hash = map_hash(part, &self.random_hash);
         let start = self.consecutive_completed;
-        let end = (start + WINDOW).min(self.hashmap.len());
+        let end = (start + self.window).min(self.hashmap.len());
         let Some(index) = self.hashmap[start..end]
             .iter()
             .position(|entry| entry.as_ref() == Some(&hash))
@@ -212,6 +238,8 @@ impl ResourceReceiver {
             self.received += 1;
             self.received_bytes = self.received_bytes.saturating_add(part.len() as u64);
             self.last_progress = now;
+            self.retry_count = 0;
+            self.outstanding.remove(&hash);
             while self
                 .parts
                 .get(self.consecutive_completed)
@@ -346,9 +374,40 @@ impl ResourceReceiver {
         !matches!(self.status, ResourceStatus::Complete | ResourceStatus::Failed)
     }
 
-    fn mark_request_at(&mut self, now: Duration) {
+    /// Whether every fragment requested in the current round has arrived.
+    fn round_drained(&self) -> bool {
+        self.outstanding.is_empty()
+    }
+
+    /// Build the request for a new round and account for the transition:
+    /// a drained round grows the bounded window, a timed-out round shrinks
+    /// it, consumes one retry, and forgets in-flight fragments and any
+    /// pending continuation, a continuation refills the window, and the
+    /// initial round changes nothing. Returns `None` when there is nothing
+    /// to ask for, such as while one continuation is still outstanding.
+    fn request_round(&mut self, round: RequestRound, now: Duration) -> Option<ResourceRequest> {
+        match round {
+            RequestRound::Initial | RequestRound::Continuation => {}
+            RequestRound::Drained => {
+                self.window = (self.window + 1).min(WINDOW_MAX);
+            }
+            RequestRound::Retry => {
+                self.window = self.window.saturating_sub(1).max(WINDOW_MIN);
+                self.retry_count = self.retry_count.saturating_add(1);
+                self.outstanding.clear();
+                self.continuation_pending = false;
+            }
+        }
+        let request = self.build_request();
+        if request.requested_hashes.is_empty() && !request.hashmap_exhausted {
+            return None;
+        }
+        self.outstanding.extend(request.requested_hashes.iter().copied());
+        if request.hashmap_exhausted {
+            self.continuation_pending = true;
+        }
         self.last_request = now;
-        self.retry_count = self.retry_count.saturating_add(1);
+        Some(request)
     }
 
     fn retry_due(&self, now: Duration, retry_interval: Duration, max_retries: u8) -> bool {
