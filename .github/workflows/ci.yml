@@ -85,7 +85,7 @@ jobs:
       - name: Test committed interoperability fixtures
         run: |
           cargo test --package styrene-rns --features interop-tests,transport
-          cargo test -p styrene-interop-runner --test rns_fixtures --test rns_handoff_manifests --test live_evidence
+          cargo test -p styrene-interop-runner --test rns_fixtures --test rns_handoff_manifests --test pinned_evidence_record
 
   # Verify all backend feature profiles compile
   feature-matrix:

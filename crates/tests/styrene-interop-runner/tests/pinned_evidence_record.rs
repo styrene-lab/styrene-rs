@@ -125,30 +125,40 @@ fn scalar<'a>(block: &'a str, key: &str) -> Option<&'a str> {
     })
 }
 
+/// Scenario ids a live gate's command opts into, as `python_compat_<id>` test
+/// filters behind `--ignored`.
+fn gate_scenarios(command: &str) -> Vec<&str> {
+    let (_, filters) = command.split_once("-- --ignored").unwrap_or(("", ""));
+    filters.split_whitespace().filter_map(|token| token.strip_prefix("python_compat_")).collect()
+}
+
+fn live_gate<'a>(registry: &'a str, id: &str) -> &'a str {
+    live_gate_blocks(registry)
+        .into_iter()
+        .find(|block| scalar(block, "id") == Some(id))
+        .unwrap_or_else(|| panic!("missing live gate {id}"))
+}
+
 #[test]
-fn enabled_live_gates_name_only_scenarios_with_passing_evidence() {
+fn live_gates_stay_isolated_and_name_only_scenarios_with_passing_evidence() {
     let record = record();
     let passing = passing_scenarios(&record);
     let registry = read("product/capabilities-v1.toml");
-    let mut enabled_gates = 0;
+    let mut live_gates = 0;
     for block in live_gate_blocks(&registry) {
         let gate = scalar(block, "id").expect("gate id");
-        let ignored = scalar(block, "ignored").expect("ignored flag");
-        if ignored == "true" {
-            continue;
-        }
-        enabled_gates += 1;
+        live_gates += 1;
+        // Repository policy: live gates never run in ordinary validation.
+        assert_eq!(scalar(block, "enabled"), Some("false"), "{gate} must stay disabled");
+        assert_eq!(scalar(block, "ignored"), Some("true"), "{gate} must stay ignored");
+        let command = scalar(block, "command").expect("command");
+        assert!(command.contains("-- --ignored"), "{gate} must opt in through --ignored");
         assert!(
             block.contains("tests/interop/handoffs/pinned-live-evidence.json"),
             "{gate} must cite the hosted evidence record"
         );
-        let command = scalar(block, "command").expect("command");
-        let named: Vec<&str> = command
-            .split("styrene-interop ")
-            .skip(1)
-            .map(|rest| rest.split_whitespace().next().expect("scenario id"))
-            .collect();
-        assert!(!named.is_empty(), "{gate} must run at least one pinned scenario");
+        let named = gate_scenarios(command);
+        assert!(!named.is_empty(), "{gate} must opt into at least one pinned scenario");
         for scenario in named {
             assert!(
                 PINNED_SCENARIOS.iter().any(|pinned| pinned.id.as_str() == scenario),
@@ -157,5 +167,65 @@ fn enabled_live_gates_name_only_scenarios_with_passing_evidence() {
             assert!(passing.contains(scenario), "{gate} names {scenario} without passing evidence");
         }
     }
-    assert!(enabled_gates > 0, "at least one live gate must be enabled");
+    assert!(live_gates >= 6, "live gate checks were vacuous");
+}
+
+/// One claim group: the scenarios that must carry passing hosted evidence and
+/// the isolated live gates whose commands must opt into exactly those scenarios.
+fn assert_group(group_scenarios: &[&str], gates: &[&str]) {
+    let record = record();
+    let passing = passing_scenarios(&record);
+    let registry = read("product/capabilities-v1.toml");
+    for scenario in group_scenarios {
+        assert!(passing.contains(*scenario), "no passing hosted run recorded for {scenario}");
+    }
+    let mut named: BTreeSet<&str> = BTreeSet::new();
+    for gate in gates {
+        let block = live_gate(&registry, gate);
+        named.extend(gate_scenarios(scalar(block, "command").expect("command")));
+    }
+    let expected: BTreeSet<&str> = group_scenarios.iter().copied().collect();
+    assert_eq!(named, expected, "live gates {gates:?} must opt into exactly the group scenarios");
+}
+
+#[test]
+fn lxmf_direct_scenarios_have_passing_hosted_runs() {
+    assert_group(
+        &["direct", "opportunistic"],
+        &["lxmf-python-direct", "lxmf-python-opportunistic"],
+    );
+}
+
+#[test]
+fn lxmf_resources_scenarios_have_passing_hosted_runs() {
+    assert_group(&["direct_resource", "propagated_resource_lxm"], &["lxmf-python-resources"]);
+}
+
+#[test]
+fn lxmf_propagation_scenarios_have_passing_hosted_runs() {
+    assert_group(
+        &[
+            "propagated_resource_lxm",
+            "propagated_retrieval",
+            "propagated_capacity",
+            "propagated_expiry",
+        ],
+        &["lxmf-python-propagation"],
+    );
+}
+
+#[test]
+fn nomadnet_transport_scenarios_have_passing_hosted_runs() {
+    assert_group(
+        &["nomadnet_pages", "nomadnet_client", "routed_nomadnet_pages"],
+        &["nomadnet-native-transport"],
+    );
+}
+
+#[test]
+fn rns_operations_scenarios_have_passing_hosted_runs() {
+    assert_group(
+        &["routed_direct", "routed_direct_resource", "routed_nomadnet_pages"],
+        &["rns-live-operations"],
+    );
 }
