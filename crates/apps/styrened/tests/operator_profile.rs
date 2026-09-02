@@ -1144,3 +1144,69 @@ async fn interrupted_portable_profile_reports_missing_media_and_writes_nothing_l
     assert!(!interrupted.root.exists(), "the old path is not recreated");
     assert_eq!(fs::read_dir(&runtime).unwrap().count(), 0);
 }
+
+// ── Legacy layout adoption ───────────────────────────────────────────────────
+
+use styrened::operator_profile::LegacyLayout;
+
+#[test]
+fn legacy_layout_is_adopted_read_only_into_a_local_profile() {
+    let (_temp, profiles, runtime) = roots("legacy-adopt");
+    let legacy = profiles.join("legacy");
+    let config_dir = legacy.join("config");
+    let data_dir = legacy.join("data");
+    fs::create_dir_all(config_dir.join("pages")).unwrap();
+    fs::create_dir_all(data_dir.join("files")).unwrap();
+    let identity = rns_core::identity::PrivateIdentity::new_from_rand(rand_core::OsRng);
+    let fingerprint = hex::encode(identity.address_hash().as_slice());
+    fs::write(config_dir.join("identity"), identity.to_private_key_bytes()).unwrap();
+    fs::write(config_dir.join("config.toml"), "role = \"client\"\n").unwrap();
+    fs::write(config_dir.join("pages/index.mu"), b"legacy page").unwrap();
+    fs::write(data_dir.join("files/attachment.bin"), b"legacy file").unwrap();
+    MessagesStore::open(&data_dir.join("messages.db"))
+        .unwrap()
+        .insert_message(&MessageRecord {
+            id: "legacy-message".into(),
+            source: "source".into(),
+            destination: "destination".into(),
+            title: "Legacy".into(),
+            content: "Adopted".into(),
+            timestamp: 1_788_194_121,
+            direction: "in".into(),
+            fields: None,
+            receipt_status: None,
+            read: false,
+        })
+        .unwrap();
+    let layout = LegacyLayout::for_dirs(&config_dir, &data_dir);
+    assert!(layout.has_state());
+    assert!(
+        !LegacyLayout::for_dirs(&profiles.join("nowhere"), &profiles.join("nowhere")).has_state()
+    );
+
+    let root = profiles.join("adopted");
+    let profile = StoppedManagedProfile::adopt_legacy(&root, &runtime, "Local node", &layout)
+        .expect("adopt legacy layout");
+    assert_eq!(profile.manifest().storage, ProfileStorage::Local);
+    assert_eq!(identity_fingerprint(&profile.paths().identity), fingerprint);
+    assert_eq!(profile.custody().unwrap().fingerprint, fingerprint);
+    assert_eq!(fs::read_to_string(&profile.paths().config).unwrap(), "role = \"client\"\n");
+    assert_eq!(fs::read(profile.paths().pages.join("index.mu")).unwrap(), b"legacy page");
+    assert_eq!(fs::read(profile.paths().files.join("attachment.bin")).unwrap(), b"legacy file");
+    let message = MessagesStore::open(&profile.paths().messages)
+        .unwrap()
+        .get_message("legacy-message")
+        .unwrap();
+    assert_eq!(message.map(|m| m.content).as_deref(), Some("Adopted"));
+    assert!(!profile.paths().messages.with_extension("db-wal").exists());
+    // The legacy layout is untouched.
+    assert_eq!(fs::read(config_dir.join("identity")).unwrap(), identity.to_private_key_bytes());
+    assert!(data_dir.join("messages.db").is_file());
+    drop(profile);
+
+    // A corrupt legacy identity adopts nothing and publishes no profile.
+    fs::write(config_dir.join("identity"), b"short").unwrap();
+    let other = profiles.join("adopted-2");
+    assert!(StoppedManagedProfile::adopt_legacy(&other, &runtime, "Local node", &layout).is_err());
+    assert!(!other.exists());
+}

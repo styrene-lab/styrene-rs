@@ -97,39 +97,64 @@ pub async fn run(options: TuiOptions) -> Result<()> {
     result
 }
 
-/// Start the embedded `styrened` runtime the TUI owns for the length of a
-/// terminal session, listening on the configured daemon socket.
-pub async fn start_embedded_runtime(
-    options: &TuiOptions,
-) -> Result<styrened::daemon::DaemonHandle, String> {
-    styrened::daemon::start(styrened::daemon::DaemonConfig2 {
-        db: Some(options.paths.data_dir.join("messages.db")),
-        config: options.paths.config_path().exists().then(|| options.paths.config_path()),
-        identity: (!options.runtime_profile.is_ephemeral()).then(|| options.paths.identity_path()),
-        socket: Some(options.paths.daemon_socket.clone()),
-        ephemeral: options.runtime_profile.is_ephemeral(),
-    })
-    .await
-    .map_err(|error| error.to_string())
+/// The host-private parent for managed profile runtime roots. It stays short
+/// because Unix socket paths have a hard length limit.
+fn runtime_parent() -> Result<std::path::PathBuf, String> {
+    let runtime_parent = std::env::temp_dir().join("styrene-rt");
+    private_dir(&runtime_parent)?;
+    Ok(runtime_parent)
 }
 
-/// Start a managed Quick profile for an ephemeral terminal session. Durable
-/// state lives under the session's data directory; the host-private runtime
-/// root stays short because Unix socket paths have a hard length limit.
-pub async fn start_quick_session(options: &TuiOptions) -> Result<styrene_session::Session, String> {
-    let profiles_parent = options.paths.data_dir.join("profiles");
-    let runtime_parent = std::env::temp_dir().join("styrene-rt");
-    for dir in [&profiles_parent, &runtime_parent] {
-        std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+fn private_dir(dir: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+    Ok(())
+}
+
+/// Start the managed profile session the TUI owns for the length of a
+/// terminal session: a Quick profile for ephemeral runtime profiles, and a
+/// Local profile under the data directory otherwise. A legacy layout on the
+/// configured paths is adopted into the Local profile once, read-only.
+pub async fn start_profile_session(
+    options: &TuiOptions,
+) -> Result<styrene_session::Session, String> {
+    let runtime_parent = runtime_parent()?;
+    if options.runtime_profile.is_ephemeral() {
+        let profiles_parent = options.paths.data_dir.join("profiles");
+        private_dir(&profiles_parent)?;
+        return styrene_session::Session::managed(styrene_session::ManagedTarget::Quick {
+            roots: styrene_session::ProfileRoots { profiles_parent, runtime_parent },
+            display_name: "Ghost session",
+        })
+        .await
+        .map_err(|error| error.to_string());
+    }
+    let root = options.paths.data_dir.join("profile");
+    private_dir(&options.paths.data_dir)?;
+    if !root.join("manifest.toml").is_file() {
+        let legacy = styrened::operator_profile::LegacyLayout::for_dirs(
+            &options.paths.config_dir,
+            &options.paths.data_dir,
+        );
+        if legacy.has_state() {
+            let adopted = styrened::operator_profile::StoppedManagedProfile::adopt_legacy(
+                &root,
+                &runtime_parent,
+                "Local node",
+                &legacy,
+            )
+            .map_err(|error| format!("adopt legacy layout: {error}"))?;
+            drop(adopted);
         }
     }
-    styrene_session::Session::managed(styrene_session::ManagedTarget::Quick {
-        roots: styrene_session::ProfileRoots { profiles_parent, runtime_parent },
-        display_name: "Ghost session",
+    styrene_session::Session::managed(styrene_session::ManagedTarget::Local {
+        root,
+        runtime_parent,
+        display_name: Some("Local node"),
     })
     .await
     .map_err(|error| error.to_string())
@@ -277,48 +302,26 @@ async fn run_terminal(
     let (connection_tx, mut connection_rx) = tokio::sync::mpsc::unbounded_channel();
     app.connection_tx = Some(connection_tx);
 
-    // Ephemeral profiles run as managed Quick profiles through the shared
-    // session layer; the daemon then describes its own profile. Standard
-    // profiles keep their existing composed runtime on the configured paths.
-    let mut quick_session = None;
-    let embedded_daemon = if daemon_mode == onboarding::setup::DaemonMode::Embedded {
-        if options.runtime_profile.is_ephemeral() {
-            match start_quick_session(options).await {
-                Ok(session) => {
-                    app.conversation.push_system("⬡ quick profile ready");
-                    quick_session = Some(session);
-                }
-                Err(error) => {
-                    app.conversation.push_system(&format!("⬡ quick profile failed: {error}"));
-                }
+    // Owned daemons run as managed profiles through the shared session layer
+    // and describe their own profile; nothing is derived from a mode name.
+    let mut profile_session = None;
+    if daemon_mode == onboarding::setup::DaemonMode::Embedded {
+        match start_profile_session(options).await {
+            Ok(session) => {
+                app.conversation.push_system(&format!("⬡ {} profile ready", session.profile()));
+                profile_session = Some(session);
             }
-            None
-        } else {
-            match start_embedded_runtime(options).await {
-                Ok(handle) => {
-                    app.conversation.push_system("⬡ embedded runtime ready");
-                    Some(handle)
-                }
-                Err(error) => {
-                    app.conversation.push_system(&format!("⬡ embedded runtime failed: {error}"));
-                    None
-                }
+            Err(error) => {
+                app.conversation.push_system(&format!("⬡ profile failed: {error}"));
             }
         }
-    } else {
-        None
-    };
+    }
 
     let connect_result = match daemon_mode {
-        onboarding::setup::DaemonMode::Embedded => {
-            if let Some(session) = quick_session.as_ref() {
-                connect_with_retry(&session.metadata().endpoint).await
-            } else if embedded_daemon.is_none() {
-                Err("embedded runtime failed to start".into())
-            } else {
-                connect_with_retry(&options.paths.daemon_socket).await
-            }
-        }
+        onboarding::setup::DaemonMode::Embedded => match profile_session.as_ref() {
+            Some(session) => connect_with_retry(&session.metadata().endpoint).await,
+            None => Err("managed profile failed to start".into()),
+        },
         onboarding::setup::DaemonMode::Background => {
             app.conversation.push_system(
                 "⬡ background mode requires an externally managed daemon; trying configured socket",
@@ -343,9 +346,8 @@ async fn run_terminal(
         }
     };
 
-    // Keep the owned runtime alive for the full terminal session.
-    let _embedded_daemon = embedded_daemon;
-    let mut quick_session = quick_session;
+    // Keep the owned profile alive for the full terminal session.
+    let mut profile_session = profile_session;
 
     // ── Main event loop — 60fps ──────────────────────────────────────────────
     loop {
@@ -407,8 +409,8 @@ async fn run_terminal(
         app.tick();
     }
 
-    // A Quick profile's daemon stops with the session, and its root goes with it.
-    if let Some(mut session) = quick_session.take() {
+    // The owned daemon stops with the session; a Quick root goes with it.
+    if let Some(mut session) = profile_session.take() {
         session.close().await;
     }
 
