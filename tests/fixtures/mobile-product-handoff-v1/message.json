@@ -3,7 +3,7 @@
   "corpus": "styrene-mobile-product-handoff-v1",
   "authority": {
     "repository": "https://github.com/styrene-lab/styrene-rs.git",
-    "source_revision": "0d9dc04cab795f23f791278b019fe4c28430ab6f",
+    "source_revision": "ae9b0f368aba4f8161c545ccf10069d630e5c69e",
     "source_type": "styrene_ipc::types::MessageInfo"
   },
   "authoritative_fields": [

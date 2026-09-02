@@ -3,8 +3,8 @@
 ## Reassessment
 
 The backend and shared UI implementation merged at
-`23beb83dbed95165347debdaabb1a672febfdc92` and
-`7b9271fbfaedfd82f000e08c89145d3ba98532f5`. QR decoder tests, bounded decoder
+`6e43f9f8362d04a0c9b81c2e82a60457cfa30acd` and
+`fabd383f34174585526c6f0ed7de750693dd3017`. QR decoder tests, bounded decoder
 implementation, and Dioxus capture composition are complete.
 
 This change is now acceptance-led. One cross-repository test must still prove

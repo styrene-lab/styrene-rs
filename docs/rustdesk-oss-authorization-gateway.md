@@ -197,4 +197,4 @@ Source snapshots used by that assessment:
 
 - `rustdesk-server` `6e7de5b1d648e64e5d7930eea2239f58721420b9`
 - `rustdesk-client` `12f2de5959fa1fcd36d5a5b0c2fa91657411cc7a`
-- `styrene-rs` `d34e88e518fc3ed8b052268d7fcf7399f46fc506`
+- `styrene-rs` `f52eda386915015a9e5559c8390b812fdd144103`

@@ -5,7 +5,7 @@
 The shared shell, embedded session, renderer-neutral state, and core messaging
 are implemented in `styrene-ui`. Platform adapters, redaction, semantics, and
 adaptive layout are also implemented. The UI pins backend revision
-`23beb83dbed95165347debdaabb1a672febfdc92`.
+`6e43f9f8362d04a0c9b81c2e82a60457cfa30acd`.
 
 This change no longer owns general packaged acceptance. That evidence remains in
 `complete-mobile-product-workflows`. The unique engineering gap here is Android

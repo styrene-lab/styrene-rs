@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "backend_revision": "21dec9ffd4a97e9647c951b52e3b4dfdd84e91f2",
-  "ui_revision": "e5d744ddee05f7247eef08bfc8cec9e43e8ba005",
+  "backend_revision": "726ef4f4c65725bcf24449e4b18387e6d322f1fa",
+  "ui_revision": "b720cf298d49b09fa94b7c7ba45bd8573c016c8d",
   "fixture_sha256": "533845aebb0e7b04b39d5957fa94856e113388b66d73903d919cc5a0ef37165f",
   "evidence_class": "backend_and_session_component",
   "verification": [

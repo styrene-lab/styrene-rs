@@ -7,7 +7,7 @@ Tracks reviews of upstream changes and adoption decisions. See [UPSTREAM.md](../
 ## 2026-03-23 — FreeTAKTeam Upstream Triage (PRs #19–#131)
 
 **Reviewer:** cwilson  
-**Range:** `0052218` (PR #18, Repo refactor) → `3a2d46b` (PR #131, current upstream HEAD)  
+**Range:** `54601d1` (PR #18, Repo refactor) → `3a2d46b` (PR #131, current upstream HEAD)  
 **Commits reviewed:** 89  
 **Branch fix:** upstream remote was tracking `master`; corrected to `main` in `.upstream-tracking.json`
 
@@ -184,7 +184,7 @@ New commits since FreeTAKTeam forked (approx. Jan 23 2026):
 
 ### FreeTAKTeam / LXMF-rs
 
-**Range:** `0052218` (fork point) → `upstream/master` HEAD
+**Range:** `54601d1` (fork point) → `upstream/master` HEAD
 
 No new commits on `master` since fork point.
 
@@ -202,8 +202,8 @@ No new commits on `master` since fork point.
 
 Both of these were independently applied in styrene-rs before the upstream adopted them:
 
-- Constant-time HMAC verification (styrene-rs `f8fc996`, Beechat PR #41)
-- Identity.encrypt() double-ephemeral fix (styrene-rs `77ce75d`, Beechat PR #42)
+- Constant-time HMAC verification (styrene-rs `eb75be5`, Beechat PR #41)
+- Identity.encrypt() double-ephemeral fix (styrene-rs `29cf225`, Beechat PR #42)
 
 ### Priority Adoption Queue
 

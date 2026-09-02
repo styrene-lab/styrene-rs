@@ -51,11 +51,11 @@ Make Styrene cross-network LXMF delivery deterministic and diagnosable across is
 
 ## Progress Milestone — 2026-07-23
 
-The deterministic baseline is implemented and verified on Brutus at exact commit `00930fad8c3b1015de28206e8740a0ff15d854d1`.
+The deterministic baseline is implemented and verified on Brutus at exact commit `769b925dc040a9792dccc6bb880bd5e09e80df5e`.
 
 ### Measured evidence
 
-- Clean run: `target/mesh-scenarios/verify-batch-00930fad-20260723T122712Z`.
+- Clean run: `target/mesh-scenarios/verify-batch-769b925d-20260723T122712Z`.
 - Run result: passed; operator exit `0`; resilience exit `0`.
 - Broad matrix: 35 passed, 0 failed.
 - Alpha → Gamma: 100 sends accepted; 100 durable inserts; 0 missing; 0 duplicates; 0 ordering failures; 3 seconds elapsed.
@@ -65,11 +65,11 @@ The deterministic baseline is implemented and verified on Brutus at exact commit
 
 ### Defects closed on the path to this gate
 
-- TCP clients now reconnect when either stream half terminates (`a861e7bc`).
-- Half-open TCP clients are detected (`6f0e6a8f`).
-- Keepalive detection is nominally bounded to 25 seconds (`55c0617a`).
-- Routed control packets no longer enter generic rebroadcast loops (`527b63ff`).
-- Equal-timestamp message ordering is deterministic (`00930fad`).
+- TCP clients now reconnect when either stream half terminates (`43792204`).
+- Half-open TCP clients are detected (`f301b1e8`).
+- Keepalive detection is nominally bounded to 25 seconds (`78d61380`).
+- Routed control packets no longer enter generic rebroadcast loops (`642886ff`).
+- Equal-timestamp message ordering is deterministic (`769b925d`).
 
 ### Scope boundary
 
