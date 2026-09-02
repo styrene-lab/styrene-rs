@@ -4,6 +4,7 @@
 //! daemon operations are added here as they migrate out of frontend crates.
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -12,14 +13,15 @@ use rmpv::Value;
 use serde::de::DeserializeOwned;
 use styrene_ipc::IpcError;
 use styrene_ipc::types::{
-    ConfigApplyResult, ConfigSnapshot, ConversationDraft, ConversationInfo, ConversationPage,
-    DaemonStatusInfo, DeviceInfo, ExecResult, FileDownloadInfo, FileDownloadRequest,
-    IdentityBackupExport, IdentityBackupImport, IdentityBackupMetadata, IdentityInfo,
-    IdentityRestoreOutcome, InterfaceDetail, LinkSnapshot, MessageInfo, MessagePage,
-    MessagingDisposition, MessagingOperationOutcome, NetworkOperationInfo, PageContent,
-    PageNavigationRequest, PathInfo, RebootResult, RemoteStatusInfo, RequestObservationInfo,
-    ResourceTransferInfo, SendChatOutcome, SendChatRequest, StandardPropagationSnapshot,
-    StartNetworkOperationInfo, StartRequestInfo, TunnelInfo, TunnelOperationInfo,
+    ACTIVE_CAPABILITIES_VERSION, ActiveCapabilitiesInfo, ConfigApplyResult, ConfigSnapshot,
+    ConversationDraft, ConversationInfo, ConversationPage, DaemonStatusInfo, DeviceInfo,
+    ExecResult, FileDownloadInfo, FileDownloadRequest, IdentityBackupExport, IdentityBackupImport,
+    IdentityBackupMetadata, IdentityInfo, IdentityRestoreOutcome, InterfaceDetail, LinkSnapshot,
+    MessageInfo, MessagePage, MessagingDisposition, MessagingOperationOutcome,
+    NetworkOperationInfo, PageContent, PageNavigationRequest, PathInfo, RebootResult,
+    RemoteStatusInfo, RequestObservationInfo, ResourceTransferInfo, SendChatOutcome,
+    SendChatRequest, StandardPropagationSnapshot, StartNetworkOperationInfo, StartRequestInfo,
+    TunnelInfo, TunnelOperationInfo,
 };
 use styrene_ipc_wire::{self as wire, Frame, MessageType, REQUEST_ID_SIZE};
 use thiserror::Error;
@@ -56,6 +58,8 @@ pub enum ClientError {
     Disconnected { message: String },
     #[error("IPC protocol error: {message}")]
     Protocol { message: String },
+    #[error("daemon incompatible: {message}")]
+    Incompatible { message: String },
     #[error("daemon request failed: {0}")]
     Remote(#[source] IpcError),
     #[error("daemon request failed ({kind}/{code}): {message}")]
@@ -74,7 +78,7 @@ impl ClientError {
             Self::LegacyRemote { kind, .. } => {
                 matches!(kind.as_str(), "unavailable" | "timeout" | "transport")
             }
-            Self::Protocol { .. } => false,
+            Self::Protocol { .. } | Self::Incompatible { .. } => false,
         }
     }
 }
@@ -213,6 +217,206 @@ pub struct Client {
     next_id: Arc<AtomicU64>,
     metrics: Arc<Metrics>,
     connected: Arc<AtomicBool>,
+    /// Daemon-side connection generation recorded by negotiation and updated
+    /// by compatibility polling; zero until negotiated.
+    daemon_generation: Arc<AtomicU64>,
+}
+
+/// Outcome of connection negotiation: the daemon's status snapshot, the
+/// connection generation it assigned to this transport, and the capability
+/// set the frontend must honor for the life of the connection.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct Negotiation {
+    pub status: DaemonStatusInfo,
+    pub daemon_generation: u64,
+    pub capabilities: Option<ActiveCapabilitiesInfo>,
+}
+
+impl Negotiation {
+    /// Validate a status snapshot as a negotiation result. The daemon must
+    /// report a non-zero connection generation, and any capability contract it
+    /// advertises must match the version this client was built against.
+    pub fn from_status(status: DaemonStatusInfo) -> Result<Self, ClientError> {
+        let daemon_generation = status
+            .connection_generation
+            .filter(|generation| *generation != 0)
+            .ok_or_else(|| ClientError::Protocol {
+                message: "daemon status omitted a connection generation".into(),
+            })?;
+        let capabilities = status.active_capabilities.clone();
+        if let Some(capabilities) = &capabilities
+            && capabilities.version != ACTIVE_CAPABILITIES_VERSION
+        {
+            return Err(ClientError::Incompatible {
+                message: format!(
+                    "daemon capability contract version {} differs from client version {}",
+                    capabilities.version, ACTIVE_CAPABILITIES_VERSION
+                ),
+            });
+        }
+        Ok(Self { status, daemon_generation, capabilities })
+    }
+}
+
+/// A compatibility observation from periodic status polling.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum CompatibilityEvent {
+    /// The daemon reports a different connection generation than the one last
+    /// observed: it restarted or the transport was re-established.
+    GenerationChanged { previous: u64, current: u64 },
+    /// The daemon's active capability set differs from the one last observed.
+    CapabilitiesChanged {
+        previous: Option<ActiveCapabilitiesInfo>,
+        current: Option<ActiveCapabilitiesInfo>,
+    },
+    /// A fresh status snapshot from a successful poll, sent after any change
+    /// events that poll produced.
+    Status(DaemonStatusInfo),
+    /// A poll failed. Polling stops; the connection is no longer trustworthy.
+    Lost { error: String },
+}
+
+/// Whether two capability snapshots differ in anything but their generation
+/// counter, which the daemon bumps with every connection generation.
+fn capability_set_changed(
+    previous: Option<&ActiveCapabilitiesInfo>,
+    current: Option<&ActiveCapabilitiesInfo>,
+) -> bool {
+    let masked = |capabilities: Option<&ActiveCapabilitiesInfo>| {
+        capabilities.cloned().map(|mut capabilities| {
+            capabilities.generation = None;
+            capabilities
+        })
+    };
+    masked(previous) != masked(current)
+}
+
+/// A running compatibility poll. Dropping the watch stops polling.
+#[derive(Debug)]
+pub struct CompatibilityWatch {
+    events: mpsc::Receiver<CompatibilityEvent>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl CompatibilityWatch {
+    /// Next compatibility event, or `None` once polling has stopped.
+    pub async fn recv(&mut self) -> Option<CompatibilityEvent> {
+        self.events.recv().await
+    }
+}
+
+impl Drop for CompatibilityWatch {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl Client {
+    /// Connect to the daemon's Unix socket and negotiate the connection.
+    pub async fn connect_unix(
+        path: &Path,
+        generation: ConnectionGeneration,
+        deadline: Duration,
+    ) -> Result<(Self, Negotiation), ClientError> {
+        let stream = UnixStream::connect(path).await.map_err(|error| {
+            ClientError::Disconnected { message: format!("connect {}: {error}", path.display()) }
+        })?;
+        let client = Self::from_unix_stream(stream, generation);
+        let negotiation = client.negotiate(deadline).await?;
+        Ok((client, negotiation))
+    }
+
+    /// Negotiate the connection: confirm the daemon answers, fetch its status,
+    /// and validate the generation and capability contract. Records the
+    /// daemon generation for [`Client::daemon_generation`].
+    pub async fn negotiate(&self, deadline: Duration) -> Result<Negotiation, ClientError> {
+        let frame = self.request(MessageType::Ping, HashMap::new(), deadline).await?;
+        if frame.msg_type != MessageType::Pong {
+            return Err(ClientError::Protocol {
+                message: format!("ping returned {:?} instead of Pong", frame.msg_type),
+            });
+        }
+        let frame = self.request(MessageType::QueryStatus, HashMap::new(), deadline).await?;
+        let negotiation = Negotiation::from_status(decode_payload(&frame.payload, "status")?)?;
+        self.daemon_generation.store(negotiation.daemon_generation, Ordering::Release);
+        Ok(negotiation)
+    }
+
+    /// The daemon connection generation observed by negotiation or polling.
+    #[must_use]
+    pub fn daemon_generation(&self) -> Option<u64> {
+        match self.daemon_generation.load(Ordering::Acquire) {
+            0 => None,
+            generation => Some(generation),
+        }
+    }
+
+    /// Poll daemon status every `interval`, emitting changes relative to
+    /// `baseline` and then the fresh snapshot. The first poll happens after
+    /// one interval. Polling stops at the first failure or when the watch is
+    /// dropped.
+    #[must_use]
+    pub fn watch_compatibility(
+        &self,
+        baseline: &Negotiation,
+        interval: Duration,
+        deadline: Duration,
+    ) -> CompatibilityWatch {
+        let (tx, events) = mpsc::channel(16);
+        let client = self.clone();
+        let mut generation = baseline.daemon_generation;
+        let mut capabilities = baseline.capabilities.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                let polled = match client
+                    .request(MessageType::QueryStatus, HashMap::new(), deadline)
+                    .await
+                {
+                    Ok(frame) => decode_payload::<DaemonStatusInfo>(&frame.payload, "status"),
+                    Err(error) => Err(error),
+                };
+                let status = match polled {
+                    Ok(status) => status,
+                    Err(error) => {
+                        let _ =
+                            tx.send(CompatibilityEvent::Lost { error: error.to_string() }).await;
+                        return;
+                    }
+                };
+                if let Some(current) = status.connection_generation.filter(|g| *g != 0)
+                    && current != generation
+                {
+                    let event =
+                        CompatibilityEvent::GenerationChanged { previous: generation, current };
+                    if tx.send(event).await.is_err() {
+                        return;
+                    }
+                    generation = current;
+                    client.daemon_generation.store(current, Ordering::Release);
+                }
+                if capability_set_changed(
+                    capabilities.as_ref(),
+                    status.active_capabilities.as_ref(),
+                ) {
+                    let event = CompatibilityEvent::CapabilitiesChanged {
+                        previous: capabilities.take(),
+                        current: status.active_capabilities.clone(),
+                    };
+                    if tx.send(event).await.is_err() {
+                        return;
+                    }
+                }
+                capabilities = status.active_capabilities.clone();
+                if tx.send(CompatibilityEvent::Status(status)).await.is_err() {
+                    return;
+                }
+            }
+        });
+        CompatibilityWatch { events, task }
+    }
 }
 
 impl Client {
@@ -268,6 +472,7 @@ impl Client {
             next_id: Arc::new(AtomicU64::new(0)),
             metrics,
             connected,
+            daemon_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -1370,12 +1575,7 @@ fn decode_map<T: DeserializeOwned>(
     payload: &HashMap<String, Value>,
     context: &str,
 ) -> Result<T, ClientError> {
-    decode_value(
-        Value::Map(
-            payload.iter().map(|(key, value)| (Value::from(key.as_str()), value.clone())).collect(),
-        ),
-        context,
-    )
+    decode_payload(payload, context)
 }
 
 fn decode_key<T: DeserializeOwned>(
@@ -1923,6 +2123,115 @@ mod tests {
             Err(ClientError::Remote(error)) => assert_eq!(error, expected),
             other => panic!("unexpected result: {other:?}"),
         }
+    }
+
+    fn negotiable_status(generation: u64, capability_version: u16) -> DaemonStatusInfo {
+        let mut status = DaemonStatusInfo::default();
+        status.daemon_version = "contract-test".into();
+        status.connection_generation = Some(generation);
+        let mut capabilities = ActiveCapabilitiesInfo::default();
+        capabilities.version = capability_version;
+        capabilities.generation = Some(generation);
+        capabilities.runtime = vec!["runtime.lxmf.direct".into()];
+        capabilities.authorized_operations = vec!["chat.send".into()];
+        status.active_capabilities = Some(capabilities);
+        status
+    }
+
+    async fn answer_status(server: &mut UnixStream, status: &DaemonStatusInfo) {
+        let request = wire::read_frame_async(server).await.expect("status request");
+        assert_eq!(request.msg_type, MessageType::QueryStatus);
+        reply(server, MessageType::Result, &request.request_id, &typed_payload(status)).await;
+    }
+
+    async fn answer_negotiation(server: &mut UnixStream, status: &DaemonStatusInfo) {
+        let ping = wire::read_frame_async(server).await.expect("ping");
+        assert_eq!(ping.msg_type, MessageType::Ping);
+        reply(server, MessageType::Pong, &ping.request_id, &HashMap::new()).await;
+        answer_status(server, status).await;
+    }
+
+    #[tokio::test]
+    async fn negotiate_records_the_daemon_generation_and_capabilities() {
+        let (client, mut server) = pair(2);
+        assert_eq!(client.daemon_generation(), None);
+        let negotiate = tokio::spawn({
+            let client = client.clone();
+            async move { client.negotiate(DEFAULT_DEADLINE).await }
+        });
+        let status = negotiable_status(42, ACTIVE_CAPABILITIES_VERSION);
+        answer_negotiation(&mut server, &status).await;
+        let negotiation = negotiate.await.expect("task").expect("negotiated");
+        assert_eq!(negotiation.daemon_generation, 42);
+        assert_eq!(negotiation.capabilities, status.active_capabilities);
+        assert_eq!(negotiation.status, status);
+        assert_eq!(client.daemon_generation(), Some(42));
+    }
+
+    #[tokio::test]
+    async fn negotiate_rejects_missing_generations_and_foreign_capability_versions() {
+        let (client, mut server) = pair(2);
+        let negotiate = tokio::spawn({
+            let client = client.clone();
+            async move { client.negotiate(DEFAULT_DEADLINE).await }
+        });
+        let mut status = negotiable_status(0, ACTIVE_CAPABILITIES_VERSION);
+        status.connection_generation = None;
+        answer_negotiation(&mut server, &status).await;
+        assert!(matches!(
+            negotiate.await.expect("task"),
+            Err(ClientError::Protocol { message }) if message.contains("connection generation")
+        ));
+        assert_eq!(client.daemon_generation(), None);
+
+        let negotiate = tokio::spawn({
+            let client = client.clone();
+            async move { client.negotiate(DEFAULT_DEADLINE).await }
+        });
+        answer_negotiation(&mut server, &negotiable_status(5, ACTIVE_CAPABILITIES_VERSION + 1))
+            .await;
+        assert!(matches!(
+            negotiate.await.expect("task"),
+            Err(ClientError::Incompatible { message }) if message.contains("capability contract")
+        ));
+    }
+
+    #[tokio::test]
+    async fn compatibility_watch_reports_changes_then_loss() {
+        let (client, mut server) = pair(2);
+        let baseline = Negotiation::from_status(negotiable_status(42, ACTIVE_CAPABILITIES_VERSION))
+            .expect("baseline");
+        let mut watch =
+            client.watch_compatibility(&baseline, Duration::from_millis(5), DEFAULT_DEADLINE);
+
+        let unchanged = negotiable_status(42, ACTIVE_CAPABILITIES_VERSION);
+        answer_status(&mut server, &unchanged).await;
+        assert_eq!(watch.recv().await, Some(CompatibilityEvent::Status(unchanged)));
+
+        let restarted = negotiable_status(43, ACTIVE_CAPABILITIES_VERSION);
+        answer_status(&mut server, &restarted).await;
+        assert_eq!(
+            watch.recv().await,
+            Some(CompatibilityEvent::GenerationChanged { previous: 42, current: 43 })
+        );
+        assert_eq!(watch.recv().await, Some(CompatibilityEvent::Status(restarted.clone())));
+        assert_eq!(client.daemon_generation(), Some(43));
+
+        let mut degraded = restarted.clone();
+        degraded.active_capabilities = None;
+        answer_status(&mut server, &degraded).await;
+        assert_eq!(
+            watch.recv().await,
+            Some(CompatibilityEvent::CapabilitiesChanged {
+                previous: restarted.active_capabilities.clone(),
+                current: None,
+            })
+        );
+        assert_eq!(watch.recv().await, Some(CompatibilityEvent::Status(degraded)));
+
+        drop(server);
+        assert!(matches!(watch.recv().await, Some(CompatibilityEvent::Lost { .. })));
+        assert_eq!(watch.recv().await, None);
     }
 
     #[tokio::test]

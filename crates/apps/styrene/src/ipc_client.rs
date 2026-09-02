@@ -3,8 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use styrene_ipc_client::{Client, ConnectionGeneration, default_socket_path};
-use tokio::net::UnixStream;
+use styrene_ipc_client::{Client, ConnectionGeneration, DEFAULT_DEADLINE, default_socket_path};
 
 pub async fn connect(socket_path: Option<&Path>) -> Result<Client, String> {
     let path = socket_path
@@ -24,13 +23,13 @@ pub async fn connect(socket_path: Option<&Path>) -> Result<Client, String> {
         ));
     }
 
-    let stream = UnixStream::connect(&path)
-        .await
-        .map_err(|error| format!("connect {}: {error}", path.display()))?;
     static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
     let generation = ConnectionGeneration(NEXT_GENERATION.fetch_add(1, Ordering::Relaxed));
-    let client = Client::from_unix_stream(stream, generation);
-    client.ping().await.map_err(|error| error.to_string())?;
+    // Negotiation confirms the daemon answers and that its capability
+    // contract matches the one this CLI was built against.
+    let (client, _negotiation) = Client::connect_unix(&path, generation, DEFAULT_DEADLINE)
+        .await
+        .map_err(|error| format!("connect {}: {error}", path.display()))?;
     Ok(client)
 }
 
