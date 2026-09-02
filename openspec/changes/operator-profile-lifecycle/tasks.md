@@ -35,7 +35,7 @@
 - [x] Add failing typed IPC contract tests for inventory, create, promote, snapshot, restore, import, export, adoption, progress, and restart-required outcomes
 - [x] Implement the backend operations and authorization before changing frontend mode selection
 - [x] Migrate desktop and TUI onto Quick, Local, Portable, and Connected profiles with cross-frontend parity tests
-- [ ] Remove duplicate Live and Embedded lifecycle logic only after failure and ownership semantics pass
+- [x] Remove duplicate Live and Embedded lifecycle logic only after failure and ownership semantics pass
 
 ## 6. Verification
 <!-- specs: operator-profile-lifecycle -->
