@@ -1,0 +1,421 @@
+{
+  "authorities": {
+    "nomadnet-1.2.3": {
+      "release": "1.2.3",
+      "repository": "https://github.com/markqvist/NomadNet.git",
+      "revision": "ad10301569a39d4f43b3d21ae9fc392602c937ca"
+    },
+    "rns-1.4.2": {
+      "release": "1.4.2",
+      "repository": "https://github.com/markqvist/Reticulum.git",
+      "revision": "b48b96e61676504e0a4e527b33b9a0b4495c6872"
+    }
+  },
+  "parameters": {
+    "fields": {
+      "field_name": "rust",
+      "var_mode": "safe"
+    },
+    "files": [
+      {
+        "request_path": "/file/manual.bin",
+        "source": "file_manual.bin"
+      }
+    ],
+    "identities": {
+      "allowed": {
+        "hash_hex": "bc9ac1460ceac355357b96520e13e4ca",
+        "public_key_hex": "2c95c1aeaaf32ec6a259b1fb0c2d607e321a5af5e749f80f9f24111d9ee4051997820dd54bbd9837179bb19c9fae9401ca3928140b0d4c39bd132741efa9cff0"
+      },
+      "denied": {
+        "hash_hex": "0eec8d71abbcac081fa17bca0608cf60",
+        "public_key_hex": "c007d80fb9f2290081061a7cddd88a752e65b7ae8f26514552339460b12f412e99f3be7695a95bdf1345b9df756afe06b82012e65064fb1bac74c88719738932"
+      }
+    },
+    "link_id_hex": "dc401e2370caa3bca4240503efbda7b7",
+    "pages": [
+      {
+        "allowed": null,
+        "request_path": "/page/index.mu",
+        "source": "page_index.mu"
+      },
+      {
+        "allowed": "allowed_private.txt",
+        "request_path": "/page/private.mu",
+        "source": "page_private.mu"
+      },
+      {
+        "allowed": "allowed_secret.txt",
+        "request_path": "/page/secret.mu",
+        "source": "page_secret.mu"
+      },
+      {
+        "allowed": null,
+        "request_path": "/page/dynamic.mu",
+        "source": "page_dynamic.mu"
+      }
+    ],
+    "requested_at": 1750000000.0
+  },
+  "schema_version": 2,
+  "vectors": [
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/page_index.mu",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "executable": false,
+        "type": "page-source"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-source-page_index.mu",
+      "kind": "page-source",
+      "sha256": "ef7600bb9279162494af7063c47f5ad686a4e4bc57767f052b214c21e0c00e02",
+      "source_symbols": [
+        "nomadnet.Node.Node.register_pages",
+        "nomadnet.Node.Node.scan_pages"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/page_private.mu",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "executable": false,
+        "type": "page-source"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-source-page_private.mu",
+      "kind": "page-source",
+      "sha256": "690035949cacb08bd9feb93e64f63edc7113fbb972839f85d53744a00df64456",
+      "source_symbols": [
+        "nomadnet.Node.Node.register_pages",
+        "nomadnet.Node.Node.scan_pages"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/page_secret.mu",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "executable": false,
+        "type": "page-source"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-source-page_secret.mu",
+      "kind": "page-source",
+      "sha256": "fe95a15afa0707a1d5aecf5527209c92ec9c9606d5998f3ec99092595fdd4b1a",
+      "source_symbols": [
+        "nomadnet.Node.Node.register_pages",
+        "nomadnet.Node.Node.scan_pages"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/page_dynamic.mu",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "executable": true,
+        "type": "page-source"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-source-page_dynamic.mu",
+      "kind": "page-source",
+      "sha256": "745bd0dbb827fbc3055ba08fd7f06b799f412af382e0806d2c97eade89291f9c",
+      "source_symbols": [
+        "nomadnet.Node.Node.register_pages",
+        "nomadnet.Node.Node.scan_pages"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/allowed_private.txt",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "executable": false,
+        "type": "page-source"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-source-allowed_private.txt",
+      "kind": "page-source",
+      "sha256": "8d7b12a4efc5a024b1f2d0bfe22c3604792b1a2850d67392b0434bde4e0336db",
+      "source_symbols": [
+        "nomadnet.Node.Node.register_pages",
+        "nomadnet.Node.Node.scan_pages"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/allowed_secret.txt",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "executable": false,
+        "type": "page-source"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-source-allowed_secret.txt",
+      "kind": "page-source",
+      "sha256": "1a3b3ebb8671ae8a9577eaa09c30355190497b51cb67092ac164ddad6fc2178f",
+      "source_symbols": [
+        "nomadnet.Node.Node.register_pages",
+        "nomadnet.Node.Node.scan_pages"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/request_index.msgpack",
+      "authority_id": "rns-1.4.2",
+      "expected": {
+        "data_hex": "c0",
+        "path": "/page/index.mu",
+        "path_hash_hex": "fb40abf359b3f25fa0086107c5eee516",
+        "request_id_hex": "b2408c98308c7e788e719ba8119e3ae2",
+        "requested_at": 1750000000.0,
+        "type": "request-envelope"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "rns-request-index",
+      "kind": "request-envelope",
+      "sha256": "b2408c98308c7e788e719ba8119e3ae29848f3c7d0be490b57ec5125a450fe7d",
+      "source_symbols": [
+        "RNS.Link.Link.request",
+        "RNS.Identity.Identity.truncated_hash"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/request_dynamic.msgpack",
+      "authority_id": "rns-1.4.2",
+      "expected": {
+        "data_hex": "82aa6669656c645f6e616d65a472757374a87661725f6d6f6465a473616665",
+        "path": "/page/dynamic.mu",
+        "path_hash_hex": "2de8d55097f513e4710786150bd745de",
+        "request_id_hex": "b08e9461ecdb5542b1b682e85ff2535e",
+        "requested_at": 1750000000.0,
+        "type": "request-envelope"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "rns-request-dynamic",
+      "kind": "request-envelope",
+      "sha256": "b08e9461ecdb5542b1b682e85ff2535edd17ec96072f72602f0e121e13f6e6c0",
+      "source_symbols": [
+        "RNS.Link.Link.request",
+        "RNS.Identity.Identity.truncated_hash"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/request_private.msgpack",
+      "authority_id": "rns-1.4.2",
+      "expected": {
+        "data_hex": "c0",
+        "path": "/page/private.mu",
+        "path_hash_hex": "567eb78335fe4de0cc937b87a788bb1d",
+        "request_id_hex": "f18a6bb0003a353bbc9e47e6266fdea8",
+        "requested_at": 1750000000.0,
+        "type": "request-envelope"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "rns-request-private",
+      "kind": "request-envelope",
+      "sha256": "f18a6bb0003a353bbc9e47e6266fdea8b41ece0a6e4c68093ca654a12abeba11",
+      "source_symbols": [
+        "RNS.Link.Link.request",
+        "RNS.Identity.Identity.truncated_hash"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/request_secret.msgpack",
+      "authority_id": "rns-1.4.2",
+      "expected": {
+        "data_hex": "c0",
+        "path": "/page/secret.mu",
+        "path_hash_hex": "4853fcd87554d42ebc927a03ab82978f",
+        "request_id_hex": "81d0cb87b72f22cfcfa3bb3f3ca8ed60",
+        "requested_at": 1750000000.0,
+        "type": "request-envelope"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "rns-request-secret",
+      "kind": "request-envelope",
+      "sha256": "81d0cb87b72f22cfcfa3bb3f3ca8ed60d49d221bc6e58210d4ab38fac0f2be2d",
+      "source_symbols": [
+        "RNS.Link.Link.request",
+        "RNS.Identity.Identity.truncated_hash"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/request_file.msgpack",
+      "authority_id": "rns-1.4.2",
+      "expected": {
+        "data_hex": "c0",
+        "path": "/file/manual.bin",
+        "path_hash_hex": "711b9cd68ba8cb4cdfa83935a344f067",
+        "request_id_hex": "88ca1bd02e4926f73905a2ed340e97d6",
+        "requested_at": 1750000000.0,
+        "type": "request-envelope"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "rns-request-file",
+      "kind": "request-envelope",
+      "sha256": "88ca1bd02e4926f73905a2ed340e97d6e3eedea074d7a8f517ba5bacc9f0efbf",
+      "source_symbols": [
+        "RNS.Link.Link.request",
+        "RNS.Identity.Identity.truncated_hash"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/response_index.bin",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "access": "public",
+        "path": "/page/index.mu",
+        "type": "page-response"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-response-index",
+      "kind": "page-response",
+      "sha256": "ef7600bb9279162494af7063c47f5ad686a4e4bc57767f052b214c21e0c00e02",
+      "source_symbols": [
+        "nomadnet.Node.Node.serve_page"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/response_envelope_index.msgpack",
+      "authority_id": "rns-1.4.2",
+      "expected": {
+        "request_id_hex": "b2408c98308c7e788e719ba8119e3ae2",
+        "response_artifact": "response_index.bin",
+        "type": "response-envelope"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "rns-response-envelope-index",
+      "kind": "response-envelope",
+      "sha256": "950bc07abf22099b4fd63666b5a241b04ac4016c6942ea413aa790dbb21bd181",
+      "source_symbols": [
+        "RNS.Link.Link.handle_request"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/response_dynamic.bin",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "access": "public",
+        "environment": {
+          "field_name": "rust",
+          "link_id": "dc401e2370caa3bca4240503efbda7b7",
+          "remote_identity": "bc9ac1460ceac355357b96520e13e4ca",
+          "var_mode": "safe"
+        },
+        "link_id_hex": "dc401e2370caa3bca4240503efbda7b7",
+        "path": "/page/dynamic.mu",
+        "remote_identity_hex": "bc9ac1460ceac355357b96520e13e4ca",
+        "type": "page-response"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-response-dynamic",
+      "kind": "page-response",
+      "sha256": "f92227d1e7b355eff6bf5b43b3aab9933e82cf2bc40e04ef130fe51dd0d519c0",
+      "source_symbols": [
+        "nomadnet.Node.Node.serve_page"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/response_private_allowed.bin",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "access": "allowed",
+        "path": "/page/private.mu",
+        "remote_identity_hex": "bc9ac1460ceac355357b96520e13e4ca",
+        "type": "page-response"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-response-private-allowed",
+      "kind": "page-response",
+      "sha256": "690035949cacb08bd9feb93e64f63edc7113fbb972839f85d53744a00df64456",
+      "source_symbols": [
+        "nomadnet.Node.Node.serve_page"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/response_private_denied.bin",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "access": "denied",
+        "path": "/page/private.mu",
+        "remote_identity_hex": "0eec8d71abbcac081fa17bca0608cf60",
+        "type": "page-response"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-response-private-denied",
+      "kind": "page-response",
+      "sha256": "1bad91e5ebf2b7ffb2b18b8c22150301bb09ee183b179dfd24d9f885f6a44dde",
+      "source_symbols": [
+        "nomadnet.Node.Node.serve_page",
+        "nomadnet.Node.DEFAULT_NOTALLOWED"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/response_private_anonymous.bin",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "access": "denied",
+        "path": "/page/private.mu",
+        "remote_identity_hex": null,
+        "type": "page-response"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-response-private-anonymous",
+      "kind": "page-response",
+      "sha256": "1bad91e5ebf2b7ffb2b18b8c22150301bb09ee183b179dfd24d9f885f6a44dde",
+      "source_symbols": [
+        "nomadnet.Node.Node.serve_page",
+        "nomadnet.Node.DEFAULT_NOTALLOWED"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/response_secret_denied.bin",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "access": "denied",
+        "path": "/page/secret.mu",
+        "remote_identity_hex": "bc9ac1460ceac355357b96520e13e4ca",
+        "type": "page-response"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-response-secret-denied",
+      "kind": "page-response",
+      "sha256": "1bad91e5ebf2b7ffb2b18b8c22150301bb09ee183b179dfd24d9f885f6a44dde",
+      "source_symbols": [
+        "nomadnet.Node.Node.serve_page",
+        "nomadnet.Node.DEFAULT_NOTALLOWED"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/file_manual.bin",
+      "authority_id": "nomadnet-1.2.3",
+      "expected": {
+        "metadata_artifact": "file_metadata.msgpack",
+        "name": "manual.bin",
+        "path": "/file/manual.bin",
+        "type": "file-response"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "nomadnet-file-manual",
+      "kind": "file-response",
+      "sha256": "3b7c56fa12bee4970fc0c3961119cbf82dd0f68a57df86e208194780cdc19417",
+      "source_symbols": [
+        "nomadnet.Node.Node.serve_file"
+      ]
+    },
+    {
+      "artifact": "tests/interop/fixtures/nomadnet-v1/file_metadata.msgpack",
+      "authority_id": "rns-1.4.2",
+      "expected": {
+        "name": "manual.bin",
+        "raw_data_artifact": "file_manual.bin",
+        "resource_prefix_hex": "00001281a46e616d65c40a6d616e75616c2e62696e",
+        "type": "resource-metadata"
+      },
+      "generator": "tests/interop/python/generate_nomadnet_fixtures.py",
+      "id": "rns-file-metadata",
+      "kind": "resource-metadata",
+      "sha256": "f837565a9fb7b98e9fe7cf57a7885e0b235b28bc868c89036b00bb4b0198edb1",
+      "source_symbols": [
+        "RNS.Link.Link.handle_request",
+        "RNS.Resource.Resource.__init__"
+      ]
+    }
+  ]
+}

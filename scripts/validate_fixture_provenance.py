@@ -17,6 +17,7 @@ VALID_PROVENANCE = {"pinned-upstream", "legacy-unrecorded", "independent-reimple
 DEFAULT_MANIFESTS = (
     pathlib.Path("tests/interop/fixtures/provenance-v1.toml"),
     pathlib.Path("tests/interop/fixtures/rns/index-v2.json"),
+    pathlib.Path("tests/interop/fixtures/nomadnet-v1/index.json"),
 )
 
 
