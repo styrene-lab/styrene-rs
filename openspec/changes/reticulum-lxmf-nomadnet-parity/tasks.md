@@ -127,7 +127,7 @@
 - [x] 12.2 Record topology, revisions, correlations, milestones, assertions, timings, checksums, logs, and cleanup evidence
 - [x] 12.3 Replace arbitrary sleeps with bounded milestone waits and deterministic topology allocation
 - [x] 12.4 Enable bidirectional Direct and Opportunistic Python/Rust LXMF gates
-- [ ] 12.5 Enable bidirectional resource-backed LXMF gates
+- [x] 12.5 Enable bidirectional resource-backed LXMF gates
 - [ ] 12.6 Enable routed Reticulum, standard propagation, and native NomadNet gates
 - [x] 12.7 Keep ordinary workspace validation offline and deterministic
 - [x] 12.8 Run warning-denied Clippy, formatting, unit, component, fixture, property, restart, and migration tests

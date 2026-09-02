@@ -57,8 +57,9 @@ fn fake_scenario(script: &str, evidence_dir: &Path) -> LiveScenario {
 
 #[test]
 fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
-    assert_eq!(PINNED_SCENARIOS.len(), 3);
+    assert_eq!(PINNED_SCENARIOS.len(), 4);
     assert_eq!("direct".parse(), Ok(PinnedScenarioId::Direct));
+    assert_eq!("direct_resource".parse(), Ok(PinnedScenarioId::DirectResource));
     assert!("unknown".parse::<PinnedScenarioId>().is_err());
     assert_eq!(pinned_scenario("opportunistic").unwrap().id, PinnedScenarioId::Opportunistic);
 
@@ -83,7 +84,17 @@ fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
     assert!(!PinnedScenarioId::PropagatedResourceLxm.is_bidirectional());
     assert!(!scenario.required_artifacts.iter().any(|name| name == "rust-outbound-proof"));
 
-    for bidirectional in [PinnedScenarioId::Direct, PinnedScenarioId::Opportunistic] {
+    assert_eq!(PinnedScenarioId::Direct.expected_outbound_representation(), "packet");
+    assert_eq!(PinnedScenarioId::Opportunistic.expected_outbound_representation(), "packet");
+    assert_eq!(PinnedScenarioId::DirectResource.expected_outbound_representation(), "resource");
+    assert_eq!(PinnedScenarioId::Direct.expected_python_representation(), "1");
+    assert_eq!(PinnedScenarioId::DirectResource.expected_python_representation(), "2");
+    assert_eq!(PinnedScenarioId::PropagatedResourceLxm.expected_python_representation(), "2");
+    for bidirectional in [
+        PinnedScenarioId::Direct,
+        PinnedScenarioId::DirectResource,
+        PinnedScenarioId::Opportunistic,
+    ] {
         assert!(bidirectional.is_bidirectional());
         let scenario = python_lxmf_scenario(
             Path::new("/repo"),
