@@ -24,8 +24,12 @@ struct ResourceReceiver {
     /// Timeout-driven retries since the last progress; arriving fragments
     /// never consume this budget.
     retry_count: u8,
-    /// Fragments requested in the current round that have not arrived yet.
-    outstanding: usize,
+    /// Map hashes of fragments requested and not yet received. A fragment in
+    /// this set is never requested a second time before its round times out.
+    outstanding: BTreeSet<[u8; MAPHASH_LEN]>,
+    /// A hashmap continuation has been requested and neither arrived nor
+    /// expired; at most one continuation is outstanding at a time.
+    continuation_pending: bool,
     /// Current bounded request window, grown by clean rounds and shrunk by
     /// timed-out rounds.
     window: usize,
@@ -41,6 +45,8 @@ enum RequestRound {
     Drained,
     /// The previous round timed out without progress.
     Retry,
+    /// A hashmap continuation arrived and the active window can refill.
+    Continuation,
 }
 
 #[derive(Debug, Clone)]
@@ -141,7 +147,8 @@ impl ResourceReceiver {
             last_progress: now,
             last_request: now,
             retry_count: 0,
-            outstanding: 0,
+            outstanding: BTreeSet::new(),
+            continuation_pending: false,
             window: WINDOW,
             status: ResourceStatus::Advertised,
         };
@@ -162,31 +169,39 @@ impl ResourceReceiver {
         }
     }
 
+    /// Missing fragments of the active window that are not already in
+    /// flight, plus a hashmap continuation when the window reaches unmapped
+    /// fragments and no continuation is outstanding.
     fn build_request(&self) -> ResourceRequest {
         let mut requested = Vec::new();
-        let mut last_known: Option<[u8; MAPHASH_LEN]> = None;
-        let mut hashmap_exhausted = false;
+        let mut exhausted_at = None;
 
         let end = (self.consecutive_completed + self.window).min(self.hashmap.len());
         for idx in self.consecutive_completed..end {
-            let entry = &self.hashmap[idx];
-            if let Some(hash) = entry {
-                last_known = Some(*hash);
-                if self.parts[idx].is_none() {
-                    requested.push(*hash);
-                    if requested.len() >= self.window {
+            if let Some(hash) = &self.hashmap[idx] {
+                if self.parts[idx].is_none() && !self.outstanding.contains(hash) {
+                    if requested.len() + self.outstanding.len() >= self.window {
                         break;
                     }
+                    requested.push(*hash);
                 }
             } else {
-                hashmap_exhausted = true;
+                exhausted_at = Some(idx);
                 break;
             }
         }
 
+        // The continuation is anchored at the last mapped hash before the
+        // gap, which may precede the consecutive height once a whole segment
+        // has been received.
+        let last_map_hash = exhausted_at
+            .filter(|_| !self.continuation_pending)
+            .and_then(|idx| self.hashmap[..idx].iter().rev().find_map(|entry| *entry));
+        let hashmap_exhausted = last_map_hash.is_some();
+
         ResourceRequest {
             hashmap_exhausted,
-            last_map_hash: if hashmap_exhausted { last_known } else { None },
+            last_map_hash,
             resource_hash: self.resource_hash,
             requested_hashes: requested,
         }
@@ -197,6 +212,7 @@ impl ResourceReceiver {
             return;
         }
         self.apply_hashmap_segment(update.segment as usize, &update.hashmap);
+        self.continuation_pending = false;
     }
 
     fn handle_part(&mut self, part: &[u8], link: &Link, now: Duration) -> PartOutcome {
@@ -233,7 +249,7 @@ impl ResourceReceiver {
             self.received_bytes = self.received_bytes.saturating_add(part.len() as u64);
             self.last_progress = now;
             self.retry_count = 0;
-            self.outstanding = self.outstanding.saturating_sub(1);
+            self.outstanding.remove(&hash);
             while self
                 .parts
                 .get(self.consecutive_completed)
@@ -370,27 +386,38 @@ impl ResourceReceiver {
 
     /// Whether every fragment requested in the current round has arrived.
     fn round_drained(&self) -> bool {
-        self.outstanding == 0
+        self.outstanding.is_empty()
     }
 
     /// Build the request for a new round and account for the transition:
     /// a drained round grows the bounded window, a timed-out round shrinks
-    /// it and consumes one retry, and the initial round changes nothing.
-    fn request_round(&mut self, round: RequestRound, now: Duration) -> ResourceRequest {
+    /// it, consumes one retry, and forgets in-flight fragments and any
+    /// pending continuation, a continuation refills the window, and the
+    /// initial round changes nothing. Returns `None` when there is nothing
+    /// to ask for, such as while one continuation is still outstanding.
+    fn request_round(&mut self, round: RequestRound, now: Duration) -> Option<ResourceRequest> {
         match round {
-            RequestRound::Initial => {}
+            RequestRound::Initial | RequestRound::Continuation => {}
             RequestRound::Drained => {
                 self.window = (self.window + 1).min(WINDOW_MAX);
             }
             RequestRound::Retry => {
                 self.window = self.window.saturating_sub(1).max(WINDOW_MIN);
                 self.retry_count = self.retry_count.saturating_add(1);
+                self.outstanding.clear();
+                self.continuation_pending = false;
             }
         }
         let request = self.build_request();
-        self.outstanding = request.requested_hashes.len();
+        if request.requested_hashes.is_empty() && !request.hashmap_exhausted {
+            return None;
+        }
+        self.outstanding.extend(request.requested_hashes.iter().copied());
+        if request.hashmap_exhausted {
+            self.continuation_pending = true;
+        }
         self.last_request = now;
-        request
+        Some(request)
     }
 
     fn retry_due(&self, now: Duration, retry_interval: Duration, max_retries: u8) -> bool {
