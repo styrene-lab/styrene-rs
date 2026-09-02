@@ -57,8 +57,9 @@ fn fake_scenario(script: &str, evidence_dir: &Path) -> LiveScenario {
 
 #[test]
 fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
-    assert_eq!(PINNED_SCENARIOS.len(), 4);
+    assert_eq!(PINNED_SCENARIOS.len(), 5);
     assert_eq!("direct".parse(), Ok(PinnedScenarioId::Direct));
+    assert_eq!("propagated_retrieval".parse(), Ok(PinnedScenarioId::PropagatedRetrieval));
     assert_eq!("direct_resource".parse(), Ok(PinnedScenarioId::DirectResource));
     assert!("unknown".parse::<PinnedScenarioId>().is_err());
     assert_eq!(pinned_scenario("opportunistic").unwrap().id, PinnedScenarioId::Opportunistic);
@@ -82,6 +83,22 @@ fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
     );
     assert_eq!(scenario.revision_probes[0].program, PathBuf::from("/pinned/python"));
     assert!(!PinnedScenarioId::PropagatedResourceLxm.is_bidirectional());
+    assert!(PinnedScenarioId::PropagatedRetrieval.is_retrieval());
+    assert!(!PinnedScenarioId::PropagatedRetrieval.is_bidirectional());
+    let retrieval = python_lxmf_scenario(
+        Path::new("/repo"),
+        PinnedScenarioId::PropagatedRetrieval,
+        Duration::from_secs(300),
+        "/pinned/python",
+    );
+    assert_eq!(
+        retrieval.required_assertions,
+        ["python-to-rust-propagation-item", "rust-to-python-retrieval"]
+    );
+    assert!(retrieval.required_milestones.iter().any(|name| name == "rust-restarted"));
+    assert!(retrieval.required_artifacts.iter().any(|name| name == "rust-retrieval-proof"));
+    assert!(retrieval.required_artifacts.iter().any(|name| name == "rust-daemon-restart-log"));
+    assert_eq!(PinnedScenarioId::PropagatedRetrieval.expected_python_representation(), "1");
     assert!(!scenario.required_artifacts.iter().any(|name| name == "rust-outbound-proof"));
 
     assert_eq!(PinnedScenarioId::Direct.expected_outbound_representation(), "packet");
