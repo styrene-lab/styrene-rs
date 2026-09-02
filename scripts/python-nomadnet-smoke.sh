@@ -464,6 +464,10 @@ results["dynamic_public"] = text_result(
 )
 denied = request(public_link, "/page/private.mu", wait=8)
 results["denied"] = {"status": denied["status"], "response_present": denied["response"] is not None}
+# The denied request leaves an unproved packet receipt timing out inside the
+# pinned client. Opening the next link in the same instant has stalled the
+# client in rare local runs, so let that machinery settle first.
+time.sleep(1.0)
 
 # Identified link: the allow-listed page and the dynamic page seeing the identity.
 identified_link = open_link()
