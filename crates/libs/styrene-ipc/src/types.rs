@@ -103,9 +103,13 @@ pub struct MobileDiagnosticExport {
 #[non_exhaustive]
 pub enum DiscoveredCapability {
     /// Evidence came from an announce for the canonical `nomadnetwork.node` destination.
+    #[serde(rename = "native_nomadnet_host")]
     NativeNomadNetHost,
     /// Evidence came from a valid standard `lxmf.propagation` announce.
     StandardLxmfPropagationHost,
+    /// A capability spelled by a newer daemon that this build does not know.
+    #[serde(other)]
+    Unknown,
 }
 
 impl DiscoveredCapability {
@@ -113,6 +117,7 @@ impl DiscoveredCapability {
         match self {
             Self::NativeNomadNetHost => "native_nomadnet_host",
             Self::StandardLxmfPropagationHost => "standard_lxmf_propagation_host",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -2348,6 +2353,24 @@ pub enum TerminalState {
 #[cfg(test)]
 mod capability_tests {
     use super::*;
+
+    #[test]
+    fn discovered_capability_serde_spelling_matches_the_wire_spelling() {
+        for capability in [
+            DiscoveredCapability::NativeNomadNetHost,
+            DiscoveredCapability::StandardLxmfPropagationHost,
+        ] {
+            let encoded = serde_json::to_value(capability).expect("encode");
+            assert_eq!(encoded, serde_json::Value::from(capability.as_str()));
+            let decoded: DiscoveredCapability =
+                serde_json::from_value(serde_json::Value::from(capability.as_str()))
+                    .expect("decode wire spelling");
+            assert_eq!(decoded, capability);
+        }
+        let unknown: DiscoveredCapability =
+            serde_json::from_value(serde_json::Value::from("future_capability")).expect("decode");
+        assert_eq!(unknown, DiscoveredCapability::Unknown);
+    }
 
     #[test]
     fn legacy_device_payload_has_no_discovered_capabilities() {

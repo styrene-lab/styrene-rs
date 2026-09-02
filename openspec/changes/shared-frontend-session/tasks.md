@@ -31,7 +31,7 @@
 
 - [x] 4.1 Replace TUI socket framing and payload-map parsing with the shared client
 - [x] 4.2 Preserve TUI command authorization, generation checks, subscriptions, and polling behavior
-- [ ] 4.3 Remove obsolete TUI client code after parity tests pass
+- [x] 4.3 Remove obsolete TUI client code after parity tests pass
 - [ ] 4.4 Run TUI unit, integration, Live-failure, Embedded, and terminal smoke checks
 
 ## 5. CLI Migration
