@@ -106,7 +106,7 @@
 - [x] 10.4 Implement relative links, history, reload, cache bypass, and connection close without duplicate navigation
 - [x] 10.5 Implement interactive Micron fields and native submitted-field requests with password redaction
 - [x] 10.6 Implement file download progress, cancellation, integrity, and save handoff
-- [ ] 10.7 Add Rust-to-Python NomadNet static, dynamic, failure-stage, and file scenarios
+- [x] 10.7 Add Rust-to-Python NomadNet static, dynamic, failure-stage, and file scenarios
 
 ## 11. Operator UX Parity
 <!-- specs: reticulum-operations, lxmf-messaging, lxmf-propagation, nomadnet-pages, production-composition -->
