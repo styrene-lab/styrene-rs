@@ -42,7 +42,7 @@ impl StyrenePaths {
         Self {
             config_dir: styrened::config::default_config_dir(),
             data_dir: styrened::config::default_data_dir(),
-            daemon_socket: styrene_ipc_server::default_socket_path(),
+            daemon_socket: styrene_ipc_client::default_socket_path(),
             home_dir: std::env::var_os("HOME")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(".")),

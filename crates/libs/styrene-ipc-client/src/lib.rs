@@ -1391,12 +1391,36 @@ fn decode_key<T: DeserializeOwned>(
     decode_value(value, context)
 }
 
-fn decode_value<T: DeserializeOwned>(value: Value, context: &str) -> Result<T, ClientError> {
-    let json: serde_json::Value = rmpv::ext::from_value(value).map_err(|error| {
-        ClientError::Protocol { message: format!("invalid {context} value: {error}") }
-    })?;
-    serde_json::from_value(json)
-        .map_err(|error| ClientError::Protocol { message: format!("invalid {context}: {error}") })
+/// Decode a daemon value into its canonical typed record.
+///
+/// The daemon spells enum fields as strings (`"verified"`, `"delivered"`),
+/// which rmpv's direct enum decoding rejects. Bridging through a JSON value
+/// keeps every canonical `styrene_ipc::types` record decodable from the wire
+/// representation, so front ends share one decoder instead of hand parsers.
+pub fn decode_value<T: DeserializeOwned>(value: Value, context: &str) -> Result<T, ClientError> {
+    let bridged = rmpv::ext::from_value::<serde_json::Value>(value.clone())
+        .map_err(|error| format!("invalid {context} value: {error}"))
+        .and_then(|json| {
+            serde_json::from_value::<T>(json).map_err(|error| format!("invalid {context}: {error}"))
+        });
+    match bridged {
+        Ok(decoded) => Ok(decoded),
+        // Values encoded straight from serde through rmpv carry enums in
+        // rmpv's native array form, which the JSON bridge cannot express.
+        Err(bridge_error) => rmpv::ext::from_value::<T>(value)
+            .map_err(|_| ClientError::Protocol { message: bridge_error }),
+    }
+}
+
+/// Decode a whole frame payload as one canonical typed record.
+pub fn decode_payload<T: DeserializeOwned>(
+    payload: &HashMap<String, Value>,
+    context: &str,
+) -> Result<T, ClientError> {
+    let value = Value::Map(
+        payload.iter().map(|(key, value)| (Value::from(key.as_str()), value.clone())).collect(),
+    );
+    decode_value(value, context)
 }
 
 fn required_bool(
@@ -1534,6 +1558,35 @@ async fn disconnect_pending(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_string_enum_fields_from_daemon_payloads() {
+        use styrene_ipc::types::{
+            MessageAuthenticationState, MessageInfo, MessageLifecycleState, MessageStampState,
+        };
+        let payload = HashMap::from([
+            ("id".to_string(), Value::from("m1")),
+            ("kind".to_string(), Value::from("new")),
+            ("content".to_string(), Value::from("hello")),
+            ("authentication_state".to_string(), Value::from("verified")),
+            ("lifecycle_state".to_string(), Value::from("delivered")),
+            ("stamp_state".to_string(), Value::from("not_applicable")),
+        ]);
+        let message: MessageInfo = decode_payload(&payload, "message").expect("decode");
+        assert_eq!(message.id, "m1");
+        assert_eq!(message.content, "hello");
+        assert_eq!(message.authentication_state, MessageAuthenticationState::Verified);
+        assert_eq!(message.lifecycle_state, MessageLifecycleState::Delivered);
+        assert_eq!(message.stamp_state, MessageStampState::NotApplicable);
+        let direct: Result<MessageInfo, _> = rmpv::ext::from_value(Value::Map(
+            payload.iter().map(|(k, v)| (Value::from(k.as_str()), v.clone())).collect(),
+        ));
+        assert!(direct.is_err(), "rmpv direct enum decoding rejects string variants");
+
+        let native = rmpv::ext::to_value(&message).expect("encode natively");
+        let roundtrip: MessageInfo = decode_value(native, "message").expect("native decode");
+        assert_eq!(roundtrip, message);
+    }
 
     fn typed_value<T: serde::Serialize>(value: &T) -> Value {
         let json = serde_json::to_value(value).expect("serialize typed value");
