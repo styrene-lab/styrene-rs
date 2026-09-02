@@ -48,7 +48,7 @@ authorization.
 | Reticulum/LXMF/NomadNet parity | 85/85 | Archive after closure review |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
-| FreeTAK RNS hardening | 42/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
+| FreeTAK RNS hardening | 43/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
 | Operator profile lifecycle | 17/19 | Signed launcher packaging checks and packaging validation, which need launcher packaging that this repository does not contain |
 | Operation-scoped authorization | 18/18 | Archive after closure review |
 | Native RNode endpoint transport | 11/11 | Archived on 2026-09-02 |

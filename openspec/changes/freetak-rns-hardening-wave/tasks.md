@@ -106,7 +106,7 @@ Dependency gate: `reticulum-1-5-parity-wave` groups 2-6 must all be verified com
 
 - [x] 14.1 Add and run a failing authority-derived decision table plus startup, child-inheritance, and hot-apply round-trip tests for both internal flags at the predecessor's final egress-policy boundary
 - [x] 14.2 Implement only `announces_from_internal` and `announces_to_internal` propagation and decisions with authority defaults and no parallel admission, queue, path, or deadline architecture
-- [ ] 14.3 Verify the policy was introduced at Reticulum 1.5.0 `e32d4df754a7b87b1bf1bb0d08675d12ff505ae6`, remains authoritative at 1.5.1 `149e4151095adf098b8f53eab0c03b37169e8559`, and preserves predecessor admission/path tests
+- [x] 14.3 Verify the policy was introduced at Reticulum 1.5.0 `e32d4df754a7b87b1bf1bb0d08675d12ff505ae6`, remains authoritative at 1.5.1 `149e4151095adf098b8f53eab0c03b37169e8559`, and preserves predecessor admission/path tests (verified in a Reticulum clone: rows identical at both revisions; the flags predate 1.5.0, see `admission.md`)
 
 ## 15. Low-level ordered-byte attempt and shared RNode engine
 <!-- specs: rns-interface-policy -->
