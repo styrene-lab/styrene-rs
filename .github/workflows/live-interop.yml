@@ -26,6 +26,7 @@ jobs:
           - routed_direct
           - routed_direct_resource
           - routed_nomadnet_pages
+          - routed_channel
           - nomadnet_pages
           - nomadnet_client
     steps:
