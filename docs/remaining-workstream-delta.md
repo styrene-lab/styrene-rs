@@ -50,7 +50,7 @@ authorization.
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
 | Operator profile lifecycle | 0/19 | Current-main implementation from tests through frontend migration |
-| Operation-scoped authorization | 0/18 | Principal, grant, constraint, issuer, decision, discovery, and compatibility contracts |
+| Operation-scoped authorization | 18/18 | Archive after closure review |
 | Native RNode endpoint transport | 11/11 | Archived on 2026-09-02 |
 
 ## Mobile Product Delta
@@ -361,9 +361,24 @@ Authority:
 
 ### Operation-scoped authorization
 
-Issue #2 and a stale prototype identify the need. Current `main` has no accepted
-operation policy. TDD work covers principals, grants, constraints, roles, and
-trusted issuers. It also covers decisions, audit redaction, and policy discovery.
+Issue #2 and a stale prototype identified the need. The `styrene-rbac` crate now
+ships an `authz` module. It covers:
+
+- authenticated principals with bounded claims and audit-safe summaries
+- exact and suffix-prefix operation grants with explicit deny precedence
+- validated role bundles with inheritance
+- resource and context constraints
+- trusted issuer extraction with a configurable header prefix
+- structured decisions with stable reasons and an audit projection
+- effective-policy discovery that runs the enforcement evaluator
+
+Policies load atomically and fail closed.
+
+The existing coarse roles remain available as data-backed bundles that cannot
+bypass explicit denies. Public-contract tests cover every spec scenario and
+issue #2's operation catalog without a consumer role table. Consumers such as
+Omegon migrate their catalogs independently. The ledger is complete and
+awaits closure review.
 
 Authority:
 

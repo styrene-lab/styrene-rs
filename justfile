@@ -80,6 +80,7 @@ check-library-minimal:
     cargo test --lib --no-default-features -p styrene-lxmf
     cargo check --lib --no-default-features -p styrene-mesh
     cargo check --lib --no-default-features -p styrene-rbac
+    cargo test -p styrene-rbac --features config,signing
     cargo check --lib --no-default-features -p styrene-rnode-firmware
     cargo check --lib --no-default-features -p styrene-identity
     cargo check --lib --no-default-features -p styrene-secrets
