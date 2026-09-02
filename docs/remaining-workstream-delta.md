@@ -14,12 +14,12 @@ summary if the change affects priorities or release boundaries.
 
 This assessment uses these canonical revisions:
 
-- `styrene-rs`: `2e9500192e55a234e1fe6bbcd1aaf2186ead2874`
-- `styrene-ui`: `902a8d91fb182142262cdb17ae2514a901893c82`
+- `styrene-rs`: `2722ed0c8442f982498ac028a0d3b10325930eef`
+- `styrene-ui`: `6746d99307cbc251aa0ac13d471a3d0da5ea7c99`
 
-The backend revision includes PR #31, which added the destination convergence
-corpus. The UI revision includes PR #15, which extracted the deterministic iOS
-App Lock policy behind a tested controller.
+The backend revision is the consolidated hardening and parity corpus: every
+Reticulum parity, FreeTAK hardening, and Beechat correction wave is merged and
+archived. The UI revision pins that backend revision in all three manifests.
 
 ## Current Position
 
@@ -28,30 +28,35 @@ is substantially complete. The remaining mobile work is concentrated in Android
 BLE, packaged execution, physical acceptance, accessibility evidence, and
 release claims.
 
-Several non-mobile workstreams also remain active. These include shared frontend
-sessions, live protocol interoperability, firmware execution, repository-signing
-publication, FreeTAK hardening, operator profiles, and operation-scoped
-authorization.
+The protocol corpus is complete. The Reticulum 1.5 parity wave, the FreeTAK RNS
+hardening wave, and the Beechat RNS corrections wave are merged and archived.
+The shared frontend session and operation-scoped authorization runtime work is
+archived with them. What remains outside mobile is firmware execution
+evidence, repository-signing publication, launcher packaging for operator
+profiles, and the UI repository's governance and acceptance definitions.
 
 ## Workstream Summary
 
 | Workstream | Status | Remaining delta |
 | --- | ---: | --- |
-| Complete mobile P0 backend contracts | 35/35 | Verification and archival only |
+| Complete mobile P0 backend contracts | 35/35 | Archived on 2026-09-02 |
 | Complete mobile product workflows | 37/49 | Recovery, accessibility, packages, physical runs, and claims |
 | Deliver mobile messaging minimum | 51/77 | Corpus provenance, Android BLE GATT, package and physical evidence, and RNode claims |
 | Shared Dioxus mobile UI | 31/55 | Android BLE, packaged corpus replay, physical acceptance, assistive technology, and release verification |
 | iOS App Lock policy | 15/17 | Physical iPhone matrix and separate App Lock versus Keychain prompt observations |
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 21/23 | Governance confirmation and the desktop acceptance and rollback definition |
-| Shared frontend session | 29/29 | Archive after closure review |
-| Reticulum/LXMF/NomadNet parity | 85/85 | Archive after closure review |
+| Shared frontend session | 29/29 | Archived on 2026-09-02 |
+| Reticulum/LXMF/NomadNet parity | 85/85 | Archived on 2026-09-02 |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
-| FreeTAK RNS hardening | 46/46 | Archive after closure review |
+| FreeTAK RNS hardening | 46/46 | Archived on 2026-09-02 |
 | Operator profile lifecycle | 17/19 | Signed launcher packaging checks and packaging validation, which need launcher packaging that this repository does not contain |
-| Operation-scoped authorization | 18/18 | Archive after closure review |
+| Operation-scoped authorization | 18/18 | Archived on 2026-09-02 |
 | Native RNode endpoint transport | 11/11 | Archived on 2026-09-02 |
+| Beechat RNS corrections | 21/21 | Archived on 2026-09-02 |
+| Persistent correlated echo | 11/11 | Archived on 2026-09-02 |
+| Reticulum 1.5.2 empty carrier | 8/8 | Archived on 2026-09-02 |
 
 ## Mobile Product Delta
 
@@ -265,7 +270,7 @@ the Reticulum operations claim is verified as well.
 
 Authority:
 
-- `openspec/changes/reticulum-lxmf-nomadnet-parity/tasks.md`, sections 4, 5, 8-10, and 12
+- `openspec/archive/2026-09-02-reticulum-lxmf-nomadnet-parity/tasks.md`, sections 4, 5, 8-10, and 12
 
 ### Firmware provisioning
 
@@ -280,18 +285,29 @@ Authority:
 
 - `openspec/changes/rnode-firmware-provisioning/tasks.md`
 
-### FreeTAK hardening
+### Hardening and correction corpus
 
-The archived Reticulum parity wave already owns constant-time Fernet behavior.
-The FreeTAK wave must not duplicate that implementation or fixture corpus.
+The Reticulum 1.5 parity wave, the FreeTAK RNS hardening wave, and the Beechat
+RNS corrections wave are complete and archived. Together they close the
+protocol-core defects that the reconciliation found. The security groups cover
+private secret persistence, classified key fallback, and receipt poison
+recovery. The Link and transport groups cover control validation,
+bound-interface sends, supervised workers, next-hop admission, canonical
+64-bit LinkRTT payloads, and epoch-bound TCP transmit queues. The resource
+groups cover round accounting, continuation, admission caps, and split
+segments. The interface groups cover passive announce bounds, the RNS 1.5
+internal announce policy, explicit embedded time, and IPv4 UDP broadcast
+permission.
 
-Open security work covers admission, private persistence, fallback classification,
-receipt recovery, Link mutation, and bound-interface dispatch. Resource lifecycle,
-task supervision, and internal-interface announce policy also remain open.
+Each wave's admission record, clarifications, and validation evidence live in
+its archived change directory. New protocol work starts from this corpus and
+opens its own OpenSpec change.
 
 Authority:
 
-- `openspec/changes/freetak-rns-hardening-wave/tasks.md`
+- `openspec/archive/2026-09-02-freetak-rns-hardening-wave/`
+- `openspec/archive/2026-09-02-beechat-rns-corrections-wave/`
+- `openspec/archive/2026-08-30-reticulum-1-5-parity-wave/`
 
 ## Runtime And Authorization Delta
 
@@ -327,8 +343,8 @@ workspace, a Live-failure unit test, and an embedded runtime e2e test. The
 `styrene-ui` desktop now pins `styrene-rs` at `be869620` and runs on the shared
 client and sessions. Its request broker, daemon bridge, and parsers are gone,
 conversations use the canonical record, and its live scenario catalog mirrors
-every pinned runner scenario. The tested revision pair is recorded in the
-change's design document. The ledger is complete and awaits closure review.
+every pinned runner scenario. The tested revision pairs are recorded in the
+change's design document. The ledger is complete and the change is archived.
 
 The loopback network suite (`just test-network`, `network-tests.yml`) does not
 pass on `main`. Hosted runs 33639376197 (`main`) and 33638808709 stop at the
@@ -343,7 +359,7 @@ including the TUI loopback test.
 
 Authority:
 
-- `openspec/changes/shared-frontend-session/tasks.md`
+- `openspec/archive/2026-09-02-shared-frontend-session/tasks.md`
 
 ### Operator profiles
 
@@ -421,12 +437,12 @@ Policies load atomically and fail closed.
 The existing coarse roles remain available as data-backed bundles that cannot
 bypass explicit denies. Public-contract tests cover every spec scenario and
 issue #2's operation catalog without a consumer role table. Consumers such as
-Omegon migrate their catalogs independently. The ledger is complete and
-awaits closure review.
+Omegon migrate their catalogs independently. The ledger is complete and the
+change is archived.
 
 Authority:
 
-- `openspec/changes/operation-scoped-authorization/tasks.md`
+- `openspec/archive/2026-09-02-operation-scoped-authorization/tasks.md`
 
 ## Publication And Closure Delta
 
@@ -434,10 +450,15 @@ Repository-signing vectors remain candidates until a publication commit marks
 them released. Latest, previous-supported, and Identity-main compatibility lanes
 also remain open.
 
-The native RNode endpoint transport had no remaining implementation task. Its
-OpenSpec change was archived on 2026-09-02 and its baseline now records the
-native RNode transport. Other 100-percent ledgers should be archived only after
-their validation and evidence records satisfy the same closure review.
+Every 100-percent ledger has been archived after its OpenSpec archive dry run
+passed. The archived set is the native RNode endpoint transport, the mobile P0
+backend contracts, the shared frontend session, the Reticulum parity waves,
+the FreeTAK hardening wave, the Beechat corrections wave, operation-scoped
+authorization, persistent correlated echo, and the Reticulum 1.5.2
+empty-carrier parity. The baselines under `openspec/baseline/` record their
+behavior. The remaining changes each
+carry a single, separable gate: hardware or packaged evidence, publication
+approval, launcher packaging, or repository governance.
 
 ## Recommended Execution Order
 
@@ -446,13 +467,14 @@ their validation and evidence records satisfy the same closure review.
 3. Execute physical custody, App Lock, RNode, QR, lifecycle, and accessibility matrices on their assigned hosts.
 4. Enable and retain pinned live RNS, LXMF, propagation, and NomadNet gates.
 5. Complete exact firmware executors and physical recovery evidence.
-6. Finish frontend-session migration before building operator profiles on duplicated lifecycle code.
-7. Implement operation-scoped authorization before consumers add more local policy tables.
-8. Publish signing vectors and run compatibility lanes.
-9. Archive verified changes only after OpenSpec archive dry runs pass.
+6. Publish signing vectors and run compatibility lanes.
+7. Package the operator launcher and run its signed packaging checks.
+8. Archive verified changes only after OpenSpec archive dry runs pass.
 
-The cross-repository destination convergence test and the deterministic App
-Lock policy tests from the original order are complete and recorded above.
+The frontend-session migration, operation-scoped authorization, and the
+hardening and correction corpus from the original order are complete and
+archived. Every remaining item can be picked up on its own from the
+consolidated revision boundary above.
 
 ## Evidence Rules
 
