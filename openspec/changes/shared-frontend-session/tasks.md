@@ -12,10 +12,10 @@
 <!-- specs: frontend-session/spec -->
 
 - [x] 2.1 Create `styrene-ipc-client` without dependencies on Ratatui or Dioxus
-- [ ] 2.2 Move framing, opcode mapping, negotiation, request correlation, and typed decoding behind the client API
-- [ ] 2.3 Add bounded concurrency, deadlines, cancellation, event fanout, reconnect generations, and compatibility polling
+- [x] 2.2 Move framing, opcode mapping, negotiation, request correlation, and typed decoding behind the client API
+- [x] 2.3 Add bounded concurrency, deadlines, cancellation, event fanout, reconnect generations, and compatibility polling
 - [x] 2.4 Add tests for overlap, out-of-order responses, timeout, cancellation, overload, disconnect, and stale generations
-- [ ] 2.5 Prevent frontend crates from importing `styrene-ipc-server::wire`
+- [x] 2.5 Prevent frontend crates from importing `styrene-ipc-server::wire`
 
 ## 3. Frontend Sessions
 <!-- specs: frontend-session/spec -->
@@ -29,8 +29,8 @@
 ## 4. Ratatui Migration
 <!-- specs: frontend-session/spec -->
 
-- [ ] 4.1 Replace TUI socket framing and payload-map parsing with the shared client
-- [ ] 4.2 Preserve TUI command authorization, generation checks, subscriptions, and polling behavior
+- [x] 4.1 Replace TUI socket framing and payload-map parsing with the shared client
+- [x] 4.2 Preserve TUI command authorization, generation checks, subscriptions, and polling behavior
 - [ ] 4.3 Remove obsolete TUI client code after parity tests pass
 - [ ] 4.4 Run TUI unit, integration, Live-failure, Embedded, and terminal smoke checks
 

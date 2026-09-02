@@ -29,7 +29,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use tokio::net::UnixStream;
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::Duration;
 
@@ -1825,33 +1824,24 @@ pub async fn connect(socket_path: Option<&Path>) -> Result<DaemonConnection, Str
         return Err(format!("socket not found: {}", path.display()));
     }
 
-    let command_stream =
-        UnixStream::connect(&path).await.map_err(|e| format!("connect {}: {e}", path.display()))?;
-    let mut handle = DaemonHandle::from_client(Client::from_unix_stream(
-        command_stream,
-        next_connection_generation(),
-    ));
-
-    // Verify daemon is alive
-    if !handle.ping().await {
-        return Err("daemon did not respond to ping".into());
-    }
+    // Negotiation confirms the daemon answers, reports a connection
+    // generation, and advertises a capability contract this TUI understands.
+    let (command_client, _negotiation) =
+        Client::connect_unix(&path, next_connection_generation(), RPC_DEADLINE)
+            .await
+            .map_err(|error| format!("connect {}: {error}", path.display()))?;
+    let mut handle = DaemonHandle::from_client(command_client);
 
     // A dedicated subscription connection prevents the event reader from
     // consuming command responses or holding the command stream lock.
-    let event_stream = UnixStream::connect(&path)
-        .await
-        .map_err(|e| format!("connect event stream {}: {e}", path.display()))?;
-    let event_client = Client::from_unix_stream(event_stream, next_connection_generation());
+    let (event_client, event_negotiation) =
+        Client::connect_unix(&path, next_connection_generation(), RPC_DEADLINE)
+            .await
+            .map_err(|error| format!("connect event stream {}: {error}", path.display()))?;
     // Take the receiver before subscribing so no pushed event is missed.
     let event_frames = event_client.events();
     let mut event_handle = DaemonHandle::from_client(event_client.clone());
-    let event_generation = event_handle
-        .status()
-        .await?
-        .connection_generation
-        .filter(|generation| *generation != 0)
-        .ok_or("event connection did not report a generation")?;
+    let event_generation = event_negotiation.daemon_generation;
     event_handle.subscribe_devices().await?;
     event_handle.subscribe_messages().await?;
     event_handle.subscribe_links().await?;
