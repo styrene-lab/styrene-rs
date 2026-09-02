@@ -21,6 +21,8 @@ jobs:
           - opportunistic
           - propagated_resource_lxm
           - propagated_retrieval
+          - propagated_capacity
+          - propagated_expiry
           - nomadnet_pages
           - nomadnet_client
     steps:
