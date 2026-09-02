@@ -25,8 +25,8 @@
 ## 4. Portable operation
 <!-- specs: operator-profile-lifecycle -->
 
-- [ ] Add failing tests for encryption, filesystem capability, stable selector, mount change, safe removal, and surprise removal
-- [ ] Implement encrypted Portable roots, exclusive writer leases, stable selectors, quiesce, checkpoint, synchronization, and key clearing
+- [x] Add failing tests for encryption, filesystem capability, stable selector, mount change, safe removal, and surprise removal
+- [x] Implement encrypted Portable roots, exclusive writer leases, stable selectors, quiesce, checkpoint, synchronization, and key clearing
 - [ ] Add signed macOS and Linux launcher packaging checks without autorun or persisted device paths
 
 ## 5. IPC and frontend migration

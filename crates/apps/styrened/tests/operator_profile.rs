@@ -221,7 +221,7 @@ async fn promotion_restart_rejects_changed_identity_and_keeps_source() {
     let replacement = rns_core::identity::PrivateIdentity::new_from_rand(rand_core::OsRng);
     fs::write(&pending.profile().paths().identity, replacement.to_private_key_bytes()).unwrap();
 
-    let failure = pending.start().await.err().expect("changed identity must reject restart");
+    let failure = pending.start().await.expect_err("changed identity must reject restart");
     assert!(failure.to_string().contains("promoted identity changed"));
     let source = failure.into_source();
     assert_eq!(source.paths().root, source_root);
@@ -237,7 +237,7 @@ async fn managed_daemon_rejects_invalid_config_without_releasing_lease() {
     let root = profile.paths().root.clone();
     fs::write(&profile.paths().config, "not valid = [toml").unwrap();
 
-    let failure = profile.start().await.err().expect("invalid managed config must fail closed");
+    let failure = profile.start().await.expect_err("invalid managed config must fail closed");
     assert!(failure.to_string().contains("load managed daemon config"));
     let profile = failure.into_profile();
     let error = StoppedManagedProfile::open(&root, &runtime)
@@ -255,7 +255,7 @@ async fn managed_start_failure_after_worker_spawn_can_retry_cleanly() {
     fs::write(&profile.paths().config, "role = \"propagation_client\"\n").unwrap();
     fs::create_dir(&profile.paths().socket).unwrap();
 
-    let failure = profile.start().await.err().expect("socket bind must fail");
+    let failure = profile.start().await.expect_err("socket bind must fail");
     let profile = failure.into_profile();
     fs::remove_dir(&profile.paths().socket).unwrap();
     let running = profile.start().await.expect("retry after rolled-back startup");
@@ -311,7 +311,7 @@ async fn managed_daemon_rejects_non_utf8_node_store_path() {
         StoppedManagedProfile::create_quick(&profiles, &runtime, "Field session").unwrap();
     fs::write(&profile.paths().config, "role = \"propagation_client\"\n").unwrap();
 
-    let failure = profile.start().await.err().expect("non-UTF-8 node path must not fall back");
+    let failure = profile.start().await.expect_err("non-UTF-8 node path must not fall back");
     assert!(failure.to_string().contains("node store path is not valid UTF-8"));
 }
 
@@ -842,7 +842,7 @@ async fn hardware_custody_unavailable_without_a_recovery_slot_fails_closed() {
         fingerprint,
         "old identity is not overwritten"
     );
-    let failure = profile.start().await.err().expect("profile without its key must not start");
+    let failure = profile.start().await.expect_err("profile without its key must not start");
     assert!(failure.to_string().contains("identity"), "unexpected error: {failure}");
     let profile = failure.into_profile();
     assert!(!profile.paths().identity.exists());
@@ -892,4 +892,255 @@ async fn hardware_abandonment_with_enrolled_recovery_restores_verified_continuit
     assert_eq!(running.identity_hash(), fingerprint);
     let profile = running.shutdown().await;
     drop(profile);
+}
+
+// ── Portable operation ───────────────────────────────────────────────────────
+
+use styrened::operator_profile::{MediaCapability, MediaStatus, StaticMediaInspector};
+
+fn encrypted_media(selector: &str) -> StaticMediaInspector {
+    StaticMediaInspector {
+        capability: MediaCapability {
+            encrypted: true,
+            filesystem: "apfs".into(),
+            volume_selector: selector.into(),
+            posix_permissions: true,
+            atomic_rename: true,
+            durable_sync: true,
+        },
+    }
+}
+
+fn portable_roots(test: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let temp = tempfile::tempdir().expect("create test root");
+    let media = temp.path().join(test).join("media");
+    // Runtime parents stay short: Unix socket paths have a hard length limit.
+    let runtime = temp.path().join("r");
+    fs::create_dir_all(&media).unwrap();
+    fs::create_dir_all(&runtime).unwrap();
+    (temp, media, runtime)
+}
+
+#[test]
+fn portable_profile_requires_encrypted_capable_media_and_host_private_runtime() {
+    let (_temp, media, runtime) = portable_roots("portable-capability");
+    let root = media.join("field-kit");
+    let mut unencrypted = encrypted_media("vol-1");
+    unencrypted.capability.encrypted = false;
+    let error =
+        StoppedManagedProfile::create_portable(&media, &root, &runtime, "Field kit", &unencrypted)
+            .expect_err("unencrypted media is refused");
+    assert!(error.to_string().contains("not encrypted"), "unexpected error: {error}");
+    assert!(!root.exists(), "refused media gets no profile");
+
+    let mut no_rename = encrypted_media("vol-1");
+    no_rename.capability.atomic_rename = false;
+    no_rename.capability.filesystem = "exfat".into();
+    let error =
+        StoppedManagedProfile::create_portable(&media, &root, &runtime, "Field kit", &no_rename)
+            .expect_err("incapable filesystem is refused");
+    assert!(error.to_string().contains("exfat"), "disclosure names the filesystem: {error}");
+
+    let on_media_runtime = media.join("runtime");
+    fs::create_dir_all(&on_media_runtime).unwrap();
+    let error = StoppedManagedProfile::create_portable(
+        &media,
+        &root,
+        &on_media_runtime,
+        "Field kit",
+        &encrypted_media("vol-1"),
+    )
+    .expect_err("runtime on media is refused");
+    assert!(error.to_string().contains("host-private"), "unexpected error: {error}");
+}
+
+#[test]
+fn portable_profile_binds_a_stable_selector_and_marker_rather_than_a_mount_path() {
+    let (_temp, media, runtime) = portable_roots("portable-selector");
+    let root = media.join("field-kit");
+    let inspector = encrypted_media("vol-abc");
+    let (profile, selector) =
+        StoppedManagedProfile::create_portable(&media, &root, &runtime, "Field kit", &inspector)
+            .expect("create");
+    assert_eq!(profile.manifest().storage, ProfileStorage::Portable);
+    assert_eq!(selector.volume_selector, "vol-abc");
+    assert_eq!(profile.portable_selector(), Some(selector.clone()));
+    assert!(root.join(".styrene-portable").is_file());
+    assert!(!profile.paths().runtime_root.starts_with(&media), "sockets stay off the media");
+    assert!(!profile.paths().socket.starts_with(&media));
+    let manifest_text = fs::read_to_string(&profile.paths().manifest).unwrap();
+    assert!(!manifest_text.contains(media.to_str().unwrap()), "manifest persists no mount path");
+    assert!(!manifest_text.contains("/dev/"), "manifest persists no device path");
+
+    // A second writer is refused while the first owns the lease.
+    let error = StoppedManagedProfile::open_portable(
+        &selector,
+        std::slice::from_ref(&media),
+        &runtime,
+        &inspector,
+    )
+    .expect_err("second owner is rejected");
+    assert!(error.to_string().contains("already in use"));
+    drop(profile);
+
+    // The wrong volume never matches, even with the right marker on disk.
+    let other_volume = encrypted_media("vol-other");
+    assert!(matches!(
+        StoppedManagedProfile::open_portable(
+            &selector,
+            std::slice::from_ref(&media),
+            &runtime,
+            &other_volume
+        ),
+        Err(styrened::operator_profile::ProfileError::PortableNotFound)
+    ));
+    let reopened = StoppedManagedProfile::open_portable(
+        &selector,
+        &[PathBuf::from("/nonexistent"), media.clone()],
+        &runtime,
+        &inspector,
+    )
+    .expect("selector resolves");
+    assert_eq!(reopened.manifest().storage, ProfileStorage::Portable);
+    assert_eq!(reopened.manifest().display_name, "Field kit");
+}
+
+#[test]
+fn portable_profile_resolves_after_the_media_mounts_elsewhere() {
+    let (temp, media, runtime) = portable_roots("portable-mount-change");
+    let root = media.join("field-kit");
+    let inspector = encrypted_media("vol-move");
+    let (profile, selector) =
+        StoppedManagedProfile::create_portable(&media, &root, &runtime, "Field kit", &inspector)
+            .unwrap();
+    let id = profile.manifest().id.clone();
+    drop(profile);
+
+    let remounted = temp.path().join("Volumes").join("FIELD");
+    fs::create_dir_all(remounted.parent().unwrap()).unwrap();
+    fs::rename(&media, &remounted).unwrap();
+    assert!(matches!(
+        StoppedManagedProfile::open_portable(
+            &selector,
+            std::slice::from_ref(&media),
+            &runtime,
+            &inspector
+        ),
+        Err(styrened::operator_profile::ProfileError::PortableNotFound)
+    ));
+    let found = StoppedManagedProfile::open_portable(
+        &selector,
+        &[media, remounted.clone()],
+        &runtime,
+        &inspector,
+    )
+    .expect("profile found at its new mount");
+    assert_eq!(found.manifest().id, id);
+    assert_beneath(&found.paths().root, &remounted.canonicalize().unwrap());
+}
+
+#[tokio::test]
+async fn safe_removal_quiesces_checkpoints_synchronizes_and_releases_ownership() {
+    let (_temp, media, runtime) = portable_roots("portable-safe-removal");
+    let root = media.join("field-kit");
+    let inspector = encrypted_media("vol-safe");
+    let (profile, selector) =
+        StoppedManagedProfile::create_portable(&media, &root, &runtime, "Field kit", &inspector)
+            .unwrap();
+    fs::write(&profile.paths().config, "role = \"propagation_client\"\n").unwrap();
+    let messages = profile.paths().messages.clone();
+    let running = profile.start().await.expect("portable daemon starts");
+    running
+        .app_context()
+        .store()
+        .lock()
+        .unwrap()
+        .insert_message(&MessageRecord {
+            id: "portable-message".into(),
+            source: "source".into(),
+            destination: "destination".into(),
+            title: "Portable".into(),
+            content: "Written on the media".into(),
+            timestamp: 1_788_194_121,
+            direction: "in".into(),
+            fields: None,
+            receipt_status: None,
+            read: false,
+        })
+        .unwrap();
+    assert_eq!(running.media_status(), MediaStatus::Present);
+    let socket = running.paths().socket.clone();
+
+    let report = running.prepare_safe_removal().await.expect("safe removal");
+    assert!(report.quiesced && report.checkpointed && report.synchronized);
+    assert!(report.lease_released && report.keys_cleared && report.media_removable);
+    assert!(!socket.exists(), "runtime socket is gone");
+    assert!(!messages.with_extension("db-wal").exists(), "WAL is checkpointed away");
+    assert!(!messages.with_extension("db-shm").exists());
+    assert_eq!(fs::read_dir(&runtime).unwrap().count(), 0, "runtime root released");
+    let reopened = StoppedManagedProfile::open_portable(
+        &selector,
+        std::slice::from_ref(&media),
+        &runtime,
+        &inspector,
+    )
+    .expect("lease released");
+    let message = MessagesStore::open(&reopened.paths().messages)
+        .unwrap()
+        .get_message("portable-message")
+        .unwrap();
+    assert_eq!(message.map(|m| m.content).as_deref(), Some("Written on the media"));
+}
+
+#[tokio::test]
+async fn surprise_removal_stops_durable_writes_without_falling_back_to_host_paths() {
+    let (temp, media, runtime) = portable_roots("portable-surprise");
+    let root = media.join("field-kit");
+    let inspector = encrypted_media("vol-gone");
+    let (profile, _selector) =
+        StoppedManagedProfile::create_portable(&media, &root, &runtime, "Field kit", &inspector)
+            .unwrap();
+    fs::write(&profile.paths().config, "role = \"propagation_client\"\n").unwrap();
+    let running = profile.start().await.expect("portable daemon starts");
+    let socket = running.paths().socket.clone();
+    let runtime_root = running.paths().runtime_root.clone();
+
+    // The media vanishes underneath the running daemon.
+    let vanished = temp.path().join("vanished-media");
+    fs::rename(&media, &vanished).unwrap();
+    assert_eq!(running.media_status(), MediaStatus::Missing);
+    let error = running.prepare_safe_removal().await.expect_err("safe removal needs the media");
+    assert!(error.to_string().contains("no longer present"), "unexpected error: {error}");
+    // Ownership was consumed by the failed removal; the daemon stopped and no
+    // host path received durable state.
+    assert!(!socket.exists());
+    assert_eq!(
+        fs::read_dir(&runtime).unwrap().count(),
+        0,
+        "runtime root released, nothing else created"
+    );
+    assert!(!runtime_root.exists());
+    assert!(
+        vanished.join("field-kit/manifest.toml").is_file(),
+        "media state is untouched where it went"
+    );
+}
+
+#[tokio::test]
+async fn interrupted_portable_profile_reports_missing_media_and_writes_nothing_locally() {
+    let (temp, media, runtime) = portable_roots("portable-interrupt");
+    let root = media.join("field-kit");
+    let inspector = encrypted_media("vol-int");
+    let (profile, _selector) =
+        StoppedManagedProfile::create_portable(&media, &root, &runtime, "Field kit", &inspector)
+            .unwrap();
+    fs::write(&profile.paths().config, "role = \"propagation_client\"\n").unwrap();
+    let running = profile.start().await.unwrap();
+    let vanished = temp.path().join("vanished");
+    fs::rename(&media, &vanished).unwrap();
+    let interrupted = running.interrupt().await;
+    assert_eq!(interrupted.status, MediaStatus::Missing);
+    assert!(!interrupted.runtime_root.exists());
+    assert!(!interrupted.root.exists(), "the old path is not recreated");
+    assert_eq!(fs::read_dir(&runtime).unwrap().count(), 0);
 }
