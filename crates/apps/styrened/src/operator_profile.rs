@@ -164,6 +164,11 @@ impl RunningManagedProfile {
         &self.profile.as_ref().expect("running profile has lease").paths
     }
 
+    /// The running daemon's application context.
+    pub fn app_context(&self) -> &std::sync::Arc<crate::app_context::AppContext> {
+        &self.daemon.as_ref().expect("running profile has daemon").app_context
+    }
+
     pub async fn shutdown(mut self) -> StoppedManagedProfile {
         let daemon = self.daemon.take().expect("running profile has daemon");
         let profile = self.profile.take().expect("running profile has lease");
@@ -632,6 +637,12 @@ pub enum ProfileError {
     },
     #[error("serialize profile manifest: {0}")]
     SerializeManifest(#[source] toml::ser::Error),
+    #[error("snapshot component {0} does not match its recorded hash")]
+    SnapshotTampered(String),
+    #[error("snapshot is missing component {0}")]
+    SnapshotMissingComponent(String),
+    #[error("profile database: {0}")]
+    Database(String),
 }
 
 fn validate_manifest(manifest: &ProfileManifest) -> Result<(), ProfileError> {
@@ -1088,5 +1099,443 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 
 #[cfg(not(unix))]
 fn sync_directory(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+// ── Snapshots ────────────────────────────────────────────────────────────────
+
+const SNAPSHOT_FORMAT_VERSION: u32 = 1;
+const MAX_SNAPSHOT_MANIFEST_BYTES: u64 = 1024 * 1024;
+
+/// One hashed file inside a snapshot generation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentRecord {
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+/// What a snapshot generation captured. Component keys are paths relative to
+/// the snapshot root, such as `data/messages.db`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotManifest {
+    pub format_version: u32,
+    pub snapshot_id: String,
+    pub profile_id: String,
+    pub profile_generation: u64,
+    pub display_name: String,
+    pub identity_hash: String,
+    pub created_at_unix: u64,
+    pub components: std::collections::BTreeMap<String, ComponentRecord>,
+}
+
+/// An immutable snapshot generation on disk, verified against its manifest.
+#[derive(Debug)]
+pub struct SnapshotRef {
+    root: PathBuf,
+    manifest: SnapshotManifest,
+}
+
+impl SnapshotRef {
+    /// Open a snapshot and verify every recorded component hash. A snapshot
+    /// with a missing or altered component is rejected.
+    pub fn open(root: &Path) -> Result<Self, ProfileError> {
+        reject_symlink(root)?;
+        let root = root
+            .canonicalize()
+            .map_err(|source| ProfileError::Io { action: "resolve snapshot root", source })?;
+        let manifest_bytes =
+            read_bounded_file(&root.join("manifest.toml"), MAX_SNAPSHOT_MANIFEST_BYTES)?;
+        let manifest: SnapshotManifest = toml::from_str(
+            std::str::from_utf8(&manifest_bytes).map_err(|_| ProfileError::InvalidManifest)?,
+        )
+        .map_err(|_| ProfileError::InvalidManifest)?;
+        if manifest.format_version != SNAPSHOT_FORMAT_VERSION {
+            return Err(ProfileError::UnsupportedFormat(manifest.format_version));
+        }
+        let snapshot = Self { root, manifest };
+        snapshot.verify()?;
+        Ok(snapshot)
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn manifest(&self) -> &SnapshotManifest {
+        &self.manifest
+    }
+
+    /// Recompute every component hash and compare with the manifest.
+    pub fn verify(&self) -> Result<(), ProfileError> {
+        let mut actual = std::collections::BTreeMap::new();
+        hash_tree(&self.root, &self.root, &mut actual)?;
+        actual.remove("manifest.toml");
+        for (component, record) in &self.manifest.components {
+            match actual.get(component) {
+                None => return Err(ProfileError::SnapshotMissingComponent(component.clone())),
+                Some(found) if found != record => {
+                    return Err(ProfileError::SnapshotTampered(component.clone()));
+                }
+                Some(_) => {}
+            }
+        }
+        for component in actual.keys() {
+            if !self.manifest.components.contains_key(component) {
+                return Err(ProfileError::SnapshotTampered(component.clone()));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// How the databases of a snapshot are produced.
+enum DatabaseSource<'a> {
+    /// The profile is stopped: open each database read-only and back it up.
+    Stopped,
+    /// The profile is running: back up through the daemon's live connections.
+    Running(&'a crate::app_context::AppContext),
+}
+
+impl StoppedManagedProfile {
+    /// Capture one coherent snapshot generation of a stopped profile.
+    pub fn snapshot(&self) -> Result<SnapshotRef, ProfileError> {
+        write_snapshot(&self.paths, &self.manifest, DatabaseSource::Stopped)
+    }
+
+    /// Every verified snapshot generation of this profile, oldest first.
+    pub fn snapshots(&self) -> Result<Vec<SnapshotRef>, ProfileError> {
+        list_snapshots(&self.paths.snapshots)
+    }
+
+    /// Restore a verified snapshot to an unused destination as a new Local
+    /// profile generation. The snapshot is only read.
+    pub fn restore_snapshot(
+        snapshot: &SnapshotRef,
+        destination: &Path,
+        runtime_parent: &Path,
+    ) -> Result<Self, ProfileError> {
+        ensure_supported_platform()?;
+        snapshot.verify()?;
+        if destination.exists() {
+            return Err(ProfileError::DestinationExists(destination.to_path_buf()));
+        }
+        let destination_parent = destination
+            .parent()
+            .ok_or_else(|| ProfileError::InvalidPath("destination has no parent".into()))?;
+        let destination_parent = validate_existing_directory(destination_parent)?;
+        let destination_name =
+            destination.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
+                ProfileError::InvalidPath("destination has no valid file name".into())
+            })?;
+        let destination = destination_parent.join(destination_name);
+        let stage = destination_parent.join(format!(".{destination_name}.restore-{}", random_id()));
+        let result = restore_into_stage(snapshot, &stage, &destination, runtime_parent);
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&stage);
+        }
+        result
+    }
+}
+
+impl RunningManagedProfile {
+    /// Capture one coherent snapshot generation while the daemon runs. The
+    /// databases come from SQLite's online backup over the live connections;
+    /// every other component is copied afterwards.
+    pub fn snapshot(&self) -> Result<SnapshotRef, ProfileError> {
+        let daemon = self.daemon.as_ref().expect("running profile has daemon");
+        let profile = self.profile.as_ref().expect("running profile has profile");
+        write_snapshot(
+            profile.paths(),
+            profile.manifest(),
+            DatabaseSource::Running(&daemon.app_context),
+        )
+    }
+
+    pub fn snapshots(&self) -> Result<Vec<SnapshotRef>, ProfileError> {
+        let profile = self.profile.as_ref().expect("running profile has profile");
+        list_snapshots(&profile.paths().snapshots)
+    }
+}
+
+fn list_snapshots(generations: &Path) -> Result<Vec<SnapshotRef>, ProfileError> {
+    if !generations.exists() {
+        return Ok(Vec::new());
+    }
+    let mut names: Vec<PathBuf> = fs::read_dir(generations)
+        .map_err(|source| ProfileError::Io { action: "read snapshot generations", source })?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('g'))
+        })
+        .collect();
+    names.sort();
+    names.iter().map(|path| SnapshotRef::open(path)).collect()
+}
+
+fn write_snapshot(
+    paths: &ProfilePaths,
+    profile: &ProfileManifest,
+    databases: DatabaseSource<'_>,
+) -> Result<SnapshotRef, ProfileError> {
+    ensure_supported_platform()?;
+    validate_profile_paths(paths)?;
+    let identity_hash = profile_identity_hash(&paths.identity)?;
+    fs::create_dir_all(&paths.snapshots)
+        .map_err(|source| ProfileError::Io { action: "create snapshot generations", source })?;
+    set_private_directory(&paths.snapshots)
+        .map_err(|source| ProfileError::Io { action: "secure snapshot generations", source })?;
+    let snapshot_id = random_id();
+    let stage = paths.snapshots.join(format!(".stage-{snapshot_id}"));
+    let result = (|| {
+        fs::create_dir(&stage)
+            .map_err(|source| ProfileError::Io { action: "create snapshot stage", source })?;
+        set_private_directory(&stage)
+            .map_err(|source| ProfileError::Io { action: "secure snapshot stage", source })?;
+        let mut budget = CopyBudget::default();
+        for component in ["config", "identity"] {
+            let source = paths.root.join(component);
+            if source.exists() {
+                copy_tree(&source, &stage.join(component), &mut budget)?;
+            }
+        }
+        let data = stage.join("data");
+        fs::create_dir(&data)
+            .map_err(|source| ProfileError::Io { action: "create snapshot data", source })?;
+        set_private_directory(&data)
+            .map_err(|source| ProfileError::Io { action: "secure snapshot data", source })?;
+        if paths.files.exists() {
+            copy_tree(&paths.files, &data.join("files"), &mut budget)?;
+        }
+        let messages = data.join("messages.db");
+        let nodes = data.join("nodes.db");
+        match databases {
+            DatabaseSource::Stopped => {
+                if paths.messages.exists() {
+                    backup_stopped_database(&paths.messages, &messages)?;
+                }
+                if paths.nodes.exists() {
+                    backup_stopped_database(&paths.nodes, &nodes)?;
+                }
+            }
+            DatabaseSource::Running(app_context) => {
+                app_context
+                    .store()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .backup_to(&messages)
+                    .map_err(|error| ProfileError::Database(error.to_string()))?;
+                app_context
+                    .node_store()
+                    .backup_to(&nodes)
+                    .map_err(|error| ProfileError::Database(error.to_string()))?;
+            }
+        }
+        for database in [&messages, &nodes] {
+            if database.exists() {
+                set_private_file(database).map_err(|source| ProfileError::Io {
+                    action: "secure snapshot database",
+                    source,
+                })?;
+            }
+        }
+        let mut components = std::collections::BTreeMap::new();
+        hash_tree(&stage, &stage, &mut components)?;
+        let manifest = SnapshotManifest {
+            format_version: SNAPSHOT_FORMAT_VERSION,
+            snapshot_id: snapshot_id.clone(),
+            profile_id: profile.id.clone(),
+            profile_generation: profile.generation,
+            display_name: profile.display_name.clone(),
+            identity_hash,
+            created_at_unix: now_unix(),
+            components,
+        };
+        let bytes = toml::to_string_pretty(&manifest).map_err(ProfileError::SerializeManifest)?;
+        atomic_write_private(&stage.join("manifest.toml"), bytes.as_bytes())
+            .map_err(|source| ProfileError::Io { action: "write snapshot manifest", source })?;
+        make_files_read_only(&stage)?;
+        sync_tree(&stage)?;
+        let final_root = paths.snapshots.join(format!("g{}-{snapshot_id}", profile.generation));
+        rename_no_replace(&stage, &final_root)?;
+        sync_directory(&paths.snapshots)
+            .map_err(|source| ProfileError::Io { action: "sync snapshot generations", source })?;
+        Ok(SnapshotRef { root: final_root, manifest })
+    })();
+    if result.is_err() {
+        let _ = make_files_writable(&stage);
+        let _ = fs::remove_dir_all(&stage);
+    }
+    result
+}
+
+fn restore_into_stage(
+    snapshot: &SnapshotRef,
+    stage: &Path,
+    destination: &Path,
+    runtime_parent: &Path,
+) -> Result<StoppedManagedProfile, ProfileError> {
+    fs::create_dir(stage)
+        .map_err(|source| ProfileError::Io { action: "create restore stage", source })?;
+    set_private_directory(stage)
+        .map_err(|source| ProfileError::Io { action: "secure restore stage", source })?;
+    let stage = stage
+        .canonicalize()
+        .map_err(|source| ProfileError::Io { action: "resolve restore stage", source })?;
+    let lease = acquire_profile_lease(&stage)?;
+    let mut budget = CopyBudget::default();
+    for component in ["config", "identity", "data"] {
+        let source = snapshot.root.join(component);
+        if source.exists() {
+            copy_tree(&source, &stage.join(component), &mut budget)?;
+        }
+    }
+    let stage_paths = ProfilePaths::for_roots(stage.clone(), PathBuf::new());
+    create_profile_directories(&stage_paths)?;
+    if profile_identity_hash(&stage_paths.identity)? != snapshot.manifest.identity_hash {
+        return Err(ProfileError::InvalidIdentity);
+    }
+    let manifest = ProfileManifest {
+        format_version: PROFILE_FORMAT_VERSION,
+        id: snapshot.manifest.profile_id.clone(),
+        display_name: snapshot.manifest.display_name.clone(),
+        storage: ProfileStorage::Local,
+        generation: snapshot.manifest.profile_generation.saturating_add(1),
+        created_at_unix: now_unix(),
+    };
+    write_manifest(&stage_paths.manifest, &manifest)?;
+    sync_tree(&stage)?;
+    sync_directory(stage.parent().expect("stage has parent"))
+        .map_err(|source| ProfileError::Io { action: "sync restore parent", source })?;
+    let runtime_root = create_runtime_root(runtime_parent, &manifest.id)?;
+    if let Err(error) = rename_no_replace(&stage, destination) {
+        let _ = fs::remove_dir_all(&runtime_root);
+        return Err(error);
+    }
+    if let Err(source) = sync_directory(destination.parent().expect("destination has parent")) {
+        let _ = fs::remove_dir_all(destination);
+        let _ = fs::remove_dir_all(&runtime_root);
+        return Err(ProfileError::Io { action: "sync restored profile parent", source });
+    }
+    let paths = ProfilePaths::for_roots(destination.to_path_buf(), runtime_root);
+    Ok(StoppedManagedProfile { manifest, paths, cleanup_durable_on_drop: false, _lease: lease })
+}
+
+fn backup_stopped_database(source: &Path, destination: &Path) -> Result<(), ProfileError> {
+    use rusqlite::{Connection, OpenFlags};
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let conn = Connection::open_with_flags(source, flags)
+        .map_err(|error| ProfileError::Database(error.to_string()))?;
+    let mut target =
+        Connection::open(destination).map_err(|error| ProfileError::Database(error.to_string()))?;
+    let backup = rusqlite::backup::Backup::new(&conn, &mut target)
+        .map_err(|error| ProfileError::Database(error.to_string()))?;
+    backup
+        .run_to_completion(64, std::time::Duration::from_millis(5), None)
+        .map_err(|error| ProfileError::Database(error.to_string()))?;
+    drop(backup);
+    target
+        .pragma_update(None, "journal_mode", "delete")
+        .map_err(|error| ProfileError::Database(error.to_string()))?;
+    Ok(())
+}
+
+fn hash_tree(
+    root: &Path,
+    path: &Path,
+    out: &mut std::collections::BTreeMap<String, ComponentRecord>,
+) -> Result<(), ProfileError> {
+    reject_symlink(path)?;
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|source| ProfileError::Io { action: "inspect snapshot entry", source })?;
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)
+            .map_err(|source| ProfileError::Io { action: "read snapshot directory", source })?
+        {
+            let entry = entry
+                .map_err(|source| ProfileError::Io { action: "read snapshot entry", source })?;
+            hash_tree(root, &entry.path(), out)?;
+        }
+        return Ok(());
+    }
+    if !metadata.is_file() {
+        return Err(ProfileError::InvalidPath(format!(
+            "unsupported snapshot entry {}",
+            path.display()
+        )));
+    }
+    let relative = path.strip_prefix(root).map_err(|_| {
+        ProfileError::InvalidPath(format!("{} escapes the snapshot", path.display()))
+    })?;
+    let key = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    if key == "manifest.toml" {
+        return Ok(());
+    }
+    if key.ends_with("-wal") || key.ends_with("-shm") || key.ends_with("-journal") {
+        return Err(ProfileError::InvalidPath(format!(
+            "snapshot contains live database sidecar {key}"
+        )));
+    }
+    let (sha256, bytes) = sha256_file(path)?;
+    out.insert(key, ComponentRecord { sha256, bytes });
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> Result<(String, u64), ProfileError> {
+    use sha2::{Digest, Sha256};
+    let mut file = File::open(path)
+        .map_err(|source| ProfileError::Io { action: "open snapshot file", source })?;
+    let mut hasher = Sha256::new();
+    let bytes = io::copy(&mut file, &mut hasher)
+        .map_err(|source| ProfileError::Io { action: "hash snapshot file", source })?;
+    Ok((hex::encode(hasher.finalize()), bytes))
+}
+
+#[cfg(unix)]
+fn make_files_read_only(root: &Path) -> Result<(), ProfileError> {
+    use std::os::unix::fs::PermissionsExt;
+    set_tree_file_mode(root, fs::Permissions::from_mode(0o400))
+}
+
+#[cfg(unix)]
+fn make_files_writable(root: &Path) -> Result<(), ProfileError> {
+    use std::os::unix::fs::PermissionsExt;
+    set_tree_file_mode(root, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(unix)]
+fn set_tree_file_mode(path: &Path, permissions: fs::Permissions) -> Result<(), ProfileError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|source| ProfileError::Io { action: "inspect snapshot entry", source })?;
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)
+            .map_err(|source| ProfileError::Io { action: "read snapshot directory", source })?
+        {
+            let entry = entry
+                .map_err(|source| ProfileError::Io { action: "read snapshot entry", source })?;
+            set_tree_file_mode(&entry.path(), permissions.clone())?;
+        }
+    } else if metadata.is_file() {
+        fs::set_permissions(path, permissions)
+            .map_err(|source| ProfileError::Io { action: "set snapshot file mode", source })?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn make_files_read_only(_root: &Path) -> Result<(), ProfileError> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn make_files_writable(_root: &Path) -> Result<(), ProfileError> {
     Ok(())
 }

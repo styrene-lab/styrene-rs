@@ -139,7 +139,7 @@ loom = "0.7"
 serde_bytes = "0.11"
 rmp-serde = "1.3.0"
 rmpv = { version = "1.3.0", features = ["with-serde"] }
-rusqlite = "0.31.0"
+rusqlite = { version = "0.31.0", features = ["backup"] }
 time = "0.3.45"
 tokio-util = "0.7.15"
 bzip2 = "0.4"

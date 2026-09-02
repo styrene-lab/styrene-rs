@@ -49,7 +49,7 @@ authorization.
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
-| Operator profile lifecycle | 5/19 | Snapshots, identity custody, Portable operation, typed IPC, and frontend migration |
+| Operator profile lifecycle | 7/19 | Identity custody, Portable operation, typed IPC, and frontend migration |
 | Operation-scoped authorization | 18/18 | Archive after closure review |
 | Native RNode endpoint transport | 11/11 | Archived on 2026-09-02 |
 
@@ -354,6 +354,10 @@ composes a managed profile from explicit paths for configuration, identity,
 database, nodes, pages, files, and the socket, with no global fallback. A
 stopped Quick profile promotes to Local through a staged sibling and one
 atomic rename.
+
+Snapshots are immutable hashed generations. A running profile snapshots
+through SQLite online backup over the live connections. A snapshot restores to
+an unused destination as a new generation and is never modified.
 
 The profile lifecycle covers coherent Quick and Local roots, atomic promotion,
 and coherent snapshots. It also covers verified custody recovery, encrypted
