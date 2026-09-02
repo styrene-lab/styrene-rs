@@ -32,7 +32,7 @@
 - [x] 4.1 Replace TUI socket framing and payload-map parsing with the shared client
 - [x] 4.2 Preserve TUI command authorization, generation checks, subscriptions, and polling behavior
 - [x] 4.3 Remove obsolete TUI client code after parity tests pass
-- [ ] 4.4 Run TUI unit, integration, Live-failure, Embedded, and terminal smoke checks
+- [x] 4.4 Run TUI unit, integration, Live-failure, Embedded, and terminal smoke checks
 
 ## 5. CLI Migration
 <!-- specs: frontend-session/spec -->
@@ -44,15 +44,15 @@
 ## 6. Cross-Repository Dioxus Migration
 <!-- specs: frontend-session/spec -->
 
-- [ ] 6.1 In `styrene-ui`, pin the reviewed `styrene-rs` revision and replace the Dioxus request broker and daemon bridge with the public client and sessions
-- [ ] 6.2 In `styrene-ui`, adapt existing stores without creating duplicate IPC domain records
-- [ ] 6.3 In `styrene-ui`, preserve explicit Live, Embedded, and Fixture profile behavior
-- [ ] 6.4 In `styrene-ui`, remove obsolete Dioxus client code after component and smoke tests pass
+- [x] 6.1 In `styrene-ui`, pin the reviewed `styrene-rs` revision and replace the Dioxus request broker and daemon bridge with the public client and sessions
+- [x] 6.2 In `styrene-ui`, adapt existing stores without creating duplicate IPC domain records
+- [x] 6.3 In `styrene-ui`, preserve explicit Live, Embedded, and Fixture profile behavior
+- [x] 6.4 In `styrene-ui`, remove obsolete Dioxus client code after component and smoke tests pass
 
 ## 7. Verification And Release Boundary
 <!-- specs: frontend-session/spec -->
 
-- [ ] 7.1 Run focused client, session, daemon, CLI, and TUI tests in `styrene-rs`, plus Dioxus tests in `styrene-ui`
-- [ ] 7.2 Run each repository's warning-denied Clippy, formatting, dependency-boundary, and documentation checks
-- [ ] 7.3 Verify ordinary workspace tests require no external daemon, Python runtime, or network access
-- [ ] 7.4 Publish or expose an immutable `styrene-rs` revision consumable by `styrene-ui` and record the tested revision pair
+- [x] 7.1 Run focused client, session, daemon, CLI, and TUI tests in `styrene-rs`, plus Dioxus tests in `styrene-ui`
+- [x] 7.2 Run each repository's warning-denied Clippy, formatting, dependency-boundary, and documentation checks
+- [x] 7.3 Verify ordinary workspace tests require no external daemon, Python runtime, or network access
+- [x] 7.4 Publish or expose an immutable `styrene-rs` revision consumable by `styrene-ui` and record the tested revision pair

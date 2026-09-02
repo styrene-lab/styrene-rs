@@ -2,16 +2,24 @@
 
 ## Reassessment
 
-Neutral wire framing, the bounded IPC client, its overlap and failure tests, and
-the one-shot CLI migration are complete. The TUI still imports server wire
-internals. No common `LiveSession`, `EmbeddedSession`, or `FixtureSession`
-implementation exists, and desktop migration now belongs to the independent
-`styrene-ui` repository.
+Every consumer now runs on the shared client. The client owns negotiation,
+operation coverage, event fanout, compatibility polling, and generation
+filtering. The `styrene-session` crate owns the Live, Embedded, and Fixture
+profiles. The CLI, the TUI, and the `styrene-ui` desktop use those contracts
+and no frontend imports server wire internals.
 
-Residual client work covers negotiation, complete operation coverage, event
-fanout, reconnect, and compatibility polling. Session and consumer work covers
-the TUI, common lifecycle, cross-repository desktop migration, and a retained
-tested revision pair. The updated inventory records the extracted topology.
+## Tested Revision Pair
+
+- `styrene-rs`: `be869620b792a3d1610438b6c3b1deb2d40448e8` (merge of #53).
+- `styrene-ui`: pull request #16 from `feat/shared-client-sessions`, head
+  `f00fb20da8ba8e7a31609d6a8b4888cd5595ed00`, merged as
+  `ecbac266b8bf743958df659bbc75f015d197221b`, pins that revision for the
+  desktop and mobile applications.
+
+Desktop validation at that pair covered `cargo test -p styrene-dx` with 115
+passing tests and the ignored Live-failure smoke run explicitly. It also
+covered warning-denied Clippy with the CI exclusions, workspace tests, and the
+mobile host and iOS target checks.
 
 ## Authority
 
