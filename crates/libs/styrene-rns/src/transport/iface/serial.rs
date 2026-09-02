@@ -281,6 +281,8 @@ mod inner {
                                 context.cancel.clone(),
                                 stop,
                                 context.ifac.clone(),
+                                runtime.epoch(),
+                                context.stats.clone(),
                             ));
                             tx_task.await.ok();
                             rx_task.await.ok();
@@ -301,6 +303,8 @@ mod inner {
                                 context.cancel.clone(),
                                 stop,
                                 context.ifac.clone(),
+                                runtime.epoch(),
+                                context.stats.clone(),
                             ));
                             tx_task.await.ok();
                             rx_task.await.ok();

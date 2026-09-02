@@ -174,6 +174,10 @@ pub(crate) async fn run_hdlc_rx_loop<R>(
 /// Exits when `cancel` or `stop` is triggered, or on write error.
 ///
 /// Suitable for any transport whose write half implements `AsyncWrite + Unpin + Send`.
+/// Write queued messages to one stream. `epoch` is the connection epoch this
+/// stream was published under; a message accepted for another epoch is
+/// discarded rather than replayed over a connection it was never bound to.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_hdlc_tx_loop<W>(
     mut writer: W,
     tx_channel: Arc<Mutex<InterfaceTxReceiver>>,
@@ -181,6 +185,8 @@ pub async fn run_hdlc_tx_loop<W>(
     cancel: CancellationToken,
     stop: CancellationToken,
     ifac: Option<Arc<IfacConfig>>,
+    epoch: u64,
+    stats: Arc<InterfaceStats>,
 ) where
     W: tokio::io::AsyncWrite + Unpin + Send,
 {
@@ -199,6 +205,16 @@ pub async fn run_hdlc_tx_loop<W>(
             _ = stop.cancelled() => break,
             Some(message) = tx_channel_guard.recv() => {
                 drop(tx_channel_guard);
+                if message.epoch != epoch {
+                    stats.record_tx_stale_epoch();
+                    log::debug!(
+                        "stream_iface: discarding egress on {} from epoch {} (stream epoch {})",
+                        iface_address,
+                        message.epoch,
+                        epoch
+                    );
+                    continue;
+                }
                 let packet = message.packet;
                 let mut output = OutputBuffer::new(&mut tx_buffer);
 
@@ -246,7 +262,7 @@ pub async fn run_hdlc_tx_loop<W>(
 mod tests {
     use super::*;
     use crate::packet::PacketDataBuffer;
-    use crate::transport::iface::{InterfaceChannel, TxMessage, TxMessageType};
+    use crate::transport::iface::{InterfaceChannel, QueuedTx, TxMessage, TxMessageType};
     use tokio::time::{Duration, timeout};
 
     fn frame(data: &[u8]) -> Vec<u8> {
@@ -318,6 +334,8 @@ mod tests {
             cancel.clone(),
             stop,
             None,
+            0,
+            Arc::new(InterfaceStats::new()),
         ));
 
         // The same shape as a resource part on a 2048-byte link: a link data
@@ -339,7 +357,10 @@ mod tests {
         assert!(expected.len() > 2048, "test frame must exceed the old 2 KB encode buffer");
 
         tx_send
-            .send(TxMessage { tx_type: TxMessageType::Broadcast(None), packet })
+            .send(QueuedTx::untracked(TxMessage {
+                tx_type: TxMessageType::Broadcast(None),
+                packet,
+            }))
             .await
             .expect("queue frame");
 

@@ -33,8 +33,46 @@ pub use ingress::{
     IngressSnapshot, InterfaceRxReceiver, InterfaceRxSendError, InterfaceRxSender,
 };
 
-pub type InterfaceTxSender = mpsc::Sender<TxMessage>;
-pub type InterfaceTxReceiver = mpsc::Receiver<TxMessage>;
+pub type InterfaceTxSender = mpsc::Sender<QueuedTx>;
+pub type InterfaceTxReceiver = mpsc::Receiver<QueuedTx>;
+
+/// A transmit message bound to the connection epoch of the carrier that
+/// accepted it. A worker serving a later epoch discards it instead of
+/// replaying it over a connection the message was never accepted for.
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub struct QueuedTx {
+    pub epoch: u64,
+    pub message: TxMessage,
+}
+
+impl QueuedTx {
+    /// Bind a message to the epoch its carrier reported when accepting it.
+    pub fn new(epoch: u64, message: TxMessage) -> Self {
+        Self { epoch, message }
+    }
+
+    /// A message not bound to any connection epoch, for carriers without
+    /// connection boundaries and for tests.
+    pub fn untracked(message: TxMessage) -> Self {
+        Self { epoch: 0, message }
+    }
+}
+
+impl core::ops::Deref for QueuedTx {
+    type Target = TxMessage;
+
+    fn deref(&self) -> &TxMessage {
+        &self.message
+    }
+}
+
+/// What a carrier reports about itself at one instant: whether it is online
+/// and the checked connection epoch of its current stream.
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub struct Carrier {
+    pub online: bool,
+    pub epoch: u64,
+}
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum TxMessageType {
@@ -53,6 +91,9 @@ pub struct TxDispatchTrace {
     pub matched_ifaces: usize,
     pub sent_ifaces: usize,
     pub failed_ifaces: usize,
+    /// Interfaces that matched but reported themselves disconnected, so the
+    /// message was refused instead of retained for a later connection.
+    pub offline_ifaces: usize,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -296,6 +337,12 @@ impl InterfaceState {
     pub const fn is_online(self) -> bool {
         matches!(self, Self::Listening | Self::Connected | Self::Active)
     }
+
+    /// The carrier has told us it currently has no connection. Interfaces
+    /// that never report state (host-driven channels) are not disconnected.
+    pub const fn is_disconnected(self) -> bool {
+        matches!(self, Self::Connecting | Self::Retrying | Self::Closed)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -441,7 +488,14 @@ impl InterfaceRuntime {
             return;
         }
         if state.is_online() && !metadata.state.is_online() {
-            metadata.generation = metadata.generation.saturating_add(1);
+            // The connection epoch is checked, never wrapped: a carrier that
+            // exhausts its epochs stays offline rather than reusing one.
+            let Some(next) = metadata.generation.checked_add(1) else {
+                log::error!("iface: connection epoch exhausted; carrier stays offline");
+                metadata.state = InterfaceState::Retrying;
+                return;
+            };
+            metadata.generation = next;
         }
         metadata.state = state;
         let event = InterfaceStateEvent { state, generation: metadata.generation };
@@ -467,6 +521,22 @@ impl InterfaceRuntime {
 
     pub(crate) fn descriptor(&self) -> InterfaceDescriptor {
         self.metadata.lock().expect("interface runtime lock").descriptor.clone()
+    }
+
+    /// Online status and connection epoch read together under one lock.
+    pub(crate) fn carrier(&self) -> Carrier {
+        let metadata = self.metadata.lock().expect("interface runtime lock");
+        Carrier { online: !metadata.state.is_disconnected(), epoch: metadata.generation }
+    }
+
+    /// The connection epoch of the current stream.
+    pub(crate) fn epoch(&self) -> u64 {
+        self.metadata.lock().expect("interface runtime lock").generation
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_generation_for_test(&self, generation: u64) {
+        self.metadata.lock().expect("interface runtime lock").generation = generation;
     }
 
     /// Hot-apply both internal announce policy flags.
@@ -578,6 +648,9 @@ pub struct InterfaceStats {
     excessive_path_request_tags: AtomicU64,
     valid_blackhole: AtomicU64,
     not_next_hop: AtomicU64,
+
+    tx_offline: AtomicU64,
+    tx_stale_epoch: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -606,6 +679,12 @@ pub struct InterfaceViolationSnapshot {
 pub struct InterfaceFilterSnapshot {
     pub valid_blackhole: u64,
     pub not_next_hop: u64,
+
+    /// Egress refused because the carrier reported itself disconnected.
+    pub tx_offline: u64,
+    /// Egress discarded by a worker because it was accepted for an earlier
+    /// connection epoch.
+    pub tx_stale_epoch: u64,
 }
 
 impl InterfaceStats {
@@ -620,6 +699,9 @@ impl InterfaceStats {
             excessive_path_request_tags: AtomicU64::new(0),
             valid_blackhole: AtomicU64::new(0),
             not_next_hop: AtomicU64::new(0),
+
+            tx_offline: AtomicU64::new(0),
+            tx_stale_epoch: AtomicU64::new(0),
         }
     }
 
@@ -627,6 +709,16 @@ impl InterfaceStats {
         let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             Some(value.saturating_add(1))
         });
+    }
+
+    /// Egress refused because the carrier reported itself disconnected.
+    pub fn record_tx_offline(&self) {
+        Self::increment(&self.tx_offline);
+    }
+
+    /// Egress discarded because it belonged to an earlier connection epoch.
+    pub fn record_tx_stale_epoch(&self) {
+        Self::increment(&self.tx_stale_epoch);
     }
 
     pub fn record_drop(&self, reason: InterfaceDropReason) {
@@ -658,6 +750,9 @@ impl InterfaceStats {
             filters: InterfaceFilterSnapshot {
                 valid_blackhole: self.valid_blackhole.load(Ordering::Relaxed),
                 not_next_hop: self.not_next_hop.load(Ordering::Relaxed),
+
+                tx_offline: self.tx_offline.load(Ordering::Relaxed),
+                tx_stale_epoch: self.tx_stale_epoch.load(Ordering::Relaxed),
             },
         }
     }
@@ -1260,7 +1355,17 @@ impl InterfaceManager {
                 && !(is_path_request && iface.runtime.should_egress_limit_path_request(now))
             {
                 trace.matched_ifaces += 1;
-                match iface.tx_send.try_send(message) {
+                // Admission binds atomically to the carrier's reported state and
+                // epoch: a disconnected carrier refuses the message outright
+                // instead of retaining it for replay after it reconnects.
+                let carrier = iface.runtime.carrier();
+                if !carrier.online {
+                    trace.offline_ifaces += 1;
+                    iface.stats.record_tx_offline();
+                    continue;
+                }
+                let queued = QueuedTx::new(carrier.epoch, message);
+                match iface.tx_send.try_send(queued) {
                     Ok(()) => {
                         trace.sent_ifaces += 1;
                         iface.stats.tx_bytes.fetch_add(pkt_bytes, Ordering::Relaxed);
@@ -1271,7 +1376,7 @@ impl InterfaceManager {
                     Err(mpsc::error::TrySendError::Full(_)) => {
                         match tokio::time::timeout(
                             Duration::from_millis(IFACE_TX_ENQUEUE_TIMEOUT_MS),
-                            iface.tx_send.send(message),
+                            iface.tx_send.send(queued),
                         )
                         .await
                         {
@@ -1728,5 +1833,223 @@ mod tests {
         assert!(manager.set_announce_policy(&boundary_hop.address, None, None));
         let trace = manager.send(local).await;
         assert_eq!(trace.sent_ifaces, 4, "local announcements ignore the policy");
+    }
+
+    fn epoch_packet(payload: &[u8]) -> TxMessage {
+        TxMessage {
+            tx_type: TxMessageType::Broadcast(None),
+            packet: Packet {
+                header: crate::packet::Header {
+                    packet_type: crate::packet::PacketType::Data,
+                    ..Default::default()
+                },
+                destination: AddressHash::new([0x61; 16]),
+                data: crate::packet::PacketDataBuffer::new_from_slice(payload),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn disconnected_carrier_refuses_egress_while_a_healthy_interface_proceeds() {
+        let mut manager = InterfaceManager::new(4);
+        let (mut down, down_control) = manager.new_host_channel(4, InterfaceDescriptor::default());
+        let (mut up, up_control) = manager.new_host_channel(4, InterfaceDescriptor::default());
+        down_control.set_state(InterfaceState::Connected);
+        down_control.set_state(InterfaceState::Retrying);
+        up_control.set_state(InterfaceState::Connected);
+
+        let started = Instant::now();
+        let trace = manager.send(epoch_packet(b"while down")).await;
+        assert!(started.elapsed() < Duration::from_millis(IFACE_TX_ENQUEUE_TIMEOUT_MS));
+        assert_eq!(
+            trace,
+            TxDispatchTrace {
+                matched_ifaces: 2,
+                sent_ifaces: 1,
+                failed_ifaces: 0,
+                offline_ifaces: 1
+            }
+        );
+        assert!(down.tx_channel.try_recv().is_err(), "a disconnected carrier retains nothing");
+        let queued = up.tx_channel.try_recv().expect("healthy interface receives the packet");
+        assert_eq!(queued.epoch, 1);
+        assert_eq!(queued.packet.data.as_slice(), b"while down");
+        let snapshots = manager.interface_snapshots();
+        let down_snapshot = snapshots.iter().find(|s| s.hash == down.address).expect("down");
+        assert_eq!(down_snapshot.filters.tx_offline, 1);
+
+        down_control.set_state(InterfaceState::Connected);
+        let trace = manager.send(epoch_packet(b"after reconnect")).await;
+        assert_eq!(trace.sent_ifaces, 2);
+        assert_eq!(trace.offline_ifaces, 0);
+        let queued = down.tx_channel.try_recv().expect("reconnected carrier accepts fresh traffic");
+        assert_eq!(queued.epoch, 2, "the second connection has the next epoch");
+        assert_eq!(queued.packet.data.as_slice(), b"after reconnect");
+        assert!(up.tx_channel.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn queued_traffic_binds_to_its_epoch_and_a_later_stream_discards_it() {
+        let mut manager = InterfaceManager::new(4);
+        let (channel, control) = manager.new_host_channel(8, InterfaceDescriptor::default());
+        let stats =
+            manager.stats_map.lock().expect("stats").get(&channel.address).cloned().expect("stats");
+
+        control.set_state(InterfaceState::Connected);
+        assert_eq!(manager.send(epoch_packet(b"epoch one")).await.sent_ifaces, 1);
+        control.set_state(InterfaceState::Retrying);
+        let refused = manager.send(epoch_packet(b"while offline")).await;
+        assert_eq!((refused.sent_ifaces, refused.offline_ifaces), (0, 1));
+        control.set_state(InterfaceState::Connected);
+        let carrier = manager.ifaces[0].runtime.carrier();
+        assert_eq!(carrier, Carrier { online: true, epoch: 2 });
+        assert_eq!(manager.send(epoch_packet(b"epoch two")).await.sent_ifaces, 1);
+
+        // The new stream's writer drains the queue: the epoch-1 item is
+        // discarded, the epoch-2 item is written.
+        let (writer, mut reader) = tokio::io::duplex(8 * 1024);
+        let (_rx, tx_recv) = channel.split();
+        let cancel = CancellationToken::new();
+        let stop = CancellationToken::new();
+        let task = tokio::spawn(super::stream_iface::run_hdlc_tx_loop(
+            writer,
+            Arc::new(tokio::sync::Mutex::new(tx_recv)),
+            AddressHash::new([0x62; 16]),
+            cancel.clone(),
+            stop,
+            None,
+            carrier.epoch,
+            stats.clone(),
+        ));
+        let mut written = Vec::new();
+        let mut buffer = [0u8; 4096];
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline && !written.windows(9).any(|w| w == b"epoch two") {
+            match tokio::time::timeout(
+                Duration::from_millis(50),
+                tokio::io::AsyncReadExt::read(&mut reader, &mut buffer),
+            )
+            .await
+            {
+                Ok(Ok(n)) if n > 0 => written.extend_from_slice(&buffer[..n]),
+                _ => {}
+            }
+        }
+        cancel.cancel();
+        task.await.expect("writer task");
+        assert!(written.windows(9).any(|w| w == b"epoch two"), "fresh traffic is written");
+        assert!(!written.windows(9).any(|w| w == b"epoch one"), "stale traffic is never replayed");
+        assert!(!written.windows(13).any(|w| w == b"while offline"));
+        assert_eq!(stats.snapshot().filters.tx_stale_epoch, 1);
+        assert_eq!(stats.snapshot().filters.tx_offline, 1);
+    }
+
+    #[tokio::test]
+    async fn connection_epoch_is_checked_and_never_wraps() {
+        let mut manager = InterfaceManager::new(4);
+        let (mut channel, control) = manager.new_host_channel(4, InterfaceDescriptor::default());
+        control.set_state(InterfaceState::Connected);
+        control.set_state(InterfaceState::Retrying);
+        manager.ifaces[0].runtime.set_generation_for_test(u64::MAX);
+        control.set_state(InterfaceState::Connected);
+        let carrier = manager.ifaces[0].runtime.carrier();
+        assert_eq!(
+            carrier,
+            Carrier { online: false, epoch: u64::MAX },
+            "an exhausted carrier stays offline"
+        );
+        let trace = manager.send(epoch_packet(b"never")).await;
+        assert_eq!((trace.sent_ifaces, trace.offline_ifaces), (0, 1));
+        assert!(channel.tx_channel.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires loopback TCP sockets and the reconnect delay"]
+    async fn tcp_client_never_replays_pre_reconnect_traffic_on_a_new_stream() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let addr = listener.local_addr().expect("addr");
+        let mut manager = InterfaceManager::new(4);
+        let address = manager.spawn(
+            super::tcp_client::TcpClient::new(addr.to_string()),
+            super::tcp_client::TcpClient::spawn,
+        );
+        let wait_state = |manager: &InterfaceManager, wanted: InterfaceState| {
+            let hash = address;
+            let snapshots = manager.interface_snapshots();
+            snapshots.iter().any(|s| s.hash == hash && s.state == wanted)
+        };
+        let (mut first, _) = listener.accept().await.expect("first connection");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !wait_state(&manager, InterfaceState::Connected) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("connected");
+
+        assert_eq!(manager.send(epoch_packet(b"first stream")).await.sent_ifaces, 1);
+        let mut buffer = [0u8; 4096];
+        let n = tokio::time::timeout(Duration::from_secs(2), first.read(&mut buffer))
+            .await
+            .expect("read")
+            .expect("bytes");
+        assert!(buffer[..n].windows(12).any(|w| w == b"first stream"));
+        // Take the server away entirely so the client cannot reconnect until
+        // the listener is back.
+        drop(first);
+        drop(listener);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let disconnected = manager
+                    .interface_snapshots()
+                    .iter()
+                    .any(|s| s.hash == address && s.state.is_disconnected());
+                if disconnected {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("disconnected");
+
+        let trace = manager.send(epoch_packet(b"while disconnected")).await;
+        assert_eq!((trace.sent_ifaces, trace.offline_ifaces), (0, 1));
+
+        let listener = tokio::net::TcpListener::bind(addr).await.expect("listener again");
+        let (mut second, _) = tokio::time::timeout(Duration::from_secs(15), listener.accept())
+            .await
+            .expect("reconnect")
+            .expect("second connection");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !wait_state(&manager, InterfaceState::Connected) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("reconnected");
+        assert_eq!(manager.send(epoch_packet(b"second stream")).await.sent_ifaces, 1);
+        let mut received = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline && !received.windows(13).any(|w| w == b"second stream") {
+            if let Ok(Ok(n)) =
+                tokio::time::timeout(Duration::from_millis(100), second.read(&mut buffer)).await
+                && n > 0
+            {
+                received.extend_from_slice(&buffer[..n]);
+            }
+        }
+        assert!(received.windows(13).any(|w| w == b"second stream"));
+        assert!(
+            !received.windows(18).any(|w| w == b"while disconnected"),
+            "no replay after reconnect"
+        );
+        assert!(!received.windows(12).any(|w| w == b"first stream"));
+        manager.shutdown();
+        for task in manager.take_tasks() {
+            let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+        }
     }
 }
