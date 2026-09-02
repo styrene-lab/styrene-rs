@@ -18,10 +18,10 @@ use styrene_ipc::types::{
     ExecResult, FileDownloadInfo, FileDownloadRequest, IdentityBackupExport, IdentityBackupImport,
     IdentityBackupMetadata, IdentityInfo, IdentityRestoreOutcome, InterfaceDetail, LinkSnapshot,
     MessageInfo, MessagePage, MessagingDisposition, MessagingOperationOutcome,
-    NetworkOperationInfo, PageContent, PageNavigationRequest, PathInfo, RebootResult,
-    RemoteStatusInfo, RequestObservationInfo, ResourceTransferInfo, SendChatOutcome,
-    SendChatRequest, StandardPropagationSnapshot, StartNetworkOperationInfo, StartRequestInfo,
-    TunnelInfo, TunnelOperationInfo,
+    NetworkOperationInfo, PageContent, PageInfo, PageNavigationRequest, PathInfo, PropagationQuery,
+    PropagationSnapshot, RebootResult, RemoteStatusInfo, RequestObservationInfo,
+    ResourceTransferInfo, SendChatOutcome, SendChatRequest, StandardPropagationSnapshot,
+    StartNetworkOperationInfo, StartRequestInfo, TunnelInfo, TunnelOperationInfo,
 };
 use styrene_ipc_wire::{self as wire, Frame, MessageType, REQUEST_ID_SIZE};
 use thiserror::Error;
@@ -624,6 +624,35 @@ impl Client {
         let frame =
             self.request(MessageType::QueryStatus, HashMap::new(), DEFAULT_DEADLINE).await?;
         decode_map(&frame.payload, "status")
+    }
+
+    /// One page of the propagation queue snapshot. A stale cursor is a typed
+    /// `Conflict` remote error, left to the caller to restart from the top.
+    pub async fn propagation_snapshot(
+        &self,
+        query: &PropagationQuery,
+    ) -> Result<PropagationSnapshot, ClientError> {
+        let mut payload = HashMap::from([("limit".into(), Value::from(query.limit))]);
+        if let Some(cursor) = &query.cursor {
+            payload.insert("cursor".into(), Value::from(cursor.as_str()));
+        }
+        let frame = self.request(MessageType::QueryPropagation, payload, DEFAULT_DEADLINE).await?;
+        decode_map(&frame.payload, "propagation snapshot")
+    }
+
+    /// Typed page inventory for a host (`"local"` for this node).
+    pub async fn page_inventory(
+        &self,
+        host: &str,
+        timeout_secs: Option<u64>,
+    ) -> Result<Vec<PageInfo>, ClientError> {
+        let mut payload = HashMap::from([("host".into(), Value::from(host))]);
+        if let Some(timeout_secs) = timeout_secs {
+            payload.insert("timeout".into(), Value::from(timeout_secs));
+        }
+        let deadline = Duration::from_secs(timeout_secs.unwrap_or(5).saturating_add(5));
+        let frame = self.request(MessageType::CmdPageListSites, payload, deadline).await?;
+        decode_key(&frame.payload, &["pages"], "page inventory")
     }
 
     pub async fn standard_propagation(&self) -> Result<StandardPropagationSnapshot, ClientError> {
@@ -2232,6 +2261,69 @@ mod tests {
         drop(server);
         assert!(matches!(watch.recv().await, Some(CompatibilityEvent::Lost { .. })));
         assert_eq!(watch.recv().await, None);
+    }
+
+    #[tokio::test]
+    async fn decodes_propagation_snapshots_and_page_inventories() {
+        let (client, mut server) = pair(2);
+        let mut query = PropagationQuery::default();
+        query.limit = 25;
+        query.cursor = Some("c1".into());
+        let snapshot_task = tokio::spawn({
+            let client = client.clone();
+            async move { client.propagation_snapshot(&query).await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("propagation request");
+        assert_eq!(request.msg_type, MessageType::QueryPropagation);
+        assert_eq!(request.payload.get("limit").and_then(Value::as_u64), Some(25));
+        assert_eq!(request.payload.get("cursor").and_then(Value::as_str), Some("c1"));
+        // The daemon spells the snapshot field by field and omits empty lists.
+        let entry = HashMap::from([
+            ("id".to_string(), Value::from("m1")),
+            ("destination_hash".to_string(), Value::from("dest")),
+            ("received_at".to_string(), Value::from(10_i64)),
+            ("expires_at".to_string(), Value::from(20_i64)),
+            ("size_bytes".to_string(), Value::from(64_u64)),
+            ("state".to_string(), Value::from("queued")),
+        ]);
+        let payload = HashMap::from([
+            ("enabled".to_string(), Value::from(true)),
+            ("queue_count".to_string(), Value::from(1_u64)),
+            ("queue_size_bytes".to_string(), Value::from(64_u64)),
+            ("expiry_secs".to_string(), Value::from(3600_u64)),
+            (
+                "queue".to_string(),
+                Value::Array(vec![Value::Map(
+                    entry.into_iter().map(|(k, v)| (Value::from(k), v)).collect(),
+                )]),
+            ),
+            ("peer_state_supported".to_string(), Value::from(false)),
+            ("sync_state_supported".to_string(), Value::from(false)),
+            ("next_cursor".to_string(), Value::from("c2")),
+        ]);
+        reply(&mut server, MessageType::Result, &request.request_id, &payload).await;
+        let snapshot = snapshot_task.await.expect("task").expect("snapshot");
+        assert!(snapshot.enabled);
+        assert_eq!(snapshot.queue.len(), 1);
+        assert_eq!(snapshot.queue[0].id, "m1");
+        assert_eq!(snapshot.queue[0].state, "queued");
+        assert_eq!(snapshot.next_cursor.as_deref(), Some("c2"));
+        assert!(snapshot.peers.is_empty());
+
+        let pages_task = tokio::spawn({
+            let client = client.clone();
+            async move { client.page_inventory("local", None).await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("pages request");
+        assert_eq!(request.msg_type, MessageType::CmdPageListSites);
+        assert_eq!(request.payload.get("host").and_then(Value::as_str), Some("local"));
+        let mut page = PageInfo::default();
+        page.path = "/index".into();
+        page.host_hash = "host".into();
+        page.title = Some("Index".into());
+        let payload = HashMap::from([("pages".to_string(), typed_value(&vec![page.clone()]))]);
+        reply(&mut server, MessageType::Result, &request.request_id, &payload).await;
+        assert_eq!(pages_task.await.expect("task").expect("pages"), vec![page]);
     }
 
     #[tokio::test]
