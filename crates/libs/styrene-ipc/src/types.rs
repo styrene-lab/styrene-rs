@@ -371,6 +371,7 @@ pub struct PropagationQuery {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
+#[serde(default)]
 pub struct PropagationSnapshot {
     pub enabled: bool,
     pub queue_count: u32,
@@ -387,6 +388,7 @@ pub struct PropagationSnapshot {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
+#[serde(default)]
 pub struct PropagationQueueEntry {
     pub id: String,
     pub destination_hash: String,
