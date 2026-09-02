@@ -36,6 +36,7 @@ pub enum PinnedScenarioId {
     PropagatedResourceLxm,
     PropagatedRetrieval,
     NomadnetPages,
+    NomadnetClient,
 }
 
 impl PinnedScenarioId {
@@ -47,13 +48,19 @@ impl PinnedScenarioId {
             Self::PropagatedResourceLxm => "propagated_resource_lxm",
             Self::PropagatedRetrieval => "propagated_retrieval",
             Self::NomadnetPages => "nomadnet_pages",
+            Self::NomadnetClient => "nomadnet_client",
         }
     }
 
-    /// A pinned Python NomadNet client fetching pages and files from the Rust
-    /// native host. No LXMF message is exchanged.
+    /// NomadNet page scenarios in either direction. No LXMF message is
+    /// exchanged, so LXMF sender evidence does not apply.
     pub const fn is_nomadnet(self) -> bool {
-        matches!(self, Self::NomadnetPages)
+        matches!(self, Self::NomadnetPages | Self::NomadnetClient)
+    }
+
+    /// The Rust native client browsing a pinned Python NomadNet node.
+    pub const fn is_nomadnet_client(self) -> bool {
+        matches!(self, Self::NomadnetClient)
     }
 
     /// The Rust node acts as the propagation store: Python queues a message
@@ -85,7 +92,8 @@ impl PinnedScenarioId {
             | Self::Opportunistic
             | Self::PropagatedResourceLxm
             | Self::PropagatedRetrieval
-            | Self::NomadnetPages => "packet",
+            | Self::NomadnetPages
+            | Self::NomadnetClient => "packet",
         }
     }
 
@@ -95,7 +103,10 @@ impl PinnedScenarioId {
     pub const fn expected_python_state(self) -> &'static str {
         match self {
             Self::Direct | Self::DirectResource | Self::Opportunistic => "8",
-            Self::PropagatedResourceLxm | Self::PropagatedRetrieval | Self::NomadnetPages => "4",
+            Self::PropagatedResourceLxm
+            | Self::PropagatedRetrieval
+            | Self::NomadnetPages
+            | Self::NomadnetClient => "4",
         }
     }
 
@@ -107,7 +118,8 @@ impl PinnedScenarioId {
             Self::Direct
             | Self::Opportunistic
             | Self::PropagatedRetrieval
-            | Self::NomadnetPages => "1",
+            | Self::NomadnetPages
+            | Self::NomadnetClient => "1",
         }
     }
 }
@@ -168,6 +180,12 @@ pub const PINNED_SCENARIOS: &[PinnedScenarioDefinition] = &[
         title: "Pinned NomadNet Host Interop",
         description: "Fetches static, dynamic, allow-listed, denied, and file paths from the Rust native NomadNet host with a pinned Python client.",
         controls: &["announce", "request", "cancel"],
+    },
+    PinnedScenarioDefinition {
+        id: PinnedScenarioId::NomadnetClient,
+        title: "Pinned NomadNet Client Interop",
+        description: "Browses static, dynamic, allow-listed, denied, and file paths on a pinned Python NomadNet node with the Rust native client.",
+        controls: &["announce", "request", "download", "cancel"],
     },
     PinnedScenarioDefinition {
         id: PinnedScenarioId::PropagatedRetrieval,
@@ -548,6 +566,7 @@ pub fn python_lxmf_scenario(
     let bidirectional = scenario_id.is_bidirectional();
     let retrieval = scenario_id.is_retrieval();
     let nomadnet = scenario_id.is_nomadnet();
+    let nomadnet_client = scenario_id.is_nomadnet_client();
     let scenario_id = scenario_id.as_str();
     let correlation_id = format!(
         "interop-{scenario_id}-{}-{}",
@@ -611,7 +630,9 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
         correlation_id: correlation_id.clone(),
         revision_probes,
         program: PathBuf::from("bash"),
-        args: if nomadnet {
+        args: if nomadnet_client {
+            vec![repo_root.join("scripts/rust-nomadnet-client-smoke.sh").display().to_string()]
+        } else if nomadnet {
             vec![repo_root.join("scripts/python-nomadnet-smoke.sh").display().to_string()]
         } else {
             vec![
@@ -627,7 +648,19 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
             ("REMOTE_STATUS_TIMEOUT_SECS".to_string(), remote_status_timeout_secs.to_string()),
         ]),
         timeout,
-        required_milestones: if nomadnet {
+        required_milestones: if nomadnet_client {
+            vec![
+                "topology-configured".to_string(),
+                "rust-ready".to_string(),
+                "python-ready".to_string(),
+                "nomadnet-client-static".to_string(),
+                "nomadnet-client-dynamic".to_string(),
+                "nomadnet-client-allowed".to_string(),
+                "nomadnet-client-denied".to_string(),
+                "nomadnet-client-file".to_string(),
+                "child-cleanup-complete".to_string(),
+            ]
+        } else if nomadnet {
             vec![
                 "topology-configured".to_string(),
                 "rust-ready".to_string(),
@@ -673,7 +706,9 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
                 "child-cleanup-complete".to_string(),
             ]
         },
-        required_assertions: if nomadnet {
+        required_assertions: if nomadnet_client {
+            vec!["rust-to-python-nomadnet-pages".to_string()]
+        } else if nomadnet {
             vec!["python-to-rust-nomadnet-pages".to_string()]
         } else if bidirectional {
             vec!["python-to-rust-content".to_string(), "rust-to-python-content".to_string()]
@@ -685,7 +720,14 @@ print(subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=Tru
         } else {
             vec!["python-to-rust-propagation-item".to_string()]
         },
-        required_artifacts: if nomadnet {
+        required_artifacts: if nomadnet_client {
+            vec![
+                "scenario-report".to_string(),
+                "nomadnet-client-proof".to_string(),
+                "rust-daemon-log".to_string(),
+                "python-node-log".to_string(),
+            ]
+        } else if nomadnet {
             vec![
                 "scenario-report".to_string(),
                 "nomadnet-proof".to_string(),
@@ -1107,6 +1149,9 @@ fn validate_protocol_artifacts(
     if let Some(scenario_id) = pinned_scenario(&scenario.id).map(|definition| definition.id)
         && scenario_id.is_nomadnet()
     {
+        if scenario_id.is_nomadnet_client() {
+            return validate_nomadnet_client_proof(scenario, &load);
+        }
         return validate_nomadnet_proof(scenario, &load);
     }
     if let Some(scenario_id) = pinned_scenario(&scenario.id).map(|definition| definition.id) {
@@ -1263,6 +1308,52 @@ fn validate_nomadnet_proof(
             == json_string_field(expected, "file_sha256")
         && !json_string_field(expected, "file_sha256").is_empty();
     (!matches).then(|| "retained NomadNet proof does not match expected values".to_string())
+}
+
+/// The Rust-client proof must show the native client fetching canonical
+/// content from the Python node, the allow list honoured for the Rust identity,
+/// the node's denial page for an unlisted identity, and a verified file.
+fn validate_nomadnet_client_proof(
+    scenario: &LiveScenario,
+    load: &dyn Fn(&str) -> Result<serde_json::Value, String>,
+) -> Option<String> {
+    let proof = match load("nomadnet-client-proof") {
+        Ok(proof) => proof,
+        Err(error) => return Some(error),
+    };
+    if json_string_field(&proof, "scenario") != scenario.id
+        || json_string_field(&proof, "correlation_id") != scenario.correlation_id
+    {
+        return Some("retained NomadNet client proof does not match this run".to_string());
+    }
+    let expected = &proof["expected"];
+    let results = &proof["results"];
+    let rust_identity = json_string_field(&proof, "rust_identity");
+    let node = json_string_field(&proof, "python_node");
+    let page_ok = |name: &str, digest_key: &str| {
+        json_string_field(&results[name], "outcome") == "succeeded"
+            && json_string_field(&results[name], "host_hash") == node
+            && !json_string_field(expected, digest_key).is_empty()
+            && json_string_field(&results[name], "source_sha256")
+                == json_string_field(expected, digest_key)
+    };
+    let dynamic = json_string_field(&results["dynamic"], "source_text");
+    let matches = rust_identity.len() == 32
+        && node.len() == 32
+        && page_ok("static", "static_sha256")
+        && page_ok("allowed", "private_sha256")
+        && json_string_field(&results["dynamic"], "outcome") == "succeeded"
+        && dynamic.contains("field=rust")
+        && dynamic.contains(&format!("remote={rust_identity}"))
+        && json_string_field(&results["denied"], "outcome") == "succeeded"
+        && json_string_field(&results["denied"], "source_text").contains("Request Not Allowed")
+        && matches!(json_string_field(&results["file"], "state"), "completed" | "saved")
+        && json_string_field(&results["file"], "sha256")
+            == json_string_field(expected, "file_sha256")
+        && !json_string_field(expected, "file_sha256").is_empty()
+        && results["file"].get("integrity_verified").and_then(serde_json::Value::as_bool)
+            == Some(true);
+    (!matches).then(|| "retained NomadNet client proof does not match expected values".to_string())
 }
 
 /// The retrieval proof must show the queued item acknowledged on the Rust node

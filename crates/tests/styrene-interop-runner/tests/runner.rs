@@ -57,8 +57,9 @@ fn fake_scenario(script: &str, evidence_dir: &Path) -> LiveScenario {
 
 #[test]
 fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
-    assert_eq!(PINNED_SCENARIOS.len(), 6);
+    assert_eq!(PINNED_SCENARIOS.len(), 7);
     assert_eq!("direct".parse(), Ok(PinnedScenarioId::Direct));
+    assert_eq!("nomadnet_client".parse(), Ok(PinnedScenarioId::NomadnetClient));
     assert_eq!("nomadnet_pages".parse(), Ok(PinnedScenarioId::NomadnetPages));
     assert_eq!("propagated_retrieval".parse(), Ok(PinnedScenarioId::PropagatedRetrieval));
     assert_eq!("direct_resource".parse(), Ok(PinnedScenarioId::DirectResource));
@@ -112,6 +113,19 @@ fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
     assert_eq!(nomadnet.args.len(), 1);
     assert_eq!(nomadnet.required_assertions, ["python-to-rust-nomadnet-pages"]);
     assert!(nomadnet.required_artifacts.iter().any(|name| name == "nomadnet-proof"));
+    let client = python_lxmf_scenario(
+        Path::new("/repo"),
+        PinnedScenarioId::NomadnetClient,
+        Duration::from_secs(300),
+        "/pinned/python",
+    );
+    assert!(PinnedScenarioId::NomadnetClient.is_nomadnet());
+    assert!(PinnedScenarioId::NomadnetClient.is_nomadnet_client());
+    assert!(!PinnedScenarioId::NomadnetPages.is_nomadnet_client());
+    assert!(client.args[0].ends_with("scripts/rust-nomadnet-client-smoke.sh"));
+    assert_eq!(client.required_assertions, ["rust-to-python-nomadnet-pages"]);
+    assert!(client.required_artifacts.iter().any(|name| name == "nomadnet-client-proof"));
+    assert!(client.required_milestones.iter().any(|name| name == "nomadnet-client-file"));
     assert!(nomadnet.revision_probes.iter().any(|probe| probe.name == "python-nomadnet"
         && probe.expected.as_deref() == Some("ad10301569a39d4f43b3d21ae9fc392602c937ca")));
     assert_eq!(PinnedScenarioId::PropagatedRetrieval.expected_python_state(), "4");
