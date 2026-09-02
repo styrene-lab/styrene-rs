@@ -32,7 +32,7 @@ PY_INSTANCE_CONTROL_PORT="${PY_INSTANCE_CONTROL_PORT:-$((PY_SHARED_INSTANCE_PORT
 
 usage() {
   cat <<'EOF'
-Usage: python-lxmd-rust-lxmd-smoke.sh [--scenario direct|opportunistic|propagated_resource_lxm] [--timeout SECONDS]
+Usage: python-lxmd-rust-lxmd-smoke.sh [--scenario direct|direct_resource|opportunistic|propagated_resource_lxm] [--timeout SECONDS]
 EOF
 }
 
@@ -70,7 +70,7 @@ parse_args() {
   done
 
   case "${SCENARIO}" in
-    direct|opportunistic|propagated_resource_lxm) ;;
+    direct|direct_resource|opportunistic|propagated_resource_lxm) ;;
     *)
       echo "unsupported scenario: ${SCENARIO}" >&2
       usage >&2
@@ -466,6 +466,10 @@ PY_MESSAGE_CONTENT="python-smoke-message-$(date +%s)"
 PY_MESSAGE_METHOD="opportunistic"
 if [[ "${SCENARIO}" == "direct" ]]; then
   PY_MESSAGE_METHOD="direct"
+elif [[ "${SCENARIO}" == "direct_resource" ]]; then
+  # Larger than one link packet, so LXMF must carry it as an RNS resource.
+  PY_MESSAGE_METHOD="direct"
+  PY_MESSAGE_CONTENT="python-smoke-resource-$(date +%s)-$(head -c 4096 /dev/zero | tr '\0' 'p')"
 elif [[ "${SCENARIO}" == "propagated_resource_lxm" ]]; then
   PY_MESSAGE_METHOD="propagated"
   PY_MESSAGE_CONTENT="python-smoke-resource-lxm-$(date +%s)-$(head -c 8192 /dev/zero | tr '\0' 'r')"
@@ -512,7 +516,13 @@ propagation_hash = bytes.fromhex(propagation_hash_hex)
 sender_wait_secs = int(sender_wait_secs)
 receive_wait_secs = int(receive_wait_secs)
 
-RNS.Reticulum(configdir=rns_config, loglevel=0)
+# PY_SENDER_LOGLEVEL raises Reticulum logging for harness debugging. Logs go to
+# a file in the sender storage directory because stdout carries the JSON handoff.
+sender_loglevel = int(os.environ.get("PY_SENDER_LOGLEVEL", "0"))
+if sender_loglevel > 0:
+    RNS.logdest = RNS.LOG_FILE
+    RNS.logfile = os.path.join(storage_dir, "rns-sender.log")
+RNS.Reticulum(configdir=rns_config, loglevel=sender_loglevel)
 identity = RNS.Identity()
 router = LXMF.LXMRouter(identity=identity, storagepath=storage_dir)
 source = router.register_delivery_identity(identity, display_name="Python Smoke Sender")
@@ -606,6 +616,9 @@ while time.time() < deadline:
                         else None
                     ),
                     "method": message_method,
+                    "representation": (
+                        int(message.representation) if message.representation is not None else None
+                    ),
                 }
             ),
             flush=True,
@@ -676,6 +689,26 @@ payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 print(payload.get("transient_id") or "")
 PY
 )"
+
+# LXMF representations: 1 = PACKET, 2 = RESOURCE. The resource scenarios exist
+# to prove resource-backed transfer, so the Python sender must have used it.
+PY_MESSAGE_REPRESENTATION="$("${PYTHON_BIN}" - <<'PY' "${PY_SEND_LOG}"
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(payload.get("representation") if payload.get("representation") is not None else "")
+PY
+)"
+EXPECTED_PY_REPRESENTATION=1
+if [[ "${SCENARIO}" == "direct_resource" || "${SCENARIO}" == "propagated_resource_lxm" ]]; then
+  EXPECTED_PY_REPRESENTATION=2
+fi
+if [[ "${PY_MESSAGE_REPRESENTATION}" != "${EXPECTED_PY_REPRESENTATION}" ]]; then
+  echo "Python sender used representation '${PY_MESSAGE_REPRESENTATION}', expected ${EXPECTED_PY_REPRESENTATION} for ${SCENARIO}" >&2
+  exit 1
+fi
 
 if [[ "${SCENARIO}" == "propagated_resource_lxm" ]]; then
   for _ in $(seq 1 "${TIMEOUT_SECS}"); do
@@ -816,6 +849,9 @@ RUST_MESSAGE_ID=""
 RUST_OUTBOUND_STATE=""
 if [[ "${SCENARIO}" != "propagated_resource_lxm" ]]; then
   RUST_MESSAGE_CONTENT="rust-smoke-message-$(date +%s)"
+  if [[ "${SCENARIO}" == "direct_resource" ]]; then
+    RUST_MESSAGE_CONTENT="rust-smoke-resource-$(date +%s)-$(head -c 4096 /dev/zero | tr '\0' 'q')"
+  fi
   if ! "${STYRENE_CLI_BIN}" --socket "${RUST_SOCKET}" send \
       "${PY_SENDER_SOURCE_HASH}" \
       "${RUST_MESSAGE_CONTENT}" \
@@ -915,7 +951,7 @@ from pathlib import Path
 with sqlite3.connect(path) as db:
     row = db.execute(
         "SELECT m.id, m.source, m.destination, m.content, m.direction, "
-        "r.requested_method, r.actual_method, r.state "
+        "r.requested_method, r.actual_method, r.state, r.representation "
         "FROM messages m JOIN outbound_routes r ON r.message_id = m.id "
         "WHERE m.id = ? AND m.direction = 'out' LIMIT 1",
         (message_id,),
@@ -950,6 +986,7 @@ proof = {
     "python_receipt": received,
     "route": {
         "actual_method": row[6],
+        "representation": row[8],
         "requested_method": row[5],
         "state": row[7],
     },
@@ -986,6 +1023,7 @@ fi
     "${PY_SENDER_SOURCE_HASH}" \
     "${PY_MESSAGE_ID}" \
     "${PY_MESSAGE_TRANSIENT_ID}" \
+  "${PY_MESSAGE_REPRESENTATION}" \
   "${RUST_MESSAGE_CONTENT}" \
   "${RUST_MESSAGE_ID}" \
   "${RUST_OUTBOUND_STATE}" \
@@ -1007,12 +1045,13 @@ import sys
     py_sender_source_hash,
     py_message_id,
     py_message_transient_id,
+    py_message_representation,
     rust_message_content,
     rust_message_id,
     rust_outbound_state,
     scenario,
     correlation_id,
-) = sys.argv[1:18]
+) = sys.argv[1:19]
 
 report = {
     "status": "pass",
@@ -1023,6 +1062,7 @@ report = {
         "python_sender_source_hash": py_sender_source_hash,
         "python_message_id": py_message_id,
         "python_message_transient_id": py_message_transient_id,
+        "python_message_representation": py_message_representation,
         "rust_to_python_outbound_content": rust_message_content,
         "rust_message_id": rust_message_id,
         "rust_outbound_state": rust_outbound_state,
