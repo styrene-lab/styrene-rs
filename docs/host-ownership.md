@@ -3,8 +3,8 @@
 The hardening and parity corpus is consolidated on `main` (see
 `docs/remaining-workstream-delta.md`). The remaining work is split by the
 host that can produce its evidence. Each host works on its own long-lived
-branch, branched from the consolidated `main` on 2026-09-02, and lands
-finished work on `main` through pull requests as before.
+branch, cut from the consolidated `main` on 2026-09-02. Finished work lands
+on `main` through pull requests as before.
 
 | Host | Branch | Owns |
 |------|--------|------|

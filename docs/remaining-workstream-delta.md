@@ -289,7 +289,9 @@ Authority:
 
 The Reticulum 1.5 parity wave, the FreeTAK RNS hardening wave, and the Beechat
 RNS corrections wave are complete and archived. Together they close the
-protocol-core defects that the reconciliation found. The security groups cover
+protocol-core defects that the reconciliation found.
+
+The security groups cover
 private secret persistence, classified key fallback, and receipt poison
 recovery. The Link and transport groups cover control validation,
 bound-interface sends, supervised workers, next-hop admission, canonical
@@ -451,12 +453,12 @@ them released. Latest, previous-supported, and Identity-main compatibility lanes
 also remain open.
 
 Every 100-percent ledger has been archived after its OpenSpec archive dry run
-passed. The archived set is the native RNode endpoint transport, the mobile P0
-backend contracts, the shared frontend session, the Reticulum parity waves,
-the FreeTAK hardening wave, the Beechat corrections wave, operation-scoped
-authorization, persistent correlated echo, and the Reticulum 1.5.2
-empty-carrier parity. The baselines under `openspec/baseline/` record their
-behavior. The remaining changes each
+passed. The archived set covers the native RNode endpoint transport, the
+mobile P0 backend contracts, and the shared frontend session. It also covers
+the Reticulum parity waves, the FreeTAK hardening wave, the Beechat
+corrections wave, operation-scoped authorization, persistent correlated echo,
+and the Reticulum 1.5.2 empty-carrier parity. The baselines under
+`openspec/baseline/` record their behavior. The remaining changes each
 carry a single, separable gate: hardware or packaged evidence, publication
 approval, launcher packaging, or repository governance.
 
