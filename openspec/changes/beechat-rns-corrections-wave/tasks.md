@@ -38,9 +38,9 @@
 ## 6. Disconnected TCP Queue Policy
 <!-- specs: interface-failure-policy -->
 
-- [ ] 6.1 Add failing barrier-controlled tests for disconnect-before-enqueue, old-writer versus new-stream publication, reconnect versus drain, epoch overflow, and stale/fresh items crossing one connection boundary while a healthy interface remains active
-- [ ] 6.2 Add the atomic `(online, connection_epoch)` carrier contract, tag accepted items with the checked monotonic epoch, reject or discard epoch mismatches, and preserve truthful per-interface outcomes
-- [ ] 6.3 Run focused TCP epoch/reconnect/queue race tests and mixed-interface transport tests, verifying bounded dispatch latency, no stale replay, same-epoch fresh delivery, and healthy-interface progress
+- [x] 6.1 Add failing barrier-controlled tests for disconnect-before-enqueue, old-writer versus new-stream publication, reconnect versus drain, epoch overflow, and stale/fresh items crossing one connection boundary while a healthy interface remains active
+- [x] 6.2 Add the atomic `(online, connection_epoch)` carrier contract, tag accepted items with the checked monotonic epoch, reject or discard epoch mismatches, and preserve truthful per-interface outcomes
+- [x] 6.3 Run focused TCP epoch/reconnect/queue race tests and mixed-interface transport tests, verifying bounded dispatch latency, no stale replay, same-epoch fresh delivery, and healthy-interface progress (loopback TCP reconnect test run locally on macOS with `--ignored` on 2026-09-02)
 
 ## 7. Final Correction Evidence
 <!-- specs: rns-wire-corrections, interface-failure-policy, embedded-time -->

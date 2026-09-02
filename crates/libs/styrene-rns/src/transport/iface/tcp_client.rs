@@ -129,6 +129,7 @@ impl TcpClient {
                 runtime.set_remote_endpoint(InterfaceEndpoint::Socket(remote_addr));
             }
             runtime.set_state(InterfaceState::Connected);
+            let epoch = runtime.epoch();
             if let Err(error) = configure_socket_liveness(&stream) {
                 log::warn!("tcp_client: failed to configure keepalive for <{}>: {}", addr, error);
             }
@@ -169,8 +170,12 @@ impl TcpClient {
                     cancel,
                     stop.clone(),
                     ifac,
+                    epoch,
+                    context.stats.clone(),
                 ))
             };
+            let rx_abort = rx_task.abort_handle();
+            let tx_abort = tx_task.abort_handle();
 
             tokio::select! {
                 _ = iface_stop.cancelled() => {}
@@ -200,6 +205,11 @@ impl TcpClient {
                 }
             }
             stop.cancel();
+            // Neither half of the old stream may outlive its epoch: the old
+            // writer must be gone before a new stream can be published.
+            rx_abort.abort();
+            tx_abort.abort();
+            tokio::task::yield_now().await;
             runtime.set_state(if accepted {
                 InterfaceState::Closed
             } else {
