@@ -44,7 +44,7 @@ authorization.
 | iOS App Lock policy | 15/17 | Physical iPhone matrix and separate App Lock versus Keychain prompt observations |
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
-| Shared frontend session | 14/29 | TUI parser removal and smoke checks, common sessions, desktop migration, and revision-pair verification |
+| Shared frontend session | 15/29 | TUI smoke checks, common sessions, desktop migration, and revision-pair verification |
 | Reticulum/LXMF/NomadNet parity | 85/85 | Archive after closure review |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
@@ -310,9 +310,14 @@ fields. Pushed message events therefore never reached the TUI. Typed decoding
 now goes through the shared client decoder, and a loopback e2e test covers the
 TUI daemon layer.
 
-The remaining sequence is TUI parser removal and smoke checks, common sessions,
-cross-repository desktop migration, and aggregate verification against one
-immutable backend/UI pair.
+Removing the TUI's hand parsers exposed a second defect. The serde spelling of
+the NomadNet host discovered capability did not match the wire spelling. No
+typed consumer could decode a device that advertised it. The contract now pins
+the wire spelling and tolerates unknown capabilities.
+
+The remaining sequence is TUI smoke checks, common sessions, cross-repository
+desktop migration, and aggregate verification against one immutable backend/UI
+pair.
 
 The loopback network suite (`just test-network`, `network-tests.yml`) does not
 pass on `main`. Hosted runs 33639376197 (`main`) and 33638808709 stop at the
