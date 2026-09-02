@@ -203,6 +203,17 @@ pub enum MessageType {
     CmdExportIdentityBackup = 0xAE,
     CmdRestoreIdentityBackup = 0xAF,
 
+    // Operator profiles (0xB0-0xBF)
+    QueryProfileInventory = 0xB0,
+    CmdProfileCreate = 0xB1,
+    CmdProfilePromote = 0xB2,
+    CmdProfileSnapshot = 0xB3,
+    CmdProfileRestore = 0xB4,
+    CmdProfileExport = 0xB5,
+    CmdProfileImport = 0xB6,
+    CmdProfileAdopt = 0xB7,
+    QueryProfileOperation = 0xB8,
+
     // Responses (0x80-0x8F)
     Result = 0x81,
     Error = 0x82,
@@ -347,6 +358,15 @@ impl MessageType {
             0xAD => Ok(Self::QueryIdentityBackupMetadata),
             0xAE => Ok(Self::CmdExportIdentityBackup),
             0xAF => Ok(Self::CmdRestoreIdentityBackup),
+            0xB0 => Ok(Self::QueryProfileInventory),
+            0xB1 => Ok(Self::CmdProfileCreate),
+            0xB2 => Ok(Self::CmdProfilePromote),
+            0xB3 => Ok(Self::CmdProfileSnapshot),
+            0xB4 => Ok(Self::CmdProfileRestore),
+            0xB5 => Ok(Self::CmdProfileExport),
+            0xB6 => Ok(Self::CmdProfileImport),
+            0xB7 => Ok(Self::CmdProfileAdopt),
+            0xB8 => Ok(Self::QueryProfileOperation),
             0x80 => Ok(Self::Pong),
             0x81 => Ok(Self::Result),
             0x82 => Ok(Self::Error),
@@ -705,6 +725,9 @@ mod tests {
         assert_eq!(MessageType::QueryIdentityBackupMetadata as u8, 0xAD);
         assert_eq!(MessageType::CmdExportIdentityBackup as u8, 0xAE);
         assert_eq!(MessageType::CmdRestoreIdentityBackup as u8, 0xAF);
+        assert_eq!(MessageType::QueryProfileInventory as u8, 0xB0);
+        assert_eq!(MessageType::QueryProfileOperation as u8, 0xB8);
+        assert_eq!(MessageType::from_byte(0xB4).ok(), Some(MessageType::CmdProfileRestore));
         assert_eq!(MessageType::CmdPinConversation as u8, 0x7C);
         assert_eq!(MessageType::CmdUnpinConversation as u8, 0x7D);
         assert_eq!(MessageType::CmdMuteConversation as u8, 0x7E);

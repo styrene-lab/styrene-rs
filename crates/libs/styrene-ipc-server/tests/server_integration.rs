@@ -2771,3 +2771,6 @@ async fn route_loss_event_carries_snapshot_and_physical_generation() {
     );
     server.stop().await;
 }
+
+#[async_trait::async_trait]
+impl styrene_ipc::traits::DaemonProfiles for TestDaemon {}

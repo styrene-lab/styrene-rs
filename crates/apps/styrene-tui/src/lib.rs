@@ -113,6 +113,28 @@ pub async fn start_embedded_runtime(
     .map_err(|error| error.to_string())
 }
 
+/// Start a managed Quick profile for an ephemeral terminal session. Durable
+/// state lives under the session's data directory; the host-private runtime
+/// root stays short because Unix socket paths have a hard length limit.
+pub async fn start_quick_session(options: &TuiOptions) -> Result<styrene_session::Session, String> {
+    let profiles_parent = options.paths.data_dir.join("profiles");
+    let runtime_parent = std::env::temp_dir().join("styrene-rt");
+    for dir in [&profiles_parent, &runtime_parent] {
+        std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    styrene_session::Session::managed(styrene_session::ManagedTarget::Quick {
+        roots: styrene_session::ProfileRoots { profiles_parent, runtime_parent },
+        display_name: "Ghost session",
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 /// Connect to a daemon socket that may still be coming up, retrying briefly.
 pub async fn connect_with_retry(
     socket: &std::path::Path,
@@ -255,15 +277,32 @@ async fn run_terminal(
     let (connection_tx, mut connection_rx) = tokio::sync::mpsc::unbounded_channel();
     app.connection_tx = Some(connection_tx);
 
+    // Ephemeral profiles run as managed Quick profiles through the shared
+    // session layer; the daemon then describes its own profile. Standard
+    // profiles keep their existing composed runtime on the configured paths.
+    let mut quick_session = None;
     let embedded_daemon = if daemon_mode == onboarding::setup::DaemonMode::Embedded {
-        match start_embedded_runtime(options).await {
-            Ok(handle) => {
-                app.conversation.push_system("⬡ embedded runtime ready");
-                Some(handle)
+        if options.runtime_profile.is_ephemeral() {
+            match start_quick_session(options).await {
+                Ok(session) => {
+                    app.conversation.push_system("⬡ quick profile ready");
+                    quick_session = Some(session);
+                }
+                Err(error) => {
+                    app.conversation.push_system(&format!("⬡ quick profile failed: {error}"));
+                }
             }
-            Err(error) => {
-                app.conversation.push_system(&format!("⬡ embedded runtime failed: {error}"));
-                None
+            None
+        } else {
+            match start_embedded_runtime(options).await {
+                Ok(handle) => {
+                    app.conversation.push_system("⬡ embedded runtime ready");
+                    Some(handle)
+                }
+                Err(error) => {
+                    app.conversation.push_system(&format!("⬡ embedded runtime failed: {error}"));
+                    None
+                }
             }
         }
     } else {
@@ -272,7 +311,9 @@ async fn run_terminal(
 
     let connect_result = match daemon_mode {
         onboarding::setup::DaemonMode::Embedded => {
-            if embedded_daemon.is_none() {
+            if let Some(session) = quick_session.as_ref() {
+                connect_with_retry(&session.metadata().endpoint).await
+            } else if embedded_daemon.is_none() {
                 Err("embedded runtime failed to start".into())
             } else {
                 connect_with_retry(&options.paths.daemon_socket).await
@@ -302,8 +343,9 @@ async fn run_terminal(
         }
     };
 
-    // Keep the embedded runtime alive for the full terminal session.
+    // Keep the owned runtime alive for the full terminal session.
     let _embedded_daemon = embedded_daemon;
+    let mut quick_session = quick_session;
 
     // ── Main event loop — 60fps ──────────────────────────────────────────────
     loop {
@@ -363,6 +405,11 @@ async fn run_terminal(
         }
 
         app.tick();
+    }
+
+    // A Quick profile's daemon stops with the session, and its root goes with it.
+    if let Some(mut session) = quick_session.take() {
+        session.close().await;
     }
 
     Ok(())

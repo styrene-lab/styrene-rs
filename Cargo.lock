@@ -4597,6 +4597,7 @@ dependencies = [
  "styrene-ipc-wire",
  "styrene-micron",
  "styrene-rns",
+ "styrene-session",
  "styrened",
  "tachyonfx",
  "tempfile",
