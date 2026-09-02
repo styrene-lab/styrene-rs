@@ -401,15 +401,35 @@ pub struct DaemonFacade {
     /// or the authenticated TLS client identity.
     /// For local IPC (same machine), this is typically the daemon's own identity.
     caller_identity: String,
+    profiles: Option<Arc<crate::profile_manager::ProfileManager>>,
 }
 
 impl DaemonFacade {
+    /// Expose the operator profile lifecycle through this facade.
+    #[must_use]
+    pub fn with_profiles(mut self, profiles: Arc<crate::profile_manager::ProfileManager>) -> Self {
+        self.profiles = Some(profiles);
+        self
+    }
+
+    fn profiles(&self) -> Result<&crate::profile_manager::ProfileManager, IpcError> {
+        self.profiles.as_deref().ok_or_else(|| IpcError::Unavailable {
+            reason: "operator profiles are not managed by this daemon".into(),
+        })
+    }
+
     /// Create a new facade wrapping the given AppContext.
     ///
     /// `caller_identity` is the authenticated identity of the IPC peer.
     /// For local connections, pass the daemon's own identity hash.
     pub fn new(ctx: Arc<AppContext>, caller_identity: String) -> Self {
-        Self { ctx, mobile_diagnostics: None, session_generation: None, caller_identity }
+        Self {
+            ctx,
+            mobile_diagnostics: None,
+            session_generation: None,
+            caller_identity,
+            profiles: None,
+        }
     }
 
     pub(crate) fn new_mobile(
@@ -423,6 +443,7 @@ impl DaemonFacade {
             mobile_diagnostics: Some(diagnostics),
             session_generation: Some(session_generation),
             caller_identity,
+            profiles: None,
         }
     }
 
@@ -2859,6 +2880,78 @@ impl DaemonPages for DaemonFacade {
 
 // DaemonFacade automatically implements `Daemon` because it implements
 // all seven sub-traits.
+
+#[async_trait]
+impl styrene_ipc::traits::DaemonProfiles for DaemonFacade {
+    async fn profile_inventory(&self) -> Result<styrene_ipc::types::ProfileInventory, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        self.profiles()?.inventory()
+    }
+
+    async fn create_profile(
+        &self,
+        request: styrene_ipc::types::ProfileCreateRequest,
+    ) -> Result<styrene_ipc::types::ProfileOperationOutcome, IpcError> {
+        self.require(Capability::PROFILE_MANAGE)?;
+        self.profiles()?.create(request)
+    }
+
+    async fn promote_profile(
+        &self,
+        request: styrene_ipc::types::ProfilePromoteRequest,
+    ) -> Result<styrene_ipc::types::ProfileOperationOutcome, IpcError> {
+        self.require(Capability::PROFILE_MANAGE)?;
+        self.profiles()?.promote(request)
+    }
+
+    async fn snapshot_profile(
+        &self,
+        request: styrene_ipc::types::ProfileSnapshotRequest,
+    ) -> Result<styrene_ipc::types::ProfileOperationOutcome, IpcError> {
+        self.require(Capability::PROFILE_MANAGE)?;
+        self.profiles()?.snapshot(request, &self.ctx)
+    }
+
+    async fn restore_profile(
+        &self,
+        request: styrene_ipc::types::ProfileRestoreRequest,
+    ) -> Result<styrene_ipc::types::ProfileOperationOutcome, IpcError> {
+        self.require(Capability::PROFILE_MANAGE)?;
+        self.profiles()?.restore(request, "restore")
+    }
+
+    async fn export_profile(
+        &self,
+        request: styrene_ipc::types::ProfileExportRequest,
+    ) -> Result<styrene_ipc::types::ProfileOperationOutcome, IpcError> {
+        self.require(Capability::PROFILE_MANAGE)?;
+        self.profiles()?.export(request, &self.ctx)
+    }
+
+    async fn import_profile(
+        &self,
+        request: styrene_ipc::types::ProfileRestoreRequest,
+    ) -> Result<styrene_ipc::types::ProfileOperationOutcome, IpcError> {
+        self.require(Capability::PROFILE_MANAGE)?;
+        self.profiles()?.restore(request, "import")
+    }
+
+    async fn adopt_profile(
+        &self,
+        request: styrene_ipc::types::ProfileAdoptRequest,
+    ) -> Result<styrene_ipc::types::ProfileOperationOutcome, IpcError> {
+        self.require(Capability::PROFILE_MANAGE)?;
+        self.profiles()?.adopt(request)
+    }
+
+    async fn profile_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<styrene_ipc::types::ProfileOperationProgress, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        self.profiles()?.operation(operation_id)
+    }
+}
 
 #[cfg(test)]
 mod tests {

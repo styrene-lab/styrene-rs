@@ -4,15 +4,20 @@
 //! lifecycle of whatever it started to reach it. The three profiles never
 //! fall back to one another:
 //!
-//! - **Live** connects to an existing daemon endpoint. A failure is a typed,
-//!   recoverable connection error; no runtime is started.
-//! - **Embedded** starts a `styrened` runtime in this process and reaches it
-//!   over a private socket, so every operation takes the same typed client
-//!   path as Live. Closing the session shuts the runtime down and releases the
-//!   private socket directory.
+//! - **Connected** reaches an existing daemon endpoint that something else
+//!   owns. A failure is a typed, recoverable connection error; no runtime is
+//!   started.
+//! - **Quick**, **Local**, and **Portable** open a managed operator profile,
+//!   start its daemon in this process, and reach it over the profile's
+//!   host-private socket, so every operation takes the same typed client
+//!   path as Connected. Closing the session shuts the daemon down and
+//!   releases what the profile owns.
 //! - **Fixture** answers the client from a deterministic script over an
 //!   in-process stream pair. It opens no daemon, socket file, or network
 //!   interface, and exposes exactly the operations the script supports.
+//!
+//! Live is an observed runtime condition, not a profile. `live` and
+//! `embedded` remain as constructors for Connected and Quick sessions.
 //!
 //! Sessions return canonical `styrene_ipc` records through
 //! [`styrene_ipc_client::Client`]; they define no second record set.
@@ -26,7 +31,7 @@ use std::time::Duration;
 use rmpv::Value;
 use serde::Serialize;
 use styrene_ipc::IpcError;
-use styrene_ipc::types::{ActiveCapabilitiesInfo, DaemonStatusInfo};
+use styrene_ipc::types::{ActiveCapabilitiesInfo, DaemonStatusInfo, ProfileInfo};
 use styrene_ipc_wire::{self as wire, MessageType, REQUEST_ID_SIZE};
 use thiserror::Error;
 use tokio::net::UnixStream;
@@ -36,14 +41,22 @@ pub use styrene_ipc_client::{
     Client, ClientError, CompatibilityEvent, CompatibilityWatch, ConnectionGeneration,
     DEFAULT_DEADLINE, EventFrame, EventTopic, Negotiation,
 };
+pub use styrened::operator_profile::{
+    MediaCapability, MediaInspector, PortableSelector, StaticMediaInspector,
+};
+pub use styrened::profile_manager::ProfileRoots;
 
 /// Which lifecycle a session owns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SessionProfile {
-    /// An existing daemon endpoint; nothing is started or owned.
-    Live,
-    /// A runtime started in this process and reached over a private socket.
-    Embedded,
+    /// A temporary managed profile, removed when the session closes.
+    Quick,
+    /// A persistent managed profile.
+    Local,
+    /// A managed profile on encrypted removable media.
+    Portable,
+    /// An existing daemon endpoint owned elsewhere; nothing is started.
+    Connected,
     /// A scripted responder over an in-process stream pair.
     Fixture,
 }
@@ -52,10 +65,18 @@ impl SessionProfile {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Live => "live",
-            Self::Embedded => "embedded",
+            Self::Quick => "quick",
+            Self::Local => "local",
+            Self::Portable => "portable",
+            Self::Connected => "connected",
             Self::Fixture => "fixture",
         }
+    }
+
+    /// Whether the session starts and owns a daemon.
+    #[must_use]
+    pub const fn owns_daemon(self) -> bool {
+        matches!(self, Self::Quick | Self::Local | Self::Portable)
     }
 }
 
@@ -94,6 +115,10 @@ pub struct SessionMetadata {
     pub daemon_generation: u64,
     pub capabilities: Option<ActiveCapabilitiesInfo>,
     pub status: DaemonStatusInfo,
+    /// The backend's description of the profile the daemon runs from, when
+    /// the daemon manages profiles. Frontends read profile truth here, not
+    /// from their own mode names.
+    pub profile_info: Option<ProfileInfo>,
 }
 
 /// Why a session could not open.
@@ -109,8 +134,8 @@ pub enum SessionError {
         #[source]
         source: ClientError,
     },
-    /// The embedded runtime failed to start.
-    #[error("embedded runtime failed to start: {message}")]
+    /// The owned runtime or its profile failed to start or open.
+    #[error("managed profile failed: {message}")]
     Runtime { message: String },
     /// The fixture transport could not be created.
     #[error("fixture transport failed: {message}")]
@@ -148,8 +173,29 @@ pub struct EmbeddedConfig {
 
 enum Owned {
     None,
-    Embedded { daemon: Option<Box<styrened::daemon::DaemonHandle>>, _temp: tempfile::TempDir },
-    Fixture { responder: Option<tokio::task::JoinHandle<()>> },
+    Managed {
+        running: Option<Box<styrened::operator_profile::RunningManagedProfile>>,
+        _temp: Option<tempfile::TempDir>,
+    },
+    Fixture {
+        responder: Option<tokio::task::JoinHandle<()>>,
+    },
+}
+
+/// A managed profile to open or create.
+pub enum ManagedTarget<'a> {
+    /// Create a Quick profile under these roots.
+    Quick { roots: ProfileRoots, display_name: &'a str },
+    /// Open an existing Local profile root, or create it with `display_name`
+    /// when it does not exist yet.
+    Local { root: PathBuf, runtime_parent: PathBuf, display_name: Option<&'a str> },
+    /// Open an existing Portable profile by selector on any offered mount.
+    Portable {
+        selector: PortableSelector,
+        mounts: Vec<PathBuf>,
+        runtime_parent: PathBuf,
+        inspector: &'a dyn MediaInspector,
+    },
 }
 
 /// One open frontend session.
@@ -173,68 +219,156 @@ impl fmt::Debug for Session {
 }
 
 impl Session {
-    /// Open a Live session to an existing daemon endpoint with the default
-    /// negotiation deadline. Never starts a runtime.
-    pub async fn live(endpoint: &Path) -> Result<Self, SessionError> {
-        Self::live_with_deadline(endpoint, DEFAULT_DEADLINE).await
+    /// Open a Connected session to a daemon endpoint owned elsewhere, with
+    /// the default negotiation deadline. Never starts a runtime.
+    pub async fn connected(endpoint: &Path) -> Result<Self, SessionError> {
+        Self::connected_with_deadline(endpoint, DEFAULT_DEADLINE).await
     }
 
-    /// Open a Live session, bounding negotiation by `deadline`.
+    /// `Session::connected` under its older name.
+    pub async fn live(endpoint: &Path) -> Result<Self, SessionError> {
+        Self::connected(endpoint).await
+    }
+
+    /// `Session::connected_with_deadline` under its older name.
     pub async fn live_with_deadline(
+        endpoint: &Path,
+        deadline: Duration,
+    ) -> Result<Self, SessionError> {
+        Self::connected_with_deadline(endpoint, deadline).await
+    }
+
+    /// Open a Connected session, bounding negotiation by `deadline`.
+    pub async fn connected_with_deadline(
         endpoint: &Path,
         deadline: Duration,
     ) -> Result<Self, SessionError> {
         let (client, negotiation) =
             Client::connect_unix(endpoint, next_connection_generation(), deadline).await.map_err(
                 |source| SessionError::Connect {
-                    profile: SessionProfile::Live,
+                    profile: SessionProfile::Connected,
                     endpoint: endpoint.to_path_buf(),
                     source,
                 },
             )?;
-        Ok(Self::open(
-            SessionProfile::Live,
+        let mut session = Self::open(
+            SessionProfile::Connected,
             endpoint.to_path_buf(),
             client,
             negotiation,
             Owned::None,
-        ))
+        );
+        session.load_profile_info().await;
+        Ok(session)
     }
 
-    /// Start a `styrened` runtime in this process and open a session to it
-    /// over a private socket. A runtime that starts but cannot be negotiated
-    /// is shut down before the error returns.
+    /// Open a managed profile session: create a Quick profile, open or
+    /// create a Local one, or resolve a Portable one, then start its daemon
+    /// and connect over the profile's host-private socket. The daemon is
+    /// shut down before any error returns.
+    pub async fn managed(target: ManagedTarget<'_>) -> Result<Self, SessionError> {
+        use styrened::operator_profile::StoppedManagedProfile;
+        let runtime = |error: styrened::operator_profile::ProfileError| SessionError::Runtime {
+            message: error.to_string(),
+        };
+        let (profile, stopped) = match target {
+            ManagedTarget::Quick { roots, display_name } => (
+                SessionProfile::Quick,
+                StoppedManagedProfile::create_quick(
+                    &roots.profiles_parent,
+                    &roots.runtime_parent,
+                    display_name,
+                )
+                .map_err(runtime)?,
+            ),
+            ManagedTarget::Local { root, runtime_parent, display_name } => {
+                let stopped = if root.join("manifest.toml").is_file() {
+                    StoppedManagedProfile::open(&root, &runtime_parent).map_err(runtime)?
+                } else {
+                    let name = display_name.ok_or_else(|| SessionError::Runtime {
+                        message: format!(
+                            "{} is not a profile and no display name was given",
+                            root.display()
+                        ),
+                    })?;
+                    StoppedManagedProfile::create_local(&root, &runtime_parent, name)
+                        .map_err(runtime)?
+                };
+                (SessionProfile::Local, stopped)
+            }
+            ManagedTarget::Portable { selector, mounts, runtime_parent, inspector } => (
+                SessionProfile::Portable,
+                StoppedManagedProfile::open_portable(
+                    &selector,
+                    &mounts,
+                    &runtime_parent,
+                    inspector,
+                )
+                .map_err(runtime)?,
+            ),
+        };
+        Self::start_managed(profile, stopped, None).await
+    }
+
+    /// Start a Quick profile under a private temporary directory. This is
+    /// the older `embedded` shape; `EmbeddedConfig` paths are ignored, and
+    /// Quick profiles are always ephemeral.
     pub async fn embedded(config: EmbeddedConfig) -> Result<Self, SessionError> {
+        use styrened::operator_profile::StoppedManagedProfile;
+        let _ = config;
+        // Unix socket paths have a hard length limit, so the private
+        // directory keeps a short name.
         let temp = tempfile::Builder::new()
-            .prefix("styrene-session-")
+            .prefix("ss-")
             .tempdir()
             .map_err(|source| SessionError::Resources { source })?;
-        let socket = temp.path().join("daemon.sock");
-        let daemon = styrened::daemon::start(styrened::daemon::DaemonConfig2 {
-            db: config.db,
-            config: config.config,
-            identity: config.identity,
-            socket: Some(socket.clone()),
-            ephemeral: config.ephemeral,
-        })
-        .await
-        .map_err(|error| SessionError::Runtime { message: error.to_string() })?;
+        let profiles = temp.path().join("p");
+        let runtime = temp.path().join("r");
+        for dir in [&profiles, &runtime] {
+            std::fs::create_dir_all(dir).map_err(|source| SessionError::Resources { source })?;
+        }
+        let stopped = StoppedManagedProfile::create_quick(&profiles, &runtime, "Quick session")
+            .map_err(|error| SessionError::Runtime { message: error.to_string() })?;
+        Self::start_managed(SessionProfile::Quick, stopped, Some(temp)).await
+    }
+
+    async fn start_managed(
+        profile: SessionProfile,
+        stopped: styrened::operator_profile::StoppedManagedProfile,
+        temp: Option<tempfile::TempDir>,
+    ) -> Result<Self, SessionError> {
+        let running = stopped
+            .start()
+            .await
+            .map_err(|failure| SessionError::Runtime { message: failure.to_string() })?;
+        let socket = running.paths().socket.clone();
         match Client::connect_unix(&socket, next_connection_generation(), DEFAULT_DEADLINE).await {
-            Ok((client, negotiation)) => Ok(Self::open(
-                SessionProfile::Embedded,
-                socket,
-                client,
-                negotiation,
-                Owned::Embedded { daemon: Some(Box::new(daemon)), _temp: temp },
-            )),
-            Err(source) => {
-                daemon.shutdown().await;
-                Err(SessionError::Connect {
-                    profile: SessionProfile::Embedded,
-                    endpoint: socket,
-                    source,
-                })
+            Ok((client, negotiation)) => {
+                let mut session = Self::open(
+                    profile,
+                    socket,
+                    client,
+                    negotiation,
+                    Owned::Managed { running: Some(Box::new(running)), _temp: temp },
+                );
+                session.load_profile_info().await;
+                Ok(session)
             }
+            Err(source) => {
+                let _stopped = running.shutdown().await;
+                Err(SessionError::Connect { profile, endpoint: socket, source })
+            }
+        }
+    }
+
+    /// Ask the daemon which profile it runs from. Daemons without managed
+    /// profiles leave it unset.
+    async fn load_profile_info(&mut self) {
+        if let Ok(inventory) = self.client.profile_inventory().await
+            && let Some(active) = inventory.active_profile_id.as_deref()
+        {
+            self.metadata.profile_info =
+                inventory.profiles.into_iter().find(|profile| profile.id == active);
         }
     }
 
@@ -282,6 +416,7 @@ impl Session {
             daemon_generation: negotiation.daemon_generation,
             capabilities: negotiation.capabilities.clone(),
             status: negotiation.status.clone(),
+            profile_info: None,
         };
         Self { metadata, negotiation, client, owned, closed: false }
     }
@@ -319,6 +454,12 @@ impl Session {
         self.metadata.capabilities.as_ref()
     }
 
+    /// The backend's description of the active profile, when managed.
+    #[must_use]
+    pub fn profile_info(&self) -> Option<&ProfileInfo> {
+        self.metadata.profile_info.as_ref()
+    }
+
     /// True until the session is closed or its connection drops.
     #[must_use]
     pub fn is_open(&self) -> bool {
@@ -351,9 +492,10 @@ impl Session {
         self.closed = true;
         match std::mem::replace(&mut self.owned, Owned::None) {
             Owned::None => {}
-            Owned::Embedded { daemon, _temp } => {
-                if let Some(daemon) = daemon {
-                    daemon.shutdown().await;
+            Owned::Managed { running, _temp } => {
+                if let Some(running) = running {
+                    let stopped = running.shutdown().await;
+                    drop(stopped);
                 }
                 drop(_temp);
             }
@@ -612,7 +754,7 @@ mod tests {
         assert!(error.is_recoverable());
         assert!(matches!(
             error,
-            SessionError::Connect { profile: SessionProfile::Live, ref endpoint, .. } if *endpoint == missing
+            SessionError::Connect { profile: SessionProfile::Connected, ref endpoint, .. } if *endpoint == missing
         ));
         assert!(!missing.exists(), "live sessions never create endpoints");
     }
