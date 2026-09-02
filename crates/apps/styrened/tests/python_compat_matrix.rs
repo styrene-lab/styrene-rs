@@ -8,11 +8,13 @@ use styrene_interop_runner::{
 
 #[test]
 fn compatibility_matrix_covers_first_slice() {
-    assert_eq!(PINNED_SCENARIOS.len(), 7);
+    assert_eq!(PINNED_SCENARIOS.len(), 9);
     assert_case_present("direct");
     assert_case_present("nomadnet_pages");
     assert_case_present("nomadnet_client");
     assert_case_present("propagated_retrieval");
+    assert_case_present("propagated_capacity");
+    assert_case_present("propagated_expiry");
     assert_case_present("direct_resource");
     assert_case_present("opportunistic");
     assert_case_present("propagated_resource_lxm");
@@ -46,6 +48,18 @@ fn python_compat_propagated_resource_lxm() {
 #[ignore = "requires live Python compatibility harness environment"]
 fn python_compat_propagated_retrieval() {
     run_case("propagated_retrieval");
+}
+
+#[test]
+#[ignore = "requires live Python compatibility harness environment"]
+fn python_compat_propagated_capacity() {
+    run_case("propagated_capacity");
+}
+
+#[test]
+#[ignore = "requires live Python compatibility harness environment"]
+fn python_compat_propagated_expiry() {
+    run_case("propagated_expiry");
 }
 
 #[test]

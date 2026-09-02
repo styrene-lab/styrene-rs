@@ -57,11 +57,20 @@ fn fake_scenario(script: &str, evidence_dir: &Path) -> LiveScenario {
 
 #[test]
 fn pinned_catalog_validates_ids_and_propagates_python_to_the_harness() {
-    assert_eq!(PINNED_SCENARIOS.len(), 7);
+    assert_eq!(PINNED_SCENARIOS.len(), 9);
     assert_eq!("direct".parse(), Ok(PinnedScenarioId::Direct));
     assert_eq!("nomadnet_client".parse(), Ok(PinnedScenarioId::NomadnetClient));
     assert_eq!("nomadnet_pages".parse(), Ok(PinnedScenarioId::NomadnetPages));
     assert_eq!("propagated_retrieval".parse(), Ok(PinnedScenarioId::PropagatedRetrieval));
+    assert_eq!("propagated_capacity".parse(), Ok(PinnedScenarioId::PropagatedCapacity));
+    assert_eq!("propagated_expiry".parse(), Ok(PinnedScenarioId::PropagatedExpiry));
+    assert!(PinnedScenarioId::PropagatedCapacity.is_capacity());
+    assert!(PinnedScenarioId::PropagatedExpiry.is_expiry());
+    assert!(PinnedScenarioId::PropagatedCapacity.rust_is_propagation_node());
+    assert!(PinnedScenarioId::PropagatedExpiry.rust_is_propagation_node());
+    assert!(!PinnedScenarioId::PropagatedCapacity.is_bidirectional());
+    assert_eq!(PinnedScenarioId::PropagatedCapacity.expected_python_state(), "1");
+    assert_eq!(PinnedScenarioId::PropagatedExpiry.expected_python_state(), "4");
     assert_eq!("direct_resource".parse(), Ok(PinnedScenarioId::DirectResource));
     assert!("unknown".parse::<PinnedScenarioId>().is_err());
     assert_eq!(pinned_scenario("opportunistic").unwrap().id, PinnedScenarioId::Opportunistic);

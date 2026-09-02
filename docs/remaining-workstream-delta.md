@@ -45,7 +45,7 @@ authorization.
 | Desktop network workflow polish | 13/16 | Native keyboard/accessibility checks, retained fixture captures, and Live/Embedded smoke checks |
 | Extract Styrene UI repository | 18/23 | Governance, desktop public-session boundary, historical rollback record, and final desktop validation |
 | Shared frontend session | 9/29 | Negotiation, event/reconnect behavior, TUI migration, common sessions, desktop migration, and revision-pair verification |
-| Reticulum/LXMF/NomadNet parity | 80/85 | Propagation policy gates and routed RNS gates |
+| Reticulum/LXMF/NomadNet parity | 81/85 | Routed RNS gates and final support claims |
 | RNode firmware provisioning | 16/28 | Exact executors, physical write/recovery evidence, accepted allowlists, and package claims |
 | Repository signing profile | 33/35 | Immutable vector publication and compatibility lanes |
 | FreeTAK RNS hardening | 4/46 | Admission plus key, receipt, Link, resource, supervision, and interface-policy hardening |
@@ -184,9 +184,23 @@ framing.
 The fixture provenance recorded the pinned NomadNet revision as release 1.2.8.
 That revision carries version 1.2.3, and the record now says so.
 
-Remaining propagation gates cover expiry and capacity policy. Remaining live
-gates also require pinned runs for routed RNS request and resource paths.
-Repository policy keeps live Python runs manual and scheduled workflows
+The propagation policy gates bound the Rust queue through documented
+environment overrides. The capacity gate sets the queue below one message, so
+the pinned Python sender's upload is cancelled and returns to `OUTBOUND`. The
+Rust snapshot records a `capacity` failure with an empty queue. The pinned
+Python control client reads the same empty store under the same limit.
+
+The expiry gate queues a message for a second Python identity with a twenty
+second expiry. It waits for the Rust node to expire the item and then has the
+recipient retrieve. The retrieval completes with no messages while the item is
+`expired` on the node.
+
+Enabling these gates exposed one more defect. A capacity rejection of a direct
+client upload recorded no failure observation, so operators could not see why a
+message was refused.
+
+Remaining live gates require pinned runs for routed RNS request and resource
+paths. Repository policy keeps live Python runs manual and scheduled workflows
 fixture-only.
 
 Authority:
