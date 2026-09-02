@@ -22,6 +22,13 @@ to pull request #17, head `a074376dee29740279b96e84e0798edcd258be72`. That
 pair adds Quick, Local, and Connected profile selection and backend profile
 truth.
 
+The pair advanced again on 2026-09-02 to the consolidated hardening corpus.
+`styrene-rs` moved to `2722ed0c8442f982498ac028a0d3b10325930eef` (merge of
+#66). `styrene-ui` moved to pull request #18, merged as
+`6746d99307cbc251aa0ac13d471a3d0da5ea7c99`, which pins that revision in all
+three manifests with no source change. The library workspace, the desktop
+application (118 passing tests), and the iOS check built and tested against it.
+
 Desktop validation at that pair covered `cargo test -p styrene-dx` with 115
 passing tests and the ignored Live-failure smoke run explicitly. It also
 covered warning-denied Clippy with the CI exclusions, workspace tests, and the
