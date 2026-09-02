@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "runner": "styrene-interop-runner",
+  "workflow": ".github/workflows/live-interop.yml",
+  "trigger": "workflow_dispatch",
+  "notes": "Hosted pinned live runs whose scenarios all passed. Repository policy keeps live Python runs manual, so each entry is a workflow_dispatch of the pinned matrix at the recorded styrene-rs revision. Product parity claims may promote a live gate only when every scenario the gate runs has a passing entry here.",
+  "authorities": {
+    "python-rns": {
+      "repository": "https://github.com/markqvist/Reticulum",
+      "revision": "b48b96e61676504e0a4e527b33b9a0b4495c6872",
+      "version": "1.4.2"
+    },
+    "python-lxmf": {
+      "repository": "https://github.com/markqvist/LXMF",
+      "revision": "795fdaa2b0777c13033787d933d1afc94a2377cb",
+      "version": "1.1.1"
+    },
+    "python-nomadnet": {
+      "repository": "https://github.com/markqvist/NomadNet",
+      "revision": "ad10301569a39d4f43b3d21ae9fc392602c937ca",
+      "version": "1.2.3"
+    }
+  },
+  "runs": [
+    {
+      "run_id": 33582749453,
+      "url": "https://github.com/styrene-lab/styrene-rs/actions/runs/33582749453",
+      "styrene_rs_revision": "41be5ea34e651584d75d5d7387d7df37c54dd1d8",
+      "recorded_at": "2026-09-02T02:18:48Z",
+      "conclusion": "success",
+      "pull_request": 38,
+      "scenarios": {
+        "direct": "success",
+        "direct_resource": "success",
+        "opportunistic": "success",
+        "propagated_resource_lxm": "success",
+        "propagated_retrieval": "success",
+        "nomadnet_pages": "success",
+        "nomadnet_client": "success"
+      }
+    },
+    {
+      "run_id": 33588597649,
+      "url": "https://github.com/styrene-lab/styrene-rs/actions/runs/33588597649",
+      "styrene_rs_revision": "100ef4f42eac2c84ce1cd786e52bf26e7b67b045",
+      "recorded_at": "2026-09-02T03:51:09Z",
+      "conclusion": "success",
+      "pull_request": 40,
+      "scenarios": {
+        "direct": "success",
+        "direct_resource": "success",
+        "opportunistic": "success",
+        "propagated_resource_lxm": "success",
+        "propagated_retrieval": "success",
+        "propagated_capacity": "success",
+        "propagated_expiry": "success",
+        "nomadnet_pages": "success",
+        "nomadnet_client": "success"
+      }
+    },
+    {
+      "run_id": 33609130877,
+      "url": "https://github.com/styrene-lab/styrene-rs/actions/runs/33609130877",
+      "styrene_rs_revision": "cd1778888795068d1485c51903c9168db7ac95a6",
+      "recorded_at": "2026-09-02T08:31:05Z",
+      "conclusion": "success",
+      "pull_request": 41,
+      "scenarios": {
+        "direct": "success",
+        "direct_resource": "success",
+        "nomadnet_client": "success",
+        "nomadnet_pages": "success",
+        "opportunistic": "success",
+        "propagated_capacity": "success",
+        "propagated_expiry": "success",
+        "propagated_resource_lxm": "success",
+        "propagated_retrieval": "success",
+        "routed_direct": "success",
+        "routed_direct_resource": "success",
+        "routed_nomadnet_pages": "success"
+      }
+    }
+  ]
+}

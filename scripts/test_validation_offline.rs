@@ -1151,7 +1151,7 @@ fn every_workflow_obeys_trigger_and_reuse_boundaries() {
                 {
                     assert_eq!(
                         invocation.tests,
-                        ["rns_fixtures", "rns_handoff_manifests"],
+                        ["rns_fixtures", "rns_handoff_manifests", "pinned_evidence_record"],
                         "ordinary workflow {path} selects live interoperability targets"
                     );
                 }
