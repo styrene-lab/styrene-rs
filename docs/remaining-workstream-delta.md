@@ -460,6 +460,12 @@ behavior. The remaining changes each
 carry a single, separable gate: hardware or packaged evidence, publication
 approval, launcher packaging, or repository governance.
 
+## Host Ownership
+
+Remaining work is split between the macOS workstation (`host/macos-ios`) and
+the Nucleus Linux machine (`host/linux-android`). The assignment rule and the
+per-host lists are in `docs/host-ownership.md`.
+
 ## Recommended Execution Order
 
 1. Implement and test Android BLE GATT before any Android Bluetooth claim.
