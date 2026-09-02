@@ -51,6 +51,16 @@ pub(crate) async fn status(socket: Option<&Path>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Print the daemon's standard propagation snapshot as JSON: policy, queue
+/// statistics, peers, attempts, and recorded failures. Live gates read it for
+/// Rust-side capacity and expiry evidence.
+pub(crate) async fn propagation(socket: Option<&Path>) -> anyhow::Result<()> {
+    let client = connect(socket).await.map_err(anyhow::Error::msg)?;
+    let snapshot = client.standard_propagation().await.map_err(anyhow::Error::msg)?;
+    println!("{}", serde_json::to_string_pretty(&snapshot)?);
+    Ok(())
+}
+
 pub(crate) async fn peers(
     socket: Option<&Path>,
     query: Option<&str>,
