@@ -23,6 +23,8 @@ const PRIVATE_IDENTITY_BYTES: u64 = 64;
 pub enum ProfileStorage {
     Quick,
     Local,
+    /// Encrypted removable media, resolved by a stable selector.
+    Portable,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -34,6 +36,9 @@ pub struct ProfileManifest {
     pub storage: ProfileStorage,
     pub generation: u64,
     pub created_at_unix: u64,
+    /// Present only for Portable storage: how the media is recognised.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable: Option<PortableBinding>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -112,6 +117,24 @@ pub struct RunningManagedProfile {
 pub struct RunningPromotion {
     running: Option<RunningManagedProfile>,
     source: Option<StoppedManagedProfile>,
+}
+
+impl fmt::Debug for RunningManagedProfile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunningManagedProfile")
+            .field("profile", &self.profile)
+            .field("daemon", &self.daemon.as_ref().map(|_| "running"))
+            .finish()
+    }
+}
+
+impl fmt::Debug for RunningPromotion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RunningPromotion")
+            .field("running", &self.running)
+            .field("source", &self.source)
+            .finish()
+    }
 }
 
 impl RunningPromotion {
@@ -528,6 +551,7 @@ impl StoppedManagedProfile {
                 storage,
                 generation: 1,
                 created_at_unix: now_unix(),
+                portable: None,
             };
             write_manifest(&paths.manifest, &manifest)?;
             sync_directory(&paths.root)
@@ -573,6 +597,7 @@ impl StoppedManagedProfile {
         let manifest = ProfileManifest {
             storage: ProfileStorage::Local,
             generation: self.manifest.generation.saturating_add(1),
+            portable: None,
             ..self.manifest.clone()
         };
         let stage_paths = ProfilePaths::for_roots(stage.clone(), PathBuf::new());
@@ -657,6 +682,12 @@ pub enum ProfileError {
     NotHardwareCustody,
     #[error("identity custody cryptography failed: {0}")]
     Custody(String),
+    #[error("portable media is unsupported: {0}")]
+    UnsupportedPortableMedia(String),
+    #[error("portable profile was not found on any offered media")]
+    PortableNotFound,
+    #[error("portable media is no longer present")]
+    MediaMissing,
 }
 
 fn validate_manifest(manifest: &ProfileManifest) -> Result<(), ProfileError> {
@@ -669,6 +700,12 @@ fn validate_manifest(manifest: &ProfileManifest) -> Result<(), ProfileError> {
     }
     if manifest.generation == 0 {
         return Err(ProfileError::InvalidManifest);
+    }
+    match (manifest.storage, manifest.portable.as_ref()) {
+        (ProfileStorage::Portable, Some(binding)) if binding.is_valid() => {}
+        (ProfileStorage::Portable, _) => return Err(ProfileError::InvalidManifest),
+        (_, Some(_)) => return Err(ProfileError::InvalidManifest),
+        (_, None) => {}
     }
     Ok(())
 }
@@ -1424,6 +1461,7 @@ fn restore_into_stage(
         storage: ProfileStorage::Local,
         generation: snapshot.manifest.profile_generation.saturating_add(1),
         created_at_unix: now_unix(),
+        portable: None,
     };
     write_manifest(&stage_paths.manifest, &manifest)?;
     sync_tree(&stage)?;
@@ -1879,4 +1917,323 @@ fn open_recovery_slot(
         return Err(ContinuityFailure::FingerprintMismatch);
     }
     Ok(key_bytes)
+}
+
+// ── Portable operation ───────────────────────────────────────────────────────
+
+const PORTABLE_MARKER_FILE: &str = ".styrene-portable";
+
+/// What the backend established about the media under a portable root.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaCapability {
+    /// Whether the volume is encrypted at rest.
+    pub encrypted: bool,
+    /// Filesystem name for disclosures, such as `apfs` or `ext4`.
+    pub filesystem: String,
+    /// Stable volume selector such as a volume UUID; never a mount path.
+    pub volume_selector: String,
+    pub posix_permissions: bool,
+    pub atomic_rename: bool,
+    pub durable_sync: bool,
+}
+
+impl MediaCapability {
+    /// Why this media cannot host a Portable profile, if anything.
+    pub fn unsupported_reason(&self) -> Option<String> {
+        let mut missing = Vec::new();
+        if !self.encrypted {
+            missing.push("volume is not encrypted");
+        }
+        if !self.posix_permissions {
+            missing.push("filesystem lacks private permissions");
+        }
+        if !self.atomic_rename {
+            missing.push("filesystem lacks atomic no-replace rename");
+        }
+        if !self.durable_sync {
+            missing.push("filesystem lacks durable sync");
+        }
+        if self.volume_selector.trim().is_empty() {
+            missing.push("volume has no stable selector");
+        }
+        (!missing.is_empty()).then(|| format!("{} ({})", missing.join(", "), self.filesystem))
+    }
+}
+
+/// Inspects the media beneath a path. Production adapters query the host;
+/// tests supply a static description.
+pub trait MediaInspector {
+    fn inspect(&self, path: &Path) -> Result<MediaCapability, ProfileError>;
+}
+
+/// A fixed media description for tests and fixtures.
+#[derive(Clone, Debug)]
+pub struct StaticMediaInspector {
+    pub capability: MediaCapability,
+}
+
+impl MediaInspector for StaticMediaInspector {
+    fn inspect(&self, _path: &Path) -> Result<MediaCapability, ProfileError> {
+        Ok(self.capability.clone())
+    }
+}
+
+/// How a Portable profile is recognised on media, independent of mount path.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PortableBinding {
+    pub volume_selector: String,
+    pub marker: String,
+    pub filesystem: String,
+}
+
+impl PortableBinding {
+    fn is_valid(&self) -> bool {
+        !self.volume_selector.trim().is_empty()
+            && self.marker.len() == 32
+            && self.marker.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
+}
+
+/// The selector an operator keeps to find a Portable profile again.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PortableSelector {
+    pub volume_selector: String,
+    pub marker: String,
+}
+
+/// Whether portable media is still reachable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MediaStatus {
+    Present,
+    Missing,
+}
+
+/// What safe removal did before reporting the media removable.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemovalReport {
+    pub root: PathBuf,
+    pub quiesced: bool,
+    pub checkpointed: bool,
+    pub synchronized: bool,
+    pub lease_released: bool,
+    pub keys_cleared: bool,
+    pub media_removable: bool,
+}
+
+/// A profile whose media disappeared while its daemon ran. Durable writes
+/// stopped; nothing was redirected to host defaults.
+#[derive(Debug)]
+pub struct InterruptedProfile {
+    pub root: PathBuf,
+    pub runtime_root: PathBuf,
+    pub status: MediaStatus,
+}
+
+fn ensure_media_supported(
+    inspector: &dyn MediaInspector,
+    path: &Path,
+) -> Result<MediaCapability, ProfileError> {
+    let capability = inspector.inspect(path)?;
+    match capability.unsupported_reason() {
+        Some(reason) => Err(ProfileError::UnsupportedPortableMedia(reason)),
+        None => Ok(capability),
+    }
+}
+
+fn ensure_runtime_off_media(runtime_parent: &Path, media_root: &Path) -> Result<(), ProfileError> {
+    let runtime = validate_existing_directory(runtime_parent)?;
+    let media = validate_existing_directory(media_root)?;
+    if runtime.starts_with(&media) || media.starts_with(&runtime) {
+        return Err(ProfileError::InvalidPath(
+            "runtime root must live on host-private storage, not on the portable media".into(),
+        ));
+    }
+    Ok(())
+}
+
+impl StoppedManagedProfile {
+    /// Create a Portable profile at `root` on media beneath `media_root`.
+    /// The media must be encrypted and capable; the runtime parent must be
+    /// host-private. Returns the selector that finds the profile again.
+    pub fn create_portable(
+        media_root: &Path,
+        root: &Path,
+        runtime_parent: &Path,
+        display_name: &str,
+        inspector: &dyn MediaInspector,
+    ) -> Result<(Self, PortableSelector), ProfileError> {
+        ensure_supported_platform()?;
+        ensure_runtime_off_media(runtime_parent, media_root)?;
+        let media = validate_existing_directory(media_root)?;
+        let capability = ensure_media_supported(inspector, &media)?;
+        let root_parent = root
+            .parent()
+            .ok_or_else(|| ProfileError::InvalidPath("portable root has no parent".into()))?;
+        if !validate_existing_directory(root_parent)?.starts_with(&media) {
+            return Err(ProfileError::InvalidPath("portable root must sit on the media".into()));
+        }
+        let id = random_id();
+        let marker = random_id();
+        let binding = PortableBinding {
+            volume_selector: capability.volume_selector.clone(),
+            marker: marker.clone(),
+            filesystem: capability.filesystem.clone(),
+        };
+        let mut profile = Self::create(
+            root.to_path_buf(),
+            runtime_parent,
+            display_name,
+            ProfileStorage::Local,
+            id,
+        )?;
+        // Rewrite the manifest as Portable with its binding, then place the marker.
+        let result = (|| {
+            profile.manifest.storage = ProfileStorage::Portable;
+            profile.manifest.portable = Some(binding);
+            write_manifest(&profile.paths.manifest, &profile.manifest)?;
+            atomic_write_private(&profile.paths.root.join(PORTABLE_MARKER_FILE), marker.as_bytes())
+                .map_err(|source| ProfileError::Io { action: "write portable marker", source })?;
+            sync_directory(&profile.paths.root)
+                .map_err(|source| ProfileError::Io { action: "sync portable root", source })
+        })();
+        if let Err(error) = result {
+            profile.cleanup_durable_on_drop = true;
+            return Err(error);
+        }
+        let selector = PortableSelector { volume_selector: capability.volume_selector, marker };
+        Ok((profile, selector))
+    }
+
+    /// Find and open a Portable profile by its selector on any of the offered
+    /// mount points. The persisted binding, not a remembered path, decides.
+    pub fn open_portable(
+        selector: &PortableSelector,
+        mounts: &[PathBuf],
+        runtime_parent: &Path,
+        inspector: &dyn MediaInspector,
+    ) -> Result<Self, ProfileError> {
+        ensure_supported_platform()?;
+        for mount in mounts {
+            let Ok(mount) = validate_existing_directory(mount) else { continue };
+            let Ok(capability) = inspector.inspect(&mount) else { continue };
+            if capability.volume_selector != selector.volume_selector {
+                continue;
+            }
+            ensure_media_supported(inspector, &mount)?;
+            ensure_runtime_off_media(runtime_parent, &mount)?;
+            for entry in fs::read_dir(&mount)
+                .map_err(|source| ProfileError::Io { action: "read portable media", source })?
+                .flatten()
+            {
+                let candidate = entry.path();
+                let marker = candidate.join(PORTABLE_MARKER_FILE);
+                if !marker.is_file() {
+                    continue;
+                }
+                let Ok(found) = read_bounded_file(&marker, 64) else { continue };
+                if found != selector.marker.as_bytes() {
+                    continue;
+                }
+                let profile = Self::open(&candidate, runtime_parent)?;
+                match profile.manifest.portable.as_ref() {
+                    Some(binding)
+                        if binding.marker == selector.marker
+                            && binding.volume_selector == selector.volume_selector => {}
+                    _ => return Err(ProfileError::InvalidManifest),
+                }
+                return Ok(profile);
+            }
+        }
+        Err(ProfileError::PortableNotFound)
+    }
+
+    /// The selector of a Portable profile.
+    pub fn portable_selector(&self) -> Option<PortableSelector> {
+        self.manifest.portable.as_ref().map(|binding| PortableSelector {
+            volume_selector: binding.volume_selector.clone(),
+            marker: binding.marker.clone(),
+        })
+    }
+
+    /// Whether the profile's media is reachable right now.
+    pub fn media_status(&self) -> MediaStatus {
+        match fs::symlink_metadata(&self.paths.manifest) {
+            Ok(_) => MediaStatus::Present,
+            Err(_) => MediaStatus::Missing,
+        }
+    }
+
+    /// Checkpoint and synchronize a stopped profile, then release its lease
+    /// and report the media removable. Nothing is left open on the media.
+    pub fn prepare_safe_removal(self) -> Result<RemovalReport, ProfileError> {
+        if self.media_status() == MediaStatus::Missing {
+            return Err(ProfileError::MediaMissing);
+        }
+        let root = self.paths.root.clone();
+        for database in [&self.paths.messages, &self.paths.nodes] {
+            if database.exists() {
+                checkpoint_database(database)?;
+            }
+        }
+        sync_tree(&root)?;
+        let runtime_root = self.paths.runtime_root.clone();
+        drop(self);
+        let _ = fs::remove_dir_all(&runtime_root);
+        Ok(RemovalReport {
+            root,
+            quiesced: true,
+            checkpointed: true,
+            synchronized: true,
+            lease_released: true,
+            keys_cleared: true,
+            media_removable: true,
+        })
+    }
+}
+
+impl RunningManagedProfile {
+    /// Whether the media beneath the running profile is still reachable.
+    pub fn media_status(&self) -> MediaStatus {
+        self.profile.as_ref().expect("running profile has lease").media_status()
+    }
+
+    /// Quiesce the daemon, checkpoint and synchronize durable state, release
+    /// ownership, and clear in-memory key material before the media is removed.
+    pub async fn prepare_safe_removal(mut self) -> Result<RemovalReport, ProfileError> {
+        let daemon = self.daemon.take().expect("running profile has daemon");
+        let profile = self.profile.take().expect("running profile has lease");
+        if profile.media_status() == MediaStatus::Missing {
+            drop(daemon);
+            return Err(ProfileError::MediaMissing);
+        }
+        daemon.shutdown().await;
+        profile.prepare_safe_removal()
+    }
+
+    /// Stop after the media disappeared: the daemon is dropped so durable
+    /// writes end, the host-private runtime root is removed, and no path is
+    /// redirected to host defaults. The lease file on the vanished media is
+    /// simply gone.
+    pub async fn interrupt(mut self) -> InterruptedProfile {
+        let daemon = self.daemon.take().expect("running profile has daemon");
+        let mut profile = self.profile.take().expect("running profile has lease");
+        let status = profile.media_status();
+        daemon.shutdown().await;
+        profile.cleanup_durable_on_drop = false;
+        let root = profile.paths.root.clone();
+        let runtime_root = profile.paths.runtime_root.clone();
+        drop(profile);
+        InterruptedProfile { root, runtime_root, status }
+    }
+}
+
+fn checkpoint_database(path: &Path) -> Result<(), ProfileError> {
+    let conn = rusqlite::Connection::open(path)
+        .map_err(|error| ProfileError::Database(error.to_string()))?;
+    conn.pragma_update(None, "wal_checkpoint", "TRUNCATE")
+        .map_err(|error| ProfileError::Database(error.to_string()))?;
+    conn.pragma_update(None, "journal_mode", "delete")
+        .map_err(|error| ProfileError::Database(error.to_string()))?;
+    Ok(())
 }
