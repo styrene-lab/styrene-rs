@@ -2612,3 +2612,50 @@ mod unicode_regression_tests {
         assert!(rendered.contains("failure history is truncated"));
     }
 }
+
+#[cfg(test)]
+mod terminal_smoke_tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+
+    fn rendered_text(terminal: &ratatui::Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width as usize;
+        buffer
+            .content
+            .chunks(width)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn app_renders_a_full_frame_into_a_headless_terminal() {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = ratatui::Terminal::new(backend).expect("headless terminal");
+        let mut app = App::new();
+        app.push_welcome();
+        terminal.draw(|frame| app.draw(frame)).expect("first frame");
+        let text = rendered_text(&terminal);
+        assert!(text.chars().any(|c| !c.is_whitespace()), "frame must paint something");
+
+        // The frame survives every workspace and a disconnected daemon.
+        app.daemon_connected = false;
+        for workspace in Workspace::ALL {
+            app.workspace = workspace;
+            terminal.draw(|frame| app.draw(frame)).expect("workspace frame");
+        }
+        app.input_mode = InputMode::Compose;
+        terminal.draw(|frame| app.draw(frame)).expect("compose frame");
+    }
+
+    #[test]
+    fn app_renders_in_a_narrow_terminal() {
+        let mut terminal =
+            ratatui::Terminal::new(TestBackend::new(40, 12)).expect("narrow terminal");
+        let mut app = App::new();
+        app.push_welcome();
+        terminal.draw(|frame| app.draw(frame)).expect("narrow frame");
+        assert!(rendered_text(&terminal).chars().any(|c| !c.is_whitespace()));
+    }
+}
