@@ -29,6 +29,7 @@ tokio = { workspace = true, features = ["full", "test-util"] }
 tokio-util.workspace = true
 
 # Utilities
+serde_json.workspace = true
 blake3 = "1"
 hex.workspace = true
 heapless = "0.8"
@@ -48,3 +49,7 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "styrene-channel-probe"
+path = "src/bin/channel_probe.rs"
