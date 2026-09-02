@@ -222,6 +222,19 @@ pub struct Client {
     daemon_generation: Arc<AtomicU64>,
 }
 
+/// One page of a cursor-paginated query.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct Paged<T> {
+    pub page: T,
+    /// The daemon rejected the requested cursor as stale and the page was
+    /// fetched again from the start.
+    pub reset: bool,
+    /// The daemon spelled a `next_cursor` field, so it paginates; an older
+    /// daemon that omits it answers with everything it has.
+    pub pagination_supported: bool,
+}
+
 /// Outcome of connection negotiation: the daemon's status snapshot, the
 /// connection generation it assigned to this transport, and the capability
 /// set the frontend must honor for the life of the connection.
@@ -1085,7 +1098,7 @@ impl Client {
         peer_hash: &str,
         cursor: Option<&str>,
         limit: u32,
-    ) -> Result<(MessagePage, bool), ClientError> {
+    ) -> Result<Paged<MessagePage>, ClientError> {
         let mut payload = HashMap::from([
             ("peer_hash".into(), Value::from(peer_hash)),
             ("limit".into(), Value::from(limit)),
@@ -1111,7 +1124,7 @@ impl Client {
         page.messages = messages;
         page.next_cursor =
             frame.payload.get("next_cursor").and_then(Value::as_str).map(str::to_owned);
-        Ok((page, reset))
+        Ok(Paged { page, reset, pagination_supported: frame.payload.contains_key("next_cursor") })
     }
 
     pub async fn message(&self, message_id: &str) -> Result<Option<MessageInfo>, ClientError> {
@@ -1128,7 +1141,7 @@ impl Client {
         &self,
         cursor: Option<&str>,
         limit: u32,
-    ) -> Result<(ConversationPage, bool), ClientError> {
+    ) -> Result<Paged<ConversationPage>, ClientError> {
         let mut payload = HashMap::from([
             ("unread_only".into(), Value::Boolean(false)),
             ("limit".into(), Value::from(limit)),
@@ -1158,7 +1171,7 @@ impl Client {
         page.conversations = conversations;
         page.next_cursor =
             frame.payload.get("next_cursor").and_then(Value::as_str).map(str::to_owned);
-        Ok((page, reset))
+        Ok(Paged { page, reset, pagination_supported: frame.payload.contains_key("next_cursor") })
     }
 
     /// Mark a conversation read. Older daemons answer with a bare count.
@@ -2045,10 +2058,24 @@ mod tests {
             ("next_cursor".into(), Value::from("next")),
         ]);
         reply(&mut server, MessageType::Result, &retry.request_id, &payload).await;
-        let (page, reset) = page.await.expect("join").expect("page");
+        let Paged { page, reset, pagination_supported } = page.await.expect("join").expect("page");
         assert!(reset);
+        assert!(pagination_supported);
         assert!(page.messages.is_empty());
         assert_eq!(page.next_cursor.as_deref(), Some("next"));
+
+        // A daemon that never spells next_cursor does not paginate.
+        let page = tokio::spawn({
+            let client = client.clone();
+            async move { client.message_page("peer", None, 50).await }
+        });
+        let request = wire::read_frame_async(&mut server).await.expect("legacy page request");
+        let payload = HashMap::from([("messages".into(), Value::Array(Vec::new()))]);
+        reply(&mut server, MessageType::Result, &request.request_id, &payload).await;
+        let legacy = page.await.expect("join").expect("legacy page");
+        assert!(!legacy.pagination_supported);
+        assert!(!legacy.reset);
+        assert!(legacy.page.next_cursor.is_none());
     }
 
     #[tokio::test]
