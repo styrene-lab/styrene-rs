@@ -80,7 +80,7 @@ impl MessagesStore {
             "INSERT OR IGNORE INTO messages
              (id, source, destination, title, content, timestamp, direction, fields,
               receipt_status, read)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'in', NULL, NULL, 0)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'in', ?7, NULL, 0)",
             params![
                 &projection.id,
                 &projection.source,
@@ -88,6 +88,10 @@ impl MessagesStore {
                 &projection.title,
                 &projection.content,
                 projection.timestamp,
+                projection
+                    .fields
+                    .as_ref()
+                    .map(|value| serde_json::to_string(value).unwrap_or_default()),
             ],
         )?;
         if changed == 0 {

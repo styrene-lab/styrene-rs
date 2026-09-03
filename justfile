@@ -340,6 +340,10 @@ test-e2e-verbose:
 test-e2e-file file:
     cargo test -p styrene-e2e --test {{ file }}
 
+# Run the live echo-peer basics against a deployed styrened echo node (opt-in; needs STYRENE_LIVE_PEER and STYRENE_LIVE_PEER_DESTINATION)
+test-live-peer:
+    cargo test -p styrene-e2e --test live_echo_peer -- --ignored --nocapture
+
 # Run live MQTT 5 broker integration tests
 test-mqtt-live:
     cargo test -p styrene-mqtt --test mosquitto_roundtrip -- --ignored
