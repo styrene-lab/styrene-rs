@@ -587,8 +587,13 @@ impl MeshTransport for TokioTransportAdapter {
                         LinkRepresentation::Resource
                     }
                 };
+                // The link decides from its confirmed MTU; a negotiated MTU can
+                // carry a payload the default MDU would have split into a
+                // resource. Record what the link chose rather than failing.
                 if actual != representation {
-                    return Err(std::io::Error::other("selected link representation changed"));
+                    crate::daemon_diagnostic!(
+                        "[messaging-flow] stage=link_representation_reconciled planned={representation:?} actual={actual:?}"
+                    );
                 }
                 dispatch_gate(actual).map_err(|error| std::io::Error::other(error.to_string()))
             },

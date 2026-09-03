@@ -1639,7 +1639,17 @@ impl MessagingService {
                     peer_hash,
                     packet_hash
                 );
-                debug_assert_eq!(*representation, plan.representation);
+                if *representation != plan.representation {
+                    crate::daemon_diagnostic!(
+                        "[messaging-flow] stage=representation_reconciled id={} planned={} actual={}",
+                        msg_id,
+                        plan.representation.as_str(),
+                        representation.as_str()
+                    );
+                    if let Ok(store) = self.lock_store() {
+                        let _ = store.update_outbound_route_representation(&msg_id, representation.as_str());
+                    }
+                }
                 // Publish send state before exposing the mapping so an
                 // immediate completion cannot be overwritten by this update.
                 let method = match plan.actual_method {
@@ -2617,7 +2627,20 @@ impl MessagingService {
             operation.complete_dispatch(&delivery_result);
             match &delivery_result {
                 Ok((evidence_hash, representation)) => {
-                    debug_assert_eq!(*representation, plan.representation);
+                    if *representation != plan.representation {
+                        crate::daemon_diagnostic!(
+                            "[messaging-flow] stage=representation_reconciled id={} planned={} actual={}",
+                            message.id,
+                            plan.representation.as_str(),
+                            representation.as_str()
+                        );
+                        if let Ok(store) = self.lock_store() {
+                            let _ = store.update_outbound_route_representation(
+                                &message.id,
+                                representation.as_str(),
+                            );
+                        }
+                    }
                     let method = plan.actual_method.as_str();
                     let status = format!("sent: {method}");
                     self.router.finish(&message.id, OutboundState::Sent, &status)?;

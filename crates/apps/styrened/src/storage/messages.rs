@@ -2817,8 +2817,16 @@ impl MessagesStore {
         attachment_issue: Option<&str>,
     ) -> rusqlite::Result<bool> {
         let transaction = self.conn.unchecked_transaction()?;
+        // The projection's fields are the decoded LXMF fields with attachment
+        // bytes already redacted; persisting them keeps correlation markers such
+        // as an echo response's request id visible to clients, not only to the
+        // canonical row.
+        let fields_json = projection
+            .fields
+            .as_ref()
+            .map(|value| serde_json::to_string(value).unwrap_or_default());
         let changed = transaction.execute(
-            "INSERT OR IGNORE INTO messages (id, source, destination, title, content, timestamp, direction, fields, receipt_status, read) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'in', NULL, NULL, 0)",
+            "INSERT OR IGNORE INTO messages (id, source, destination, title, content, timestamp, direction, fields, receipt_status, read) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'in', ?7, NULL, 0)",
             params![
                 &projection.id,
                 &projection.source,
@@ -2826,6 +2834,7 @@ impl MessagesStore {
                 &projection.title,
                 &projection.content,
                 projection.timestamp,
+                fields_json,
             ],
         )?;
         if changed == 0 {
@@ -3477,6 +3486,20 @@ impl MessagesStore {
              WHERE message_id = ?1 AND requested_method = 'direct' AND actual_method = 'direct'
                AND state = 'sending'",
             params![message_id, reason],
+        )? == 1)
+    }
+
+    /// Records the representation the link actually used when it differs from
+    /// the planned one: a link with a negotiated MTU can carry a payload that the
+    /// default MDU would have sent as a resource inside one packet.
+    pub fn update_outbound_route_representation(
+        &self,
+        message_id: &str,
+        representation: &str,
+    ) -> rusqlite::Result<bool> {
+        Ok(self.conn.execute(
+            "UPDATE outbound_routes SET representation = ?2 WHERE message_id = ?1",
+            params![message_id, representation],
         )? == 1)
     }
 
@@ -7273,6 +7296,69 @@ mod tests {
         updated_projection.content = "new projection".into();
         store.insert_message(&updated_projection).unwrap();
         assert_eq!(store.canonical_inbound("upsert-canonical").unwrap(), Some(canonical));
+    }
+
+    #[test]
+    fn outbound_route_representation_follows_the_link() {
+        let store = MessagesStore::in_memory().unwrap();
+        let route = OutboundRouteRecord {
+            message_id: "mtu-route".into(),
+            requested_method: "direct".into(),
+            actual_method: "direct".into(),
+            representation: "resource".into(),
+            fallback_reason: None,
+            correlation_id: "mtu-route".into(),
+            retry_of: None,
+            deadline_unix_ms: 100,
+            state: "sending".into(),
+            attempt_count: 0,
+        };
+        store
+            .insert_outbound_message(&outbound_message("mtu-route", 1, Some("sending")), &route)
+            .unwrap();
+        assert!(store.update_outbound_route_representation("mtu-route", "packet").unwrap());
+        assert_eq!(store.outbound_route("mtu-route").unwrap().unwrap().representation, "packet");
+        assert!(!store.update_outbound_route_representation("missing", "packet").unwrap());
+    }
+
+    #[test]
+    fn canonical_inbound_insert_persists_projected_fields() {
+        let store = MessagesStore::in_memory().unwrap();
+        let mut projection = chat_message("inbound-fields", "aa", "me", 1);
+        projection.direction = "in".into();
+        projection.fields = Some(serde_json::json!({
+            "styrene_echo": { "request_id": "req-1", "response": true }
+        }));
+        let canonical = CanonicalInboundRecord {
+            message_id: projection.id.clone(),
+            source: [1; 16],
+            destination: [2; 16],
+            title: Vec::new(),
+            content: b"canonical".to_vec(),
+            timestamp: 1.0,
+            fields_msgpack: Some(vec![0x80]),
+            signature: None,
+            stamp: None,
+            wire: vec![3; 64],
+            authentication_state: "unknown_identity".into(),
+            stamp_state: "unknown".into(),
+            stamp_value: None,
+            stamp_target: None,
+        };
+        assert!(store.insert_canonical_inbound_if_absent(&projection, &canonical).unwrap());
+
+        let stored = store.get_message("inbound-fields").unwrap().expect("stored inbound");
+        assert_eq!(stored.direction, "in");
+        assert_eq!(
+            stored.fields, projection.fields,
+            "inbound fields survive the projection insert"
+        );
+        let listed = store.list_messages(10, None).unwrap();
+        let listed = listed.iter().find(|m| m.id == "inbound-fields").expect("listed inbound");
+        assert_eq!(
+            listed.fields.as_ref().and_then(|f| f["styrene_echo"]["request_id"].as_str()),
+            Some("req-1")
+        );
     }
 
     #[test]
