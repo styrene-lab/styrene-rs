@@ -3,7 +3,7 @@
 
 use crate::services::discovery::NATIVE_NOMADNET_HOST_DEVICE_TYPE;
 use crate::services::{DiscoveryService, EventService};
-use crate::transport::mesh_transport::MeshTransport;
+use crate::transport::mesh_transport::{MeshTransport, TransportLifecycleEvent};
 use rns_core::destination::{DestinationName, NAME_HASH_LENGTH};
 use rns_core::transport::time::now_epoch_secs_i64;
 use std::sync::Arc;
@@ -165,4 +165,89 @@ fn spawn_announce_worker_inner(
             }
         }
     })
+}
+
+/// Announce the local delivery destination whenever the transport becomes
+/// connected. A peer that only ever hears the node's announce at first start
+/// loses it on its own restart, and every later message from this node then
+/// arrives unverified. Announcing on every connect and reconnect keeps the
+/// node resolvable by the peers it actually talks to.
+pub fn spawn_connect_announce_worker(
+    transport: Arc<dyn MeshTransport>,
+) -> tokio::task::JoinHandle<()> {
+    const SETTLE: std::time::Duration = std::time::Duration::from_millis(750);
+    tokio::spawn(async move {
+        let mut lifecycle = transport.subscribe_lifecycle();
+        if transport.is_connected() {
+            tokio::time::sleep(SETTLE).await;
+            announce_on_connect(transport.as_ref(), "start").await;
+        }
+        loop {
+            match lifecycle.recv().await {
+                Ok(TransportLifecycleEvent::Connected) => {
+                    tokio::time::sleep(SETTLE).await;
+                    announce_on_connect(transport.as_ref(), "connect").await;
+                }
+                Ok(TransportLifecycleEvent::Reconnected) => {
+                    tokio::time::sleep(SETTLE).await;
+                    announce_on_connect(transport.as_ref(), "reconnect").await;
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    })
+}
+
+async fn announce_on_connect(transport: &dyn MeshTransport, reason: &str) {
+    match transport.dispatch_announce(None).await {
+        Ok(()) => crate::daemon_diagnostic!("[worker] announced on transport {reason}"),
+        Err(error) => {
+            crate::daemon_diagnostic!("[worker] announce on transport {reason} rejected: {error}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod connect_announce_tests {
+    use super::*;
+    use crate::transport::mock_transport::{MockCall, MockTransport};
+    use std::time::Duration;
+
+    fn announce_count(transport: &MockTransport) -> usize {
+        transport.calls().iter().filter(|call| matches!(call, MockCall::Announce { .. })).count()
+    }
+
+    #[tokio::test]
+    async fn announces_on_start_and_on_every_reconnect() {
+        let transport = Arc::new(MockTransport::new_default());
+        transport.set_connected(true);
+        let worker = spawn_connect_announce_worker(transport.clone());
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        assert_eq!(announce_count(&transport), 1, "announces once when already connected");
+
+        transport.inject_lifecycle(TransportLifecycleEvent::Reconnected);
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        assert_eq!(announce_count(&transport), 2, "announces again after a reconnect");
+
+        transport.inject_lifecycle(TransportLifecycleEvent::Disconnected);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(announce_count(&transport), 2, "a disconnect does not announce");
+        worker.abort();
+    }
+
+    #[tokio::test]
+    async fn does_not_announce_while_disconnected_at_start() {
+        let transport = Arc::new(MockTransport::new_default());
+        transport.set_connected(false);
+        let worker = spawn_connect_announce_worker(transport.clone());
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        assert_eq!(announce_count(&transport), 0);
+        transport.set_connected(true);
+        transport.inject_lifecycle(TransportLifecycleEvent::Connected);
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        assert_eq!(announce_count(&transport), 1, "announces once the transport connects");
+        worker.abort();
+    }
 }

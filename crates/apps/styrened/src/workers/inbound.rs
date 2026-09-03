@@ -125,6 +125,36 @@ fn maybe_enqueue_response(
     }
 }
 
+/// An inbound message from a sender whose identity this node has never seen
+/// cannot be verified, so it is neither dispatched nor answered. Say so, and
+/// ask the network for the sender's path so the next message can verify.
+async fn note_unverified_sender(
+    transport: &dyn MeshTransport,
+    record: &crate::storage::messages::MessageRecord,
+) {
+    let Some(source) = hex::decode(&record.source)
+        .ok()
+        .and_then(|bytes| <[u8; 16]>::try_from(bytes).ok())
+        .map(rns_core::hash::AddressHash::new)
+    else {
+        return;
+    };
+    if transport.resolve_identity(&source).await.is_some() {
+        crate::daemon_diagnostic!(
+            "[worker] inbound {} from {} held: authentication or stamp untrusted",
+            record.id,
+            record.source
+        );
+        return;
+    }
+    crate::daemon_diagnostic!(
+        "[worker] inbound {} from {} held: sender identity unknown, requesting path",
+        record.id,
+        record.source
+    );
+    transport.request_path(&source).await;
+}
+
 async fn resolve_sender_identity(
     transport: &dyn MeshTransport,
     data: &[u8],
@@ -361,6 +391,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                             &response_tx,
                                         );
                                     } else {
+                                        note_unverified_sender(transport.as_ref(), &record).await;
                                         events.emit_inbound_drop(
                                             "direct_resource",
                                             "authentication_or_stamp_untrusted",
@@ -566,6 +597,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                             let trusted =
                                 messaging.inbound_is_dispatchable(&record.id).unwrap_or(false);
                             if !trusted {
+                                note_unverified_sender(transport.as_ref(), &record).await;
                                 events.emit_inbound_drop(
                                     "direct_packet",
                                     "authentication_or_stamp_untrusted",

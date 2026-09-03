@@ -1289,6 +1289,7 @@ struct LoadedMobileIdentity {
 struct MobileWorkers {
     inbound: crate::workers::inbound::InboundWorkerHandle,
     announce: JoinHandle<()>,
+    connect_announce: JoinHandle<()>,
     link: JoinHandle<()>,
     route: JoinHandle<()>,
     router_deadlines: JoinHandle<()>,
@@ -1337,6 +1338,7 @@ impl MobileWorkers {
         }
         self.inbound.abort();
         self.announce.abort();
+        self.connect_announce.abort();
         self.link.abort();
         self.route.abort();
         self.router_deadlines.abort();
@@ -1354,6 +1356,7 @@ impl MobileWorkers {
         }
         self.inbound.abort();
         self.announce.abort();
+        self.connect_announce.abort();
         self.link.abort();
         self.route.abort();
         self.router_deadlines.abort();
@@ -1709,6 +1712,8 @@ async fn compose_mobile_node(
         app_context.events_arc(),
     );
     startup.record(startup_component::ANNOUNCE_WORKER);
+    let connect_announce =
+        crate::workers::announce::spawn_connect_announce_worker(app_context.transport_arc());
     let link = crate::workers::link::spawn_link_worker(
         app_context.transport_arc(),
         app_context.events_arc(),
@@ -1739,6 +1744,7 @@ async fn compose_mobile_node(
     let mut workers = MobileWorkers {
         inbound,
         announce,
+        connect_announce,
         link,
         route,
         router_deadlines,
