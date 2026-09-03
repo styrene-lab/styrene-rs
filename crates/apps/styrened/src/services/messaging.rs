@@ -319,7 +319,14 @@ impl OutboundOperation {
             self.changed.notify_waiters();
             return Err(TransportError::Cancelled);
         }
-        if !matches!(state.phase, OutboundOperationPhase::Dispatching(_)) {
+        // A direct attempt that failed before it dispatched (no path, no
+        // link) is still in Preparing; that is exactly when an opportunistic
+        // packet is worth trying. Only an attempt that already accepted a
+        // resource or finished is ineligible.
+        if !matches!(
+            state.phase,
+            OutboundOperationPhase::Preparing | OutboundOperationPhase::Dispatching(_)
+        ) {
             return Err(TransportError::SendFailed(
                 "outbound operation is not eligible for packet fallback".into(),
             ));
@@ -1596,7 +1603,12 @@ impl MessagingService {
         {
             let direct_error = delivery_result.as_ref().unwrap_err().to_string();
             if let Err(error) = operation.begin_fallback_dispatch() {
-                delivery_result = Err(error);
+                delivery_result = Err(match error {
+                    TransportError::Cancelled => TransportError::Cancelled,
+                    other => TransportError::SendFailed(format!(
+                        "direct delivery failed: {direct_error}; {other}"
+                    )),
+                });
             } else {
                 let fallback = self.router.fallback_to_opportunistic(
                     &msg_id,
@@ -2590,7 +2602,12 @@ impl MessagingService {
             {
                 let direct_error = delivery_result.as_ref().unwrap_err().to_string();
                 if let Err(error) = operation.begin_fallback_dispatch() {
-                    delivery_result = Err(error);
+                    delivery_result = Err(match error {
+                        TransportError::Cancelled => TransportError::Cancelled,
+                        other => TransportError::SendFailed(format!(
+                            "direct delivery failed: {direct_error}; {other}"
+                        )),
+                    });
                 } else {
                     let fallback = self.router.fallback_to_opportunistic(
                         &message.id,
@@ -3927,6 +3944,16 @@ mod tests {
             Err(TransportError::Cancelled)
         ));
         assert_eq!(operation.wait_for_cancel_handoff().await, OutboundOperationPhase::Cancelled);
+    }
+
+    #[test]
+    fn direct_attempt_that_never_dispatched_may_fall_back_to_a_packet() {
+        let operation = OutboundOperation::new();
+        assert!(operation.begin_fallback_dispatch().is_ok());
+        assert_eq!(
+            operation.lock_state().phase,
+            OutboundOperationPhase::Dispatching(LinkRepresentation::Packet)
+        );
     }
 
     #[test]
