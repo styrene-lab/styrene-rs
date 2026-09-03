@@ -176,25 +176,36 @@ pub fn spawn_connect_announce_worker(
     transport: Arc<dyn MeshTransport>,
 ) -> tokio::task::JoinHandle<()> {
     const SETTLE: std::time::Duration = std::time::Duration::from_millis(750);
+    const POLL: std::time::Duration = std::time::Duration::from_secs(1);
     tokio::spawn(async move {
+        // The adapter reports Disconnected on shutdown but never Connected, so
+        // the worker watches the connected state itself and treats every
+        // false-to-true transition as a (re)connect, alongside any lifecycle
+        // event that does arrive.
         let mut lifecycle = transport.subscribe_lifecycle();
-        if transport.is_connected() {
-            tokio::time::sleep(SETTLE).await;
-            announce_on_connect(transport.as_ref(), "start").await;
-        }
+        let mut was_connected = false;
+        let mut poll = tokio::time::interval(POLL);
         loop {
-            match lifecycle.recv().await {
-                Ok(TransportLifecycleEvent::Connected) => {
-                    tokio::time::sleep(SETTLE).await;
-                    announce_on_connect(transport.as_ref(), "connect").await;
+            tokio::select! {
+                _ = poll.tick() => {
+                    let connected = transport.is_connected();
+                    if connected && !was_connected {
+                        tokio::time::sleep(SETTLE).await;
+                        announce_on_connect(transport.as_ref(), "connect").await;
+                    }
+                    was_connected = connected;
                 }
-                Ok(TransportLifecycleEvent::Reconnected) => {
-                    tokio::time::sleep(SETTLE).await;
-                    announce_on_connect(transport.as_ref(), "reconnect").await;
+                event = lifecycle.recv() => match event {
+                    Ok(TransportLifecycleEvent::Connected | TransportLifecycleEvent::Reconnected) => {
+                        tokio::time::sleep(SETTLE).await;
+                        announce_on_connect(transport.as_ref(), "reconnect").await;
+                        was_connected = true;
+                    }
+                    Ok(TransportLifecycleEvent::Disconnected) => was_connected = false,
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
-                Ok(_) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     })
@@ -224,7 +235,7 @@ mod connect_announce_tests {
         let transport = Arc::new(MockTransport::new_default());
         transport.set_connected(true);
         let worker = spawn_connect_announce_worker(transport.clone());
-        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        tokio::time::sleep(Duration::from_millis(2_200)).await;
         assert_eq!(announce_count(&transport), 1, "announces once when already connected");
 
         transport.inject_lifecycle(TransportLifecycleEvent::Reconnected);
@@ -245,9 +256,12 @@ mod connect_announce_tests {
         tokio::time::sleep(Duration::from_millis(1_100)).await;
         assert_eq!(announce_count(&transport), 0);
         transport.set_connected(true);
-        transport.inject_lifecycle(TransportLifecycleEvent::Connected);
-        tokio::time::sleep(Duration::from_millis(1_100)).await;
-        assert_eq!(announce_count(&transport), 1, "announces once the transport connects");
+        tokio::time::sleep(Duration::from_millis(2_200)).await;
+        assert_eq!(
+            announce_count(&transport),
+            1,
+            "announces once the transport connects, with no lifecycle event at all"
+        );
         worker.abort();
     }
 }
