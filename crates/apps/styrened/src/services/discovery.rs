@@ -13,7 +13,7 @@ use crate::storage::messages::{AnnounceRecord, MessagesStore};
 use crate::storage::standard_propagation::StandardPropagationPeer;
 use std::sync::{Arc, Mutex};
 use styrene_ipc::types::{DeviceInfo, DiscoveredCapability};
-use styrene_services::node_store::{Node, NodeStore};
+use styrene_services::node_store::{AnnounceRoute, Node, NodeStore};
 
 pub const NATIVE_NOMADNET_HOST_DEVICE_TYPE: &str = "native_nomadnet_host";
 pub const LXMF_DELIVERY_DEVICE_TYPE: &str = "lxmf_delivery";
@@ -165,6 +165,25 @@ impl DiscoveryService {
         app_data: &[u8],
         device_type: Option<&str>,
     ) -> Result<AnnounceRecord, std::io::Error> {
+        self.accept_announce_with_route(
+            peer_hash,
+            timestamp,
+            app_data,
+            device_type,
+            &AnnounceRoute::default(),
+        )
+    }
+
+    /// Process an announce reception, recording the announcing identity and the
+    /// route the announce arrived over alongside the aspect-derived type.
+    pub fn accept_announce_with_route(
+        &self,
+        peer_hash: String,
+        timestamp: i64,
+        app_data: &[u8],
+        device_type: Option<&str>,
+        route: &AnnounceRoute,
+    ) -> Result<AnnounceRecord, std::io::Error> {
         let (name, name_source) = parse_peer_name_from_app_data(app_data)
             .map(|(n, s)| (Some(n), Some(s.to_string())))
             .unwrap_or((None, None));
@@ -172,13 +191,14 @@ impl DiscoveryService {
         // Persist to NodeStore with device_type from aspect classification
         let node = self
             .node_store
-            .accept_announce(
+            .accept_announce_with_route(
                 &peer_hash,
                 timestamp,
                 name.as_deref(),
                 name_source.as_deref(),
                 device_type,
                 None,
+                route,
             )
             .map_err(|e| std::io::Error::other(e.to_string()))?;
 
@@ -229,13 +249,29 @@ impl DiscoveryService {
         timestamp: i64,
         app_data: &[u8],
     ) -> Result<AnnounceRecord, std::io::Error> {
+        self.accept_delivery_announce_with_route(
+            destination_hash,
+            timestamp,
+            app_data,
+            &AnnounceRoute::default(),
+        )
+    }
+
+    pub fn accept_delivery_announce_with_route(
+        &self,
+        destination_hash: String,
+        timestamp: i64,
+        app_data: &[u8],
+        route: &AnnounceRoute,
+    ) -> Result<AnnounceRecord, std::io::Error> {
         lxmf::announce::delivery_announce_metadata(app_data)
             .ok_or_else(|| std::io::Error::other("invalid canonical LXMF delivery app data"))?;
-        self.accept_announce_with_type(
+        self.accept_announce_with_route(
             destination_hash,
             timestamp,
             app_data,
             Some(LXMF_DELIVERY_DEVICE_TYPE),
+            route,
         )
     }
 
@@ -246,6 +282,29 @@ impl DiscoveryService {
         propagation_destination: [u8; 16],
         timestamp: i64,
         metadata: &lxmf::propagation_announce::StandardPropagationAnnounce,
+    ) -> Result<AnnounceRecord, std::io::Error> {
+        self.accept_standard_propagation_announce_with_route(
+            peer_hash,
+            identity_hash,
+            propagation_destination,
+            timestamp,
+            metadata,
+            &AnnounceRoute {
+                identity_hash: Some(hex::encode(identity_hash)),
+                ..AnnounceRoute::default()
+            },
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn accept_standard_propagation_announce_with_route(
+        &self,
+        peer_hash: String,
+        identity_hash: [u8; 16],
+        propagation_destination: [u8; 16],
+        timestamp: i64,
+        metadata: &lxmf::propagation_announce::StandardPropagationAnnounce,
+        route: &AnnounceRoute,
     ) -> Result<AnnounceRecord, std::io::Error> {
         let device_type = if metadata.node_active {
             STANDARD_LXMF_PROPAGATION_ACTIVE_DEVICE_TYPE
@@ -258,6 +317,7 @@ impl DiscoveryService {
             metadata.node_name.clone(),
             Some("standard_lxmf_propagation_metadata".into()),
             device_type,
+            route,
         )?;
         record.stamp_cost = u32::try_from(metadata.stamp_cost).ok();
         record.stamp_cost_flexibility = u32::try_from(metadata.stamp_cost_flexibility).ok();
@@ -293,16 +353,18 @@ impl DiscoveryService {
         name: Option<String>,
         name_source: Option<String>,
         device_type: &str,
+        route: &AnnounceRoute,
     ) -> Result<AnnounceRecord, std::io::Error> {
         let node = self
             .node_store
-            .accept_announce(
+            .accept_announce_with_route(
                 &peer_hash,
                 timestamp,
                 name.as_deref(),
                 name_source.as_deref(),
                 Some(device_type),
                 None,
+                route,
             )
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(AnnounceRecord {
@@ -405,9 +467,13 @@ fn project_device(node: Node) -> DeviceInfo {
         Some(NATIVE_NOMADNET_HOST_DEVICE_TYPE | LEGACY_NOMADNET_HOST_DEVICE_TYPE)
     );
     let mut device = DeviceInfo::default();
-    // The discovery key is the announced destination hash. An identity hash is
-    // not recoverable from the current announce projection.
+    // The discovery key is the announced destination hash. The identity behind
+    // it is recorded only when an announce reception observed it, so legacy
+    // rows project an empty identity hash.
     device.destination_hash = node.identity_hash;
+    device.identity_hash = node.peer_identity_hash.unwrap_or_default();
+    device.hops = node.last_hops;
+    device.interface_kind = node.last_interface_kind;
     device.name = node.display_name.unwrap_or_default();
     device.device_type = if native_nomadnet_host {
         NATIVE_NOMADNET_HOST_DEVICE_TYPE.into()

@@ -713,6 +713,32 @@ pub struct MobilePeer {
     pub age_secs: u64,
     pub source: MobilePeerSource,
     pub announce_count: u32,
+    /// Hex address hash of the identity that announced this destination.
+    ///
+    /// One identity announces several destinations (delivery, propagation,
+    /// page host), so this is what groups those announces into one peer. Empty
+    /// for a record persisted before the identity was projected.
+    #[serde(default)]
+    pub identity_hash: String,
+    /// Hops the peer's most recent announce travelled.
+    #[serde(default)]
+    pub hops: Option<u8>,
+    /// Interface kind the peer's most recent announce arrived on.
+    #[serde(default)]
+    pub interface_kind: Option<String>,
+}
+
+/// The current link to a peer, as the transport's path table sees it now.
+///
+/// Distinct from the hops and interface a `MobilePeer` carries: those describe
+/// the announce that was heard, this describes whether the peer can be reached
+/// at all right now.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MobilePeerLink {
+    pub reachable: bool,
+    pub hops: Option<u8>,
+    pub interface_kind: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1952,6 +1978,9 @@ fn mobile_peer_from_device(
         age_secs: u64::try_from(snapshot_observed_at.saturating_sub(observed_at)).unwrap_or(0),
         source: MobilePeerSource::CanonicalAnnounce,
         announce_count: device.announce_count,
+        identity_hash: device.identity_hash,
+        hops: device.hops,
+        interface_kind: device.interface_kind,
     })
 }
 
@@ -2418,6 +2447,33 @@ impl MobileNode {
 
     pub async fn peer_snapshot(&self) -> Result<MobilePeerSnapshot, MobileDiscoveryError> {
         self.peer_snapshot_at(rns_core::transport::time::now_epoch_secs_i64()).await
+    }
+
+    /// Describe the current link to a peer destination.
+    ///
+    /// A destination with no path is reported unreachable rather than as an
+    /// error, so an unresolvable or malformed hash and a peer that has simply
+    /// not been heard from read the same to a caller rendering link state.
+    pub async fn peer_link(&self, destination_hash: &str) -> MobilePeerLink {
+        if destination_hash.len() != rns_core::hash::ADDRESS_HASH_SIZE * 2 {
+            return MobilePeerLink::default();
+        }
+        let Ok(destination) = AddressHash::new_from_hex_string(destination_hash) else {
+            return MobilePeerLink::default();
+        };
+        let Some((hops, interface)) = self.app_context.transport().query_path(&destination).await
+        else {
+            return MobilePeerLink::default();
+        };
+        let interface_kind = self
+            .app_context
+            .transport()
+            .interface_snapshots()
+            .await
+            .into_iter()
+            .find(|snapshot| snapshot.hash == interface)
+            .map(|snapshot| snapshot.kind.as_str().to_string());
+        MobilePeerLink { reachable: true, hops: Some(hops), interface_kind }
     }
 
     pub async fn subscribe_peer_events(&self) -> MobilePeerSubscription {
@@ -5280,6 +5336,110 @@ mod tests {
         assert_eq!(
             result.items[0].acknowledgement,
             PollAcknowledgementOutcome::Failed { error: "hub refused deletion".into() }
+        );
+        node.shutdown().await.unwrap();
+    }
+
+    fn tcp_client_interface(hash: AddressHash) -> rns_core::transport::iface::InterfaceSnapshot {
+        rns_core::transport::iface::InterfaceSnapshot {
+            hash,
+            kind: InterfaceKind::TcpClient,
+            mode: rns_core::transport::iface::InterfaceMode::PointToPoint,
+            state: InterfaceState::Connected,
+            local_endpoint: None,
+            remote_endpoint: None,
+            parent: None,
+            tx_bytes: 0,
+            rx_bytes: 0,
+            violations: Default::default(),
+            filters: Default::default(),
+            connected_peers: 1,
+            generation: 1,
+        }
+    }
+
+    async fn peer_for(node: &MobileNode, destination_hash: &str) -> MobilePeer {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let snapshot = node.peer_snapshot().await.expect("mobile peer snapshot");
+                if let Some(peer) = snapshot
+                    .peers
+                    .into_iter()
+                    .find(|peer| peer.destination_hash == destination_hash)
+                {
+                    break peer;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("announce is projected into the peer snapshot")
+    }
+
+    #[tokio::test]
+    async fn received_announce_projects_the_announcing_identity_and_its_route() {
+        let mock = Arc::new(MockTransport::new_default());
+        let interface = AddressHash::new([0x9a; 16]);
+        mock.set_interface_snapshots(vec![tcp_client_interface(interface)]);
+        let node = compose_with_mock(mock.clone(), None).await;
+
+        let identity = PrivateIdentity::new_from_name("announcing peer identity");
+        let name = DestinationName::new("lxmf", "delivery");
+        let destination = SingleOutputDestination::new(*identity.as_identity(), name);
+        let destination_hash = hex::encode(destination.desc.address_hash.as_slice());
+        let mut name_hash = [0u8; rns_core::destination::NAME_HASH_LENGTH];
+        name_hash.copy_from_slice(name.as_name_hash_slice());
+        mock.inject_announce(rns_core::transport::core_transport::AnnounceEvent {
+            destination: Arc::new(tokio::sync::Mutex::new(destination)),
+            app_data: rns_core::packet::PacketDataBuffer::new_from_slice(
+                &encode_delivery_display_name_app_data("Announcing Peer").unwrap(),
+            ),
+            ratchet: None,
+            name_hash,
+            hops: 3,
+            interface: interface.as_slice().to_vec(),
+        });
+
+        let peer = peer_for(&node, &destination_hash).await;
+
+        assert!(!peer.identity_hash.is_empty(), "a heard announce carries its identity");
+        assert_eq!(peer.identity_hash, hex::encode(identity.address_hash().as_slice()));
+        assert_ne!(peer.identity_hash, peer.destination_hash);
+        assert_eq!(peer.hops, Some(3));
+        assert_eq!(peer.interface_kind.as_deref(), Some("tcp_client"));
+        node.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn peer_link_reports_unknown_and_malformed_destinations_as_unreachable() {
+        let node = compose_with_mock(Arc::new(MockTransport::new_default()), None).await;
+
+        assert_eq!(node.peer_link(&"ab".repeat(16)).await, MobilePeerLink::default());
+        assert!(!node.peer_link(&"ab".repeat(16)).await.reachable);
+        assert_eq!(node.peer_link("not hex at all").await, MobilePeerLink::default());
+        assert_eq!(node.peer_link("").await, MobilePeerLink::default());
+
+        node.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn peer_link_describes_hops_and_interface_kind_of_a_known_path() {
+        let mock = Arc::new(MockTransport::new_default());
+        let interface = AddressHash::new([0x7c; 16]);
+        let destination = AddressHash::new([0x21; 16]);
+        mock.set_interface_snapshots(vec![tcp_client_interface(interface)]);
+        mock.set_path(destination, 2, interface);
+        let node = compose_with_mock(mock, None).await;
+
+        let link = node.peer_link(&hex::encode(destination.as_slice())).await;
+
+        assert_eq!(
+            link,
+            MobilePeerLink {
+                reachable: true,
+                hops: Some(2),
+                interface_kind: Some("tcp_client".into()),
+            }
         );
         node.shutdown().await.unwrap();
     }

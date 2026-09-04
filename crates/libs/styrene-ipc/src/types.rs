@@ -142,6 +142,10 @@ pub struct DeviceInfo {
     pub discovered_capabilities: Vec<DiscoveredCapability>,
     /// Advertised standard propagation handler state, when proven by canonical app data.
     pub standard_lxmf_propagation_active: Option<bool>,
+    /// Hops the most recent announce travelled, when the reception was observed.
+    pub hops: Option<u8>,
+    /// Interface kind the most recent announce arrived on, when resolvable.
+    pub interface_kind: Option<String>,
 }
 
 // ── Identity ──────────────────────────────────────────────────────────────────
