@@ -33,6 +33,55 @@ pub struct Node {
     pub blocked: bool,
     /// Whether this node is bookmarked/favorited.
     pub bookmarked: bool,
+    /// Hex address hash of the announcing identity, when the announce carried
+    /// one. Distinct from `identity_hash`, which is the announced destination.
+    pub peer_identity_hash: Option<String>,
+    /// Hop count reported by the most recent announce.
+    pub last_hops: Option<u8>,
+    /// Interface kind the most recent announce arrived on.
+    pub last_interface_kind: Option<String>,
+}
+
+/// Route evidence carried by a single announce reception.
+///
+/// The announced destination hash identifies the peer, but grouping announces
+/// by the identity behind them and describing the link they arrived over both
+/// need facts only the announce reception has.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnnounceRoute {
+    /// Hex address hash of the announcing identity.
+    pub identity_hash: Option<String>,
+    /// Hops the announce travelled.
+    pub hops: Option<u8>,
+    /// Interface kind the announce arrived on.
+    pub interface_kind: Option<String>,
+}
+
+/// Every persisted node column, in the order `node_from_row` reads them.
+const NODE_COLUMNS: &str = "identity_hash, display_name, name_source, first_seen, last_seen,
+            announce_count, signal_quality, device_type, blocked, bookmarked,
+            peer_identity_hash, last_hops, last_interface_kind";
+
+fn node_select(filter: &str) -> String {
+    format!("SELECT {NODE_COLUMNS} FROM nodes {filter}")
+}
+
+fn node_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Node> {
+    Ok(Node {
+        identity_hash: row.get(0)?,
+        display_name: row.get(1)?,
+        name_source: row.get(2)?,
+        first_seen: row.get(3)?,
+        last_seen: row.get(4)?,
+        announce_count: row.get(5)?,
+        signal_quality: row.get(6)?,
+        device_type: row.get(7)?,
+        blocked: row.get::<_, i32>(8)? != 0,
+        bookmarked: row.get::<_, i32>(9)? != 0,
+        peer_identity_hash: row.get(10)?,
+        last_hops: row.get::<_, Option<i64>>(11)?.and_then(|hops| u8::try_from(hops).ok()),
+        last_interface_kind: row.get(12)?,
+    })
 }
 
 /// Persistent node registry backed by SQLite.
@@ -76,10 +125,17 @@ impl NodeStore {
             CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
             ",
         )?;
+        // Added after the table shipped; existing databases keep their rows and
+        // read the new columns as NULL until the next announce fills them in.
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN peer_identity_hash TEXT", []);
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN last_hops INTEGER", []);
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN last_interface_kind TEXT", []);
         Ok(())
     }
 
-    /// Upsert a node keyed by its announced destination hash.
+    /// Upsert a node keyed by its announced destination hash, without route
+    /// evidence. Kept for callers that replay announces from storage rather
+    /// than observing a reception.
     pub fn accept_announce(
         &self,
         destination_hash: &str,
@@ -89,12 +145,40 @@ impl NodeStore {
         device_type: Option<&str>,
         signal_quality: Option<f64>,
     ) -> Result<Node, ServiceError> {
+        self.accept_announce_with_route(
+            destination_hash,
+            timestamp,
+            display_name,
+            name_source,
+            device_type,
+            signal_quality,
+            &AnnounceRoute::default(),
+        )
+    }
+
+    /// Upsert a node keyed by its announced destination hash, recording the
+    /// identity behind the announce and the route it arrived over.
+    ///
+    /// Route facts are last-writer-wins on a fresher announce, and a missing
+    /// fact never erases a previously recorded one.
+    #[allow(clippy::too_many_arguments)]
+    pub fn accept_announce_with_route(
+        &self,
+        destination_hash: &str,
+        timestamp: i64,
+        display_name: Option<&str>,
+        name_source: Option<&str>,
+        device_type: Option<&str>,
+        signal_quality: Option<f64>,
+        route: &AnnounceRoute,
+    ) -> Result<Node, ServiceError> {
         let conn = self.conn.lock().map_err(|e| ServiceError::Storage(e.to_string()))?;
 
         conn.execute(
             "INSERT INTO nodes (identity_hash, display_name, name_source, first_seen, last_seen,
-                                announce_count, signal_quality, device_type)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                                announce_count, signal_quality, device_type,
+                                peer_identity_hash, last_hops, last_interface_kind)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(identity_hash) DO UPDATE SET
                 display_name = CASE WHEN excluded.last_seen >= nodes.last_seen
                     THEN COALESCE(excluded.display_name, nodes.display_name)
@@ -110,7 +194,16 @@ impl NodeStore {
                     ELSE nodes.signal_quality END,
                 device_type = CASE WHEN excluded.last_seen >= nodes.last_seen
                     THEN COALESCE(excluded.device_type, nodes.device_type)
-                    ELSE nodes.device_type END",
+                    ELSE nodes.device_type END,
+                peer_identity_hash = CASE WHEN excluded.last_seen >= nodes.last_seen
+                    THEN COALESCE(excluded.peer_identity_hash, nodes.peer_identity_hash)
+                    ELSE nodes.peer_identity_hash END,
+                last_hops = CASE WHEN excluded.last_seen >= nodes.last_seen
+                    THEN COALESCE(excluded.last_hops, nodes.last_hops)
+                    ELSE nodes.last_hops END,
+                last_interface_kind = CASE WHEN excluded.last_seen >= nodes.last_seen
+                    THEN COALESCE(excluded.last_interface_kind, nodes.last_interface_kind)
+                    ELSE nodes.last_interface_kind END",
             params![
                 destination_hash,
                 display_name,
@@ -120,28 +213,16 @@ impl NodeStore {
                 1_u64,
                 signal_quality,
                 device_type,
+                route.identity_hash.as_deref(),
+                route.hops.map(i64::from),
+                route.interface_kind.as_deref(),
             ],
         )?;
 
         conn.query_row(
-            "SELECT identity_hash, display_name, name_source, first_seen, last_seen,
-                    announce_count, signal_quality, device_type, blocked, bookmarked
-             FROM nodes WHERE identity_hash = ?1",
+            &node_select("WHERE identity_hash = ?1"),
             params![destination_hash],
-            |row| {
-                Ok(Node {
-                    identity_hash: row.get(0)?,
-                    display_name: row.get(1)?,
-                    name_source: row.get(2)?,
-                    first_seen: row.get(3)?,
-                    last_seen: row.get(4)?,
-                    announce_count: row.get(5)?,
-                    signal_quality: row.get(6)?,
-                    device_type: row.get(7)?,
-                    blocked: row.get::<_, i32>(8)? != 0,
-                    bookmarked: row.get::<_, i32>(9)? != 0,
-                })
-            },
+            node_from_row,
         )
         .map_err(ServiceError::from)
     }
@@ -168,24 +249,9 @@ impl NodeStore {
     pub fn get(&self, identity_hash: &str) -> Result<Option<Node>, ServiceError> {
         let conn = self.conn.lock().map_err(|e| ServiceError::Storage(e.to_string()))?;
         conn.query_row(
-            "SELECT identity_hash, display_name, name_source, first_seen, last_seen,
-                    announce_count, signal_quality, device_type, blocked, bookmarked
-             FROM nodes WHERE identity_hash = ?1",
+            &node_select("WHERE identity_hash = ?1"),
             params![identity_hash],
-            |row| {
-                Ok(Node {
-                    identity_hash: row.get(0)?,
-                    display_name: row.get(1)?,
-                    name_source: row.get(2)?,
-                    first_seen: row.get(3)?,
-                    last_seen: row.get(4)?,
-                    announce_count: row.get(5)?,
-                    signal_quality: row.get(6)?,
-                    device_type: row.get(7)?,
-                    blocked: row.get::<_, i32>(8)? != 0,
-                    bookmarked: row.get::<_, i32>(9)? != 0,
-                })
-            },
+            node_from_row,
         )
         .optional()
         .map_err(ServiceError::from)
@@ -205,27 +271,10 @@ impl NodeStore {
             })
             .unwrap_or(0);
 
-        let mut stmt = conn.prepare(
-            "SELECT identity_hash, display_name, name_source, first_seen, last_seen,
-                    announce_count, signal_quality, device_type, blocked, bookmarked
-             FROM nodes WHERE last_seen >= ?1
-             ORDER BY last_seen DESC",
-        )?;
+        let mut stmt =
+            conn.prepare(&node_select("WHERE last_seen >= ?1 ORDER BY last_seen DESC"))?;
 
-        let rows = stmt.query_map(params![cutoff], |row| {
-            Ok(Node {
-                identity_hash: row.get(0)?,
-                display_name: row.get(1)?,
-                name_source: row.get(2)?,
-                first_seen: row.get(3)?,
-                last_seen: row.get(4)?,
-                announce_count: row.get(5)?,
-                signal_quality: row.get(6)?,
-                device_type: row.get(7)?,
-                blocked: row.get::<_, i32>(8)? != 0,
-                bookmarked: row.get::<_, i32>(9)? != 0,
-            })
-        })?;
+        let rows = stmt.query_map(params![cutoff], node_from_row)?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(ServiceError::from)
     }

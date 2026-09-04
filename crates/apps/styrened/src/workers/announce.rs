@@ -7,12 +7,34 @@ use crate::transport::mesh_transport::{MeshTransport, TransportLifecycleEvent};
 use rns_core::destination::{DestinationName, NAME_HASH_LENGTH};
 use rns_core::transport::time::now_epoch_secs_i64;
 use std::sync::Arc;
+use styrene_services::node_store::AnnounceRoute;
 use tokio::task::JoinHandle;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnnounceProcessingMilestone {
     pub destination_hash: String,
     pub accepted: bool,
+}
+
+/// Resolve the interface an announce arrived on to its kind label.
+///
+/// The announce carries the interface hash bytes; the kind is only knowable by
+/// matching them against the transport's live interface set. An announce from
+/// an interface that has since gone away resolves to nothing rather than to a
+/// wrong kind.
+async fn announce_interface_kind(
+    transport: &dyn MeshTransport,
+    interface: &[u8],
+) -> Option<String> {
+    if interface.is_empty() {
+        return None;
+    }
+    transport
+        .interface_snapshots()
+        .await
+        .into_iter()
+        .find(|snapshot| snapshot.hash.as_slice() == interface)
+        .map(|snapshot| snapshot.kind.as_str().to_string())
 }
 
 /// Compute the name hash prefix for a destination aspect.
@@ -73,6 +95,16 @@ fn spawn_announce_worker_inner(
                     propagation_destination.copy_from_slice(dest.desc.address_hash.as_slice());
                     drop(dest);
 
+                    let route = AnnounceRoute {
+                        identity_hash: Some(hex::encode(identity_hash)),
+                        hops: Some(event.hops),
+                        interface_kind: announce_interface_kind(
+                            transport.as_ref(),
+                            &event.interface,
+                        )
+                        .await,
+                    };
+
                     // Classify by aspect
                     let is_page_host = event.name_hash == nomadnet_hash;
                     let is_delivery = event.name_hash == delivery_hash;
@@ -90,22 +122,29 @@ fn spawn_announce_worker_inner(
                                 std::io::Error::other("invalid standard propagation app data")
                             })
                             .and_then(|metadata| {
-                                discovery.accept_standard_propagation_announce(
+                                discovery.accept_standard_propagation_announce_with_route(
                                     peer_hash.clone(),
                                     identity_hash,
                                     propagation_destination,
                                     timestamp,
                                     &metadata,
+                                    &route,
                                 )
                             })
                     } else if is_delivery {
-                        discovery.accept_delivery_announce(peer_hash.clone(), timestamp, app_data)
+                        discovery.accept_delivery_announce_with_route(
+                            peer_hash.clone(),
+                            timestamp,
+                            app_data,
+                            &route,
+                        )
                     } else if is_page_host {
-                        discovery.accept_announce_with_type(
+                        discovery.accept_announce_with_route(
                             peer_hash.clone(),
                             timestamp,
                             app_data,
                             device_type,
+                            &route,
                         )
                     } else {
                         Err(std::io::Error::other("unsupported announce aspect"))
