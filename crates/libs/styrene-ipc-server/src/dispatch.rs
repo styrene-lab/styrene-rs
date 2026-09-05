@@ -1427,6 +1427,7 @@ async fn dispatch_query_devices(
                 (rmpv::Value::from("device_type"), rmpv::Value::from(d.device_type.as_str())),
                 (rmpv::Value::from("status"), rmpv::Value::from(d.status.as_str())),
                 (rmpv::Value::from("is_styrene_node"), rmpv::Value::from(d.is_styrene_node)),
+                (rmpv::Value::from("announce_count"), rmpv::Value::from(d.announce_count)),
                 (
                     rmpv::Value::from("discovered_capabilities"),
                     rmpv::Value::Array(
@@ -1437,6 +1438,9 @@ async fn dispatch_query_devices(
                     ),
                 ),
             ];
+            if let Some(timestamp) = d.last_announce {
+                fields.push((rmpv::Value::from("last_announce"), rmpv::Value::from(timestamp)));
+            }
             if let Some(active) = d.standard_lxmf_propagation_active {
                 fields.push((
                     rmpv::Value::from("standard_lxmf_propagation_active"),

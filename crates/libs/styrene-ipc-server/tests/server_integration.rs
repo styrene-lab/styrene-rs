@@ -313,6 +313,8 @@ impl DaemonStatus for TestDaemon {
         let mut d = DeviceInfo::default();
         d.destination_hash = "abcd1234".into();
         d.name = "test-node".into();
+        d.last_announce = Some(1_783_000_000);
+        d.announce_count = 17;
         d.standard_lxmf_propagation_active = Some(false);
         Ok(vec![d])
     }
@@ -2423,6 +2425,10 @@ async fn query_devices() {
     assert!(devices.is_some());
     let devices = devices.expect("arr");
     assert_eq!(devices.len(), 1);
+    let decoded: DeviceInfo =
+        rmpv::ext::from_value(devices[0].clone()).expect("typed device snapshot");
+    assert_eq!(decoded.last_announce, Some(1_783_000_000));
+    assert_eq!(decoded.announce_count, 17);
     let state = devices[0]
         .as_map()
         .and_then(|map| {
