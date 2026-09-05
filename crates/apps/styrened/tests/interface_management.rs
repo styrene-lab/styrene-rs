@@ -34,7 +34,7 @@ async fn tcp_crud_closes_children_and_survives_restart() {
     )
     .unwrap();
     let start = || DaemonConfig2 {
-        db: None,
+        db: Some(root.path().join("messages.db")),
         config: Some(path.clone()),
         identity: None,
         socket: Some(root.path().join("control.sock")),
@@ -146,7 +146,7 @@ async fn tcp_client_connect_disable_reenable_and_authorization() {
     let path = root.path().join("config.toml");
     std::fs::write(&path, "interfaces_managed=true\ninterfaces=[]\n").unwrap();
     let handle = daemon::start(DaemonConfig2 {
-        db: None,
+        db: Some(root.path().join("messages.db")),
         config: Some(path.clone()),
         identity: None,
         socket: Some(root.path().join("control.sock")),
@@ -211,7 +211,7 @@ async fn startup_binds_each_saved_client_to_its_own_worker() {
     }
     std::fs::write(&path, text).unwrap();
     let handle = daemon::start(DaemonConfig2 {
-        db: None,
+        db: Some(root.path().join("messages.db")),
         config: Some(path.clone()),
         identity: None,
         socket: Some(root.path().join("control.sock")),
