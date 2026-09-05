@@ -186,6 +186,8 @@ pub struct DaemonConfig {
     #[serde(default)]
     pub interfaces: Vec<InterfaceConfig>,
     #[serde(default)]
+    pub interfaces_managed: bool,
+    #[serde(default)]
     pub role: NodeRole,
     /// Whether this node forwards and retransmits transit RNS traffic.
     /// Defaults to true for existing full-node and hub configurations.
@@ -234,6 +236,8 @@ const fn default_auto_reply_cooldown_secs() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InterfaceConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     #[serde(rename = "type")]
     pub kind: String,
     pub enabled: Option<bool>,

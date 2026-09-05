@@ -302,14 +302,38 @@ async fn start_inner(
                 ));
             iface_manager.lock().await.spawn(rnode, RNodeInterface::spawn);
         }
-        let (tcp_server, _bound_rx) = TcpServer::new(bind_addr.clone(), iface_manager.clone());
-        iface_manager.lock().await.spawn(tcp_server, TcpServer::spawn);
-        crate::daemon_diagnostic!("[styrene] tcp_server bind={}", bind_addr);
+        let servers = daemon_config
+            .as_ref()
+            .filter(|c| c.interfaces_managed)
+            .map(|c| {
+                c.interfaces
+                    .iter()
+                    .filter(|i| i.kind == "tcp_server" && i.enabled == Some(true))
+                    .filter_map(|i| {
+                        let host = i.host.as_deref()?;
+                        let port = i.port?;
+                        Some(if host.contains(':') {
+                            format!("[{host}]:{port}")
+                        } else {
+                            format!("{host}:{port}")
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec![bind_addr.clone()]);
+        for endpoint in servers {
+            let (server, _) = TcpServer::new(endpoint, iface_manager.clone());
+            iface_manager.lock().await.spawn(server, TcpServer::spawn);
+        }
 
         // TCP clients from config
         if let Some(ref config) = daemon_config {
             for (host, port) in config.tcp_client_endpoints() {
-                let endpoint = format!("{}:{}", host, port);
+                let endpoint = if host.contains(':') {
+                    format!("[{host}]:{port}")
+                } else {
+                    format!("{host}:{port}")
+                };
                 iface_manager
                     .lock()
                     .await

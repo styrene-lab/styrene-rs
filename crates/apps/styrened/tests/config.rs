@@ -22,12 +22,14 @@ interfaces = [
 #[test]
 fn filters_enabled_tcp_clients() {
     let cfg = DaemonConfig {
+        interfaces_managed: false,
         role: Default::default(),
         transport_retransmit: None,
         rbac: None,
         auto_reply: Default::default(),
         interfaces: vec![
             InterfaceConfig {
+                id: None,
                 kind: "tcp_client".into(),
                 enabled: Some(true),
                 host: Some("rmap.world".into()),
@@ -36,6 +38,7 @@ fn filters_enabled_tcp_clients() {
                 rnode: Default::default(),
             },
             InterfaceConfig {
+                id: None,
                 kind: "tcp_client".into(),
                 enabled: Some(false),
                 host: Some("example.com".into()),

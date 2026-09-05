@@ -1976,6 +1976,17 @@ impl DaemonStatus for DaemonFacade {
         Ok(true)
     }
 
+    async fn interface_inventory(&self) -> Result<InterfaceInventory, IpcError> {
+        self.require(Capability::RPC_STATUS)?;
+        Ok(self.ctx.interfaces().list(self.ctx.config(), self.ctx.transport()).await)
+    }
+    async fn mutate_interface(
+        &self,
+        request: InterfaceMutation,
+    ) -> Result<InterfaceInventory, IpcError> {
+        self.require(Capability::RPC_CONFIG_UPDATE)?;
+        self.ctx.interfaces().mutate(self.ctx.config(), self.ctx.transport(), request).await
+    }
     async fn save_config(&self, config: ConfigSnapshot) -> Result<bool, IpcError> {
         self.require(Capability::RPC_CONFIG_UPDATE)?;
         self.ctx.config().apply_snapshot(&config).map_err(internal)?;

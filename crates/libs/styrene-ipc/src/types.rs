@@ -3153,3 +3153,43 @@ pub struct ProfileOperationOutcome {
     /// resulting profile.
     pub restart_required: bool,
 }
+
+/// Persistent operator configuration, independent of a runtime interface hash.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct InterfaceSettings {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub host: String,
+    pub port: u16,
+    pub enabled: bool,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ManagedInterface {
+    pub settings: InterfaceSettings,
+    pub runtime_hash: Option<String>,
+    pub state: String,
+    pub local_endpoint: Option<String>,
+    pub remote_endpoint: Option<String>,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+    pub connected_peers: u32,
+    pub editable: bool,
+    pub error: Option<String>,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct InterfaceInventory {
+    pub revision: String,
+    pub entries: Vec<ManagedInterface>,
+}
+/// action: create, update, delete, or reconnect. Updates carry complete settings.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct InterfaceMutation {
+    pub expected_revision: String,
+    pub action: String,
+    pub settings: InterfaceSettings,
+}

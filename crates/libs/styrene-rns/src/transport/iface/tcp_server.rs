@@ -58,7 +58,10 @@ impl TcpServer {
             if listener.is_err() {
                 runtime.set_state(InterfaceState::Retrying);
                 log::warn!("tcp_server: couldn't bind to <{}>", addr);
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                tokio::select! {
+                    _ = context.cancel.cancelled() => break,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                }
                 continue;
             }
 
@@ -119,7 +122,7 @@ impl TcpServer {
                             );
 
                             let mut iface_manager = iface_manager.lock().await;
-
+                            if cancel.is_cancelled() { break; }
                             iface_manager.spawn_child_with_ifac(
                                 server_address,
                                 TcpClient::new_from_stream(client.1.to_string(), client.0),

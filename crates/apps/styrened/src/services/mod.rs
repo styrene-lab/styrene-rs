@@ -52,3 +52,5 @@ pub use status::{InterfaceRecord, PropagationState, StatusService};
 #[cfg(feature = "terminal")]
 pub use terminal::TerminalService;
 pub use tunnel::TunnelService;
+
+pub mod interfaces;

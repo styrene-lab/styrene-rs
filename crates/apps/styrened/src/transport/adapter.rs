@@ -938,6 +938,25 @@ impl MeshTransport for TokioTransportAdapter {
         self.transport.interface_stats().await
     }
 
+    async fn start_tcp_interface(
+        &self,
+        kind: &str,
+        endpoint: &str,
+    ) -> Result<AddressHash, TransportError> {
+        use rns_core::transport::iface::{tcp_client::TcpClient, tcp_server::TcpServer};
+        let manager = self.transport.iface_manager();
+        let hash = if kind == "tcp_client" {
+            manager.lock().await.spawn(TcpClient::new(endpoint), TcpClient::spawn)
+        } else {
+            let (server, _) = TcpServer::new(endpoint, manager.clone());
+            manager.lock().await.spawn(server, TcpServer::spawn)
+        };
+        Ok(hash)
+    }
+    async fn stop_managed_interface(&self, hash: &AddressHash) -> Result<(), TransportError> {
+        self.transport.iface_manager().lock().await.stop_interface(hash);
+        Ok(())
+    }
     async fn interface_snapshots(&self) -> Vec<rns_core::transport::iface::InterfaceSnapshot> {
         self.transport.interface_snapshots().await
     }

@@ -213,6 +213,8 @@ pub enum MessageType {
     CmdProfileImport = 0xB6,
     CmdProfileAdopt = 0xB7,
     QueryProfileOperation = 0xB8,
+    QueryInterfaceInventory = 0xB9,
+    CmdInterfaceMutation = 0xBA,
 
     // Responses (0x80-0x8F)
     Result = 0x81,
@@ -367,6 +369,8 @@ impl MessageType {
             0xB6 => Ok(Self::CmdProfileImport),
             0xB7 => Ok(Self::CmdProfileAdopt),
             0xB8 => Ok(Self::QueryProfileOperation),
+            0xB9 => Ok(Self::QueryInterfaceInventory),
+            0xBA => Ok(Self::CmdInterfaceMutation),
             0x80 => Ok(Self::Pong),
             0x81 => Ok(Self::Result),
             0x82 => Ok(Self::Error),

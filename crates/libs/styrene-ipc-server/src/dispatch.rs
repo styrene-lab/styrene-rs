@@ -76,6 +76,15 @@ pub async fn dispatch_for_connection(
         MessageType::CmdRestoreIdentityBackup => {
             dispatch_restore_identity_backup(daemon, &payload).await
         }
+        MessageType::QueryInterfaceInventory => {
+            let result = daemon.interface_inventory().await.map_err(typed_ipc_error)?;
+            typed_payload("inventory", &result)
+        }
+        MessageType::CmdInterfaceMutation => {
+            let request = decode_typed(&payload, "request")?;
+            let result = daemon.mutate_interface(request).await.map_err(typed_ipc_error)?;
+            typed_payload("inventory", &result)
+        }
         MessageType::QueryProfileInventory => {
             let inventory = daemon.profile_inventory().await.map_err(typed_ipc_error)?;
             typed_payload("inventory", &inventory)

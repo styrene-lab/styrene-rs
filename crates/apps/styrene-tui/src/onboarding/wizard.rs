@@ -206,6 +206,7 @@ impl WizardState {
         // Auto-discover: local TCP server
         if self.auto_discover {
             interfaces.push(styrened::config::InterfaceConfig {
+                id: None,
                 kind: "tcp_server".into(),
                 enabled: Some(true),
                 host: Some("127.0.0.1".into()),
@@ -222,6 +223,7 @@ impl WizardState {
             }
             if let Some(kind) = super::reticulum::map_interface_kind(&iface.kind) {
                 interfaces.push(styrened::config::InterfaceConfig {
+                    id: None,
                     kind: kind.into(),
                     enabled: Some(true),
                     host: iface.host.clone(),
@@ -236,6 +238,7 @@ impl WizardState {
         if !self.hub_address.is_empty() {
             let (host, port) = parse_host_port(&self.hub_address);
             interfaces.push(styrened::config::InterfaceConfig {
+                id: None,
                 kind: "tcp_client".into(),
                 enabled: Some(true),
                 host: Some(host),

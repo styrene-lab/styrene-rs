@@ -16,13 +16,13 @@ use styrene_ipc::types::{
     ACTIVE_CAPABILITIES_VERSION, ActiveCapabilitiesInfo, ConfigApplyResult, ConfigSnapshot,
     ConversationDraft, ConversationInfo, ConversationPage, DaemonStatusInfo, DeviceInfo,
     ExecResult, FileDownloadInfo, FileDownloadRequest, IdentityBackupExport, IdentityBackupImport,
-    IdentityBackupMetadata, IdentityInfo, IdentityRestoreOutcome, InterfaceDetail, LinkSnapshot,
-    MessageInfo, MessagePage, MessagingDisposition, MessagingOperationOutcome,
-    NetworkOperationInfo, ObservationMetadata, ObservationSource, PageContent, PageInfo,
-    PageNavigationRequest, PathInfo, ProfileAdoptRequest, ProfileCreateRequest,
-    ProfileExportRequest, ProfileInventory, ProfileOperationOutcome, ProfileOperationProgress,
-    ProfilePromoteRequest, ProfileRestoreRequest, ProfileSnapshotRequest, PropagationQuery,
-    PropagationSnapshot, RebootResult, RemoteStatusInfo, RequestObservationInfo,
+    IdentityBackupMetadata, IdentityInfo, IdentityRestoreOutcome, InterfaceDetail,
+    InterfaceInventory, InterfaceMutation, LinkSnapshot, MessageInfo, MessagePage,
+    MessagingDisposition, MessagingOperationOutcome, NetworkOperationInfo, ObservationMetadata,
+    ObservationSource, PageContent, PageInfo, PageNavigationRequest, PathInfo, ProfileAdoptRequest,
+    ProfileCreateRequest, ProfileExportRequest, ProfileInventory, ProfileOperationOutcome,
+    ProfileOperationProgress, ProfilePromoteRequest, ProfileRestoreRequest, ProfileSnapshotRequest,
+    PropagationQuery, PropagationSnapshot, RebootResult, RemoteStatusInfo, RequestObservationInfo,
     ResourceTransferInfo, RouteEventInfo, RouteEventKind, RouteLossReason, SendChatOutcome,
     SendChatRequest, StandardPropagationSnapshot, StartNetworkOperationInfo, StartRequestInfo,
     TunnelInfo, TunnelOperationInfo,
@@ -1134,6 +1134,22 @@ impl Client {
         decode_key(&frame.payload, &["paths"], "path table")
     }
 
+    pub async fn interface_inventory(&self) -> Result<InterfaceInventory, ClientError> {
+        let frame = self
+            .request(MessageType::QueryInterfaceInventory, HashMap::new(), DEFAULT_DEADLINE)
+            .await?;
+        decode_key(&frame.payload, &["inventory"], "interface inventory")
+    }
+    pub async fn mutate_interface(
+        &self,
+        request: &InterfaceMutation,
+    ) -> Result<InterfaceInventory, ClientError> {
+        let payload =
+            HashMap::from([("request".into(), encode_typed(request, "interface mutation")?)]);
+        let frame =
+            self.request(MessageType::CmdInterfaceMutation, payload, DEFAULT_DEADLINE).await?;
+        decode_key(&frame.payload, &["inventory"], "interface inventory")
+    }
     /// Per-interface counters and state.
     pub async fn interface_stats(&self) -> Result<Vec<InterfaceDetail>, ClientError> {
         let frame = self
@@ -2483,6 +2499,34 @@ mod tests {
             generation: ConnectionGeneration(1),
         };
         assert!(other.route_event().is_err());
+    }
+
+    #[tokio::test]
+    async fn interface_mutation_preserves_revision_and_inventory() {
+        let (client, mut server) = pair(2);
+        let mut request = InterfaceMutation::default();
+        request.expected_revision = "revision-1".into();
+        request.action = "create".into();
+        request.settings.name = "Local listener".into();
+        let expected = request.clone();
+        let task = tokio::spawn(async move { client.mutate_interface(&request).await });
+        let frame = wire::read_frame_async(&mut server).await.expect("request");
+        assert_eq!(frame.msg_type, MessageType::CmdInterfaceMutation);
+        let bytes = frame.payload["request"].as_slice().expect("typed request");
+        let decoded: InterfaceMutation =
+            decode_value(rmpv::decode::read_value(&mut &bytes[..]).expect("decode"), "request")
+                .expect("request");
+        assert_eq!(decoded, expected);
+        let mut inventory = InterfaceInventory::default();
+        inventory.revision = "revision-2".into();
+        reply(
+            &mut server,
+            MessageType::Result,
+            &frame.request_id,
+            &HashMap::from([("inventory".into(), typed_bin(&inventory))]),
+        )
+        .await;
+        assert_eq!(task.await.expect("task").expect("inventory"), inventory);
     }
 
     #[tokio::test]

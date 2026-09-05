@@ -67,6 +67,16 @@ pub trait DaemonStatus: Send + Sync {
     /// List all blocked peer identity hashes.
     async fn blocked_peers(&self) -> Result<Vec<String>, IpcError>;
 
+    async fn interface_inventory(&self) -> Result<InterfaceInventory, IpcError> {
+        Err(IpcError::not_implemented("interface_inventory"))
+    }
+    async fn mutate_interface(
+        &self,
+        _request: InterfaceMutation,
+    ) -> Result<InterfaceInventory, IpcError> {
+        Err(IpcError::not_implemented("mutate_interface"))
+    }
+
     /// List all network interfaces with detail.
     async fn list_interfaces(&self) -> Result<Vec<InterfaceDetail>, IpcError>;
 

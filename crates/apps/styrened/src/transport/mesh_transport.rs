@@ -527,6 +527,16 @@ pub trait MeshTransport: Send + Sync {
         HashMap::new()
     }
 
+    async fn start_tcp_interface(
+        &self,
+        _kind: &str,
+        _endpoint: &str,
+    ) -> Result<AddressHash, TransportError> {
+        Err(TransportError::Unavailable)
+    }
+    async fn stop_managed_interface(&self, _hash: &AddressHash) -> Result<(), TransportError> {
+        Err(TransportError::Unavailable)
+    }
     /// Authoritative runtime interface observations.
     async fn interface_snapshots(&self) -> Vec<rns_core::transport::iface::InterfaceSnapshot>;
 }

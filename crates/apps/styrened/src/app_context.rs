@@ -40,6 +40,7 @@ pub struct AppContext {
     node_store: Arc<NodeStore>,
     identity: Arc<IdentityService>,
     config: Arc<ConfigService>,
+    interfaces: crate::services::interfaces::InterfaceService,
     status: Arc<StatusService>,
     fleet: Arc<FleetService>,
     policy: Arc<PolicyService>,
@@ -188,6 +189,7 @@ impl AppContext {
             node_store,
             identity,
             config,
+            interfaces: Default::default(),
             status,
             fleet,
             policy,
@@ -278,6 +280,10 @@ impl AppContext {
 
     pub fn identity(&self) -> &IdentityService {
         &self.identity
+    }
+
+    pub fn interfaces(&self) -> &crate::services::interfaces::InterfaceService {
+        &self.interfaces
     }
 
     pub fn config(&self) -> &ConfigService {

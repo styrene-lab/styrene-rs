@@ -882,7 +882,9 @@ impl InterfaceManager {
 
         log::debug!("iface: create channel {}", address);
 
-        let stop = CancellationToken::new();
+        let stop = parent
+            .and_then(|hash| self.ifaces.iter().find(|i| i.address == hash))
+            .map_or_else(|| self.cancel.child_token(), |i| i.stop.child_token());
         let stats = Arc::new(InterfaceStats::new());
         let runtime = Arc::new(InterfaceRuntime::new(
             descriptor,
@@ -955,8 +957,8 @@ impl InterfaceManager {
 
         InterfaceContext::<T> {
             inner: inner.clone(),
+            cancel: channel.stop.clone(),
             channel,
-            cancel: self.cancel.clone(),
             ifac: None,
             stats,
             runtime,
@@ -983,6 +985,7 @@ impl InterfaceManager {
         context.ifac = ifac;
         let address = *context.channel.address();
 
+        self.tasks.retain(|task| !task.is_finished());
         self.tasks.push(task::spawn(worker(context)));
 
         address
@@ -997,6 +1000,7 @@ impl InterfaceManager {
         let context = self.new_context(inner);
         let address = *context.channel.address();
 
+        self.tasks.retain(|task| !task.is_finished());
         self.tasks.push(task::spawn(worker(context)));
 
         address
@@ -1017,6 +1021,7 @@ impl InterfaceManager {
         let mut context = self.new_context_with_parent(inner, Some(parent));
         context.ifac = ifac;
         let address = *context.channel.address();
+        self.tasks.retain(|task| !task.is_finished());
         self.tasks.push(task::spawn(worker(context)));
         address
     }
@@ -1279,6 +1284,18 @@ impl InterfaceManager {
 
     pub(crate) fn ingress_sender(&self) -> InterfaceRxSender {
         self.rx_send.clone()
+    }
+
+    /// Stop a configured interface and its accepted children.
+    pub fn stop_interface(&mut self, hash: &AddressHash) -> bool {
+        let found = self.ifaces.iter().find(|i| i.address == *hash);
+        if let Some(interface) = found {
+            interface.stop.cancel();
+        } else {
+            return false;
+        }
+        self.cleanup();
+        true
     }
 
     pub fn cleanup(&mut self) {

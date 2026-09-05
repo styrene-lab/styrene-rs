@@ -417,12 +417,36 @@ async fn bootstrap_with_transport_override(
                 ));
             iface_manager.lock().await.spawn(rnode, RNodeInterface::spawn);
         }
-        let (tcp_server, _bound_addr_rx) = TcpServer::new(addr.clone(), iface_manager.clone());
-        let server_iface = iface_manager.lock().await.spawn(tcp_server, TcpServer::spawn);
-        eprintln!("[daemon] tcp_server enabled iface={} bind={}", server_iface, addr);
+        let servers = daemon_config
+            .as_ref()
+            .filter(|c| c.interfaces_managed)
+            .map(|c| {
+                c.interfaces
+                    .iter()
+                    .filter(|i| i.kind == "tcp_server" && i.enabled == Some(true))
+                    .filter_map(|i| {
+                        let host = i.host.as_deref()?;
+                        let port = i.port?;
+                        Some(if host.contains(':') {
+                            format!("[{host}]:{port}")
+                        } else {
+                            format!("{host}:{port}")
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec![addr.clone()]);
+        for endpoint in servers {
+            let (server, _) = TcpServer::new(endpoint, iface_manager.clone());
+            iface_manager.lock().await.spawn(server, TcpServer::spawn);
+        }
         if let Some(config) = daemon_config.as_ref() {
             for (host, port) in config.tcp_client_endpoints() {
-                let endpoint = format!("{}:{}", host, port);
+                let endpoint = if host.contains(':') {
+                    format!("[{host}]:{port}")
+                } else {
+                    format!("{host}:{port}")
+                };
                 let client_iface =
                     iface_manager.lock().await.spawn(TcpClient::new(endpoint), TcpClient::spawn);
                 eprintln!(

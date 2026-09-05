@@ -171,6 +171,34 @@ impl ConfigService {
         Ok(())
     }
 
+    pub fn replace_interfaces(
+        &self,
+        interfaces: Vec<InterfaceConfig>,
+    ) -> Result<(), std::io::Error> {
+        let mut state = self.state.lock().unwrap();
+        let path = state.path.clone().ok_or_else(|| {
+            std::io::Error::other("No persistent configuration path is available")
+        })?;
+        let config = state.config.get_or_insert_with(DaemonConfig::default);
+        let previous = std::mem::replace(&mut config.interfaces, interfaces);
+        let managed = config.interfaces_managed;
+        config.interfaces_managed = true;
+        let result = (|| {
+            let text = std::fs::read_to_string(&path)?;
+            let mut document: toml::Value = toml::from_str(&text).map_err(std::io::Error::other)?;
+            document["interfaces"] =
+                toml::Value::try_from(&config.interfaces).map_err(std::io::Error::other)?;
+            document["interfaces_managed"] = toml::Value::Boolean(true);
+            let text = toml::to_string_pretty(&document).map_err(std::io::Error::other)?;
+            crate::config::atomic_write_private(&path, text.as_bytes())
+        })();
+        if result.is_err() {
+            config.interfaces = previous;
+            config.interfaces_managed = managed;
+        }
+        result
+    }
+
     /// Get all configured interfaces.
     pub fn interfaces(&self) -> Vec<InterfaceConfig> {
         self.state.lock().unwrap().config.as_ref().map(|c| c.interfaces.clone()).unwrap_or_default()
