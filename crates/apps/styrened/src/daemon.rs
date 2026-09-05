@@ -192,6 +192,7 @@ async fn start_inner(
     managed_paths: Option<ManagedDaemonPaths>,
 ) -> anyhow::Result<DaemonHandle> {
     let conservative_network_defaults = cfg.ephemeral || managed_paths.is_some();
+    let mut interface_bindings = Vec::new();
     let mut startup = StartupContractBuilder::production(RuntimeKind::Canonical);
     // --- Identity ---
     let identity = if cfg.ephemeral {
@@ -302,43 +303,38 @@ async fn start_inner(
                 ));
             iface_manager.lock().await.spawn(rnode, RNodeInterface::spawn);
         }
-        let servers = daemon_config
-            .as_ref()
-            .filter(|c| c.interfaces_managed)
-            .map(|c| {
-                c.interfaces
-                    .iter()
-                    .filter(|i| i.kind == "tcp_server" && i.enabled == Some(true))
-                    .filter_map(|i| {
-                        let host = i.host.as_deref()?;
-                        let port = i.port?;
-                        Some(if host.contains(':') {
-                            format!("[{host}]:{port}")
-                        } else {
-                            format!("{host}:{port}")
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| vec![bind_addr.clone()]);
-        for endpoint in servers {
-            let (server, _) = TcpServer::new(endpoint, iface_manager.clone());
+        if !daemon_config.as_ref().is_some_and(|c| c.interfaces_managed) {
+            let (server, _) = TcpServer::new(bind_addr.clone(), iface_manager.clone());
             iface_manager.lock().await.spawn(server, TcpServer::spawn);
         }
-
-        // TCP clients from config
-        if let Some(ref config) = daemon_config {
-            for (host, port) in config.tcp_client_endpoints() {
+        if let Some(config) = daemon_config.as_ref() {
+            for (index, interface) in config.interfaces.iter().enumerate() {
+                if interface.enabled != Some(true) {
+                    continue;
+                }
+                if interface.kind != "tcp_client"
+                    && !(interface.kind == "tcp_server" && config.interfaces_managed)
+                {
+                    continue;
+                }
+                let (Some(host), Some(port)) = (interface.host.as_ref(), interface.port) else {
+                    continue;
+                };
                 let endpoint = if host.contains(':') {
                     format!("[{host}]:{port}")
                 } else {
                     format!("{host}:{port}")
                 };
-                iface_manager
-                    .lock()
-                    .await
-                    .spawn(TcpClient::new(endpoint.clone()), TcpClient::spawn);
-                crate::daemon_diagnostic!("[styrene] tcp_client endpoint={}", endpoint);
+                let hash = if interface.kind == "tcp_client" {
+                    iface_manager.lock().await.spawn(TcpClient::new(endpoint), TcpClient::spawn)
+                } else {
+                    let (server, _) = TcpServer::new(endpoint, iface_manager.clone());
+                    iface_manager.lock().await.spawn(server, TcpServer::spawn)
+                };
+                interface_bindings.push((
+                    interface.id.clone().unwrap_or_else(|| format!("configured-{index}")),
+                    hash,
+                ));
             }
         }
 
@@ -521,6 +517,7 @@ async fn start_inner(
             policy_service,
         )
     });
+    app_context.interfaces().bind_startup(interface_bindings).await;
     if let Some(config) = daemon_config.as_ref() {
         app_context.auto_reply().set_config((&config.auto_reply).into());
     }

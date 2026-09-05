@@ -82,6 +82,10 @@ fn revision(configs: &[InterfaceConfig]) -> String {
     format!("{:016x}", h.finish())
 }
 impl InterfaceService {
+    pub async fn bind_startup(&self, bindings: Vec<(String, AddressHash)>) {
+        self.state.lock().await.bindings.extend(bindings);
+    }
+
     fn inventory(
         state: &mut State,
         config: &ConfigService,

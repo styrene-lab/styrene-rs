@@ -1138,7 +1138,7 @@ impl Client {
         let frame = self
             .request(MessageType::QueryInterfaceInventory, HashMap::new(), DEFAULT_DEADLINE)
             .await?;
-        decode_key(&frame.payload, &["inventory"], "interface inventory")
+        decode_typed_key(&frame.payload, "inventory", "interface inventory")
     }
     pub async fn mutate_interface(
         &self,
@@ -1148,7 +1148,7 @@ impl Client {
             HashMap::from([("request".into(), encode_typed(request, "interface mutation")?)]);
         let frame =
             self.request(MessageType::CmdInterfaceMutation, payload, DEFAULT_DEADLINE).await?;
-        decode_key(&frame.payload, &["inventory"], "interface inventory")
+        decode_typed_key(&frame.payload, "inventory", "interface inventory")
     }
     /// Per-interface counters and state.
     pub async fn interface_stats(&self) -> Result<Vec<InterfaceDetail>, ClientError> {

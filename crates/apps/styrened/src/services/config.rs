@@ -184,11 +184,20 @@ impl ConfigService {
         let managed = config.interfaces_managed;
         config.interfaces_managed = true;
         let result = (|| {
-            let text = std::fs::read_to_string(&path)?;
+            let text = match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(error) => return Err(error),
+            };
             let mut document: toml::Value = toml::from_str(&text).map_err(std::io::Error::other)?;
-            document["interfaces"] =
-                toml::Value::try_from(&config.interfaces).map_err(std::io::Error::other)?;
-            document["interfaces_managed"] = toml::Value::Boolean(true);
+            let table = document
+                .as_table_mut()
+                .ok_or_else(|| std::io::Error::other("Configuration must be a TOML table"))?;
+            table.insert(
+                "interfaces".into(),
+                toml::Value::try_from(&config.interfaces).map_err(std::io::Error::other)?,
+            );
+            table.insert("interfaces_managed".into(), toml::Value::Boolean(true));
             let text = toml::to_string_pretty(&document).map_err(std::io::Error::other)?;
             crate::config::atomic_write_private(&path, text.as_bytes())
         })();
@@ -215,6 +224,18 @@ impl Default for ConfigService {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn interface_management_creates_first_configuration() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("first/config.toml");
+        let service = ConfigService::new();
+        service.load_or_default(&path).unwrap();
+        service.replace_interfaces(Vec::new()).unwrap();
+        let persisted = DaemonConfig::from_path(&path).unwrap();
+        assert!(persisted.interfaces_managed);
+        assert!(persisted.interfaces.is_empty());
+    }
 
     #[test]
     fn empty_config_service() {

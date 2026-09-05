@@ -291,6 +291,7 @@ async fn bootstrap_with_transport_override(
     args: Args,
     mesh_transport_override: Option<Arc<dyn MeshTransport>>,
 ) -> anyhow::Result<BootstrapContext> {
+    let mut interface_bindings = Vec::new();
     let mut startup = StartupContractBuilder::production(RuntimeKind::Standalone);
     let mut legacy_workers = Vec::new();
     let rpc_addr: SocketAddr = args.rpc.parse().expect("invalid rpc address");
@@ -417,44 +418,41 @@ async fn bootstrap_with_transport_override(
                 ));
             iface_manager.lock().await.spawn(rnode, RNodeInterface::spawn);
         }
-        let servers = daemon_config
-            .as_ref()
-            .filter(|c| c.interfaces_managed)
-            .map(|c| {
-                c.interfaces
-                    .iter()
-                    .filter(|i| i.kind == "tcp_server" && i.enabled == Some(true))
-                    .filter_map(|i| {
-                        let host = i.host.as_deref()?;
-                        let port = i.port?;
-                        Some(if host.contains(':') {
-                            format!("[{host}]:{port}")
-                        } else {
-                            format!("{host}:{port}")
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| vec![addr.clone()]);
-        for endpoint in servers {
-            let (server, _) = TcpServer::new(endpoint, iface_manager.clone());
+        if !daemon_config.as_ref().is_some_and(|c| c.interfaces_managed) {
+            let (server, _) = TcpServer::new(addr.clone(), iface_manager.clone());
             iface_manager.lock().await.spawn(server, TcpServer::spawn);
         }
         if let Some(config) = daemon_config.as_ref() {
-            for (host, port) in config.tcp_client_endpoints() {
+            for (index, interface) in config.interfaces.iter().enumerate() {
+                if interface.enabled != Some(true) {
+                    continue;
+                }
+                if interface.kind != "tcp_client"
+                    && !(interface.kind == "tcp_server" && config.interfaces_managed)
+                {
+                    continue;
+                }
+                let (Some(host), Some(port)) = (interface.host.as_ref(), interface.port) else {
+                    continue;
+                };
                 let endpoint = if host.contains(':') {
                     format!("[{host}]:{port}")
                 } else {
                     format!("{host}:{port}")
                 };
-                let client_iface =
-                    iface_manager.lock().await.spawn(TcpClient::new(endpoint), TcpClient::spawn);
-                eprintln!(
-                    "[daemon] tcp_client enabled iface={} name={} host={} port={}",
-                    client_iface, host, host, port
-                );
+                let hash = if interface.kind == "tcp_client" {
+                    iface_manager.lock().await.spawn(TcpClient::new(endpoint), TcpClient::spawn)
+                } else {
+                    let (server, _) = TcpServer::new(endpoint, iface_manager.clone());
+                    iface_manager.lock().await.spawn(server, TcpServer::spawn)
+                };
+                interface_bindings.push((
+                    interface.id.clone().unwrap_or_else(|| format!("configured-{index}")),
+                    hash,
+                ));
             }
         }
+
         eprintln!("[daemon] transport enabled");
         if let Some((host, port)) = addr.rsplit_once(':') {
             configured_interfaces.push(InterfaceRecord {
@@ -781,6 +779,7 @@ async fn bootstrap_with_transport_override(
         node_store,
         styrened::services::PolicyService::new(rbac_policy),
     ));
+    app_context.interfaces().bind_startup(interface_bindings).await;
     if let Some(config) = daemon_config.as_ref() {
         app_context.auto_reply().set_config((&config.auto_reply).into());
     }

@@ -197,3 +197,64 @@ async fn tcp_client_connect_disable_reenable_and_authorization() {
     assert_eq!(enabled.entries[0].settings.id, inventory.entries[0].settings.id);
     handle.shutdown().await;
 }
+
+#[tokio::test]
+async fn startup_binds_each_saved_client_to_its_own_worker() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("config.toml");
+    let first = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let second = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ports = [first.local_addr().unwrap().port(), second.local_addr().unwrap().port()];
+    let mut text = "interfaces_managed=true\n".to_string();
+    for (index, port) in ports.iter().enumerate() {
+        text.push_str(&format!("[[interfaces]]\nid='client-{index}'\nname='Client {index}'\ntype='tcp_client'\nhost='127.0.0.1'\nport={port}\nenabled=true\n"));
+    }
+    std::fs::write(&path, text).unwrap();
+    let handle = daemon::start(DaemonConfig2 {
+        db: None,
+        config: Some(path.clone()),
+        identity: None,
+        socket: Some(root.path().join("control.sock")),
+        ephemeral: true,
+    })
+    .await
+    .unwrap();
+    handle.app_context.config().load(&path).unwrap();
+    let (mut first_peer, _) =
+        tokio::time::timeout(Duration::from_secs(5), first.accept()).await.unwrap().unwrap();
+    let (mut second_peer, _) =
+        tokio::time::timeout(Duration::from_secs(5), second.accept()).await.unwrap().unwrap();
+    let inventory = handle.daemon_facade.interface_inventory().await.unwrap();
+    let mut settings =
+        inventory.entries.iter().find(|e| e.settings.id == "client-0").unwrap().settings.clone();
+    settings.enabled = false;
+    let updated = handle
+        .daemon_facade
+        .mutate_interface(mutation(&inventory, "update", settings))
+        .await
+        .unwrap();
+    assert!(
+        updated
+            .entries
+            .iter()
+            .find(|e| e.settings.id == "client-1")
+            .unwrap()
+            .runtime_hash
+            .is_some()
+    );
+    use tokio::io::AsyncReadExt;
+    let mut byte = [0];
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), first_peer.read(&mut byte))
+            .await
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), second_peer.read(&mut byte))
+            .await
+            .is_err()
+    );
+    handle.shutdown().await;
+}
