@@ -33,6 +33,7 @@ impl GhostPreferences {
 
     pub fn write_session_config(&self, path: &Path) -> io::Result<()> {
         let config = styrened::config::DaemonConfig {
+            interfaces_managed: false,
             interfaces: self.interfaces.clone(),
             role: styrened::config::NodeRole::FullNode,
             transport_retransmit: None,

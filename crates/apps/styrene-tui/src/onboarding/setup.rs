@@ -86,6 +86,7 @@ impl SetupResult {
         }
 
         let config = styrened::config::DaemonConfig {
+            interfaces_managed: false,
             interfaces: self.interfaces.clone(),
             role: self.node_role,
             transport_retransmit: None,
