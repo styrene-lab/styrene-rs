@@ -987,6 +987,7 @@ async fn bootstrap_with_transport_override(
         "[daemon] service workers started (inbound + announce + rpc-request + rpc-response + tunnel)"
     );
 
+    startup.advertise(startup_capability::INTERFACE_MANAGEMENT).map_err(anyhow::Error::msg)?;
     startup.advertise(startup_capability::LOCAL_CONFIG).unwrap_or_else(|error| {
         panic!("invalid standalone local-config startup contract: {error}")
     });

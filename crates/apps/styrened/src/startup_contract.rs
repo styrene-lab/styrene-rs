@@ -660,6 +660,10 @@ pub mod capabilities {
         id: "runtime.network.operations",
         required: NETWORK_OPERATION_COMPONENTS,
     };
+    pub const INTERFACE_MANAGEMENT: CapabilityContract = CapabilityContract {
+        id: "runtime.interface-management.v1",
+        required: LOCAL_CONFIG_COMPONENTS,
+    };
     pub const LOCAL_CONFIG: CapabilityContract =
         CapabilityContract { id: "runtime.local.config", required: LOCAL_CONFIG_COMPONENTS };
     pub const LOCAL_POLICY: CapabilityContract =

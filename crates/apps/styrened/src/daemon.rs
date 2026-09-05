@@ -689,6 +689,7 @@ async fn start_inner(
 
     crate::daemon_diagnostic!("[styrene] workers started");
 
+    startup.advertise(startup_capability::INTERFACE_MANAGEMENT).map_err(anyhow::Error::msg)?;
     startup.advertise(startup_capability::LOCAL_CONFIG).map_err(anyhow::Error::msg)?;
     startup.advertise(startup_capability::LOCAL_POLICY).map_err(anyhow::Error::msg)?;
 
