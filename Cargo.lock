@@ -3889,6 +3889,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-nomadnet"
+version = "0.1.0"
+dependencies = [
+ "rmpv",
+ "styrene-micron",
+]
+
+[[package]]
 name = "styrene-rbac"
 version = "0.1.0"
 dependencies = [
@@ -4089,6 +4097,7 @@ dependencies = [
  "styrene-lxmf",
  "styrene-mesh",
  "styrene-micron",
+ "styrene-nomadnet",
  "styrene-rbac",
  "styrene-rnode-firmware",
  "styrene-rns",

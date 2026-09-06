@@ -14,6 +14,7 @@ members = [
   "crates/libs/styrene-session",
   "crates/libs/styrene-tunnel",
   "crates/libs/styrene-micron",
+  "crates/libs/styrene-nomadnet",
   "crates/libs/styrene-rbac",
   "crates/libs/styrene-rnode-firmware",
   "crates/libs/styrene-secrets",
@@ -43,6 +44,7 @@ default-members = [
   "crates/libs/styrene-session",
   "crates/libs/styrene-tunnel",
   "crates/libs/styrene-micron",
+  "crates/libs/styrene-nomadnet",
   "crates/libs/styrene-rbac",
   "crates/libs/styrene-rnode-firmware",
   "crates/libs/styrene-secrets",
@@ -86,6 +88,7 @@ foundation = [
 ]
 protocol = ["styrene-lxmf", "styrene-mesh", "styrene-tunnel"]
 domain = [
+  "styrene-nomadnet",
   "styrene-rbac",
   "styrene-rnode-firmware",
   "styrene-secrets",

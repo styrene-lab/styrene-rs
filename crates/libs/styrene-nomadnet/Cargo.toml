@@ -1,0 +1,16 @@
+[package]
+name = "styrene-nomadnet"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "NomadNet content projection and native request semantics"
+
+[dependencies]
+styrene-micron = { path = "../styrene-micron", version = "0.1.0" }
+rmpv = { workspace = true }
+
+[lints]
+workspace = true
