@@ -28,7 +28,7 @@ test:
     cargo test -p styrene-interop-runner --test rns_fixtures --test rns_handoff_manifests --test pinned_evidence_record
     cargo test -p styrene-ipc-server --lib --test wire_compat
     cargo test -p styrened --lib \
-        --test announce_names --test config --test identity_store \
+        --test announce_names --test direct_link_delivery --test config --test identity_store \
         --test lxmf_bridge_tests --test lxmf_fidelity_storage \
         --test mobile_application_parity_corpus --test mobile_backend_p0_corpus \
         --test mobile_corpus --test mobile_destination_convergence \

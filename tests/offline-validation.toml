@@ -34,6 +34,7 @@ selected_targets = [
   "styrene-ipc-server:test/wire_compat",
   "styrened:lib",
   "styrened:test/announce_names",
+  "styrened:test/direct_link_delivery",
   "styrened:test/config",
   "styrened:test/identity_store",
   "styrened:test/lxmf_bridge_tests",
