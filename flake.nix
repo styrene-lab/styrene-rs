@@ -296,16 +296,28 @@
             --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.openssl pkgs.sqlite pkgs.stdenv.cc.cc.lib ]}
         '';
 
+        # Match the repository's declared offline daemon gate. Network and
+        # hardware targets are validated separately through their owning lanes.
+        daemonTestArgs = pkgs.lib.concatMapStringsSep " " (target:
+          if target == "styrened:lib" then "--lib"
+          else if pkgs.lib.hasPrefix "styrened:test/" target then
+            "--test ${pkgs.lib.removePrefix "styrened:test/" target}"
+          else throw "Unsupported offline daemon target: ${target}"
+        ) (builtins.filter (pkgs.lib.hasPrefix "styrened:")
+          (builtins.fromTOML (builtins.readFile ./tests/offline-validation.toml)).selected_targets);
+
         # The daemon binary
         styrened = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
           cargoExtraArgs = "-p styrened";
+          cargoTestExtraArgs = daemonTestArgs;
         });
 
         # The daemon with I2P proxy feature
         styrened-i2p = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
           cargoExtraArgs = "-p styrened --features i2p-proxy";
+          cargoTestExtraArgs = daemonTestArgs;
         });
 
         # The I2P proxy client binary
