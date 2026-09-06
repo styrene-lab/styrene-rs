@@ -315,7 +315,7 @@ test-e2e:
 # Run loopback TCP component and end-to-end tests
 test-network: test-e2e
     cargo test -p styrene-i2p
-    cargo test -p styrened --test mobile_node
+    cargo test -p styrened --test mobile_node --test interface_management
 
 # Run the subprocess and listener based interoperability runner tests
 test-live-harness:

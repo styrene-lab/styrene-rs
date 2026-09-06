@@ -133,3 +133,7 @@ evidence = "ignored-live-test; explicit-recipe:test-mqtt-live"
 [[sensitive_tests]]
 path = "crates/libs/styrene-mqtt/tests/mosquitto_persistent_session.rs"
 evidence = "ignored-live-test; explicit-recipe:test-mqtt-live"
+
+[[sensitive_tests]]
+path = "crates/apps/styrened/tests/interface_management.rs"
+evidence = "excluded-target:interface_management; explicit-recipe:test-network"
