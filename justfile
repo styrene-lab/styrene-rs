@@ -18,23 +18,13 @@ install_dir := env_var_or_default("STYRENE_INSTALL_DIR", env_var("HOME") + "/.ca
 
 # Run offline unit, component, and committed fixture tests
 test:
-    mkdir -p target
-    rustc --edition 2024 scripts/check_fixture_immutability.rs -o target/check-fixture-immutability
-    target/check-fixture-immutability snapshot target/identity-vectors.snapshot \
-        crates/libs/styrene-identity/tests/test-vectors.json \
-        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/positive.json \
-        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/negative.json
-    cargo test --features styrene-identity/repository-signing \
+    cargo test \
         -p styrene-entropy -p styrene-content -p styrene-telemetry \
         -p styrene-rns -p styrene-lxmf -p styrene-mesh -p styrene-ipc \
         -p styrene-ipc-wire -p styrene-ipc-client -p styrene-session \
-        -p styrene-identity -p styrene-tunnel -p styrene-micron \
+        -p styrene-tunnel -p styrene-micron \
         -p styrene-rbac -p styrene-rnode-firmware -p styrene-secrets -p styrene-services \
         -p styrene-a2a -p styrene-mqtt -p styrene-forge -p styrene-amcp
-    target/check-fixture-immutability verify target/identity-vectors.snapshot \
-        crates/libs/styrene-identity/tests/test-vectors.json \
-        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/positive.json \
-        crates/libs/styrene-identity/tests/vectors/repository-signing-v1/negative.json
     cargo test -p styrene-interop-runner --test rns_fixtures --test rns_handoff_manifests --test pinned_evidence_record
     cargo test -p styrene-ipc-server --lib --test wire_compat
     cargo test -p styrened --lib \
@@ -83,7 +73,6 @@ check-library-minimal:
     cargo check --lib --no-default-features -p styrene-rbac
     cargo test -p styrene-rbac --features config,signing
     cargo check --lib --no-default-features -p styrene-rnode-firmware
-    cargo check --lib --no-default-features -p styrene-identity
     cargo check --lib --no-default-features -p styrene-secrets
     cargo clippy --lib --no-default-features --no-deps -p styrene-rns -- -D warnings
     cargo test --no-default-features -p styrene-rns --test embedded_time

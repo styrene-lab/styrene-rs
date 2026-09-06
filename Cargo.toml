@@ -12,7 +12,6 @@ members = [
   "crates/libs/styrene-ipc-client",
   "crates/libs/styrene-ipc-server",
   "crates/libs/styrene-session",
-  "crates/libs/styrene-identity",
   "crates/libs/styrene-tunnel",
   "crates/libs/styrene-micron",
   "crates/libs/styrene-rbac",
@@ -42,7 +41,6 @@ default-members = [
   "crates/libs/styrene-ipc-client",
   "crates/libs/styrene-ipc-server",
   "crates/libs/styrene-session",
-  "crates/libs/styrene-identity",
   "crates/libs/styrene-tunnel",
   "crates/libs/styrene-micron",
   "crates/libs/styrene-rbac",
@@ -71,7 +69,6 @@ public-crates = [
   "styrene-ipc-wire",
   "styrene-ipc-client",
   "styrene-ipc-server",
-  "styrene-identity",
   "styrene-tunnel",
   "styrene-secrets",
   "styrene-a2a",
@@ -89,7 +86,6 @@ foundation = [
 ]
 protocol = ["styrene-lxmf", "styrene-mesh", "styrene-tunnel"]
 domain = [
-  "styrene-identity",
   "styrene-rbac",
   "styrene-rnode-firmware",
   "styrene-secrets",
@@ -106,6 +102,7 @@ tooling = ["styrene-interop-runner"]
 test = ["styrene-e2e"]
 
 [workspace.dependencies]
+styrene-identity = { git = "https://github.com/styrene-lab/styrene-identity", rev = "7ce44fd8dac29299b88623ca0252e5f5cebcacfc" }
 anyhow = "1"
 clap = { version = "4.5.29", features = ["derive"] }
 clap_complete = "4.5"

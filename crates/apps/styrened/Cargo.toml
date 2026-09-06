@@ -52,7 +52,7 @@ x25519-dalek = { workspace = true }
 x509-parser = { workspace = true }
 zeroize.workspace = true
 tempfile.workspace = true
-styrene-identity = { path = "../../libs/styrene-identity", optional = true }
+styrene-identity = { workspace = true, optional = true }
 dirs = "6.0.0"
 fs2 = "0.4"
 portable-pty = { version = "0.9", optional = true }

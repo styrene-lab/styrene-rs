@@ -22,7 +22,7 @@ styrene-ipc = { path = "../../libs/styrene-ipc" }
 styrene-ipc-server = { path = "../../libs/styrene-ipc-server" }
 styrene-rbac = { path = "../../libs/styrene-rbac" }
 lxmf = { package = "styrene-lxmf", path = "../../libs/styrene-lxmf", features = ["std"] }
-styrene-identity = { path = "../../libs/styrene-identity", features = ["file-signer", "signing"] }
+styrene-identity = { workspace = true, features = ["file-signer", "signing"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["full", "test-util"] }

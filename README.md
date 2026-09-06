@@ -130,7 +130,7 @@ Important workspace components:
 | [`styrene-lxmf`](crates/libs/styrene-lxmf/) | LXMF messaging, delivery, propagation, stamps, and peer lifecycle |
 | [`styrene-mesh`](crates/libs/styrene-mesh/) | Styrene service protocol envelope and compatibility fixtures |
 | [`styrene-ipc`](crates/libs/styrene-ipc/) | Typed daemon/application boundary |
-| [`styrene-identity`](crates/libs/styrene-identity/) | Scoped identity and key derivation facilities |
+| [`styrene-identity`](https://github.com/styrene-lab/styrene-identity) | Scoped identity and key derivation facilities |
 | [`styrene-tunnel`](crates/libs/styrene-tunnel/) | Peer tunnel and post-quantum session foundations |
 | [`styrened`](crates/apps/styrened/) | Runtime and service composition |
 | [`styrene`](crates/apps/styrene/) | Product facade and CLI |

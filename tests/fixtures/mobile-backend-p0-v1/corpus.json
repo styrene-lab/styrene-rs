@@ -72,7 +72,7 @@
       "current_contract_state": "available",
       "delivery_state": "verified",
       "summary": "Unavailable production custody backends fail closed before plaintext identity creation; plaintext storage requires explicit development configuration.",
-      "owner_paths": ["crates/apps/styrened/src/mobile.rs", "crates/libs/styrene-identity/src/keychain_signer.rs", "crates/libs/styrene-identity/src/android_keystore_signer.rs"],
+      "owner_paths": ["crates/apps/styrened/src/mobile.rs"],
       "assertions": ["Selecting an unavailable production custody backend fails before plaintext identity creation.", "Plaintext storage is possible only through explicit development configuration."],
       "forbidden_outcomes": ["implicit plaintext fallback", "empty production passphrase", "secure custody claim after downgrade"],
       "required_tests": ["crates/apps/styrened/tests/mobile_p0_backend.rs#production_custody_backends_fail_closed", "crates/apps/styrened/tests/mobile_p0_backend.rs#plaintext_backend_requires_explicit_selection"],

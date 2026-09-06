@@ -29,7 +29,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
       - run: |
-          cargo test -p styrene-entropy -p styrene-content -p styrene-telemetry -p styrene-rns -p styrene-lxmf -p styrene-mesh -p styrene-ipc -p styrene-ipc-wire -p styrene-ipc-client -p styrene-session -p styrene-identity -p styrene-tunnel -p styrene-micron -p styrene-rbac -p styrene-secrets -p styrene-services -p styrene-a2a -p styrene-mqtt -p styrene-forge -p styrene-amcp
+          cargo test -p styrene-entropy -p styrene-content -p styrene-telemetry -p styrene-rns -p styrene-lxmf -p styrene-mesh -p styrene-ipc -p styrene-ipc-wire -p styrene-ipc-client -p styrene-session -p styrene-tunnel -p styrene-micron -p styrene-rbac -p styrene-secrets -p styrene-services -p styrene-a2a -p styrene-mqtt -p styrene-forge -p styrene-amcp
           cargo test -p styrene-rnode-firmware
           cargo test -p styrene-ipc-server --lib --test wire_compat
           cargo test -p styrened --lib --test announce_names --test config --test identity_store --test lxmf_bridge_tests --test lxmf_fidelity_storage --test mobile_application_parity_corpus --test mobile_backend_p0_corpus --test mobile_corpus --test mobile_destination_convergence --test mobile_forced_termination --test mobile_minimum_corpus --test mobile_p0_backend --test nomadnet_fixtures --test nomadnet_pages_offline --test operator_profile --test profile_ipc --test receipt_bridge --test receipt_mapping --test rns_crypto --test transport_contract --test transport_null --test worker_announce --test worker_inbound -- --test-threads=1
@@ -45,7 +45,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
       - run: |
-          cargo test -p styrene-entropy -p styrene-content -p styrene-telemetry -p styrene-rns -p styrene-lxmf -p styrene-mesh -p styrene-ipc -p styrene-ipc-wire -p styrene-ipc-client -p styrene-session -p styrene-identity -p styrene-tunnel -p styrene-micron -p styrene-rbac -p styrene-secrets -p styrene-services -p styrene-a2a -p styrene-mqtt -p styrene-forge -p styrene-amcp
+          cargo test -p styrene-entropy -p styrene-content -p styrene-telemetry -p styrene-rns -p styrene-lxmf -p styrene-mesh -p styrene-ipc -p styrene-ipc-wire -p styrene-ipc-client -p styrene-session -p styrene-tunnel -p styrene-micron -p styrene-rbac -p styrene-secrets -p styrene-services -p styrene-a2a -p styrene-mqtt -p styrene-forge -p styrene-amcp
           cargo test -p styrene-rnode-firmware
           cargo test -p styrene-ipc-server --lib --test wire_compat
           cargo test -p styrened --lib --test announce_names --test config --test identity_store --test lxmf_bridge_tests --test lxmf_fidelity_storage --test mobile_application_parity_corpus --test mobile_backend_p0_corpus --test mobile_corpus --test mobile_destination_convergence --test mobile_forced_termination --test mobile_minimum_corpus --test mobile_p0_backend --test nomadnet_fixtures --test nomadnet_pages_offline --test operator_profile --test profile_ipc --test receipt_bridge --test receipt_mapping --test rns_crypto --test transport_contract --test transport_null --test worker_announce --test worker_inbound -- --test-threads=1
@@ -124,7 +124,6 @@ jobs:
           cargo check --lib --no-default-features -p styrene-mesh
           cargo check --lib --no-default-features -p styrene-rbac
           cargo test -p styrene-rbac --features config,signing
-          cargo check --lib --no-default-features -p styrene-identity
           cargo check --lib --no-default-features -p styrene-secrets
           cargo clippy --lib --no-default-features --no-deps -p styrene-rns -- -D warnings
           cargo test --no-default-features -p styrene-rns --test embedded_time

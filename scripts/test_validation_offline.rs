@@ -1421,8 +1421,6 @@ fn hardware_features_remain_opt_in() {
     for (path, declaration) in [
         ("crates/libs/styrene-entropy/Cargo.toml", "hardware-trng = [\"dep:serialport\"]"),
         ("crates/libs/styrene-rns/Cargo.toml", "serial = [\"transport\", \"dep:tokio-serial\"]"),
-        ("crates/libs/styrene-identity/Cargo.toml", "yubikey = ["),
-        ("crates/libs/styrene-identity/Cargo.toml", "keychain = ["),
     ] {
         let manifest = read(path);
         assert!(manifest.contains(declaration), "{path} lost '{declaration}'");
