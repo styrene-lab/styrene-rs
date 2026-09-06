@@ -109,7 +109,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
       - name: "Check: ${{ matrix.name }}"
-        run: cargo check -p styrened ${{ matrix.features }}
+        run: cargo check --locked -p styrened ${{ matrix.features }}
+      - name: Test external Identity recovery contract
+        if: matrix.name == 'mobile-identity'
+        run: cargo test --locked -p styrened --no-default-features --features mobile-identity --lib portable
   library-minimal:
     name: Reusable Libraries (defaults disabled)
     runs-on: ubuntu-latest
