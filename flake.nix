@@ -239,16 +239,9 @@
           else if self ? dirtyShortRev then self.dirtyShortRev
           else "unknown";
 
-        # Source filtering — include Rust sources, configuration, and test fixtures
-        src = pkgs.lib.cleanSourceWith {
-          src = craneLib.path ./.;
-          filter = path: type:
-            (craneLib.filterCargoSources path type)
-            || pkgs.lib.hasInfix "/tests/interop/fixtures/" path
-            || builtins.match ".*\\.md$" path != null
-            || builtins.match ".*\\.toml$" path != null
-            || builtins.match ".*\\.json$" path != null;
-        };
+        # Corpus contracts reference non-Rust sources and provenance files.
+        # Keep the complete committed flake source for package validation.
+        src = craneLib.path ./.;
 
         commonArgs = {
           inherit src;
