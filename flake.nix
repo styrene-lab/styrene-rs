@@ -265,6 +265,16 @@
             pkg-config
           ];
           PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
+          # Dynamic page cleanup must resolve tools inside the Nix closure.
+          postPatch = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+            substituteInPlace crates/apps/styrened/src/services/pages.rs \
+              --replace-fail '"/bin/ps"' '"${pkgs.procps}/bin/ps"'
+            substituteInPlace crates/apps/styrened/src/workers/native_nomadnet.rs \
+              --replace-fail '/bin/ps' '${pkgs.procps}/bin/ps' \
+              --replace-fail '/bin/sleep' '${pkgs.coreutils}/bin/sleep' \
+              --replace-fail '/usr/bin/touch' '${pkgs.coreutils}/bin/touch' \
+              --replace-fail '/usr/bin/perl' '${pkgs.perl}/bin/perl'
+          '';
         };
 
         # Build deps once, reuse for all packages
