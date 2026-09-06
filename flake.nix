@@ -278,7 +278,7 @@
         };
 
         # Build deps once, reuse for all packages
-        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+        cargoArtifacts = craneLib.buildDepsOnly (builtins.removeAttrs commonArgs [ "postPatch" ]);
 
         # The canonical product binary used by installation and Ghost checks
         styreneRaw = craneLib.buildPackage (commonArgs // {
