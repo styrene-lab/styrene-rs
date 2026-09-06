@@ -239,11 +239,12 @@
           else if self ? dirtyShortRev then self.dirtyShortRev
           else "unknown";
 
-        # Source filtering — include Rust sources + config files
+        # Source filtering — include Rust sources, configuration, and test fixtures
         src = pkgs.lib.cleanSourceWith {
           src = craneLib.path ./.;
           filter = path: type:
             (craneLib.filterCargoSources path type)
+            || pkgs.lib.hasInfix "/tests/interop/fixtures/" path
             || builtins.match ".*\\.md$" path != null
             || builtins.match ".*\\.toml$" path != null
             || builtins.match ".*\\.json$" path != null;
