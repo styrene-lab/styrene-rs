@@ -274,6 +274,21 @@ async fn live_echo_peer_basics() {
     )
     .await;
 
+    // Exercise several watchdog cycles before reusing the established link.
+    // A first exchange alone cannot detect asymmetric idle expiration.
+    for cycle in 1..=2 {
+        evidence.record("idle.started", json!({"cycle": cycle, "seconds": 120}));
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        echo_round_trip(
+            &probe,
+            &target,
+            &mut evidence,
+            &format!("after-idle-{cycle}"),
+            format!("live echo after idle {cycle} {stamp}"),
+        )
+        .await;
+    }
+
     probe.cancel_interface(&iface).await;
     evidence.record("interface.dropped", json!({ "interface": iface.to_string() }));
     let reattached = probe.attach_tcp_client(target.addr).await;

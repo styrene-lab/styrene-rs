@@ -117,7 +117,7 @@ pub(super) async fn protocol_drop_reason(
 
 pub(super) async fn handle_check_links<'a>(mut handler: MutexGuard<'a, TransportHandler>) {
     let mut links_to_remove: Vec<AddressHash> = Vec::new();
-    let mut pending_packets: Vec<Packet> = Vec::new();
+    let mut pending_packets: Vec<(Option<AddressHash>, Packet)> = Vec::new();
     let mut terminal_snapshots = Vec::new();
 
     // Clean up input links
@@ -164,7 +164,8 @@ pub(super) async fn handle_check_links<'a>(mut handler: MutexGuard<'a, Transport
             }
             LinkStatus::Active | LinkStatus::Stale => match link.check_watchdog(true) {
                 LinkWatchdogAction::SendKeepAlive => {
-                    pending_packets.push(link.keep_alive_packet(KEEP_ALIVE_REQUEST));
+                    pending_packets
+                        .push((link.ingress_iface(), link.keep_alive_packet(KEEP_ALIVE_REQUEST)));
                 }
                 LinkWatchdogAction::Close => {
                     terminal_snapshots.push(link.state_snapshot());
@@ -175,7 +176,7 @@ pub(super) async fn handle_check_links<'a>(mut handler: MutexGuard<'a, Transport
             LinkStatus::Pending => {
                 if link.elapsed() > INTERVAL_OUTPUT_LINK_REPEAT {
                     log::warn!("tp({}): repeat link request {}", handler.config.name, link.id());
-                    pending_packets.push(link.request());
+                    pending_packets.push((None, link.request()));
                 }
             }
             LinkStatus::Handshake => {}
@@ -190,8 +191,12 @@ pub(super) async fn handle_check_links<'a>(mut handler: MutexGuard<'a, Transport
         handler.out_links.remove(addr);
     }
 
-    for packet in pending_packets {
-        handler.send_packet(packet).await;
+    for (iface, packet) in pending_packets {
+        if let Some(iface) = iface {
+            handler.send(TxMessage { tx_type: TxMessageType::Direct(iface), packet }).await;
+        } else if packet.header.packet_type == PacketType::LinkRequest {
+            handler.send_packet(packet).await;
+        }
     }
 }
 

@@ -239,7 +239,16 @@ impl Transport {
     async fn prepare_outbound_link(&self, destination: DestinationDesc) -> PreparedOutboundLink {
         let mut handler = self.handler.lock().await;
         if let Some(existing) = handler.out_links.get(&destination.address_hash).cloned() {
-            if existing.lock().await.status() != LinkStatus::Closed {
+            let active_interfaces = handler.iface_manager.lock().await.active_interface_hashes();
+            let reusable = {
+                let mut link = existing.lock().await;
+                if link.ingress_iface().is_some_and(|iface| !active_interfaces.contains(&iface)) {
+                    link.close_with_reason(LinkCloseReason::SendFailure);
+                    handler.record_terminal_link(link.state_snapshot());
+                }
+                link.status() != LinkStatus::Closed
+            };
+            if reusable {
                 return PreparedOutboundLink::Existing(existing);
             }
             if handler

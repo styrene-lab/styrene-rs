@@ -196,6 +196,7 @@ pub struct Link {
     activated_at: Option<Instant>,
     last_inbound: Option<Instant>,
     last_keepalive: Option<Instant>,
+    pending_keepalive: Option<Instant>,
     last_proof: Option<Instant>,
     stale_since: Option<Instant>,
     observed_at: std::time::SystemTime,
@@ -242,6 +243,7 @@ impl Link {
             activated_at: None,
             last_inbound: None,
             last_keepalive: None,
+            pending_keepalive: None,
             last_proof: None,
             stale_since: None,
             observed_at: std::time::SystemTime::now(),
@@ -312,6 +314,7 @@ impl Link {
             activated_at: None,
             last_inbound: None,
             last_keepalive: None,
+            pending_keepalive: None,
             last_proof: None,
             stale_since: None,
             observed_at: std::time::SystemTime::now(),
@@ -366,6 +369,7 @@ impl Link {
         self.activated_at = None;
         self.last_inbound = None;
         self.last_keepalive = None;
+        self.pending_keepalive = None;
         self.last_proof = None;
         self.stale_since = None;
         self.observed_at = std::time::SystemTime::now();
@@ -541,10 +545,13 @@ impl Link {
                 if packet.data.as_slice() == [0xFE] {
                     log::trace!("link({}): keep-alive response", self.id);
                     self.note_inbound(packet.context);
-                    self.rtt = self.request_time.elapsed();
-                    self.update_keepalive_timing();
-                    self.refresh_channel_flow_control();
-                    self.post_event(LinkEvent::RttUpdated);
+                    if let Some(sent_at) = self.pending_keepalive.take() {
+                        self.rtt = sent_at.elapsed();
+                        // The peer still uses the interval negotiated during
+                        // establishment. A local probe cannot renegotiate it.
+                        self.refresh_channel_flow_control();
+                        self.post_event(LinkEvent::RttUpdated);
+                    }
                     return LinkHandleResult::None;
                 }
             }
@@ -1083,7 +1090,9 @@ impl Link {
         if self.status != LinkStatus::Active {
             return Err(RnsError::InvalidArgument);
         }
-        self.request_time = Instant::now();
+        let now = Instant::now();
+        self.last_keepalive = Some(now);
+        self.pending_keepalive = Some(now);
         Ok(self.keep_alive_packet(0xFF))
     }
 
@@ -1256,6 +1265,7 @@ impl Link {
                         let keepalive_anchor = self.last_keepalive.unwrap_or(inbound_anchor);
                         if now.duration_since(keepalive_anchor) >= self.keepalive {
                             self.last_keepalive = Some(now);
+                            self.pending_keepalive = Some(now);
                             return LinkWatchdogAction::SendKeepAlive;
                         }
                     }
@@ -1340,6 +1350,7 @@ impl Link {
         self.activated_at = None;
         self.last_inbound = None;
         self.last_keepalive = None;
+        self.pending_keepalive = None;
         self.last_proof = None;
         self.stale_since = None;
         self.observed_at = std::time::SystemTime::now();
@@ -1693,6 +1704,58 @@ mod tests {
         );
         let response = inbound.keep_alive_packet(0xFE);
         outbound.handle_packet(&response, iface);
+
+        assert!(
+            std::iter::from_fn(|| events.try_recv().ok())
+                .any(|event| matches!(event.event, LinkEvent::RttUpdated))
+        );
+    }
+
+    #[test]
+    fn watchdog_keepalive_does_not_count_idle_time_as_round_trip() {
+        let signer = PrivateIdentity::new_from_rand(OsRng);
+        let identity = *signer.as_identity();
+        let destination = DestinationDesc {
+            identity,
+            address_hash: identity.address_hash,
+            name: DestinationName::new("lxmf", "delivery"),
+        };
+        let (tx, mut events) = tokio::sync::broadcast::channel(8);
+        let mut outbound = Link::new(destination, tx.clone());
+        let request = outbound.request();
+        let mut inbound =
+            Link::new_from_request(&request, signer.sign_key().clone(), destination, tx)
+                .expect("link request should parse");
+        let iface = AddressHash::new_from_rand(OsRng);
+        assert!(matches!(
+            outbound.handle_packet(&inbound.prove(), iface),
+            LinkHandleResult::Activated
+        ));
+        while events.try_recv().is_ok() {}
+
+        outbound.rtt = Duration::from_millis(20);
+        outbound.update_keepalive_timing();
+        let negotiated_interval = outbound.keepalive;
+        let anchor = Instant::now() - negotiated_interval - Duration::from_secs(1);
+        outbound.activated_at = Some(anchor);
+        outbound.last_inbound = Some(anchor);
+        outbound.last_proof = Some(anchor);
+        outbound.request_time = anchor;
+        outbound.last_keepalive = Some(anchor);
+        assert_eq!(outbound.check_watchdog(true), LinkWatchdogAction::SendKeepAlive);
+        let probe = outbound.keep_alive_packet(0xFF);
+        assert!(matches!(inbound.handle_packet(&probe, iface), LinkHandleResult::KeepAlive));
+        assert!(
+            !std::iter::from_fn(|| events.try_recv().ok())
+                .any(|event| matches!(event.event, LinkEvent::RttUpdated))
+        );
+        let response = inbound.keep_alive_packet(0xFE);
+        outbound.handle_packet(&response, iface);
+        assert!(outbound.rtt < Duration::from_secs(1), "idle time is not network latency");
+        assert_eq!(
+            outbound.keepalive, negotiated_interval,
+            "keepalive cannot renegotiate one end alone"
+        );
 
         assert!(
             std::iter::from_fn(|| events.try_recv().ok())

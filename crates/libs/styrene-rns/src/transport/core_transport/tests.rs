@@ -2275,3 +2275,35 @@ async fn shared_medium_link_request_is_forwarded_by_the_designated_relay_only() 
     assert_eq!(r.handler.lock().await.link_table.len(), 1);
     assert_eq!(interface_stats_for(&r, r_medium.address).await.filters.not_next_hop, 0);
 }
+
+#[tokio::test]
+async fn watchdog_keepalive_uses_bound_interface_without_destination_route() {
+    let mut fixture = bound_link_fixture().await;
+    // The minimum negotiated interval is five seconds. The link has no
+    // destination-table route and broadcasting is disabled.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    super::jobs::handle_check_links(fixture.transport.handler.lock().await).await;
+    fixture.expect_bound_send(fixture.out_link_id, PacketContext::KeepAlive).await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn disconnected_link_is_not_reused_before_periodic_path_cleanup() {
+    let fixture = bound_link_fixture().await;
+    let existing = fixture.transport.find_out_link(&fixture.out_link_id).await.expect("link");
+    let destination = *existing.lock().await.destination();
+    assert!(
+        fixture
+            .transport
+            .iface_manager()
+            .lock()
+            .await
+            .cancel_interface_for_test(&fixture.bound.address)
+    );
+    let replacement = fixture
+        .transport
+        .link_with_dispatch(destination, |_| async { SendPacketOutcome::DroppedNoRoute })
+        .await;
+    assert!(!Arc::ptr_eq(&existing, &replacement), "dead interface cannot carry a reused link");
+    assert_eq!(existing.lock().await.status(), LinkStatus::Closed);
+}
