@@ -84,6 +84,7 @@ bundled-sqlite = ["rusqlite/bundled"]
 native-serial = ["rns_core/serial"]
 
 [dev-dependencies]
+styrene-ipc-client = { path = "../../libs/styrene-ipc-client", version = "0.1.0" }
 styrene-interop-runner = { path = "../../tests/styrene-interop-runner" }
 tokio = { workspace = true, features = ["test-util"] }
 

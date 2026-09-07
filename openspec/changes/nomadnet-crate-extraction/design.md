@@ -44,3 +44,23 @@ IPC types in styrened. Preserve generation/correlation and owner identifiers. A
 session operation keeps one absolute deadline across stages. The existing
 SessionReservation, UnretainedLink and ActiveRequest drop/cleanup behavior must
 have equivalent tests before replacing the daemon coordinator.
+
+## Final extraction structure
+
+`coordinator.rs` and `coordinator_tests.rs` now own all browsing sessions, cache,
+history, downloads, saves and link-reference cleanup. `models.rs` contains domain
+observations and results with no serde dependency or derives. The runtime adapter
+maps each IPC field explicitly; there is no serialize/deserialize conversion path.
+The adapter retains private identity selection; BrowseBackend identification takes
+no private key. RNS public identity/destination types remain foundation contracts.
+
+Address parsing is canonical in the domain crate. The public IPC address API is
+retained for source compatibility with its existing implementation; parity cases
+are integration-tested. A future public-contract consolidation must preserve that
+API and publication rules. The crate does not depend upward to reuse it.
+
+Native page hosting (PageService), host configuration and dynamic process execution
+remain daemon concerns outside this browsing-coordinator extraction. Adapter tests
+retain native request cancellation/receipt polling because these use MeshTransport;
+scripted coordinator ownership tests moved into the library. No duplicate runtime
+coordinator implementation remains in styrened.

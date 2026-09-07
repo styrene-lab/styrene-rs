@@ -6,6 +6,6 @@
 
 ## 2. Coordinator gate
 <!-- specs: nomadnet-crate-extraction -->
-- [ ] Define IPC-independent transport/discovery/observation contracts and address compatibility.
-- [ ] Move coordinator, session/cache/download ownership and scripted lifecycle tests.
-- [ ] Verify daemon composition, IPC compatibility and controlled runtime fixtures.
+- [x] Define IPC-independent transport/discovery/observation contracts and address compatibility.
+- [x] Move coordinator, session/cache/download ownership and scripted lifecycle tests.
+- [x] Verify daemon composition, IPC compatibility and controlled runtime fixtures.

@@ -99,6 +99,7 @@ pub struct MockTransport {
     cancel_open_results: Mutex<VecDeque<Result<(), TransportError>>>,
     probe_results: Mutex<VecDeque<Result<(), TransportError>>>,
     close_results: Mutex<VecDeque<Result<(), TransportError>>>,
+    request_receipts: Mutex<VecDeque<styrene_ipc::types::RequestObservationInfo>>,
     request_results:
         Mutex<VecDeque<Result<styrene_ipc::types::RequestObservationInfo, TransportError>>>,
     shutdown_results: Mutex<VecDeque<Result<(), TransportError>>>,
@@ -149,6 +150,7 @@ impl MockTransport {
             probe_results: Mutex::new(VecDeque::new()),
             close_results: Mutex::new(VecDeque::new()),
             request_results: Mutex::new(VecDeque::new()),
+            request_receipts: Mutex::new(VecDeque::new()),
             shutdown_results: Mutex::new(VecDeque::new()),
             cancel_request_delay: Mutex::new(Duration::ZERO),
             paths: Mutex::new(HashMap::new()),
@@ -216,6 +218,11 @@ impl MockTransport {
 
     pub fn queue_close(&self, result: Result<(), TransportError>) {
         self.close_results.lock().unwrap().push_back(result);
+    }
+
+    /// Queue a terminal/progress receipt for adapter integration tests.
+    pub fn queue_request_receipt(&self, receipt: styrene_ipc::types::RequestObservationInfo) {
+        self.request_receipts.lock().unwrap().push_back(receipt);
     }
 
     pub fn queue_request(
@@ -369,6 +376,9 @@ impl MeshTransport for MockTransport {
         request_id: &str,
     ) -> Result<Option<styrene_ipc::types::RequestObservationInfo>, TransportError> {
         self.record(MockCall::RequestReceipt { request_id: request_id.to_string() });
+        if let Some(receipt) = self.request_receipts.lock().unwrap().pop_front() {
+            return Ok(Some(receipt));
+        }
         let mut receipt = styrene_ipc::types::RequestObservationInfo::default();
         receipt.request_id = request_id.to_string();
         receipt.state = styrene_ipc::types::RequestState::Pending;
@@ -516,6 +526,23 @@ impl MeshTransport for MockTransport {
     async fn close_link(&self, link_id: &AddressHash) -> Result<(), TransportError> {
         self.record(MockCall::CloseLink { link_id: *link_id });
         self.close_results.lock().unwrap().pop_front().unwrap_or(Err(TransportError::Unavailable))
+    }
+
+    async fn open_native_nomadnet_link(
+        &self,
+        destination: DestinationDesc,
+        cancellation: tokio_util::sync::CancellationToken,
+        timeout: Duration,
+    ) -> Result<LinkOpenResult, TransportError> {
+        self.open_link(&destination.address_hash, cancellation, timeout).await
+    }
+
+    async fn identify_native_nomadnet_link(
+        &self,
+        link_id: &str,
+        identity: &rns_core::identity::PrivateIdentity,
+    ) -> Result<(), TransportError> {
+        self.identify_link(link_id, identity).await
     }
 
     async fn open_named_link(

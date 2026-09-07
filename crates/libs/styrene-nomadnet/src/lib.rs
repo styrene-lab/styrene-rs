@@ -308,3 +308,8 @@ pub fn decode_binary_response(response: &[u8]) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests;
+
+mod address;
+pub mod coordinator;
+pub mod models;
+pub use address::{NomadNetHost, NomadNetPath, PageAddress, PageAddressError};

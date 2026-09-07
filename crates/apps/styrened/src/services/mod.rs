@@ -55,4 +55,4 @@ pub use tunnel::TunnelService;
 
 pub mod interfaces;
 
-mod nomadnet_content;
+mod nomadnet_conversion;

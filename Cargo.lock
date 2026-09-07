@@ -3892,8 +3892,17 @@ dependencies = [
 name = "styrene-nomadnet"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "hex",
+ "log",
  "rmpv",
+ "sha2",
  "styrene-micron",
+ "styrene-rns",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -4093,6 +4102,7 @@ dependencies = [
  "styrene-identity",
  "styrene-interop-runner",
  "styrene-ipc",
+ "styrene-ipc-client",
  "styrene-ipc-server",
  "styrene-lxmf",
  "styrene-mesh",

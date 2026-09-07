@@ -83,3 +83,12 @@ crates/
 - **Boundary checks** prevent unauthorized inter-crate dependencies
 - Wire protocol evolution answers to rolling-upgrade compatibility among Styrene Rust nodes
 - All workspace crates inherit Rust `2024` edition and `rust-version` from the workspace, which is pinned to latest stable in `rust-toolchain.toml`.
+
+## NomadNet browsing ownership
+
+`crates/libs/styrene-nomadnet` owns browser sessions, cache/history, downloads,
+content projection and lifecycle cleanup. Read its README.md and AGENTS.md before
+browsing changes. `styrened::services::native_browse` is the runtime adapter;
+authorization and IPC conversion remain in the daemon. Keep routing recovery in
+styrene-rns and parsing in styrene-micron. Run the `nomadnet_split` integration
+test when changing the domain/daemon boundary.

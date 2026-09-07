@@ -6,11 +6,23 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
-description = "NomadNet content projection and native request semantics"
+description = "NomadNet browser sessions, content, downloads and lifecycle semantics"
 
 [dependencies]
+async-trait.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+hex.workspace = true
+log.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "rt", "sync", "time", "macros"] }
+tokio-util.workspace = true
+rns_core = { package = "styrene-rns", path = "../styrene-rns", version = "0.1.0" }
+
 styrene-micron = { path = "../styrene-micron", version = "0.1.0" }
 rmpv = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

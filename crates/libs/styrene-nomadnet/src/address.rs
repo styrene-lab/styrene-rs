@@ -1,6 +1,3 @@
-//! Legacy public address API. Behavior must match styrene-nomadnet addressing;
-//! styrened/tests/nomadnet_split.rs checks compatibility without an upward dependency.
-
 use std::fmt;
 
 const DESTINATION_HASH_HEX_LEN: usize = 32;
