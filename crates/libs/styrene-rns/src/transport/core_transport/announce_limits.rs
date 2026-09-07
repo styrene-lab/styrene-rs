@@ -79,8 +79,10 @@ impl AnnounceLimitEntry {
         now.saturating_duration_since(self.created_at)
     }
 
-    fn incoming_announce_frequency(&self, now: Instant) -> f64 {
-        if self.incoming.len() <= 1 {
+    fn incoming_announce_frequency(&self, now: Instant, rate_limit: &AnnounceRateLimit) -> f64 {
+        // A node announces several services together. Do not classify its first
+        // pair as a sustained burst; collect the bounded sample window first.
+        if self.incoming.len() < rate_limit.incoming_freq_samples.max(2) {
             return 0.0;
         }
 
@@ -93,10 +95,9 @@ impl AnnounceLimitEntry {
         }
 
         if delta_sum.is_zero() {
-            0.0
+            f64::INFINITY
         } else {
-            let avg = delta_sum.as_secs_f64() / self.incoming.len() as f64;
-            if avg == 0.0 { 0.0 } else { 1.0 / avg }
+            (self.incoming.len() - 1) as f64 / delta_sum.as_secs_f64()
         }
     }
 
@@ -110,7 +111,7 @@ impl AnnounceLimitEntry {
 
     fn should_ingress_limit(&mut self, now: Instant, rate_limit: &AnnounceRateLimit) -> bool {
         let freq_threshold = self.threshold(now, rate_limit);
-        let incoming_freq = self.incoming_announce_frequency(now);
+        let incoming_freq = self.incoming_announce_frequency(now, rate_limit);
 
         if self.burst_active {
             if incoming_freq < freq_threshold
@@ -258,9 +259,50 @@ mod tests {
     use crate::packet::{Header, PacketType};
     use tokio::time::{Duration, advance};
 
+    #[tokio::test(start_paused = true)]
+    async fn default_limit_admits_initial_service_announcements_but_bounds_a_burst() {
+        let mut limits = AnnounceLimits::new();
+        let iface = AddressHash::new([9; 16]);
+        for id in 1..6 {
+            assert_eq!(
+                limits.check(iface, &announce_packet(AddressHash::new([id; 16]), 1), false),
+                AnnounceLimitAction::Allow
+            );
+            advance(Duration::from_millis(1)).await;
+        }
+        assert!(matches!(
+            limits.check(iface, &announce_packet(AddressHash::new([6; 16]), 1), false),
+            AnnounceLimitAction::Hold(_)
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn simultaneous_full_window_is_limited_and_quiet_window_is_not() {
+        let iface = AddressHash::new([8; 16]);
+        let mut burst = AnnounceLimits::new();
+        for id in 1..6 {
+            assert_eq!(
+                burst.check(iface, &announce_packet(AddressHash::new([id; 16]), 1), false),
+                AnnounceLimitAction::Allow
+            );
+        }
+        assert!(matches!(
+            burst.check(iface, &announce_packet(AddressHash::new([6; 16]), 1), false),
+            AnnounceLimitAction::Hold(_)
+        ));
+        let mut quiet = AnnounceLimits::new();
+        for id in 1..12 {
+            advance(Duration::from_secs(1)).await;
+            assert_eq!(
+                quiet.check(iface, &announce_packet(AddressHash::new([id; 16]), 1), false),
+                AnnounceLimitAction::Allow
+            );
+        }
+    }
+
     fn test_rate_limit() -> AnnounceRateLimit {
         AnnounceRateLimit {
-            incoming_freq_samples: 3,
+            incoming_freq_samples: 2,
             max_held_announces: 8,
             new_time: Duration::from_secs(3600),
             burst_freq_new: 100.0,

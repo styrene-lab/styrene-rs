@@ -35,7 +35,7 @@ fn fixture() -> (tempfile::TempDir, Arc<AppContext>, Arc<dyn Daemon>, Arc<MockTr
     (dir, ctx, daemon, transport)
 }
 
-fn queue_content(transport: &MockTransport, source: &[u8], reused: bool) {
+fn queue_content(transport: &MockTransport, source: &[u8], reused: bool, filename: Option<&str>) {
     let peer = PrivateIdentity::new_from_name("nomadnet-integration-peer");
     transport.queue_resolve(Some(*peer.as_identity()));
     transport.set_path(
@@ -55,7 +55,12 @@ fn queue_content(transport: &MockTransport, source: &[u8], reused: bool) {
     started.state = RequestState::Pending;
     transport.queue_request(Ok(started.clone()));
     let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &rmpv::Value::Binary(source.to_vec())).unwrap();
+    let value = if let Some(filename) = filename {
+        rmpv::Value::Array(vec![rmpv::Value::from(filename), rmpv::Value::Binary(source.to_vec())])
+    } else {
+        rmpv::Value::Binary(source.to_vec())
+    };
+    rmpv::encode::write_value(&mut encoded, &value).unwrap();
     let mut completed = started;
     completed.state = RequestState::Succeeded;
     completed.response_transfer = RequestResponseTransfer::Packet;
@@ -108,7 +113,7 @@ async fn remote_receipts_shared_links_and_downloads_cross_the_adapter() {
         )
         .unwrap();
     ctx.set_signer(Arc::new(PrivateIdentity::new_from_name("reader")));
-    queue_content(&transport, b">Remote\nHello", false);
+    queue_content(&transport, b">Remote\nHello", false, None);
     let first = daemon.browse_page_for_owner(10, HOST, "/page/index.mu", Some(1)).await.unwrap();
     assert_eq!(first.outcome, PageBrowseOutcome::Succeeded, "{:?}", first.failure);
     assert_eq!(first.request.link_id.as_deref(), Some("22222222222222222222222222222222"));
@@ -121,7 +126,7 @@ async fn remote_receipts_shared_links_and_downloads_cross_the_adapter() {
     assert_eq!(transfer_stage.observation.interface_generation, Some(9));
     assert_eq!(first.source_bytes, b">Remote\nHello");
     assert!(transport.calls().iter().any(|c| matches!(c, MockCall::IdentifyLink { .. })));
-    queue_content(&transport, b">Second", true);
+    queue_content(&transport, b">Second", true, None);
     let second = daemon.browse_page_for_owner(10, HOST, "/page/second.mu", Some(1)).await.unwrap();
     assert_eq!(second.outcome, PageBrowseOutcome::Succeeded);
     daemon.close_page_session_for_owner(10, &first.navigation.session_id).await.unwrap();
@@ -129,7 +134,7 @@ async fn remote_receipts_shared_links_and_downloads_cross_the_adapter() {
         !transport.calls().iter().any(|c| matches!(c, MockCall::CloseLink { .. })),
         "second session still retains shared link"
     );
-    queue_content(&transport, b"file bytes", true);
+    queue_content(&transport, b"file bytes", true, Some("sample.bin"));
     let mut request = FileDownloadRequest::default();
     request.session_id = Some(second.navigation.session_id.clone());
     request.target = "/file/sample.bin".into();

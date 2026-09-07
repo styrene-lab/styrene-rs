@@ -102,3 +102,23 @@ fn binary_response_accepts_only_exact_bounded_binary_payloads() {
         assert_eq!(decode_binary_response(&value), None);
     }
 }
+
+#[test]
+fn native_file_pair_is_bounded_and_does_not_accept_extra_values() {
+    for header in [vec![0x92], vec![0xdc, 0, 2], vec![0xdd, 0, 0, 0, 2]] {
+        let mut encoded = header;
+        encoded.extend_from_slice(&[0xa1, b'x', 0xc4, 1, 42]);
+        assert_eq!(decode_file_response(&encoded), Some(vec![42]));
+        encoded.push(0);
+        assert_eq!(decode_file_response(&encoded), None);
+    }
+    for encoded in [
+        vec![0x92, 0xdb, 255, 255, 255, 255],
+        vec![0x92, 0xa1, 255, 0xc4, 0],
+        vec![0x93, 0xa0, 0xc4, 0, 0xc0],
+        vec![0x92, 0xa0, 0x90],
+    ] {
+        assert_eq!(decode_file_response(&encoded), None);
+    }
+    assert_eq!(decode_file_response(&[0xc4, 1, 42]), Some(vec![42]));
+}

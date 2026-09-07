@@ -166,7 +166,7 @@ async fn handle_announce_with_class<'a>(
         match handler.announce_limits.check(iface, packet, destination_known) {
             AnnounceLimitAction::Allow => {}
             AnnounceLimitAction::Hold(release_after) => {
-                log::info!(
+                crate::transport_diagnostic!(
                     "tp({}): holding announce for {} on iface {} for at least {:?}",
                     handler.config.name,
                     packet.destination,

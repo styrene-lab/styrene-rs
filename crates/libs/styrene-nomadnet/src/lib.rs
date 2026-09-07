@@ -308,6 +308,28 @@ pub fn decode_binary_response(response: &[u8]) -> Option<Vec<u8>> {
     (payload.len() == length).then(|| payload.to_vec())
 }
 
+/// Decode the native [filename, binary] response, retaining legacy bare binary support.
+/// The remote filename is validated but never selects a local save path.
+pub fn decode_file_response(response: &[u8]) -> Option<Vec<u8>> {
+    if matches!(response.first(), Some(0xc4..=0xc6)) {
+        return decode_binary_response(response);
+    }
+    let rest = match response {
+        [0x92, rest @ ..] | [0xdc, 0, 2, rest @ ..] | [0xdd, 0, 0, 0, 2, rest @ ..] => rest,
+        _ => return None,
+    };
+    let (offset, length) = match *rest.first()? {
+        marker @ 0xa0..=0xbf => (1, usize::from(marker & 0x1f)),
+        0xd9 => (2, usize::from(*rest.get(1)?)),
+        0xda => (3, usize::from(u16::from_be_bytes(rest.get(1..3)?.try_into().ok()?))),
+        0xdb => (5, usize::try_from(u32::from_be_bytes(rest.get(1..5)?.try_into().ok()?)).ok()?),
+        _ => return None,
+    };
+    let rest = rest.get(offset..)?;
+    std::str::from_utf8(rest.get(..length)?).ok()?;
+    decode_binary_response(rest.get(length..)?)
+}
+
 #[cfg(test)]
 mod tests;
 

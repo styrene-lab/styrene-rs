@@ -9,8 +9,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::PageAddress;
 use crate::PageParserWarning;
-use crate::decode_binary_response;
 use crate::models::*;
+use crate::{decode_binary_response, decode_file_response};
 use crate::{encode_submission, render_projection};
 use async_trait::async_trait;
 use rns_core::destination::{DestinationDesc, DestinationName};
@@ -1186,7 +1186,7 @@ impl NativeNomadNetBrowseCoordinator {
                 )));
             }
             let bytes =
-                request.completed.response.as_deref().and_then(decode_binary_response).ok_or_else(
+                request.completed.response.as_deref().and_then(decode_file_response).ok_or_else(
                     || BrowseError::Transport("native file response was malformed".into()),
                 )?;
             if bytes.len() > MAX_FILE_SIZE {
