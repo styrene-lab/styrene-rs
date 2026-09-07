@@ -315,3 +315,32 @@ async fn live_echo_peer_basics() {
     evidence.write("passed", &target, &probe);
     probe.shutdown().await;
 }
+
+/// Do not pre-announce. The echo peer must discover this fresh sender after
+/// receipt, verify the held wire message, and dispatch it without a second send.
+#[tokio::test]
+#[ignore = "requires a reachable live echo peer"]
+async fn live_echo_peer_first_contact() {
+    let Some(target) = target() else {
+        return;
+    };
+    let mut evidence = Evidence::new();
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let probe = TestNodeBuilder::new(&format!("first-contact-{stamp}"))
+        .tcp_client(target.addr)
+        .build()
+        .await;
+    evidence.record("probe.started_without_announce", json!({"destination": probe.delivery_hash}));
+    await_interface_up(&probe, None, CONNECT_TIMEOUT).await;
+    await_path_with_requests(&probe, &target.destination, PATH_TIMEOUT).await;
+    echo_round_trip(
+        &probe,
+        &target,
+        &mut evidence,
+        "first-contact",
+        format!("first contact {stamp}"),
+    )
+    .await;
+    evidence.write("passed", &target, &probe);
+    probe.shutdown().await;
+}
