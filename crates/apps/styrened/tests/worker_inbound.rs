@@ -602,3 +602,104 @@ async fn outbound_resource_integrity_failure_is_terminal_and_sticky() {
     handle.abort();
     handle.wait().await;
 }
+
+async fn delayed_identity_case(resource: bool, valid: bool, expired: bool) {
+    let destination = [0x71; 16];
+    let transport =
+        Arc::new(MockTransport::new(AddressHash::new([0x70; 16]), AddressHash::new(destination)));
+    let messaging = Arc::new(MessagingService::new());
+    let sender = PrivateIdentity::new_from_name("first-contact-echo-sender");
+    let (source, mut wire) = build_signed_lxmf_wire(&sender, destination, "first contact", None);
+    if !valid {
+        wire[32] ^= 1;
+    }
+    let id = hex::encode(lxmf::WireMessage::unpack(&wire).unwrap().message_id());
+    let mut handle = spawn_echo_worker(transport.clone(), messaging.clone(), destination);
+    let inject = || {
+        if resource {
+            transport.inject_resource(ResourceEvent {
+                hash: Hash::new([0x72; 32]),
+                link_id: AddressHash::new([0x73; 16]),
+                kind: ResourceEventKind::Complete(ResourceComplete {
+                    data: wire.clone(),
+                    metadata: None,
+                    request_id: None,
+                    is_request: false,
+                    is_response: false,
+                    transfer_size: wire.len() as u64,
+                    checksum_verified: true,
+                }),
+                progress: None,
+            });
+        } else {
+            transport.inject_inbound(ReceivedData {
+                destination: AddressHash::new(destination),
+                link_id: None,
+                data: rns_core::packet::PacketDataBuffer::new_from_slice(&wire),
+                payload_mode: ReceivedPayloadMode::FullWire,
+                ratchet_used: false,
+                context: None,
+                request_id: None,
+                hops: None,
+                interface: None,
+                packet_hash: None,
+                receiving_iface: None,
+            });
+        }
+    };
+    inject();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        transport.wait_for_calls(1, |call| matches!(call, MockCall::RequestPath { .. })),
+    )
+    .await
+    .unwrap();
+    assert!(!messaging.inbound_is_dispatchable(&id).unwrap());
+    assert!(!transport.calls().iter().any(|call| matches!(call, MockCall::SendRaw { .. })));
+    if expired {
+        tokio::time::advance(std::time::Duration::from_secs(31)).await;
+        tokio::task::yield_now().await;
+    }
+    transport.queue_resolve(Some(*sender.as_identity()));
+    transport.queue_resolve(Some(*sender.as_identity()));
+    tokio::time::advance(std::time::Duration::from_millis(500)).await;
+    tokio::task::yield_now().await;
+    if valid && !expired {
+        assert_single_structured_echo(&transport, source, "first contact", &id).await;
+        inject();
+        tokio::time::advance(std::time::Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            transport
+                .calls()
+                .iter()
+                .filter(|call| matches!(call, MockCall::SendRaw { .. }))
+                .count(),
+            1
+        );
+        assert!(messaging.inbound_is_dispatchable(&id).unwrap());
+    } else {
+        assert!(!transport.calls().iter().any(|call| matches!(call, MockCall::SendRaw { .. })));
+        assert!(!messaging.inbound_is_dispatchable(&id).unwrap());
+    }
+    handle.abort();
+    handle.wait().await;
+    assert!(handle.is_finished());
+}
+
+#[tokio::test(start_paused = true)]
+async fn first_contact_packet_echoes_once_after_identity_arrives() {
+    delayed_identity_case(false, true, false).await;
+}
+#[tokio::test(start_paused = true)]
+async fn first_contact_resource_echoes_once_after_identity_arrives() {
+    delayed_identity_case(true, true, false).await;
+}
+#[tokio::test(start_paused = true)]
+async fn first_contact_invalid_signature_never_echoes() {
+    delayed_identity_case(false, false, false).await;
+}
+#[tokio::test(start_paused = true)]
+async fn first_contact_identity_timeout_never_dispatches_late() {
+    delayed_identity_case(false, true, true).await;
+}

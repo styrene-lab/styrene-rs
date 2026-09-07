@@ -16,6 +16,8 @@ use rns_core::transport::resource::{ResourceEventKind, ResourceFailure};
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 
+mod deferred;
+
 const ECHO_FIELD: &str = "styrene_echo";
 const RESPONSE_QUEUE_CAPACITY: usize = 64;
 
@@ -34,6 +36,7 @@ pub struct InboundWorkerHandle {
     packet: JoinHandle<()>,
     resource: JoinHandle<()>,
     response: JoinHandle<()>,
+    deferred: JoinHandle<()>,
 }
 
 pub struct InboundDestinations {
@@ -55,21 +58,31 @@ impl InboundWorkerHandle {
         self.packet.abort();
         self.resource.abort();
         self.response.abort();
+        self.deferred.abort();
     }
 
     pub fn is_finished(&self) -> bool {
-        self.packet.is_finished() && self.resource.is_finished() && self.response.is_finished()
+        self.packet.is_finished()
+            && self.resource.is_finished()
+            && self.response.is_finished()
+            && self.deferred.is_finished()
     }
 
     pub async fn wait(&mut self) {
         let _ = (&mut self.packet).await;
         let _ = (&mut self.resource).await;
         let _ = (&mut self.response).await;
+        let _ = (&mut self.deferred).await;
     }
 
     #[cfg(test)]
-    pub(crate) fn abort_handles(&self) -> [tokio::task::AbortHandle; 3] {
-        [self.packet.abort_handle(), self.resource.abort_handle(), self.response.abort_handle()]
+    pub(crate) fn abort_handles(&self) -> [tokio::task::AbortHandle; 4] {
+        [
+            self.packet.abort_handle(),
+            self.resource.abort_handle(),
+            self.response.abort_handle(),
+            self.deferred.abort_handle(),
+        ]
     }
 }
 
@@ -238,11 +251,22 @@ pub fn spawn_inbound_worker_with_auto_reply(
         })
     };
 
+    let (deferred_tx, deferred_rx) = tokio::sync::mpsc::channel(deferred::CAPACITY);
+    let deferred = deferred::spawn(
+        deferred_rx,
+        transport.clone(),
+        messaging.clone(),
+        protocol.clone(),
+        auto_reply.clone(),
+        response_tx.clone(),
+    );
+
     // Spawn a resource event handler that processes completed resource transfers.
     // Large payloads (> LINK_PACKET_MDU) are sent as RNS resources and arrive
     // via the resource_events channel rather than the inbound data channel.
     let resource = {
         let mut resource_rx = transport.subscribe_resources();
+        let deferred_tx = deferred_tx.clone();
         let messaging = messaging.clone();
         let events = events.clone();
         let protocol = protocol.clone();
@@ -391,6 +415,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                                             &response_tx,
                                         );
                                     } else {
+                                        deferred::hold(&deferred_tx, &messaging, &record);
                                         note_unverified_sender(transport.as_ref(), &record).await;
                                         events.emit_inbound_drop(
                                             "direct_resource",
@@ -597,6 +622,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
                             let trusted =
                                 messaging.inbound_is_dispatchable(&record.id).unwrap_or(false);
                             if !trusted {
+                                deferred::hold(&deferred_tx, &messaging, &record);
                                 note_unverified_sender(transport.as_ref(), &record).await;
                                 events.emit_inbound_drop(
                                     "direct_packet",
@@ -658,7 +684,7 @@ pub fn spawn_inbound_worker_with_auto_reply(
         }
     });
 
-    InboundWorkerHandle { packet, resource, response }
+    InboundWorkerHandle { packet, resource, response, deferred }
 }
 
 #[cfg(test)]
@@ -708,6 +734,7 @@ mod tests {
             packet: tokio::spawn(std::future::pending()),
             resource: tokio::spawn(std::future::pending()),
             response: tokio::spawn(std::future::pending()),
+            deferred: tokio::spawn(std::future::pending()),
         };
         let response = handle.response.abort_handle();
 

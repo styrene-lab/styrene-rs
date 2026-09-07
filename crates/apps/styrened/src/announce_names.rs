@@ -1,3 +1,5 @@
+pub use lxmf::announce::encode_delivery_app_data;
+
 pub fn encode_delivery_display_name_app_data(display_name: &str) -> Option<Vec<u8>> {
     lxmf::announce::encode_delivery_display_name_app_data(display_name)
 }

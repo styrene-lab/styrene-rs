@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::announce_names::{encode_delivery_display_name_app_data, normalize_display_name};
+use crate::announce_names::{encode_delivery_app_data, normalize_display_name};
 use crate::app_context::AppContext;
 use crate::config::DaemonConfig;
 use crate::daemon_facade::DaemonFacade;
@@ -386,7 +386,7 @@ async fn start_inner(
             rns_core::hash::AddressHash::new(id_hash_bytes),
             delivery_addr,
             destination.clone(),
-            display_name.as_ref().and_then(|n| encode_delivery_display_name_app_data(n)),
+            encode_delivery_app_data(display_name.as_deref()),
             packet_receipts.sender(),
         )
         .await;

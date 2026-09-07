@@ -15,6 +15,20 @@ pub fn normalize_display_name(value: &str) -> Option<String> {
     if normalized.is_empty() { None } else { Some(normalized) }
 }
 
+/// Canonical delivery metadata, including the unnamed-node case.
+pub fn encode_delivery_app_data(display_name: Option<&str>) -> Option<Vec<u8>> {
+    let name = display_name
+        .and_then(normalize_display_name)
+        .map(|name| rmpv::Value::Binary(name.into_bytes()))
+        .unwrap_or(rmpv::Value::Nil);
+    rmp_serde::to_vec(&rmpv::Value::Array(vec![
+        name,
+        rmpv::Value::Nil,
+        rmpv::Value::Array(Vec::new()),
+    ]))
+    .ok()
+}
+
 pub fn encode_delivery_display_name_app_data(display_name: &str) -> Option<Vec<u8>> {
     let normalized = normalize_display_name(display_name)?;
     let peer_data = rmpv::Value::Array(vec![
@@ -107,6 +121,19 @@ pub fn stamp_cost_from_delivery_app_data(data: &[u8]) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unnamed_delivery_announce_is_canonical() {
+        let data = encode_delivery_app_data(None).unwrap();
+        let metadata = delivery_announce_metadata(&data).unwrap();
+        assert_eq!(metadata.display_name, None);
+        assert_eq!(metadata.stamp_cost, None);
+        assert!(metadata.supported_functionality.is_empty());
+        assert_eq!(
+            encode_delivery_app_data(Some("Alice")),
+            encode_delivery_display_name_app_data("Alice")
+        );
+    }
 
     #[test]
     fn encode_and_decode_delivery_display_name_round_trip() {

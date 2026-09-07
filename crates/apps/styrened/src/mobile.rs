@@ -40,7 +40,9 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::announce_names::{encode_delivery_display_name_app_data, normalize_display_name};
+#[cfg(test)]
+use crate::announce_names::encode_delivery_display_name_app_data;
+use crate::announce_names::{encode_delivery_app_data, normalize_display_name};
 use crate::app_context::AppContext;
 use crate::config::{PlatformPaths, atomic_write_private};
 use crate::daemon_facade::{DaemonFacade, SessionGeneration};
@@ -2206,8 +2208,7 @@ impl MobileNode {
                 persist_public_identity_metadata(&metadata_path, &metadata)?;
             }
             let display_name = metadata.display_name.clone();
-            let announce_app_data =
-                display_name.as_deref().and_then(encode_delivery_display_name_app_data);
+            let announce_app_data = encode_delivery_app_data(display_name.as_deref());
 
             // Host-driven RNode and TCP profiles share one transport identity and destination.
             let transport_runtime = if config.enable_rnode_channel || !interfaces.is_empty() {

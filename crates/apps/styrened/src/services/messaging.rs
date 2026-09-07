@@ -2227,61 +2227,78 @@ impl MessagingService {
             if records.is_empty() {
                 break;
             }
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
-                .unwrap_or(0);
             for record in records {
-                let decoded = decode_canonical_inbound_payload(
-                    record.destination,
-                    &record.wire,
-                    InboundPayloadMode::FullWire,
-                    Some(identity),
-                    None,
-                    &[],
-                )
-                .map_err(|error| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
-                })?;
-                if !canonical_immutable_matches(&record, &decoded.canonical) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "canonical LXMF record {} differs from stored wire",
-                            record.message_id
-                        ),
-                    ));
-                }
-                let state = decoded.canonical.authentication_state.as_str();
-                let ticket = decoded.received_ticket.and_then(|(expires_at, ticket)| {
-                    (expires_at > now).then(|| crate::storage::messages::LxmfTicketRecord {
-                        peer: hex::encode(source),
-                        ticket,
-                        expires_at,
-                        direction: "received".into(),
-                    })
-                });
-                let updated = store
-                    .update_unknown_auth_with_verified_ticket(
-                        &record.message_id,
-                        state,
-                        ticket.as_ref(),
-                    )
-                    .map_err(std::io::Error::other)?;
-                if updated {
-                    changed += 1;
-                    if let (Some(events), Some(projection)) = (
-                        self.events.get(),
-                        store.get_message(&record.message_id).map_err(std::io::Error::other)?,
-                    ) {
-                        let mut authoritative = record.clone();
-                        authoritative.authentication_state = state.into();
-                        events.emit_message_authentication_changed(&projection, &authoritative);
-                    }
-                }
+                changed += usize::from(self.revalidate_inbound_record(&store, &record, identity)?);
             }
         }
         Ok(changed)
+    }
+
+    /// Re-verify one held message without scanning the sender's backlog.
+    pub fn revalidate_unknown_message(
+        &self,
+        message_id: &str,
+        identity: &rns_core::identity::Identity,
+    ) -> Result<bool, std::io::Error> {
+        let store = self.lock_store()?;
+        let Some(record) = store.canonical_inbound(message_id).map_err(std::io::Error::other)?
+        else {
+            return Ok(false);
+        };
+        if record.authentication_state != "unknown_identity" {
+            return Ok(false);
+        }
+        self.revalidate_inbound_record(&store, &record, identity)
+    }
+
+    fn revalidate_inbound_record(
+        &self,
+        store: &crate::storage::messages::MessagesStore,
+        record: &crate::storage::messages::CanonicalInboundRecord,
+        identity: &rns_core::identity::Identity,
+    ) -> Result<bool, std::io::Error> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs().min(i64::MAX as u64) as i64)
+            .unwrap_or(0);
+        let decoded = decode_canonical_inbound_payload(
+            record.destination,
+            &record.wire,
+            InboundPayloadMode::FullWire,
+            Some(identity),
+            None,
+            &[],
+        )
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+        if !canonical_immutable_matches(record, &decoded.canonical) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("canonical LXMF record {} differs from stored wire", record.message_id),
+            ));
+        }
+        let state = decoded.canonical.authentication_state.as_str();
+        let ticket = decoded.received_ticket.and_then(|(expires_at, ticket)| {
+            (expires_at > now).then(|| crate::storage::messages::LxmfTicketRecord {
+                peer: hex::encode(record.source),
+                ticket,
+                expires_at,
+                direction: "received".into(),
+            })
+        });
+        let updated = store
+            .update_unknown_auth_with_verified_ticket(&record.message_id, state, ticket.as_ref())
+            .map_err(std::io::Error::other)?;
+        if updated
+            && let (Some(events), Some(projection)) = (
+                self.events.get(),
+                store.get_message(&record.message_id).map_err(std::io::Error::other)?,
+            )
+        {
+            let mut authoritative = record.clone();
+            authoritative.authentication_state = state.into();
+            events.emit_message_authentication_changed(&projection, &authoritative);
+        }
+        Ok(updated)
     }
 
     pub fn canonical_inbound(

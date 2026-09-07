@@ -244,9 +244,7 @@ impl IdentityService {
     /// Trigger an announce with optional app_data.
     pub async fn announce(&self, app_data: Option<&[u8]>) {
         let encoded = if app_data.is_none() {
-            self.display_name().and_then(|name| {
-                crate::announce_names::encode_delivery_display_name_app_data(&name)
-            })
+            crate::announce_names::encode_delivery_app_data(self.display_name().as_deref())
         } else {
             None
         };

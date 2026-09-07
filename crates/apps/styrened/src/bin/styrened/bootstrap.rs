@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use styrened::announce_names::{encode_delivery_display_name_app_data, normalize_display_name};
+use styrened::announce_names::{encode_delivery_app_data, normalize_display_name};
 use styrened::app_context::AppContext;
 use styrened::config::DaemonConfig;
 use styrened::daemon_facade::DaemonFacade;
@@ -582,9 +582,7 @@ async fn bootstrap_with_transport_override(
                 identity.clone(),
                 delivery_source_hash,
                 destination.clone(),
-                local_display_name
-                    .as_ref()
-                    .and_then(|display_name| encode_delivery_display_name_app_data(display_name)),
+                encode_delivery_app_data(local_display_name.as_deref()),
                 nomadnet_destination.clone().map(|node| {
                     (node, local_display_name.as_deref().map(|name| name.as_bytes().to_vec()))
                 }),
@@ -658,9 +656,7 @@ async fn bootstrap_with_transport_override(
             rns_core::hash::AddressHash::new(id_hash),
             rns_core::hash::AddressHash::new(delivery_source_hash),
             ann_dest.clone(),
-            local_display_name
-                .as_ref()
-                .and_then(|name| encode_delivery_display_name_app_data(name)),
+            encode_delivery_app_data(local_display_name.as_deref()),
             packet_receipt_sender.clone().expect("native transport has packet receipt bridge"),
         )
         .await;
