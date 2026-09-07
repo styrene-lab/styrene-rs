@@ -748,11 +748,12 @@ impl NativeNomadNetBrowseCoordinator {
         }
         reservation.commit_eviction();
 
+        // Link variables can carry request data even without an explicit form submission.
+        let cacheable = request.submission.is_none() && data == [0xc0];
         let bypass = request.bypass_cache || request.action == PageNavigationAction::Reload;
         let cache_key = address.to_string();
-        let mut page =
-            if !bypass && request.submission.is_none() { self.cached(&cache_key) } else { None }
-                .unwrap_or_else(PageContent::default);
+        let mut page = if !bypass && cacheable { self.cached(&cache_key) } else { None }
+            .unwrap_or_else(PageContent::default);
         let mut fetched_link = None;
         let cache_hit = !page.correlation_id.is_empty();
         if page.correlation_id.is_empty() {
@@ -782,7 +783,7 @@ impl NativeNomadNetBrowseCoordinator {
             fetched_link = fetched.link;
             page.cache.status =
                 if bypass { PageCacheStatus::Bypassed } else { PageCacheStatus::Miss };
-            if page.outcome == PageBrowseOutcome::Succeeded && request.submission.is_none() {
+            if page.outcome == PageBrowseOutcome::Succeeded && cacheable {
                 self.store_cache(cache_key.clone(), &page);
             }
         } else {

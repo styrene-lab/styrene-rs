@@ -295,15 +295,17 @@ fn warning(code: &str, message: String) -> PageParserWarning {
 }
 
 pub fn decode_binary_response(response: &[u8]) -> Option<Vec<u8>> {
-    let mut cursor = std::io::Cursor::new(response);
-    let value = rmpv::decode::read_value(&mut cursor).ok()?;
-    if usize::try_from(cursor.position()).ok() != Some(response.len()) {
-        return None;
-    }
-    match value {
-        rmpv::Value::Binary(bytes) => Some(bytes),
-        _ => None,
-    }
+    // Inspect only the binary header; never decode arbitrary remote containers.
+    let (offset, length) = match *response.first()? {
+        0xc4 => (2, usize::from(*response.get(1)?)),
+        0xc5 => (3, usize::from(u16::from_be_bytes(response.get(1..3)?.try_into().ok()?))),
+        0xc6 => {
+            (5, usize::try_from(u32::from_be_bytes(response.get(1..5)?.try_into().ok()?)).ok()?)
+        }
+        _ => return None,
+    };
+    let payload = response.get(offset..)?;
+    (payload.len() == length).then(|| payload.to_vec())
 }
 
 #[cfg(test)]

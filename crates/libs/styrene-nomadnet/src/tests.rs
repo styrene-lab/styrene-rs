@@ -85,3 +85,20 @@ fn projection_preserves_text_links_and_directive_warnings() {
     render_projection(&document, &mut warnings);
     assert_eq!(warnings[0].code, "directive_not_rendered");
 }
+
+#[test]
+fn binary_response_accepts_only_exact_bounded_binary_payloads() {
+    for value in [vec![0xc4, 1, 42], vec![0xc5, 0, 1, 42], vec![0xc6, 0, 0, 0, 1, 42]] {
+        assert_eq!(decode_binary_response(&value), Some(vec![42]));
+    }
+    assert_eq!(decode_binary_response(&[0xc4, 0]), Some(vec![]));
+    for value in [
+        vec![0xc6, 255, 255, 255, 255],
+        vec![0xc5, 0],
+        vec![0xc4, 0, 42],
+        vec![0x91, 0xc4, 0],
+        vec![0x80],
+    ] {
+        assert_eq!(decode_binary_response(&value), None);
+    }
+}

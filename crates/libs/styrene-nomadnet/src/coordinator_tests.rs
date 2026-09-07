@@ -1314,3 +1314,33 @@ async fn download_capacity_never_evicts_active_work_and_uses_terminal_lru() {
     let cancelled = coordinator.cancel_download(&started.download_id).await.unwrap();
     assert_eq!(cancelled.state, FileDownloadState::Cancelled);
 }
+
+#[tokio::test]
+async fn link_variables_neither_read_nor_replace_ordinary_url_cache() {
+    let backend = Arc::new(ScriptedBackend::success(RequestResponseTransfer::Packet, b">public"));
+    for source in [b"`[Run`/page/next.mu`mode=private]".as_slice(), b">private".as_slice()] {
+        let next = ScriptedBackend::success(RequestResponseTransfer::Packet, source);
+        backend
+            .outcome
+            .lock()
+            .unwrap()
+            .push_back(next.outcome.lock().unwrap().pop_front().unwrap());
+    }
+    let coordinator = coordinator(backend.clone());
+    let mut request = PageNavigationRequest::default();
+    request.target = Some(format!("{HOST}:/page/next.mu"));
+    let public = coordinator.navigate(request.clone(), HOST, |_| Vec::new()).await.unwrap();
+    let mut index = PageNavigationRequest::default();
+    index.target = Some(format!("{HOST}:/page/index.mu"));
+    let index = coordinator.navigate(index, HOST, |_| Vec::new()).await.unwrap();
+    let mut link = PageNavigationRequest::default();
+    link.session_id = Some(index.navigation.session_id);
+    link.target = Some("/page/next.mu".into());
+    let private = coordinator.navigate(link, HOST, |_| Vec::new()).await.unwrap();
+    assert_eq!(private.cache.status, PageCacheStatus::Miss);
+    assert_ne!(private.source_bytes, public.source_bytes);
+    let ordinary = coordinator.navigate(request, HOST, |_| Vec::new()).await.unwrap();
+    assert_eq!(ordinary.cache.status, PageCacheStatus::Hit);
+    assert_eq!(ordinary.source_bytes, public.source_bytes);
+    assert_eq!(backend.requested_data.lock().unwrap().len(), 3);
+}

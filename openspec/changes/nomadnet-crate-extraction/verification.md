@@ -58,3 +58,27 @@ Evidence is retained by the coordination checkout under
 crates.io publication, remote push, Nucleus validation or mobile device validation
 was performed. Host compilation is not Apple/Android device evidence. Cache expiry,
 failed-route recovery and UI wait policy remain separate follow-up changes.
+
+## Adversarial follow-up — 2026-09-06
+
+The review found two defects in the extracted implementation:
+
+- A link with submitted variables, but no explicit form submission, could read or
+  overwrite the ordinary URL cache. Cache eligibility now requires both no form
+  submission and nil encoded request data. A regression first failed with `Hit`
+  instead of `Miss`, then passed after the fix; it also verifies that the public
+  cached response survives the variable-dependent request.
+- Binary response handling decoded general MessagePack before checking its type.
+  It now accepts only bin8/bin16/bin32 headers with an exact payload length. It
+  rejects container types, truncation, trailing bytes and oversized declarations
+  without allocating from a remote declared length.
+
+The independent crate retains session ownership and cancellation behavior. No IPC
+wire types changed. This review does not establish live remote route health or
+add cache expiry or automatic failed-route repair.
+
+Follow-up validation passed: 45 domain unit tests, 547 daemon unit tests (3
+ignored), the same 40 integration tests, domain doctests, warning-denied Clippy
+for both crates' libraries and tests, formatting, and all 9 workspace policy
+checker tests. Desktop deadline alignment and build evidence belong to the UI
+and coordination checkouts.
