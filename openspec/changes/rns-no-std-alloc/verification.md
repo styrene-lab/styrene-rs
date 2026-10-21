@@ -75,7 +75,91 @@ The coordinator integrated the reviewed A and B commits as `3bad1011` and
 `27cf0af6`. The exact combined input is
 `27cf0af68d5b58a30f9f94ff5ec5e3217c880679`. A clean detached worktree preserves
 that revision for validation and as the product input to lane C's independent
-consumer. Combined checks are in progress. No result is inferred from launch.
+consumer.
+
+## Combined A+B validation
+
+The focused matrix at `27cf0af68d5b58a30f9f94ff5ec5e3217c880679` completed all
+40 recorded commands successfully, without retries or timeouts. Initial/final
+source, index, configuration, and lockfile fingerprints match.
+
+| Check | Observed result |
+|---|---|
+| AArch64 minimal, alloc, and alloc/AES-128 library checks | All passed |
+| Minimal Clippy and portable RNG/decrypt/time tests | All three profiles passed; 13 tests per profile |
+| Default and explicit-std package tests | 66 passed per profile |
+| Full interop/transport tests | 389 passed |
+| Three ordinarily ignored loopback tests | Passed when run explicitly |
+| Alternate crypto tests | Selected groups passed: 4, 27, and 1 tests |
+| Transport/serial compilation and transport Clippy | Passed |
+| LXMF, mesh, tunnel, and daemon compilation | Passed |
+| Shared fixture/evidence tests | 13 passed |
+| Workspace policy and formatting | Passed; nine policy tests passed |
+
+These counts are per invocation, not unique-test totals. Hosted dev-dependencies
+can restore some dependency `std` features. Independent-consumer and final
+integrated validation remain separate obligations. SQLite linking succeeded using
+the existing cached native environment.
+
+Evidence:
+
+```text
+~/.local/state/styrene-lab/issue-78/runs/integration/20261021T014134Z-53j1wj84/
+```
+
+`HANDOFF.md` and `RESULTS.md` identify exact commands, counts, durations, and log
+hashes. The `evidence.sha256` file has digest
+`40dac8c0c3bb7d41b1fde0bd79cc5f06e47d543d3e6a95f5268a436198e4d891`.
+
+## Exact-base regression proof
+
+An immutable archive of canonical base
+`ab46aa1f13de5663c684225dc27dfcba330d965f` was checked with the same pinned
+Rust 1.97 toolchain and actual AArch64 target libraries. The minimal library
+check failed with exit 101 at `getrandom`'s unsupported-target diagnostic.
+A diagnostic repetition with `--keep-going` also exposed `E0463` for target
+`std` in `serde_core`, `num-traits`, `signature`, `byteorder`, and `hex`.
+
+This is the expected portability failure, not a missing-core, cache, or manifest
+setup failure. It contrasts with the three target-profile passes on reviewed
+combined source `27cf0af68d5b58a30f9f94ff5ec5e3217c880679`.
+
+Evidence:
+
+```text
+~/.local/state/styrene-lab/issue-78/runs/integration/20261021T015641Z-baseline-tcdrq2sl/HANDOFF.md
+```
+
+The baseline archive SHA-256 is
+`174af84814c01da84e84c4c181da44f5f9ad0e836387fce53e99a3ba7ea3a245`.
+The evidence inventory SHA-256 is
+`3f7063037a22a21756391fd83ffa9647f4fbdc2cf62fb227e8a944aa554ad98d`.
+
+## Lane C review in progress
+
+Lane C returned commits `efcdb2aff936ae1a546b0978b331c0f57474a387` and
+`0cf5f83c33c8c8143a59cc21e001e3a67fa28005` against the D2 amendment. Its recorded
+positive runs compile, link, and execute all three profiles with product input
+`27cf0af68d5b58a30f9f94ff5ec5e3217c880679`. Review verified the source binding,
+47 indexed evidence hashes, and the positive target results.
+
+The initial handoff is not accepted for integration. Independent review requires:
+
+| Finding | Required correction | Status |
+|---|---|---|
+| C-1: OOM false acceptance | Distinguish unexpected allocation success from actual OOM; require the intended fault point and test rejection | Returned to lane C |
+| C-2: cancellation cleanup | Route SIGTERM through owned-child cleanup and test cancellation without a successful result | Returned to lane C |
+| C-3: symlink provenance | Reject input-root and ancestor symlinks before resolution/materialization; test containment | Returned to lane C |
+
+Other reviewed boot properties include confined unsafe modules, checked bump
+allocation, EL1/interrupt/FP initialization, Normal-memory translation, and bounded
+ELF regions. This review does not waive the three findings or final revalidation.
+
+Initial evidence:
+
+```text
+~/.local/state/styrene-lab/issue-78/runs/validation/rns-no-std-7a3_kdcx/handoff.json
+```
 
 ## Environment readiness
 
@@ -123,9 +207,10 @@ RNS target compilation, executable linking, guest execution, or hardware support
 
 ## Acceptance state
 
-Cases `RNS-NOSTD-001` through `RNS-NOSTD-012` remain unaccepted. The missing-target
-library prerequisite is resolved. Implementation, integrated tests, independent
-code review, and final acceptance remain outstanding.
+Cases `RNS-NOSTD-001` through `RNS-NOSTD-012` remain unaccepted on a final A+B+C
+revision. Environment readiness and reviewed A+B implementation/validation are
+complete. Lane C corrections, final integration, required remaining validation,
+and final acceptance remain outstanding.
 
 The [test plan](test-plan.md) defines case criteria. The
 [execution plan](execution-plan.md) defines authority and required evidence.

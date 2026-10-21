@@ -129,7 +129,7 @@ A private local path alone is not sufficient evidence for an external reviewer.
 |---|---|
 | Local integration | Coordinator verifies clean handoffs, bounded diff, and case coverage on the integrated revision |
 | Independent review | Reviewer checks D3/API compatibility, entropy state ownership, zeroization, authentication order, persistence, feature isolation, and test effectiveness |
-| PR readiness | Coordinator supplies all required passing cases, applicable repository format/lint/test/policy/interop results, exact revision, limitations, and reviewer disposition |
+| Local PR readiness | Coordinator supplies passing local gates, applicable format/lint/test/policy/interop results, exact revision, limitations, and reviewer disposition; required remote CI and platform checks remain explicitly pending |
 | PR publication | Wilson authorizes push and PR creation; coordinator targets `main` and includes the compatibility/evidence summary |
 | Merge readiness | Final PR-head checks and independent review are accepted; any integration with newer main is validated; no required case is blocked |
 | Merge and acceptance | Wilson authorizes merge and acceptance against the reviewed revision; verify the resulting main revision and record the result |
@@ -138,6 +138,12 @@ A private local path alone is not sufficient evidence for an external reviewer.
 Repository protection does not substitute for these gates. Prior inspection
 found no required-review or required-CI rules. Never merge merely because GitHub
 permits the operation.
+
+Publishing an authorized draft PR may be necessary to obtain PR-head CI evidence.
+That publication is not acceptance. Required remote/platform checks may remain
+pending at publication, but must pass before merge and final acceptance. This
+distinction avoids treating unpublished GitHub checks as locally executable or
+waiving them merely to declare PR readiness.
 
 Crate publication is not part of issue acceptance. No release action is implied.
 Host, emulator, and hardware evidence retain their separate meanings.
