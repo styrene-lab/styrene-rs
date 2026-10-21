@@ -13,6 +13,7 @@ No RNS acceptance case has passed on an integrated change revision yet.
 | A: dependencies | `work/issue78-dependencies` | Planning baseline |
 | B: core | `work/issue78-core` | Planning baseline |
 | C: validation | `work/issue78-validation` | D2 contract amendment |
+| Combined A+B validation input | Detached validation worktree | `27cf0af68d5b58a30f9f94ff5ec5e3217c880679` |
 
 Lane results and the integrated validation revision must be recorded here before
 acceptance. A completed environment probe is not a lane handoff.
@@ -42,6 +43,39 @@ Evidence:
 ```text
 ~/.local/state/styrene-lab/issue-78/runs/dependencies/styrene-issue78-dependencies-XOgzG1O4/HANDOFF.md
 ```
+
+## Reviewed lane B handoff and combined input
+
+Lane B returned clean commit `131555c6ee290fd242b98b484a12e7c72f0b353a` from
+the planning baseline. It changes 13 authorized non-transport RNS source/test
+files and leaves the manifest and product lockfile unchanged.
+
+Independent review approved it for combined integration. Review covered
+borrowed RNG state, legacy trait and immutable-Fernet compatibility, key splits,
+framing, errors, constant-time authentication, and rotation/clock behavior.
+The reviewer verified all 13 changed-file hashes and 84 evidence checksums.
+
+Lane-local focused tests passed for borrowed providers, decryption, embedded
+time, applicable canonical/alternate crypto fixtures, hosted compatibility, and
+persistence. The new persistence tests also passed against unchanged base
+sources. These are not final integrated acceptance results.
+
+The transport fixture link attempt failed because its environment omitted
+SQLite linker inputs. Investigation confirmed that SQLite and its native build
+tools already exist in the declared cached native environment. Combined host
+validation uses those existing inputs without provisioning or profile changes.
+
+Evidence:
+
+```text
+~/.local/state/styrene-lab/issue-78/runs/core/20261021T011604Z/HANDOFF.md
+```
+
+The coordinator integrated the reviewed A and B commits as `3bad1011` and
+`27cf0af6`. The exact combined input is
+`27cf0af68d5b58a30f9f94ff5ec5e3217c880679`. A clean detached worktree preserves
+that revision for validation and as the product input to lane C's independent
+consumer. Combined checks are in progress. No result is inferred from launch.
 
 ## Environment readiness
 
