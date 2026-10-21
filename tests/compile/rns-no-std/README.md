@@ -45,8 +45,11 @@ The positive matrix is no default features, `alloc`, and `alloc,fernet-aes128`.
 The separate negative consumer explicitly imports target `std`. Its expected
 result is rustc **E0463**, naming `std` and that consumer's source. A missing
 `core`, package, lockfile, or unrelated compilation failure does not pass it.
-CI performs explicit locked cache acquisition before offline validation. CI
-does not require QEMU.
+CI acquires locked dependencies in the materialized fixture with
+`cargo fetch --locked --target aarch64-unknown-none --target host-tuple`.
+Cargo's graph inspection loads host-applicable dependencies as well as target
+dependencies. Both must be cached before offline validation. CI does not require
+QEMU.
 
 ## Fixture and lock ownership
 

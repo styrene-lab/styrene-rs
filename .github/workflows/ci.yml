@@ -38,7 +38,7 @@ jobs:
         env:
           CARGO_HOME: ${{ steps.consumer.outputs.run }}/cargo-home
           CARGO_TARGET_DIR: ${{ steps.consumer.outputs.run }}/target
-        run: cargo fetch --locked --target aarch64-unknown-none
+        run: cargo fetch --locked --target aarch64-unknown-none --target host-tuple
       - name: Check target profiles and intended negative diagnostic offline
         run: |
           python3 -B scripts/check-rns-no-std.py check --cargo "$(rustup which cargo)" --rustc "$(rustup which rustc)" --cache "${{ steps.consumer.outputs.run }}/cargo-home"
