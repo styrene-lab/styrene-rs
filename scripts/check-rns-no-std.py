@@ -28,6 +28,7 @@ TARGET = "aarch64-unknown-none"
 COMPLETE = "RNS-NOSTD:COMPLETE"
 BOOT_ONLY = "RNS-NOSTD:BOOT-ONLY"
 FAILURE = "RNS-NOSTD:PANIC-OR-OOM"
+OOM_RETURNED = "RNS-NOSTD:OOM-RETURNED"
 PROFILES = ("", "alloc", "alloc,fernet-aes128")
 FIXTURE = Path("tests/compile/rns-no-std")
 SOURCE = Path(__file__).resolve().parents[1]
@@ -186,6 +187,13 @@ def expected_std_failure(status: int, output: str) -> bool:
         and any(span["file_name"].endswith("src/lib.rs") for span in error["message"]["spans"])
         for error in errors
     )
+
+
+def fault_ok(status: int, timed_out: bool, output: str, scenario: str) -> bool:
+    if scenario not in ("panic", "oom"):
+        raise ValueError(f"unknown fault scenario: {scenario}")
+    return (not timed_out and status == 1
+            and output.splitlines() == [f"RNS-NOSTD:ARMED-{scenario.upper()}", FAILURE])
 
 
 def log_limit() -> None:
@@ -399,7 +407,9 @@ def main() -> int:
                 passed(result)
 
         if args.mode in ("execute", "bootstrap"):
-            scenarios = [("panic", "scenario-panic"), ("oom", "scenario-oom")]
+            scenarios = [("panic", "scenario-panic"), ("oom", "scenario-oom"),
+                         ("oom-returned", "scenario-oom-success"),
+                         ("early-panic", "scenario-early-panic")]
             scenarios += [("boot", "")] if args.mode == "bootstrap" else [
                 (f"smoke-{index}", ",".join(filter(None, ("smoke", features))))
                 for index, features in enumerate(PROFILES)
@@ -420,8 +430,16 @@ def main() -> int:
                 report["artifacts"][label] = {"elf_sha256": sha256(saved), "map_sha256": sha256(mapfile)}
                 result, output = command(f"execute-{label}", qemu_args(qemu["path"], saved), timeout=args.timeout)
                 if label in ("panic", "oom"):
-                    if result["timed_out"] or result["status"] != 1 or output.splitlines() != [FAILURE]:
-                        raise GateError(f"{label} did not terminate with the allocation-free failure marker and exit 1")
+                    if not fault_ok(result["status"], result["timed_out"], output, label):
+                        raise GateError(f"{label} lacks its armed/failure handshake and exit 1")
+                elif label in ("oom-returned", "early-panic"):
+                    expected = ["RNS-NOSTD:ARMED-OOM", OOM_RETURNED] if label == "oom-returned" else [FAILURE]
+                    status = 3 if label == "oom-returned" else 1
+                    if result["timed_out"] or result["status"] != status or output.splitlines() != expected:
+                        raise GateError(f"{label} did not reach its rejection-control outcome")
+                    if any(fault_ok(result["status"], False, output, fault) for fault in ("panic", "oom")):
+                        raise GateError(f"{label} incorrectly accepted as an intended fault")
+                    report.setdefault("rejected_fault_controls", []).append(label)
                 elif not result_ok(result["status"], result["timed_out"], output,
                                    BOOT_ONLY if label == "boot" else COMPLETE):
                     raise GateError(f"{label} lacks its exact completion marker and zero exit")

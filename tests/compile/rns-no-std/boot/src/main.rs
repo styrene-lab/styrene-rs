@@ -23,6 +23,9 @@ fn panic(_info: &core::panic::PanicInfo<'_>) -> ! {
 }
 
 fn run() -> ! {
+    if cfg!(feature = "scenario-early-panic") {
+        panic!("intentional panic before the control is armed");
+    }
     // Exercise the boot substrate even without a product dependency: heap,
     // atomics on Normal RAM, floating point, and non-overlap of live objects.
     let value = alloc::sync::Arc::new(core::sync::atomic::AtomicU64::new(7));
@@ -33,14 +36,21 @@ fn run() -> ! {
     assert_eq!(core::hint::black_box(float) * 2.0, 6.0);
 
     if cfg!(feature = "scenario-panic") {
+        semihosting::arm_panic();
         panic!("intentional synthetic panic");
     }
     if cfg!(feature = "scenario-oom") {
-        let mut too_large = alloc::vec::Vec::<u8>::with_capacity(core::hint::black_box(17 << 20));
-        too_large.push(1);
-        core::hint::black_box(too_large);
-        // Reaching this means the OOM control is broken; never report success.
-        semihosting::failure();
+        // The small-capacity variant deliberately reaches the same unexpected
+        // return path, proving that a successful allocation cannot pass as OOM.
+        let capacity = core::hint::black_box(if cfg!(feature = "scenario-oom-success") {
+            1
+        } else {
+            17 << 20
+        });
+        semihosting::arm_oom();
+        let allocation = alloc::vec::Vec::<u8>::with_capacity(capacity);
+        core::hint::black_box(allocation);
+        semihosting::unexpected_oom_success();
     }
     #[cfg(feature = "smoke")]
     rns_no_std_smoke::run();

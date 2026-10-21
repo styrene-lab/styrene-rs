@@ -15,6 +15,8 @@ alloc = ["rns-no-std-smoke?/alloc"]
 fernet-aes128 = ["rns-no-std-smoke?/fernet-aes128"]
 scenario-panic = []
 scenario-oom = []
+scenario-oom-success = ["scenario-oom"]
+scenario-early-panic = []
 
 [lints.rust]
 unsafe_code = "deny"

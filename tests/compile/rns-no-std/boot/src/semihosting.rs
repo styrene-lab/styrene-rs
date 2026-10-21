@@ -33,6 +33,19 @@ pub fn failure() -> ! {
     exit(1)
 }
 
+pub fn arm_panic() {
+    write(b"RNS-NOSTD:ARMED-PANIC\n\0");
+}
+
+pub fn arm_oom() {
+    write(b"RNS-NOSTD:ARMED-OOM\n\0");
+}
+
+pub fn unexpected_oom_success() -> ! {
+    write(b"RNS-NOSTD:OOM-RETURNED\n\0");
+    exit(3)
+}
+
 pub fn success() -> ! {
     #[cfg(feature = "smoke")]
     write(b"RNS-NOSTD:COMPLETE\n\0");

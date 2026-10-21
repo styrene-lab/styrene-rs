@@ -78,6 +78,25 @@ class RunnerTests(unittest.TestCase):
         self.assertFalse(gate.expected_std_failure(101, valid.replace("rns_no_std_negative", "dependency")))
         self.assertFalse(gate.expected_std_failure(101, valid + "\n" + valid.replace("E0463", "E0001")))
 
+    def test_fault_requires_exact_armed_handshake(self) -> None:
+        for scenario in ("panic", "oom"):
+            with self.subTest(scenario=scenario):
+                armed = f"RNS-NOSTD:ARMED-{scenario.upper()}"
+                intended = armed + "\n" + gate.FAILURE + "\n"
+                self.assertTrue(gate.fault_ok(1, False, intended, scenario))
+                self.assertFalse(gate.fault_ok(1, False, gate.FAILURE, scenario))
+                self.assertFalse(gate.fault_ok(1, False, gate.FAILURE + "\n" + armed, scenario))
+                self.assertFalse(gate.fault_ok(1, False, intended + gate.FAILURE, scenario))
+                self.assertFalse(gate.fault_ok(1, True, intended, scenario))
+                self.assertFalse(gate.fault_ok(0, False, intended, scenario))
+                self.assertFalse(gate.fault_ok(1, False, intended.replace(armed, "RNS-NOSTD:TRAP"), scenario))
+
+    def test_successful_allocation_cannot_satisfy_oom_control(self) -> None:
+        returned = "RNS-NOSTD:ARMED-OOM\n" + gate.OOM_RETURNED + "\n"
+        self.assertFalse(gate.fault_ok(3, False, returned, "oom"))
+        self.assertFalse(gate.fault_ok(1, False, returned, "oom"))
+        self.assertFalse(gate.fault_ok(1, False, "RNS-NOSTD:ARMED-PANIC\n" + gate.FAILURE, "oom"))
+
     def test_source_overlap_and_symlink_outputs_rejected(self) -> None:
         source = self.root / "source"
         source.mkdir()

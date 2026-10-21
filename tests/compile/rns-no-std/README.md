@@ -107,8 +107,13 @@ Deallocation is a no-op for this finite workload. Storage is never reset or
 reused. Allocator operations neither allocate recursively nor unwind.
 
 The panic handler emits one fixed failure string and exits 1. The pinned
-no-std allocation-error runtime reaches that handler on OOM. Separate target
-controls exercise both paths. Exception vectors emit a fixed trap string and
+no-std allocation-error runtime reaches that handler on OOM. Each fault control
+emits its own armed marker immediately before the intended operation. Acceptance
+requires that marker, the failure marker, and exit 1 in that order. An allocation
+that returns emits `OOM-RETURNED` and exits 3. Target regression controls force
+that return path and an earlier unarmed panic; neither can satisfy a fault check.
+All these diagnostics and exits are allocation-free.
+Exception vectors emit a fixed trap string and
 exit 2 without using the stack. Neither path emits a completion marker.
 
 Every QEMU execution has a 60-second deadline, configurable from 1 to 120 seconds.
