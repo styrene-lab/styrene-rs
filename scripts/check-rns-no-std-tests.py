@@ -103,7 +103,14 @@ class RunnerTests(unittest.TestCase):
         git("commit", "-m", "fixture")
         before = gate.snapshot(source)
         gate.unchanged(source, before)
+        self.assertEqual(gate.reviewed_product(source, before["head"]), before)
+        with self.assertRaisesRegex(gate.GateError, "full --product-revision"):
+            gate.reviewed_product(source, before["head"][:7])
+        with self.assertRaisesRegex(gate.GateError, "exact reviewed revision"):
+            gate.reviewed_product(source, "0" * 40)
         (source / "tracked").write_text("changed")
+        with self.assertRaisesRegex(gate.GateError, "must be clean"):
+            gate.reviewed_product(source, before["head"])
         with self.assertRaisesRegex(gate.GateError, "source changed"):
             gate.unchanged(source, before)
         dirty = gate.snapshot(source)
@@ -130,6 +137,12 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(smoke["lints"]["rust"]["unsafe_code"], "forbid")
         self.assertEqual(boot["lints"]["rust"]["unsafe_code"], "deny")
         self.assertEqual(smoke["features"]["default"], [])
+        separate = self.root / "separate"
+        product = self.root / "reviewed-product"
+        gate.materialize(gate.SOURCE, separate, product)
+        selected = tomllib.loads((separate / "Cargo.toml").read_text())
+        self.assertEqual(selected["workspace"]["dependencies"]["rns_core"]["path"],
+                         str(product / "crates/libs/styrene-rns"))
 
     def test_cache_copy_omits_configuration_and_credentials(self) -> None:
         seed = self.root / "seed"

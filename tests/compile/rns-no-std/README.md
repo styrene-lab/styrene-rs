@@ -34,6 +34,13 @@ Call `scripts/check-rns-no-std.py` directly for `bootstrap` or `prepare`.
 Use the same arguments as `execute` for `bootstrap`. `prepare` needs only
 `--cargo` and `--rustc` and prints its scratch directory to stdout.
 
+For a coordinator-supplied read-only product snapshot, also pass
+`--product-source /absolute/checkout --product-revision <full-40-character-SHA>`
+directly to the script. That checkout must be clean at the exact revision.
+The runner records and monitors product and fixture-source fingerprints
+separately. It writes no files into either checkout. By default, both inputs
+come from the checkout containing the runner.
+
 The positive matrix is no default features, `alloc`, and `alloc,fernet-aes128`.
 The separate negative consumer explicitly imports target `std`. Its expected
 result is rustc **E0463**, naming `std` and that consumer's source. A missing
@@ -60,11 +67,13 @@ The complete compatibility and negative-crypto corpus remains owned by RNS tests
 code. Only `startup`, `allocator`, and `semihosting` permit their documented
 unsafe operations. `smoke` and product code continue to forbid unsafe code.
 
-The fixture lock was intentionally generated offline against lane C's planning
-base. Every registry version and checksum also occurs in the product lockfile.
+The fixture lock was intentionally refreshed offline against reviewed product
+revision `27cf0af68d5b58a30f9f94ff5ec5e3217c880679`. The refresh removed nine
+packages and obsolete dependency edges without changing versions or checksums.
+Every registry version and checksum also occurs in the product lockfile.
 ChaCha 0.3.1 and rand_core 0.6.4 have defaults disabled in the fixture.
-The lock can still list baseline
-hosted dependencies. A lockfile is not the resolved target feature graph.
+A lockfile can include unselected platform dependencies. It is not the resolved
+target feature graph.
 
 After integrating dependency changes, the coordinator must review lock
 compatibility. If Cargo requires a lock refresh, generate it deliberately in an

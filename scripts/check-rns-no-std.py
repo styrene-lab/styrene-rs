@@ -80,6 +80,15 @@ def unchanged(source: Path, before: dict[str, Any]) -> None:
         raise GateError("source changed during validation; result invalidated")
 
 
+def reviewed_product(source: Path, revision: str | None) -> dict[str, Any]:
+    if revision is None or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise GateError("a separate product source requires its full --product-revision")
+    identity = snapshot(source)
+    if identity["head"] != revision or identity["status"]:
+        raise GateError("separate product source must be clean at the exact reviewed revision")
+    return identity
+
+
 def fixture_snapshot(root: Path) -> dict[str, str]:
     files = {}
     for path in sorted(root.rglob("*")):
@@ -104,7 +113,7 @@ def external_root(path: Path, source: Path) -> Path:
     return path
 
 
-def materialize(source: Path, destination: Path) -> None:
+def materialize(source: Path, destination: Path, product: Path | None = None) -> None:
     """Copy templates, resolving only the exact RNS path; never run Cargo in source."""
     destination.mkdir()
     for path in sorted((source / FIXTURE).rglob("*")):
@@ -119,7 +128,7 @@ def materialize(source: Path, destination: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         if path.name.endswith(".in"):
             text = path.read_text().replace(
-                "@RNS_PATH@", json.dumps(str(source / "crates/libs/styrene-rns"))
+                "@RNS_PATH@", json.dumps(str((product or source) / "crates/libs/styrene-rns"))
             )
             target.write_text(text)
         else:
@@ -237,6 +246,8 @@ def main() -> int:
     parser.add_argument("--rustc", required=True, help="absolute rustc 1.97.0 executable")
     parser.add_argument("--cache", type=Path, help="reviewed registry cache to copy (required except prepare)")
     parser.add_argument("--qemu", help="absolute QEMU 11.1.0 executable (execute/bootstrap only)")
+    parser.add_argument("--product-source", type=Path, help="separate read-only reviewed product checkout")
+    parser.add_argument("--product-revision", help="required full SHA for a separate product checkout")
     parser.add_argument("--timeout", type=int, default=60, choices=range(1, 121), metavar="1..120")
     args = parser.parse_args()
     source = SOURCE
@@ -258,18 +269,31 @@ def main() -> int:
         "review": "unreviewed; execution is not acceptance", "status": "blocked",
     }
     before = None
+    product = source
+    product_before = None
     fixture = run / "fixture"
     try:
         before = snapshot(source)
         report["source_before"] = before
+        if args.product_source is not None:
+            product = args.product_source.expanduser().resolve(strict=True)
+            product_before = reviewed_product(product, args.product_revision)
+        elif args.product_revision is not None:
+            raise GateError("--product-revision requires --product-source")
+        else:
+            product_before = before
+        report["product_source"] = str(product)
+        report["product_before"] = product_before
+        external_root(run, product)
+        external_root(evidence, product)
         fixture_files = {name: entry for name, entry in before["files"].items()
                          if name.startswith(str(FIXTURE) + "/")}
         report["fixture_content_sha256"] = hashlib.sha256(
             json.dumps(fixture_files, sort_keys=True).encode()
         ).hexdigest()
-        report["product_lock_sha256"] = sha256(source / "Cargo.lock")
+        report["product_lock_sha256"] = sha256(product / "Cargo.lock")
         report["fixture_lock_sha256"] = sha256(source / FIXTURE / "Cargo.lock")
-        materialize(source, fixture)
+        materialize(source, fixture, product)
         report["fixture_before"] = fixture_snapshot(fixture)
         for directory in ("home", "tmp", "cargo-home", "target"):
             (run / directory).mkdir()
@@ -324,11 +348,15 @@ def main() -> int:
         def command(label: str, command_args: list[str], cwd: Path = fixture,
                     overrides: dict[str, str] | None = None, timeout: float = 600) -> tuple[dict[str, Any], str]:
             unchanged(source, before)
+            if product != source:
+                unchanged(product, product_before)
             if fixture_snapshot(fixture) != report["fixture_before"]:
                 raise GateError("materialized fixture changed during validation")
             result = run_command(command_args, cwd, env | (overrides or {}), logs / f"{label}.log", timeout)
             report["commands"].append(result)
             unchanged(source, before)
+            if product != source:
+                unchanged(product, product_before)
             if fixture_snapshot(fixture) != report["fixture_before"]:
                 raise GateError("materialized fixture changed during validation")
             return result, (logs / result["log"]).read_text(errors="replace")
@@ -410,6 +438,10 @@ def main() -> int:
             if report["source_after"] != before:
                 report["status"] = "invalid-source-mutation"
                 # `command` checks mutation too; prepare needs this final check.
+        if product_before is not None:
+            report["product_after"] = snapshot(product)
+            if report["product_after"] != product_before:
+                report["status"] = "invalid-source-mutation"
         shutil.copytree(logs, evidence / "logs")
         if fixture.exists():
             report["fixture_after"] = fixture_snapshot(fixture)
