@@ -1,0 +1,553 @@
+#!/usr/bin/env python3
+"""Independent Rust 1.97 aarch64-unknown-none gate; see fixture README.md.
+
+Only `prepare` omits compilation. It materializes a locked fixture for explicit
+CI dependency acquisition. All validation commands are offline and locked.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import platform
+import re
+import resource
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+TARGET = "aarch64-unknown-none"
+COMPLETE = "RNS-NOSTD:COMPLETE"
+BOOT_ONLY = "RNS-NOSTD:BOOT-ONLY"
+FAILURE = "RNS-NOSTD:PANIC-OR-OOM"
+OOM_RETURNED = "RNS-NOSTD:OOM-RETURNED"
+PROFILES = ("", "alloc", "alloc,fernet-aes128")
+FIXTURE = Path("tests/compile/rns-no-std")
+RNS = Path("crates/libs/styrene-rns")
+# Keep the caller's spelling until checked_input_path rejects alias components.
+SOURCE = Path(__file__).absolute().parents[1]
+MAX_LOG = 64 * 1024 * 1024
+
+
+class GateError(RuntimeError):
+    """A failed check or unavailable prerequisite, never an implicit fallback."""
+
+
+class GateCancelled(GateError):
+    def __init__(self, signum: int):
+        super().__init__(f"validation cancelled by signal {signum}; owned process group stopped")
+        self.signum = signum
+
+
+def sha256(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def probe(args: list[str], cwd: Path, *, trim: bool = True) -> str:
+    result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=30, check=False)
+    if result.returncode:
+        raise GateError(f"probe failed: {args!r}: {result.stderr.strip()}")
+    return result.stdout.strip() if trim else result.stdout
+
+
+def checked_input_path(path: Path, *, within: Path | None = None, required: bool = True) -> Path:
+    """Check each lexical component before resolve can erase a symlink alias."""
+    original = path.expanduser().absolute()
+    # Inspect ancestors first: never inspect descendants through an alias.
+    for component in reversed((original, *original.parents)):
+        try:
+            mode = component.lstat().st_mode
+        except FileNotFoundError:
+            if required:
+                raise GateError(f"missing build input: {component}") from None
+            break
+        if stat.S_ISLNK(mode):
+            raise GateError(f"symlink in build input path: {component}")
+    resolved = original.resolve(strict=required)
+    if within is not None and not resolved.is_relative_to(checked_input_path(within)):
+        raise GateError(f"build input escapes source root: {original}")
+    return resolved
+
+
+def snapshot(source: Path) -> dict[str, Any]:
+    source = checked_input_path(source)
+    # Some snapshots have no fixture yet. Still inspect every existing ancestor
+    # of both roots, including the roots themselves, before Git or file reads.
+    for relative in (RNS, FIXTURE, Path("Cargo.toml"), Path("Cargo.lock")):
+        checked_input_path(source / relative, within=source, required=False)
+    names = probe(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], source, trim=False)
+    files = {}
+    for name in sorted(set(names.rstrip("\0").split("\0")) - {""}):
+        path = source / name
+        checked_input_path(path.parent, within=source, required=False)
+        if path.is_symlink():
+            if any(name == str(root) or name.startswith(str(root) + "/") for root in (RNS, FIXTURE)):
+                raise GateError(f"symlink in build input: {name}")
+            content = hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()
+        elif path.is_file():
+            content = sha256(path)
+        elif not path.exists():
+            content = "deleted"
+        else:
+            raise GateError(f"unsupported source entry: {name}")
+        try:
+            mode = stat.S_IMODE(path.lstat().st_mode)
+        except FileNotFoundError:
+            mode = 0
+        files[name] = [mode, content]
+    return {
+        "head": probe(["git", "rev-parse", "HEAD"], source),
+        "status": probe(["git", "status", "--porcelain=v1", "--untracked-files=all"], source, trim=False),
+        "content_sha256": hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest(),
+        "files": files,
+    }
+
+
+def unchanged(source: Path, before: dict[str, Any]) -> None:
+    if snapshot(source) != before:
+        raise GateError("source changed during validation; result invalidated")
+
+
+def reviewed_product(source: Path, revision: str | None) -> dict[str, Any]:
+    if revision is None or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise GateError("a separate product source requires its full --product-revision")
+    identity = snapshot(source)
+    if identity["head"] != revision or identity["status"]:
+        raise GateError("separate product source must be clean at the exact reviewed revision")
+    return identity
+
+
+def fixture_snapshot(root: Path) -> dict[str, str]:
+    root = checked_input_path(root)
+    files = {}
+    for path in sorted(root.rglob("*")):
+        checked_input_path(path, within=root)
+        if path.is_file():
+            files[str(path.relative_to(root))] = sha256(path)
+    return files
+
+
+def external_root(path: Path, source: Path) -> Path:
+    """Refuse symlinked or source-overlapping output roots before creating files."""
+    path = path.absolute()
+    if any(part.is_symlink() for part in (path, *path.parents)):
+        raise GateError(f"symlinked output root: {path}")
+    resolved = path.resolve()
+    if resolved == source or resolved.is_relative_to(source) or source.is_relative_to(resolved):
+        raise GateError(f"output overlaps source: {resolved}")
+    path.mkdir(parents=True, exist_ok=True)
+    if not path.is_dir():
+        raise GateError(f"output root is not a directory: {path}")
+    return path
+
+
+def materialize(source: Path, destination: Path, product: Path | None = None) -> None:
+    """Copy templates, resolving only the exact RNS path; never run Cargo in source."""
+    source = checked_input_path(source)
+    product = checked_input_path(product or source)
+    fixture_root = checked_input_path(source / FIXTURE, within=source)
+    rns_root = checked_input_path(product / RNS, within=product)
+    checked_input_path(product / "Cargo.toml", within=product)
+    checked_input_path(rns_root / "Cargo.toml", within=product)
+    destination.mkdir()
+    for path in sorted(fixture_root.rglob("*")):
+        checked_input_path(path, within=fixture_root)
+        if not path.is_file() or path.name == "README.md":
+            continue
+        relative = path.relative_to(fixture_root)
+        target = destination / relative
+        if path.name.endswith(".in"):
+            target = target.with_suffix("")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if path.name.endswith(".in"):
+            text = path.read_text().replace(
+                "@RNS_PATH@", json.dumps(str(rns_root))
+            )
+            target.write_text(text)
+        else:
+            shutil.copyfile(path, target)
+    for ancestor in (destination, *destination.parents):
+        for config in ("config", "config.toml"):
+            if (ancestor / ".cargo" / config).exists():
+                raise GateError(f"ambient Cargo configuration at {ancestor / '.cargo' / config}")
+
+
+def seed_cache(seed: Path, destination: Path) -> None:
+    # Copy only public registry data: never credentials, config, Git credentials,
+    # global cache databases or locks. Each run owns its writable Cargo home.
+    registry = seed.resolve(strict=True) / "registry"
+    if registry.is_symlink() or not registry.is_dir():
+        raise GateError(f"reviewed registry cache missing: {registry}")
+    for path in registry.rglob("*"):
+        if path.is_symlink() or not (path.is_file() or path.is_dir()):
+            raise GateError(f"unsupported entry in registry cache: {path}")
+    shutil.copytree(registry, destination / "registry")
+
+
+def tool(path: str, name: str, cwd: Path, version_args: tuple[str, ...] = ("--version",)) -> dict[str, str]:
+    executable = Path(path).expanduser()
+    if not executable.is_absolute() or not executable.is_file() or not os.access(executable, os.X_OK):
+        raise GateError(f"{name} must be an existing absolute executable path: {path}")
+    resolved = executable.resolve(strict=True)
+    version = probe([str(resolved), *version_args], cwd)
+    return {"path": str(resolved), "version": version, "sha256": sha256(resolved)}
+
+
+def result_ok(status: int, timed_out: bool, output: str, marker: str) -> bool:
+    lines = output.splitlines()
+    return (
+        not timed_out
+        and status == 0
+        and lines.count(marker) == 1
+        and all(line == marker for line in lines if line.startswith("RNS-NOSTD:"))
+    )
+
+
+def expected_std_failure(status: int, output: str) -> bool:
+    errors = []
+    for line in output.splitlines():
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if message.get("reason") == "compiler-message" and message["message"]["level"] == "error":
+            errors.append(message)
+    return status == 101 and bool(errors) and all(
+        error["target"]["name"] == "rns_no_std_negative"
+        and (error["message"].get("code") or {}).get("code") == "E0463"
+        and "can't find crate for `std`" in error["message"]["message"]
+        and any(span["file_name"].endswith("src/lib.rs") for span in error["message"]["spans"])
+        for error in errors
+    )
+
+
+def fault_ok(status: int, timed_out: bool, output: str, scenario: str) -> bool:
+    if scenario not in ("panic", "oom"):
+        raise ValueError(f"unknown fault scenario: {scenario}")
+    return (not timed_out and status == 1
+            and output.splitlines() == [f"RNS-NOSTD:ARMED-{scenario.upper()}", FAILURE])
+
+
+def log_limit() -> None:
+    resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_LOG, MAX_LOG))
+
+
+def kill_group(pid: int) -> None:
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def run_command(
+    args: list[str], cwd: Path, env: dict[str, str], log: Path, timeout: float
+) -> dict[str, Any]:
+    """Own one foreground process group; kill and reap it on deadline/cancellation."""
+    started = datetime.now(timezone.utc).isoformat()
+    timed_out = False
+    cancelled_signal = None
+    process = None
+
+    def terminate(signum: int, _frame: Any) -> None:
+        nonlocal cancelled_signal
+        cancelled_signal = signum
+        # Do not raise asynchronously across Popen: a signal can arrive after
+        # fork but before Python assigns the process handle. Remember it, then
+        # stop that group immediately after Popen returns in that case.
+        if process is not None:
+            kill_group(process.pid)
+
+    previous_handler = signal.signal(signal.SIGTERM, terminate)
+    try:
+        with log.open("xb") as output:
+            process = subprocess.Popen(
+                args, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=output,
+                stderr=subprocess.STDOUT, start_new_session=True, preexec_fn=log_limit,
+            )
+            if cancelled_signal is not None:
+                kill_group(process.pid)
+            try:
+                status = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                kill_group(process.pid)
+                status = process.wait()
+            except BaseException:
+                kill_group(process.pid)
+                process.wait()
+                raise
+            finally:
+                # Also stop any remaining descendants if their parent exited first.
+                kill_group(process.pid)
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
+    return {
+        "args": args, "cwd": str(cwd), "environment": env, "started": started,
+        "status": status, "timed_out": timed_out, "timeout_seconds": timeout,
+        "cancelled_signal": cancelled_signal,
+        "log": log.name, "log_sha256": sha256(log),
+    }
+
+
+def qemu_args(qemu: str, artifact: Path) -> list[str]:
+    return [
+        qemu, "-machine", "virt-11.1,secure=off,virtualization=off", "-cpu", "cortex-a53",
+        "-accel", "tcg,thread=single", "-smp", "1", "-m", "128M", "-nodefaults",
+        "-nic", "none", "-display", "none", "-serial", "none", "-monitor", "none",
+        "-no-reboot", "-semihosting-config", "enable=on,target=native", "-kernel", str(artifact),
+    ]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", choices=("prepare", "check", "execute", "bootstrap"))
+    parser.add_argument("--cargo", required=True, help="absolute Cargo 1.97.0 executable")
+    parser.add_argument("--rustc", required=True, help="absolute rustc 1.97.0 executable")
+    parser.add_argument("--cache", type=Path, help="reviewed registry cache to copy (required except prepare)")
+    parser.add_argument("--qemu", help="absolute QEMU 11.1.0 executable (execute/bootstrap only)")
+    parser.add_argument("--product-source", type=Path, help="separate read-only reviewed product checkout")
+    parser.add_argument("--product-revision", help="required full SHA for a separate product checkout")
+    parser.add_argument("--timeout", type=int, default=60, choices=range(1, 121), metavar="1..120")
+    args = parser.parse_args()
+    try:
+        source = checked_input_path(SOURCE)
+        checked_input_path(Path(__file__), within=source)
+    except GateError as error:
+        print(f"rns-no-std: {error}", file=sys.stderr)
+        return 1
+    scratch = external_root(Path("/tmp/opencode"), source)
+    run = Path(tempfile.mkdtemp(prefix="rns-no-std-", dir=scratch))
+    store = external_root(Path.home() / ".local/state/styrene-lab/issue-78/runs/validation", source)
+    evidence = store / run.name
+    evidence.mkdir(mode=0o700)
+    logs = run / "logs"
+    logs.mkdir()
+    report: dict[str, Any] = {
+        "schema": 1, "run": str(run), "evidence": str(evidence), "source": str(source),
+        "started": datetime.now(timezone.utc).isoformat(),
+        "host": platform.node(), "platform": platform.platform(), "mode": args.mode,
+        "target": TARGET, "commands": [], "artifacts": {}, "tools": {},
+        "profiles": list(PROFILES),
+        "evidence_class": {"prepare": "materialization-only", "check": "target-compile",
+                           "execute": "synthetic-emulation", "bootstrap": "boot-substrate-only"}[args.mode],
+        "review": "unreviewed; execution is not acceptance", "status": "blocked",
+    }
+    before = None
+    product = source
+    product_before = None
+    fixture = run / "fixture"
+    try:
+        before = snapshot(source)
+        report["source_before"] = before
+        if args.product_source is not None:
+            product = checked_input_path(args.product_source)
+            product_before = reviewed_product(product, args.product_revision)
+        elif args.product_revision is not None:
+            raise GateError("--product-revision requires --product-source")
+        else:
+            product_before = before
+        report["product_source"] = str(product)
+        report["product_before"] = product_before
+        external_root(run, product)
+        external_root(evidence, product)
+        fixture_files = {name: entry for name, entry in before["files"].items()
+                         if name.startswith(str(FIXTURE) + "/")}
+        report["fixture_content_sha256"] = hashlib.sha256(
+            json.dumps(fixture_files, sort_keys=True).encode()
+        ).hexdigest()
+        report["product_lock_sha256"] = sha256(product / "Cargo.lock")
+        report["fixture_lock_sha256"] = sha256(source / FIXTURE / "Cargo.lock")
+        materialize(source, fixture, product)
+        report["fixture_before"] = fixture_snapshot(fixture)
+        for directory in ("home", "tmp", "cargo-home", "target"):
+            (run / directory).mkdir()
+        cargo = tool(args.cargo, "cargo", run)
+        rustc = tool(args.rustc, "rustc", run)
+        report["tools"].update(cargo=cargo, rustc=rustc)
+        report["tools"]["python"] = tool(sys.executable, "python", run)
+        report["tools"]["git"] = tool(shutil.which("git") or "", "git", run)
+        if not re.match(r"cargo 1\.97\.0\b", cargo["version"]) or not re.match(
+            r"rustc 1\.97\.0\b", rustc["version"]
+        ):
+            raise GateError("matching Cargo/rustc 1.97.0 required")
+        verbose = probe([rustc["path"], "-vV"], run)
+        report["rustc_verbose"] = verbose
+        report["target_cfg"] = probe([rustc["path"], "--print", "cfg", "--target", TARGET], run)
+        for atomic in ('target_has_atomic="64"', 'target_has_atomic="ptr"'):
+            if atomic not in report["target_cfg"].splitlines():
+                raise GateError(f"target lacks required {atomic}")
+        libdir = Path(probe([rustc["path"], "--print", "target-libdir", "--target", TARGET], run))
+        for library in ("core", "alloc", "compiler_builtins"):
+            if not list(libdir.glob(f"lib{library}-*.rlib")):
+                raise GateError(f"missing Rust 1.97 target library {library}: {libdir}")
+        report["target_libraries"] = {str(path): sha256(path) for path in sorted(libdir.glob("*.rlib"))}
+        env = {
+            "PATH": os.environ.get("PATH", os.defpath), "HOME": str(run / "home"),
+            "TMPDIR": str(run / "tmp"), "CARGO_HOME": str(run / "cargo-home"),
+            "CARGO_TARGET_DIR": str(run / "target"), "CARGO_BUILD_JOBS": "2",
+            "RUSTC": rustc["path"], "RUSTFLAGS": "-Dwarnings", "CARGO_NET_OFFLINE": "true",
+            "CARGO_TERM_COLOR": "never", "LC_ALL": "C",
+        }
+        report["environment"] = env
+        if args.mode == "prepare":
+            report["status"] = "prepared-only"
+            print(run)
+            return 0
+        if args.cache is None:
+            raise GateError("--cache is required; validation never downloads dependencies")
+        seed_cache(args.cache, run / "cargo-home")
+        report["cache_seed"] = str(args.cache.resolve())
+        if args.mode in ("execute", "bootstrap"):
+            if args.qemu is None:
+                raise GateError("--qemu is required for target execution")
+            qemu = tool(args.qemu, "qemu", run)
+            if not qemu["version"].startswith("QEMU emulator version 11.1.0"):
+                raise GateError("QEMU 11.1.0 required by the reviewed boot contract")
+            sysroot = Path(probe([rustc["path"], "--print", "sysroot"], run))
+            host = next(line.removeprefix("host: ") for line in verbose.splitlines() if line.startswith("host: "))
+            linker = tool(str(sysroot / "lib/rustlib" / host / "bin/rust-lld"), "rust-lld", run,
+                          ("-flavor", "gnu", "--version"))
+            report["tools"].update(qemu=qemu, linker=linker)
+
+        def command(label: str, command_args: list[str], cwd: Path = fixture,
+                    overrides: dict[str, str] | None = None, timeout: float = 600) -> tuple[dict[str, Any], str]:
+            unchanged(source, before)
+            if product != source:
+                unchanged(product, product_before)
+            if fixture_snapshot(fixture) != report["fixture_before"]:
+                raise GateError("materialized fixture changed during validation")
+            result = run_command(command_args, cwd, env | (overrides or {}), logs / f"{label}.log", timeout)
+            report["commands"].append(result)
+            if result["cancelled_signal"] is not None:
+                raise GateCancelled(result["cancelled_signal"])
+            unchanged(source, before)
+            if product != source:
+                unchanged(product, product_before)
+            if fixture_snapshot(fixture) != report["fixture_before"]:
+                raise GateError("materialized fixture changed during validation")
+            return result, (logs / result["log"]).read_text(errors="replace")
+
+        def cargo_command(label: str, verb: str, extra: list[str], **kwargs: Any) -> tuple[dict[str, Any], str]:
+            return command(label, [cargo["path"], verb, "--offline", "--locked", *extra], **kwargs)
+
+        def passed(result: dict[str, Any]) -> None:
+            if result["timed_out"] or result["status"]:
+                raise GateError(f"command failed: {result['log']} (exit {result['status']})")
+
+        result, _ = command("allocator-build", [rustc["path"], "--edition=2024", "-Dwarnings",
+                            "--test", str(fixture / "boot/src/bump.rs"), "-o", str(run / "allocator-tests")])
+        passed(result)
+        result, _ = command("allocator-tests", [str(run / "allocator-tests")], timeout=30)
+        passed(result)
+
+        if args.mode in ("check", "execute"):
+            # Negative control is separate from the product graph so baseline
+            # dependency errors cannot accidentally satisfy its diagnostic test.
+            result, output = cargo_command(
+                "negative", "check", ["--lib", "--target", TARGET, "--message-format=json"],
+                cwd=fixture / "negative",
+            )
+            if result["timed_out"] or not expected_std_failure(result["status"], output):
+                raise GateError("negative control did not fail specifically for missing target std")
+            report["negative_control"] = "intended-E0463"
+            for index, features in enumerate(PROFILES):
+                options = ["--no-default-features", "--target", TARGET]
+                if features:
+                    options += ["--features", features]
+                result, _ = cargo_command(f"tree-{index}", "tree", ["-p", "rns-no-std-smoke", "-e", "normal,build,features", *options])
+                passed(result)
+                result, _ = cargo_command(f"metadata-{index}", "metadata", [
+                    "--format-version", "1", "--filter-platform", TARGET, "--no-default-features",
+                    *(["--features", features] if features else []),
+                ])
+                passed(result)
+                result, _ = cargo_command(f"check-{index}", "check", ["-p", "rns-no-std-smoke", "--lib", "-vv", *options])
+                passed(result)
+
+        if args.mode in ("execute", "bootstrap"):
+            scenarios = [("panic", "scenario-panic"), ("oom", "scenario-oom"),
+                         ("oom-returned", "scenario-oom-success"),
+                         ("early-panic", "scenario-early-panic")]
+            scenarios += [("boot", "")] if args.mode == "bootstrap" else [
+                (f"smoke-{index}", ",".join(filter(None, ("smoke", features))))
+                for index, features in enumerate(PROFILES)
+            ]
+            for label, features in scenarios:
+                mapfile = run / f"{label}.map"
+                flags = (f"-Dwarnings -C target-cpu=cortex-a53 -C linker={linker['path']} "
+                         f"-C link-arg=-T{fixture / 'boot/linker.ld'} -C link-arg=-Map={mapfile}")
+                result, _ = cargo_command(f"link-{label}", "build", [
+                    "-p", "rns-no-std-boot", "--release", "--no-default-features", "--target", TARGET,
+                    *(["--features", features] if features else []),
+                ], overrides={"RUSTFLAGS": flags})
+                passed(result)
+                artifact = run / "target" / TARGET / "release/rns-no-std-boot"
+                saved = evidence / f"{label}.elf"
+                shutil.copyfile(artifact, saved)
+                shutil.copyfile(mapfile, evidence / mapfile.name)
+                report["artifacts"][label] = {"elf_sha256": sha256(saved), "map_sha256": sha256(mapfile)}
+                result, output = command(f"execute-{label}", qemu_args(qemu["path"], saved), timeout=args.timeout)
+                if label in ("panic", "oom"):
+                    if not fault_ok(result["status"], result["timed_out"], output, label):
+                        raise GateError(f"{label} lacks its armed/failure handshake and exit 1")
+                elif label in ("oom-returned", "early-panic"):
+                    expected = ["RNS-NOSTD:ARMED-OOM", OOM_RETURNED] if label == "oom-returned" else [FAILURE]
+                    status = 3 if label == "oom-returned" else 1
+                    if result["timed_out"] or result["status"] != status or output.splitlines() != expected:
+                        raise GateError(f"{label} did not reach its rejection-control outcome")
+                    if any(fault_ok(result["status"], False, output, fault) for fault in ("panic", "oom")):
+                        raise GateError(f"{label} incorrectly accepted as an intended fault")
+                    report.setdefault("rejected_fault_controls", []).append(label)
+                elif not result_ok(result["status"], result["timed_out"], output,
+                                   BOOT_ONLY if label == "boot" else COMPLETE):
+                    raise GateError(f"{label} lacks its exact completion marker and zero exit")
+        report["status"] = "passed-bootstrap-only" if args.mode == "bootstrap" else "passed"
+        return 0
+    except GateCancelled as error:
+        report["error"] = str(error)
+        report["status"] = "cancelled"
+        report["cancelled_signal"] = error.signum
+        print(f"rns-no-std: {error}", file=sys.stderr)
+        return 128 + error.signum
+    except (GateError, OSError, subprocess.SubprocessError) as error:
+        report["error"] = str(error)
+        report["status"] = "failed" if report["commands"] else "blocked"
+        print(f"rns-no-std: {error}", file=sys.stderr)
+        return 1
+    finally:
+        if before is not None:
+            report["source_after"] = snapshot(source)
+            if report["source_after"] != before:
+                report["status"] = "invalid-source-mutation"
+                # `command` checks mutation too; prepare needs this final check.
+        if product_before is not None:
+            report["product_after"] = snapshot(product)
+            if report["product_after"] != product_before:
+                report["status"] = "invalid-source-mutation"
+        shutil.copytree(logs, evidence / "logs")
+        if fixture.exists():
+            report["fixture_after"] = fixture_snapshot(fixture)
+            if "fixture_before" in report and report["fixture_after"] != report["fixture_before"]:
+                report["status"] = "invalid-source-mutation"
+            shutil.copytree(fixture, evidence / "fixture")
+        report["evidence_files"] = {
+            str(path.relative_to(evidence)): sha256(path)
+            for path in sorted(evidence.rglob("*")) if path.is_file()
+        }
+        (evidence / "summary.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        print(f"rns-no-std evidence: {evidence}", file=sys.stderr)
+        if report["status"] == "invalid-source-mutation":
+            raise GateError("source changed during validation; result invalidated")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

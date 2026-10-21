@@ -6,6 +6,10 @@ Rust implementation of the Reticulum Network Stack (RNS) protocol core. Provides
 
 Library name is `rns_core` (not `styrene_rns`).
 
+See [README.md](README.md) for the allocation-backed profile, caller-RNG APIs,
+target requirements, and validation limits. Keep that contract distinct from
+host-only minimal-feature checks and physical-device acceptance.
+
 ## Current Status
 
 **Primary protocol crate -- actively used by styrened and styrene-lxmf.** Has comprehensive interop tests against Python RNS. Transport layer is functional with TCP, UDP, and Serial interfaces.
@@ -67,8 +71,8 @@ src/
 | Feature | What it enables |
 |---------|----------------|
 | `default` | `std` |
-| `std` | Standard library support |
-| `alloc` | Alloc-only (no std) |
+| `std` | Hosted APIs, OS-randomness conveniences, and persistence dependencies |
+| `alloc` | Explicit allocation-backed core marker; defaults must also be disabled to exclude std |
 | `fernet-aes128` | Fernet AES-128-CBC token format |
 | `interop-tests` | Cross-language interop test support |
 | `transport` | Full transport layer: TCP, UDP, Serial, SQLite storage, tokio runtime |
@@ -83,8 +87,8 @@ cargo test -p styrene-rns
 # With transport layer
 cargo test -p styrene-rns --features transport
 
-# Interop tests (requires Python RNS fixtures in tests/interop/)
-cargo test -p styrene-rns --features interop-tests
+# Committed interop fixtures (transport is required by the full suite)
+cargo test -p styrene-rns --features interop-tests,transport
 
 # All features
 cargo test -p styrene-rns --all-features

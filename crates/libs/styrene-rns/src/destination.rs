@@ -37,8 +37,10 @@ mod request;
 #[path = "destination/tests.rs"]
 mod tests;
 
+#[cfg(feature = "std")]
+pub use primitives::group_encrypt;
 pub use primitives::{
-    Direction, Group, Input, Output, Plain, Single, Type, group_decrypt, group_encrypt,
+    Direction, Group, Input, Output, Plain, Single, Type, group_decrypt, group_encrypt_with_rng,
 };
 pub use ratchet::RATCHET_LENGTH;
 use ratchet::{RatchetState, try_decrypt_with_ratchets};
@@ -474,9 +476,11 @@ impl Destination<PrivateIdentity, Input, Single> {
         Ok((plaintext, false))
     }
 
-    pub fn announce<R: CryptoRngCore + Copy>(
+    /// Create an announce using the supplied provider for randomness and ratchets.
+    /// Pass `&mut rng` to advance caller-owned cryptographic state.
+    pub fn announce<R: CryptoRngCore>(
         &mut self,
-        rng: R,
+        mut rng: R,
         app_data: Option<&[u8]>,
     ) -> Result<Packet, RnsError> {
         let mut packet_data = PacketDataBuffer::new();
@@ -486,8 +490,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         // layout keeps announce freshness/path ordering interoperable.
         let mut rand_hash = [0u8; RAND_HASH_LENGTH];
         let mut random_part = [0u8; RAND_HASH_LENGTH / 2];
-        let mut rng_mut = rng;
-        rng_mut.fill_bytes(&mut random_part);
+        rng.fill_bytes(&mut random_part);
         rand_hash[..RAND_HASH_LENGTH / 2].copy_from_slice(&random_part);
         // One wall-clock reading feeds both the announce timestamp and the
         // ratchet rotation decision; without a clock the announce is refused.
@@ -499,7 +502,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         let verifying_key = self.identity.as_identity().verifying_key_bytes();
 
         let ratchet = if self.ratchet_state.enabled {
-            self.ratchet_state.rotate_if_needed(&self.identity, emitted_secs as f64)?;
+            self.ratchet_state.rotate_if_needed(&self.identity, emitted_secs as f64, &mut rng)?;
             self.ratchet_state.current_ratchet_public()
         } else {
             None
@@ -558,7 +561,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         })
     }
 
-    pub fn path_response<R: CryptoRngCore + Copy>(
+    pub fn path_response<R: CryptoRngCore>(
         &mut self,
         rng: R,
         app_data: Option<&[u8]>,
@@ -566,7 +569,7 @@ impl Destination<PrivateIdentity, Input, Single> {
         self.path_response_with_tag(rng, app_data, None)
     }
 
-    pub fn path_response_with_tag<R: CryptoRngCore + Copy>(
+    pub fn path_response_with_tag<R: CryptoRngCore>(
         &mut self,
         rng: R,
         app_data: Option<&[u8]>,

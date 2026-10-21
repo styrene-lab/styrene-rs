@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["smoke", "boot"]
+default-members = ["smoke"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.97"
+publish = false
+
+[workspace.dependencies]
+rns_core = { package = "styrene-rns", version = "^0.1.0", path = @RNS_PATH@, default-features = false }
+rand_core = { version = "=0.6.4", default-features = false }
+rand_chacha = { version = "=0.3.1", default-features = false }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1

@@ -93,6 +93,50 @@ impl<'a> From<&'a [u8]> for Token<'a> {
     }
 }
 
+fn encrypt_with_rng<'a, R: CryptoRngCore + ?Sized>(
+    sign_key: &[u8],
+    enc_key: &AesKey,
+    rng: &mut R,
+    text: PlainText,
+    out_buf: &'a mut [u8],
+) -> Result<Token<'a>, RnsError> {
+    let block_count = text
+        .0
+        .len()
+        .checked_div(AES_BLOCK_SIZE)
+        .and_then(|blocks| blocks.checked_add(1))
+        .ok_or(RnsError::InvalidArgument)?;
+    let padded_cipher_len =
+        block_count.checked_mul(AES_BLOCK_SIZE).ok_or(RnsError::InvalidArgument)?;
+    let required_len =
+        FERNET_OVERHEAD_SIZE.checked_add(padded_cipher_len).ok_or(RnsError::InvalidArgument)?;
+
+    if out_buf.len() < required_len {
+        return Err(RnsError::InvalidArgument);
+    }
+
+    let mut out_len = 0;
+
+    let iv = AesCbcEnc::generate_iv(rng);
+    out_buf[..iv.len()].copy_from_slice(iv.as_slice());
+    out_len += iv.len();
+
+    let cipher_len = AesCbcEnc::new(enc_key, &iv)
+        .encrypt_padded_b2b_mut::<Pkcs7>(text.0, &mut out_buf[out_len..])
+        .map_err(|_| RnsError::InvalidArgument)?
+        .len();
+    out_len += cipher_len;
+
+    let mut hmac =
+        <HmacSha256 as Mac>::new_from_slice(sign_key).map_err(|_| RnsError::InvalidArgument)?;
+    hmac.update(&out_buf[..out_len]);
+    let tag = hmac.finalize().into_bytes();
+    out_buf[out_len..out_len + tag.len()].copy_from_slice(tag.as_slice());
+    out_len += tag.len();
+
+    Ok(Token(&out_buf[..out_len]))
+}
+
 impl<R: CryptoRngCore + Copy> Fernet<R> {
     pub fn new(sign_key: [u8; AES_KEY_SIZE], enc_key: AesKey, rng: R) -> Self {
         Self { rng, sign_key, enc_key }
@@ -118,52 +162,17 @@ impl<R: CryptoRngCore + Copy> Fernet<R> {
         Self { rng, sign_key, enc_key }
     }
 
+    /// Encrypt with a copyable handle to an advancing cryptographic provider.
+    ///
+    /// Copying a PRNG state snapshot can repeat IVs. For caller-owned mutable
+    /// state, use [`CachedFernet::encrypt`] with `&mut rng` instead.
     pub fn encrypt<'a>(
         &self,
         text: PlainText,
         out_buf: &'a mut [u8],
     ) -> Result<Token<'a>, RnsError> {
-        let block_count = text
-            .0
-            .len()
-            .checked_div(AES_BLOCK_SIZE)
-            .and_then(|blocks| blocks.checked_add(1))
-            .ok_or(RnsError::InvalidArgument)?;
-        let padded_cipher_len =
-            block_count.checked_mul(AES_BLOCK_SIZE).ok_or(RnsError::InvalidArgument)?;
-        let required_len =
-            FERNET_OVERHEAD_SIZE.checked_add(padded_cipher_len).ok_or(RnsError::InvalidArgument)?;
-
-        if out_buf.len() < required_len {
-            return Err(RnsError::InvalidArgument);
-        }
-
-        let mut out_len = 0;
-
-        // Generate random IV
-        let iv = AesCbcEnc::generate_iv(self.rng);
-        out_buf[..iv.len()].copy_from_slice(iv.as_slice());
-
-        out_len += iv.len();
-
-        let chiper_len = AesCbcEnc::new(&self.enc_key, &iv)
-            .encrypt_padded_b2b_mut::<Pkcs7>(text.0, &mut out_buf[out_len..])
-            .map_err(|_| RnsError::InvalidArgument)?
-            .len();
-
-        out_len += chiper_len;
-
-        let mut hmac = <HmacSha256 as Mac>::new_from_slice(&self.sign_key)
-            .map_err(|_| RnsError::InvalidArgument)?;
-
-        hmac.update(&out_buf[..out_len]);
-
-        let tag = hmac.finalize().into_bytes();
-
-        out_buf[out_len..out_len + tag.len()].copy_from_slice(tag.as_slice());
-        out_len += tag.len();
-
-        Ok(Token(&out_buf[..out_len]))
+        let mut rng = self.rng;
+        encrypt_with_rng(&self.sign_key, &self.enc_key, &mut rng, text, out_buf)
     }
 
     pub fn verify<'a>(&self, token: Token<'a>) -> Result<VerifiedToken<'a>, RnsError> {
@@ -302,13 +311,16 @@ impl CachedFernet {
         Self { sign_key: sign_key_bytes, enc_key: enc_key_bytes.into() }
     }
 
-    pub fn encrypt<'a, R: CryptoRngCore + Copy>(
+    /// Encrypt using the supplied cryptographic provider; pass `&mut rng` to
+    /// advance caller-owned state. The provider must be initialized and healthy.
+    /// Entropy failure may panic; the result does not promise entropy recovery.
+    pub fn encrypt<'a, R: CryptoRngCore>(
         &self,
-        rng: R,
+        mut rng: R,
         text: PlainText,
         out_buf: &'a mut [u8],
     ) -> Result<Token<'a>, RnsError> {
-        Fernet::new(self.sign_key, self.enc_key, rng).encrypt(text, out_buf)
+        encrypt_with_rng(&self.sign_key, &self.enc_key, &mut rng, text, out_buf)
     }
 
     pub fn verify<'a>(&self, token: Token<'a>) -> Result<VerifiedToken<'a>, RnsError> {

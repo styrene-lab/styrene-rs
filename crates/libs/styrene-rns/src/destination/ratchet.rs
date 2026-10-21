@@ -6,7 +6,7 @@ use crate::{
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
 use ed25519_dalek::Signature;
-use rand_core::OsRng;
+use rand_core::CryptoRngCore;
 #[cfg(feature = "std")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "std")]
@@ -123,10 +123,11 @@ impl RatchetState {
         crate::private_file::write_private_atomic(path, &encoded).map_err(|_| RnsError::PacketError)
     }
 
-    pub(crate) fn rotate_if_needed(
+    pub(crate) fn rotate_if_needed<R: CryptoRngCore + ?Sized>(
         &mut self,
         identity: &PrivateIdentity,
         now: f64,
+        rng: &mut R,
     ) -> Result<(), RnsError> {
         #[cfg(not(feature = "std"))]
         let _ = identity;
@@ -135,7 +136,7 @@ impl RatchetState {
         }
         let last = self.latest_ratchet_time.unwrap_or(0.0);
         if self.ratchets.is_empty() || now > last + self.ratchet_interval_secs as f64 {
-            let secret = StaticSecret::random_from_rng(OsRng);
+            let secret = StaticSecret::random_from_rng(rng);
             self.ratchets.insert(0, secret.to_bytes());
             self.latest_ratchet_time = Some(now);
             if self.ratchets.len() > self.retained_ratchets {

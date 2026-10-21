@@ -1,11 +1,11 @@
 use crate::{
-    crypt::fernet::{Fernet, PlainText, Token},
+    crypt::fernet::{CachedFernet, PlainText, Token},
     error::RnsError,
     packet::DestinationType,
 };
 use alloc::vec;
 use alloc::vec::Vec;
-use rand_core::OsRng;
+use rand_core::CryptoRngCore;
 
 pub trait Direction {}
 
@@ -41,15 +41,29 @@ impl Type for Group {
     }
 }
 
+/// Encrypt using the operating system's cryptographic provider.
+#[cfg(feature = "std")]
 pub fn group_encrypt(key: &[u8; 16], data: &[u8]) -> Result<Vec<u8>, RnsError> {
-    let fernet = Fernet::new_from_slices(key, key, OsRng);
+    group_encrypt_with_rng(key, data, &mut rand_core::OsRng)
+}
+
+/// Encrypt with caller-owned, advancing cryptographic state.
+///
+/// The provider must be initialized and healthy. Entropy failure may panic;
+/// this result does not promise recovery from entropy loss.
+pub fn group_encrypt_with_rng<R: CryptoRngCore + ?Sized>(
+    key: &[u8; 16],
+    data: &[u8],
+    rng: &mut R,
+) -> Result<Vec<u8>, RnsError> {
+    let fernet = CachedFernet::new_from_slices(key, key);
     let mut out_buf = vec![0u8; data.len() + 64];
-    let token = fernet.encrypt(PlainText::from(data), &mut out_buf)?;
+    let token = fernet.encrypt(rng, PlainText::from(data), &mut out_buf)?;
     Ok(token.as_bytes().to_vec())
 }
 
 pub fn group_decrypt(key: &[u8; 16], data: &[u8]) -> Result<Vec<u8>, RnsError> {
-    let fernet = Fernet::new_from_slices(key, key, OsRng);
+    let fernet = CachedFernet::new_from_slices(key, key);
     let token = Token::from(data);
     let verified = fernet.verify(token)?;
     let mut out_buf = vec![0u8; data.len()];
