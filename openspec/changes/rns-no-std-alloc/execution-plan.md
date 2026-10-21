@@ -26,6 +26,12 @@ its CI. The draft must disclose the existing NixOS daemon failures and unexecute
 checks. This does not authorize force-pushing, merging, releasing, issue closure,
 or OpenSpec archival.
 
+After the first CI run, Wilson authorized a scoped CI-preparation correction,
+locked dependency acquisition into a new isolated local cache, and a normal
+update push to the same draft branch. Validation after acquisition must remain
+offline. This exception does not authorize other dependency updates, tool/profile
+changes, merge, release, or issue closure.
+
 The user separately authorized the dedicated Rust 1.97 AArch64 target profile
 through `/home/wilson/nix-config`. The environment agent owns only that bounded
 configuration/profile work. It may not change default profiles, services, or

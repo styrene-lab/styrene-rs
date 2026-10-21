@@ -24,7 +24,9 @@ Historical diagnostics below cannot satisfy a case against a changed revision.
    The separately authorized target profile does not authorize further provisioning,
    default-toolchain changes, service changes, host activation or deployment.
 5. Use reviewed cached dependencies and external outputs. Local validation is
-   `--offline --locked`; cache acquisition is a separate, explicit CI setup step below.
+   `--offline --locked`; cache acquisition is a separate, explicit setup step below.
+   The user separately authorized fresh local acquisition to reproduce and verify
+   the first CI preparation defect. Other local acquisition remains approval-gated.
 6. Use the checked-in templates in `tests/compile/rns-no-std/` through the runner.
    It materializes an independent workspace outside the product tree with resolver 3,
    edition 2024, Rust 1.97 and `publish = false`.
@@ -169,14 +171,21 @@ sequence for job `rns-no-std`:
 1. Select Rust 1.97.0 with `aarch64-unknown-none` target libraries.
 2. Run `prepare` with explicit `--cargo` and `--rustc` paths. It prints the external
    scratch directory and probes prerequisites without compiling or fetching dependencies.
-3. From that directory's `fixture/`, run `cargo fetch --locked --target aarch64-unknown-none`.
+3. From that directory's `fixture/`, run
+   `cargo fetch --locked --target aarch64-unknown-none --target host-tuple`.
    Set `CARGO_HOME` to its `cargo-home/` and `CARGO_TARGET_DIR` to its `target/`.
-   This network-capable acquisition step belongs to CI setup only.
+   Fetch both target and host dependency closures. Cargo graph inspection can load
+   host-applicable packages even when its output is target-filtered.
+   This network-capable acquisition step belongs to CI setup or the explicitly
+   authorized isolated fresh-cache regression.
 4. Run `check` with the same tool paths and `--cache` set to the prepared `cargo-home/`.
    Validation is offline and QEMU-independent. Retain the workflow's evidence artifact.
 
-This CI sequence does not authorize local fetching or provisioning. A cached
-local rehearsal cannot establish fresh-runner acquisition, artifact upload or PR-head CI results.
+The CI sequence does not itself authorize local fetching or provisioning.
+For a fresh-cache regression, prove the cache is empty before acquisition and
+run all subsequent checks offline using only that cache. A warm-cache rehearsal
+cannot establish acquisition completeness. Neither local procedure substitutes
+for artifact upload and PR-head GitHub results.
 
 ## Focused hosted commands
 

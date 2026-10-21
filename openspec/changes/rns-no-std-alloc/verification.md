@@ -315,11 +315,85 @@ explicitly blocked draft PR, with the failed and unexecuted daemon checks disclo
 Canonical `main` was rechecked at `ab46aa1f13de5663c684225dc27dfcba330d965f` before
 publication preparation. No competing open PR was found.
 
-The tested implementation candidate remains `02643d7c`; subsequent changes are
-evidence/acceptance-documentation updates. Required PR-head Linux/macOS CI,
-complete hosted daemon validation, and final acceptance remain outstanding.
-Publication is not a readiness waiver. Merge, release, issue closure, and archival
-remain separately approval-gated.
+Draft PR [#79](https://github.com/styrene-lab/styrene-rs/pull/79) was published at
+`1a953ba9c342c1308e9bf58e6d2047e972ccd43d`. The publication receipt confirms draft
+state, exact head/body, and no automatic issue-closing reference.
+The tested implementation candidate remained `02643d7c`; the publication delta
+contained only evidence/acceptance-documentation updates.
+
+## First PR-head CI result
+
+At head `1a953ba9`, CI completed with 11 passed checks, one failure, and one
+cancellation. No checks remained pending. The PR stayed open and draft.
+
+- Linux passed the complete daemon library selection: 579 passed and three ignored.
+  All 23 selected integration targets ran and passed, with 202 top-level passes.
+  Logs confirm that the Perl-dependent cleanup case entered its body and passed.
+  This provides the compatible-host coverage missing from the NixOS run. It does
+  not repair or erase the local daemon host-layout limitation.
+- The new no-std job failed after incomplete fresh acquisition. Target-only
+  `cargo fetch` omitted `curve25519-dalek-derive 0.1.1`, which Cargo's graph
+  inspection also loads through host-applicable edges. Offline tree inspection
+  failed before the positive target checks. The independent negative control and
+  artifact upload succeeded. This is a new CI preparation defect, not a passing gate.
+- macOS was cancelled because GitHub could not allocate an arm64 hosted runner.
+  No macOS tests executed. This is an infrastructure cancellation, not compatibility
+  evidence or a product-test failure.
+
+The failed no-std job is
+[119235940040](https://github.com/styrene-lab/styrene-rs/actions/runs/39604150488/job/119235940040).
+The Linux job is
+[119235940355](https://github.com/styrene-lab/styrene-rs/actions/runs/39604150488/job/119235940355).
+The cancelled macOS job is
+[119235940060](https://github.com/styrene-lab/styrene-rs/actions/runs/39604150488/job/119235940060).
+
+Sanitized remote receipts, job results, artifact evidence, and diagnostics:
+
+```text
+~/.local/state/styrene-lab/issue-78/publication/20261021T130139Z-ci-watch-ZMFjaH/
+```
+
+The user authorized a host-plus-target acquisition correction, an actually empty
+isolated-cache regression, and a normal update push to this draft branch. No
+dependency version, lockfile, validation-offline policy, or platform gate may be
+weakened to make CI pass. A warm-cache rehearsal is not sufficient proof.
+
+## Reviewed fresh-cache CI correction
+
+Correction `417137ba8905e3b653edc9321ddc895f8c39b607`, based on published head
+`1a953ba9`, adds `--target host-tuple` to the locked AArch64 fetch and updates
+the fixture acquisition documentation. No Rust source, runner behavior,
+dependency version, or lockfile changed.
+
+The regression proved that Cargo home, home, temporary, and target directories
+were empty before one authorized acquisition. Cargo 1.97 fetched 44 locked
+packages, including `curve25519-dalek-derive 0.1.1`, without retries or warm-cache
+supplementation. The archives totaled 2,425,197 bytes and matched fixture-lock
+checksums.
+
+Using only that acquired cache, validation remained offline and locked. All nine
+tree/metadata/library checks across the three profiles passed. The intended
+negative E0463, three allocator tests, all 17 runner tests, fixture formatting,
+and diff checks also passed. Tested dirty-source hashes match the committed result.
+
+Independent review approved the correction with no findings. It verified all
+63 evidence checksums and equality of all 1,503 registry-file hashes between
+the acquisition inventory, seed cache, and offline-check cache.
+
+Evidence:
+
+```text
+~/.local/state/styrene-lab/issue-78/publication/20261021T133051Z-ci-preparation-fix-54chiz1v/
+```
+
+`receipt.json`, `cache-prestate-empty.json`, `acquired-packages.json`,
+`check-evidence/`, and `SHA256SUMS` retain the command, source, toolchain, cache,
+and lockfile proof. These local results do not replace the next PR-head CI run.
+
+Case 008 remains partial pending macOS execution. Case 012 remains open after
+the failed acquisition. Passing no-std and Linux/macOS CI on the corrected PR head
+and final acceptance remain outstanding. Publication is not a readiness waiver.
+Merge, release, issue closure, and archival remain separately approval-gated.
 
 The [test plan](test-plan.md) defines case criteria. The
 [execution plan](execution-plan.md) defines authority and required evidence.

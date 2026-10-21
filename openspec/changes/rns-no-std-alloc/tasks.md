@@ -48,7 +48,7 @@ assigns work packages, exclusive paths, handoffs, and delivery gates.
 - [x] Add the approved true-target library matrix for minimal, alloc, and alternate-Fernet profiles. (`RNS-NOSTD-003`)
 - [x] Add and execute the bounded target smoke workflow with synthetic state and owned cleanup. Review findings C-1 through C-3 were corrected and independently closed. (`RNS-NOSTD-011`)
 - [x] Add a disposable negative control that introduces target-side `std` and verify the intended gate failure. (`RNS-NOSTD-012`)
-- [x] Wire the target gate into CI and a documented repository command without replacing existing host checks. Local command-shape rehearsal passed; remote CI remains an acceptance gate. (`RNS-NOSTD-003`, `RNS-NOSTD-012`)
+- [ ] Wire the target gate into CI and a documented repository command without replacing existing host checks. Reopened after fresh CI exposed incomplete host/target dependency acquisition; a cold-cache regression and corrected PR-head run are required. (`RNS-NOSTD-003`, `RNS-NOSTD-012`)
 - [x] Retain source, lockfile, toolchain, feature, target, command, and result evidence for each case. Local evidence and remaining remote/platform gaps are indexed in `verification.md`. (`RNS-NOSTD-012`)
 
 ## 6. Review completion and compatibility
