@@ -6,9 +6,12 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import selectors
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import unittest
 from pathlib import Path
@@ -61,6 +64,88 @@ class RunnerTests(unittest.TestCase):
         self.assertTrue(result["timed_out"])
         self.assertEqual(result["status"], -9)
         self.assertFalse(gate.result_ok(result["status"], True, output, gate.COMPLETE))
+
+    def test_sigterm_stops_only_owned_group_and_restores_handler(self) -> None:
+        fifo = self.root / "ready"
+        os.mkfifo(fifo)
+        ready_fd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        grandchild = "import os, signal; print(os.getpid(), flush=True); signal.pause()"
+        child = f"""
+import json, os, signal, subprocess, sys
+grandchild = subprocess.Popen([sys.executable, '-c', {grandchild!r}], stdout=subprocess.PIPE, text=True)
+grandchild_pid = int(grandchild.stdout.readline())
+with open({str(fifo)!r}, 'w') as ready:
+    ready.write(json.dumps({{'child': os.getpid(), 'group': os.getpgrp(), 'grandchild': grandchild_pid}}))
+signal.pause()
+"""
+        runner = str(Path(gate.__file__).absolute())
+        record = self.root / "cancelled.json"
+        supervisor_code = f"""
+import importlib.util, json, os, signal, sys
+from pathlib import Path
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location('gate', {runner!r})
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+result = gate.run_command([sys.executable, '-c', {child!r}], Path({str(self.root)!r}),
+                          {{'PATH': os.defpath}}, Path({str(self.root / 'cancelled.log')!r}), 30)
+result['handler_restored'] = signal.getsignal(signal.SIGTERM) == signal.SIG_IGN
+Path({str(record)!r}).write_text(json.dumps(result))
+sys.exit(128 + result['cancelled_signal'] if result['cancelled_signal'] else 1)
+"""
+        unrelated = subprocess.Popen([sys.executable, "-c", "import signal; signal.pause()"],
+                                     start_new_session=True)
+        supervisor = None
+        owned = None
+        pidfds = []
+        try:
+            supervisor = subprocess.Popen([sys.executable, "-B", "-c", supervisor_code],
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                          start_new_session=True)
+            with selectors.DefaultSelector() as ready:
+                ready.register(ready_fd, selectors.EVENT_READ)
+                self.assertTrue(ready.select(5), "owned child did not become ready")
+                owned = json.loads(os.read(ready_fd, 4096))
+            self.assertEqual(owned["group"], owned["child"])
+            self.assertNotEqual(owned["group"], os.getpgrp())
+            self.assertNotEqual(owned["group"], unrelated.pid)
+            # pidfds report process exit even if init has not reaped an orphan
+            # yet. Synchronize on readiness and exit, not arbitrary sleeps.
+            pidfds = [os.pidfd_open(owned[name]) for name in ("child", "grandchild")]
+            os.kill(supervisor.pid, signal.SIGTERM)
+            _, stderr = supervisor.communicate(timeout=5)
+            self.assertEqual(supervisor.returncode, 143, stderr.decode())
+            result = json.loads(record.read_text())
+            self.assertEqual(result["cancelled_signal"], signal.SIGTERM)
+            self.assertEqual(result["status"], -signal.SIGKILL)
+            self.assertFalse(result["timed_out"])
+            self.assertTrue(result["handler_restored"])
+            self.assertEqual(result["log_sha256"], gate.sha256(self.root / "cancelled.log"))
+            with selectors.DefaultSelector() as exited:
+                for pidfd in pidfds:
+                    exited.register(pidfd, selectors.EVENT_READ)
+                deadline = time.monotonic() + 5
+                while exited.get_map():
+                    events = exited.select(max(0, deadline - time.monotonic()))
+                    self.assertTrue(events, "owned descendant survived cancellation")
+                    for key, _ in events:
+                        exited.unregister(key.fd)
+            self.assertIsNone(unrelated.poll(), "cancellation killed an unrelated process")
+        finally:
+            if supervisor is not None and supervisor.poll() is None:
+                supervisor.terminate()
+                try:
+                    supervisor.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    supervisor.kill()
+                    supervisor.communicate()
+            if owned is not None:
+                gate.kill_group(owned["group"])
+            unrelated.kill()
+            unrelated.wait()
+            for fd in [ready_fd, *pidfds]:
+                os.close(fd)
 
     def test_only_intended_std_diagnostic_satisfies_control(self) -> None:
         message = {

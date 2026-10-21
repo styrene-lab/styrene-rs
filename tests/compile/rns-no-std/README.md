@@ -118,6 +118,9 @@ exit 2 without using the stack. Neither path emits a completion marker.
 
 Every QEMU execution has a 60-second deadline, configurable from 1 to 120 seconds.
 The runner kills and reaps its own process group on timeout or cancellation.
+Its scoped SIGTERM handler stops the active group, restores the previous signal
+handler, and records cancellation before returning exit 143. Command logs and
+cancellation status are retained when evidence finalization can complete.
 Build commands have a 600-second deadline, two Cargo jobs and 64 MiB log limits.
 Success requires the exact scenario marker and exit 0. Boot-only success uses
 a different marker and cannot establish product success.

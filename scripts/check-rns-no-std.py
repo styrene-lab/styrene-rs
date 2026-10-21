@@ -39,6 +39,12 @@ class GateError(RuntimeError):
     """A failed check or unavailable prerequisite, never an implicit fallback."""
 
 
+class GateCancelled(GateError):
+    def __init__(self, signum: int):
+        super().__init__(f"validation cancelled by signal {signum}; owned process group stopped")
+        self.signum = signum
+
+
 def sha256(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -213,27 +219,46 @@ def run_command(
     """Own one foreground process group; kill and reap it on deadline/cancellation."""
     started = datetime.now(timezone.utc).isoformat()
     timed_out = False
-    with log.open("xb") as output:
-        process = subprocess.Popen(
-            args, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=output,
-            stderr=subprocess.STDOUT, start_new_session=True, preexec_fn=log_limit,
-        )
-        try:
-            status = process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
+    cancelled_signal = None
+    process = None
+
+    def terminate(signum: int, _frame: Any) -> None:
+        nonlocal cancelled_signal
+        cancelled_signal = signum
+        # Do not raise asynchronously across Popen: a signal can arrive after
+        # fork but before Python assigns the process handle. Remember it, then
+        # stop that group immediately after Popen returns in that case.
+        if process is not None:
             kill_group(process.pid)
-            status = process.wait()
-        except BaseException:
-            kill_group(process.pid)
-            process.wait()
-            raise
-        finally:
-            # Also stop any remaining descendants if their parent exited first.
-            kill_group(process.pid)
+
+    previous_handler = signal.signal(signal.SIGTERM, terminate)
+    try:
+        with log.open("xb") as output:
+            process = subprocess.Popen(
+                args, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=output,
+                stderr=subprocess.STDOUT, start_new_session=True, preexec_fn=log_limit,
+            )
+            if cancelled_signal is not None:
+                kill_group(process.pid)
+            try:
+                status = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                kill_group(process.pid)
+                status = process.wait()
+            except BaseException:
+                kill_group(process.pid)
+                process.wait()
+                raise
+            finally:
+                # Also stop any remaining descendants if their parent exited first.
+                kill_group(process.pid)
+    finally:
+        signal.signal(signal.SIGTERM, previous_handler)
     return {
         "args": args, "cwd": str(cwd), "environment": env, "started": started,
         "status": status, "timed_out": timed_out, "timeout_seconds": timeout,
+        "cancelled_signal": cancelled_signal,
         "log": log.name, "log_sha256": sha256(log),
     }
 
@@ -362,6 +387,8 @@ def main() -> int:
                 raise GateError("materialized fixture changed during validation")
             result = run_command(command_args, cwd, env | (overrides or {}), logs / f"{label}.log", timeout)
             report["commands"].append(result)
+            if result["cancelled_signal"] is not None:
+                raise GateCancelled(result["cancelled_signal"])
             unchanged(source, before)
             if product != source:
                 unchanged(product, product_before)
@@ -445,6 +472,12 @@ def main() -> int:
                     raise GateError(f"{label} lacks its exact completion marker and zero exit")
         report["status"] = "passed-bootstrap-only" if args.mode == "bootstrap" else "passed"
         return 0
+    except GateCancelled as error:
+        report["error"] = str(error)
+        report["status"] = "cancelled"
+        report["cancelled_signal"] = error.signum
+        print(f"rns-no-std: {error}", file=sys.stderr)
+        return 128 + error.signum
     except (GateError, OSError, subprocess.SubprocessError) as error:
         report["error"] = str(error)
         report["status"] = "failed" if report["commands"] else "blocked"
