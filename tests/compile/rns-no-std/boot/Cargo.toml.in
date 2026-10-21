@@ -1,0 +1,21 @@
+[package]
+name = "rns-no-std-boot"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rns-no-std-smoke = { path = "../smoke", optional = true, default-features = false }
+
+[features]
+default = []
+smoke = ["dep:rns-no-std-smoke"]
+alloc = ["rns-no-std-smoke?/alloc"]
+fernet-aes128 = ["rns-no-std-smoke?/fernet-aes128"]
+scenario-panic = []
+scenario-oom = []
+
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"

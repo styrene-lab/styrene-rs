@@ -88,6 +88,18 @@ check-library-minimal:
     cargo clippy --lib --no-default-features --no-deps -p styrene-rns -- -D warnings
     cargo test --no-default-features -p styrene-rns --test embedded_time
 
+# Independently check the std-less RNS target using existing tools and a reviewed cache
+check-rns-no-std cargo rustc cache:
+    python3 -B scripts/check-rns-no-std.py check --cargo "{{ cargo }}" --rustc "{{ rustc }}" --cache "{{ cache }}"
+
+# Execute synthetic target assertions with the separately approved QEMU 11.1.0
+execute-rns-no-std cargo rustc cache qemu:
+    python3 -B scripts/check-rns-no-std.py execute --cargo "{{ cargo }}" --rustc "{{ rustc }}" --cache "{{ cache }}" --qemu "{{ qemu }}"
+
+# Test runner rejection, evidence and isolation boundaries offline
+test-rns-no-std-runner:
+    python3 -B scripts/check-rns-no-std-tests.py
+
 # Format code
 format:
     cargo fmt --all

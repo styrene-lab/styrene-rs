@@ -11,6 +11,43 @@ env:
   RUSTFLAGS: -Dwarnings
 
 jobs:
+  rns-no-std:
+    name: RNS (independent std-less target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          targets: aarch64-unknown-none
+          components: rustfmt
+      - name: Test runner and format fixture
+        run: |
+          mkdir -p /tmp/opencode
+          python3 -B scripts/check-rns-no-std-tests.py
+          rustfmt --edition 2024 --check tests/compile/rns-no-std/boot/src/main.rs tests/compile/rns-no-std/smoke/src/lib.rs tests/compile/rns-no-std/negative/src/lib.rs
+      - name: Prepare independent locked consumer
+        id: consumer
+        run: |
+          run=$(python3 -B scripts/check-rns-no-std.py prepare --cargo "$(rustup which cargo)" --rustc "$(rustup which rustc)")
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+      - name: Acquire locked fixture dependencies (CI setup only)
+        working-directory: ${{ steps.consumer.outputs.run }}/fixture
+        env:
+          CARGO_HOME: ${{ steps.consumer.outputs.run }}/cargo-home
+          CARGO_TARGET_DIR: ${{ steps.consumer.outputs.run }}/target
+        run: cargo fetch --locked --target aarch64-unknown-none
+      - name: Check target profiles and intended negative diagnostic offline
+        run: |
+          python3 -B scripts/check-rns-no-std.py check --cargo "$(rustup which cargo)" --rustc "$(rustup which rustc)" --cache "${{ steps.consumer.outputs.run }}/cargo-home"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rns-no-std-evidence
+          path: ~/.local/state/styrene-lab/issue-78/runs/validation/
+
   check:
     name: Check
     runs-on: ubuntu-latest

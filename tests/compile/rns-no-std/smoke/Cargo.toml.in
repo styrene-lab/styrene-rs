@@ -1,0 +1,19 @@
+[package]
+name = "rns-no-std-smoke"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rns_core.workspace = true
+rand_core.workspace = true
+rand_chacha.workspace = true
+
+[features]
+default = []
+alloc = ["rns_core/alloc"]
+fernet-aes128 = ["rns_core/fernet-aes128"]
+
+[lints.rust]
+unsafe_code = "forbid"
