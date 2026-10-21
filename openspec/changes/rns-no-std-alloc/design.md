@@ -173,12 +173,83 @@ Separate library compilation, executable linking, synthetic target execution,
 and physical-device acceptance. The new target job must fail if a negative-control
 consumer introduces target-side `std`. Run that control outside product sources.
 
+## Target harness decision
+
+D2 selects the existing QEMU 11.1.0 AArch64 system emulator on Nucleus, using
+`virt-11.1`, Cortex-A53, TCG, one CPU, and 128 MiB RAM. Use an independently
+linked `aarch64-unknown-none` ELF and native semihosting for fixed result messages
+and process exit. Disable networking, monitor, ordinary serial, display, and
+unneeded devices. Bound each foreground execution with a timeout and owned
+process cleanup. Success requires both the expected completion marker and a
+zero exit status. A timeout, trap, panic, or allocation failure is a failure.
+
+Keep source-controlled fixture templates under `tests/compile/rns-no-std/`.
+Materialize an independent workspace outside the product source tree before
+running Cargo. The fixture workspace owns resolver 3, edition 2024, Rust 1.97,
+non-publication, and a reviewed lockfile. Resolve its RNS path to the exact source
+under test. Do not inherit product-directory Cargo configuration accidentally.
+
+Use two fixture packages:
+
+- A `no_std` smoke library with `unsafe_code = "forbid"` exercises product APIs.
+- A separate boot binary owns startup assembly, a bounded fixed-capacity allocator,
+  entry/panic handling, and semihosting. It must not contain product logic.
+
+The boot package is a fixture-only unsafe boundary, subject to separate
+architecture and code review. This exception does not weaken the product
+workspace's `unsafe_code = "forbid"` policy. Keep unsafe operations confined to
+named boot/allocator/semihosting modules with explicit safety contracts.
+
+Independent architecture review approved this boundary for implementation with
+the following conditions. Set an unsafe-denying boot-package default and allow
+only those named modules. Do not use blanket lint suppression. Document each
+unsafe operation's preconditions.
+
+Allocator alignment and size calculations must be checked. Returned allocations
+must be aligned, non-overlapping, and inside the reserved heap. Return null on
+exhaustion or unsupported layouts. Allocator operations must not unwind or
+allocate recursively. Document the finite-run no-op deallocation policy and
+prohibit resetting storage while allocations remain live.
+
+Panic and OOM handling must be allocation-free, terminate unsuccessfully, and
+never emit the completion marker. Semihosting is restricted to fixed diagnostic
+output and termination. It must not open host files or perform unrelated host
+operations.
+
+Before accepting the boot fixture, review ELF entry, stack alignment, BSS
+initialization, and a non-overlapping bounded linker memory map. The fixture
+must establish its EL1 assumptions, mask interrupts, enable FP/NEON before Rust,
+and map RAM with memory attributes that support atomic accesses. Do not assume
+that a stack pointer and disabled MMU alone establish valid atomic execution.
+The single-CPU, masked-interrupt assumption must match allocator synchronization.
+
+Verification must cover allocator alignment, exact fit, overflow/exhaustion, and
+non-overlap of live allocations. Exercise target panic/OOM paths and runner
+rejection of marker-only, zero-exit-only, and timeout outcomes. Review the actual
+startup assembly, linker map, page tables, and memory attributes before accepting
+the run. Architectural approval is not implementation or runtime acceptance.
+
+Use a seeded synthetic provider for the finite smoke workload, preferably a
+non-`Copy` wrapper around the cached ChaCha implementation. It must never produce
+operator identities or live traffic. Retain the approved D3 API assertions.
+
+The repository target gate must use explicit matching Cargo/rustc, target,
+fixture lockfile, and external output paths. It must refuse missing prerequisites
+rather than install them or fall back to hosted compilation. Its CI compile and
+negative-control checks do not require QEMU. Local link/execution acceptance
+still requires the reviewed QEMU run and separately retained evidence.
+
+The user authorized a dedicated retained Rust 1.97 target profile through
+Nucleus's owning Nix configuration. This permits the missing target-library
+provisioning only. It does not authorize a default-toolchain change, service
+change, host rebuild, or product deployment.
+
 ## Open decisions
 
 | ID | Decision | Proposed direction | Closure condition |
 |---|---|---|---|
 | D1 — resolved | Initial target and atomic requirements | User approved atomic-capable `aarch64-unknown-none`; Cortex-M excluded | Retain the compiler target configuration with validation evidence; target execution is still unverified |
-| D2 | Executable smoke-test target and runner | Reuse D1 with an owned emulator/harness where practical | Record runner, allocator/startup approach, pinned toolchain, and bounded execution/cleanup procedure |
+| D2 — resolved | Executable smoke-test target and runner | QEMU 11.1.0 virt-11.1/Cortex-A53 with isolated safe smoke library and independently reviewed fixture-only boot boundary | Approved for implementation with the safety and negative-test conditions above; code review and actual link/execution evidence remain required |
 | D3 — resolved | Public RNG API and failure contract | Coordinator approved the borrowed-state and legacy-compatibility contract above after source review | Independent implementation review and tests must verify non-Copy callers, legacy trait compatibility, failure semantics, and unchanged protocol behavior |
 
 D1 approval does not prove environment availability or resolve D2. Provisioning

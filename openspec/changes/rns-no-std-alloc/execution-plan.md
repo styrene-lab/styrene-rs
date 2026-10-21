@@ -15,15 +15,21 @@ The approved initial target is `aarch64-unknown-none`. Cortex-M support is exclu
 Local source edits, isolated tests, focused commits, and local integration are
 authorized. Do not modify existing developer or validation checkouts.
 
-The following remain approval-gated: host/toolchain provisioning, pushes,
+The following remain approval-gated unless separately authorized: host/toolchain provisioning, pushes,
 opening a GitHub PR, merging, issue closure, OpenSpec archival, and release.
 The repository uses GitHub PRs, not GitLab MRs. A green local result does not
 authorize any of these external or lifecycle actions.
 
+The user separately authorized the dedicated Rust 1.97 AArch64 target profile
+through `/home/wilson/nix-config`. The environment agent owns only that bounded
+configuration/profile work. It may not change default profiles, services, or
+activate the host. This exception does not authorize other provisioning.
+
 ## Shared baseline and decision gates
 
-Commit this corpus before dispatching implementation worktrees. Record that
-planning commit as the common lane base. The product base remains
+The committed planning base for lanes A and B is
+`9c681e8e40718b9af8a6189d2fbee4094808bf69`. Record reviewed D2 additions as an exact
+contract amendment consumed by lane C. The product base remains
 `ab46aa1f13de5663c684225dc27dfcba330d965f`.
 
 - D1 is resolved: atomic-capable AArch64 allocation-backed core only. Record the
@@ -49,6 +55,10 @@ read other paths. They must request a handoff before writing outside their scope
 | C — Consumer and validation gates | Proposed `tests/compile/rns-no-std/`, its fixture lockfile, `scripts/check-rns-no-std*`, `.github/workflows/ci.yml`, `justfile` | 001–003, 010–012 | Approved D1/D2 and D3 API contract; return isolated consumer, target/harness gates, command documentation, and exact commit |
 | Coordinator | This OpenSpec change and final support documentation; integration branch | All | Reviewed lane commits and evidence; return integrated revision and acceptance summary |
 | Reviewer | No write ownership | All, especially 004–009 | Integrated commit and evidence; return findings with severity and acceptance recommendation |
+
+Active A/B branches are `work/issue78-dependencies` and `work/issue78-core` in
+their dedicated worktrees. The coordinator integration branch remains
+`fix/rns-no-std-78`. Record C's exact base and result in its handoff.
 
 Lane B owns encryption and decryption together because they share source files.
 It must not edit transport code without coordinator reassignment.

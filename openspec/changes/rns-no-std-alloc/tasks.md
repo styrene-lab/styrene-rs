@@ -8,9 +8,9 @@ assigns work packages, exclusive paths, handoffs, and delivery gates.
 ## 1. Resolve the supported contract
 <!-- specs: rns-core-portability -->
 
-- [ ] Resolve D1: record the initial no-std target, atomic requirements, and explicit Cortex-M scope decision. (`RNS-NOSTD-003`)
-- [ ] Resolve D2: select the executable harness, allocator/startup approach, runner, and permitted environment provisioning. (`RNS-NOSTD-011`)
-- [ ] Resolve D3: review caller-RNG signatures, state ownership, hosted compatibility, and entropy failure policy. (`RNS-NOSTD-004`, `RNS-NOSTD-005`)
+- [x] Resolve D1: record the initial no-std target, atomic requirements, and explicit Cortex-M scope decision. User approval and Rust 1.97 target configuration confirm the selected atomic-capable envelope. (`RNS-NOSTD-003`)
+- [x] Resolve D2: select the executable harness, allocator/startup approach, runner, and permitted environment provisioning. Independent architecture review approved the fixture-only boundary with conditions recorded in the design. (`RNS-NOSTD-011`)
+- [x] Resolve D3: review caller-RNG signatures, state ownership, hosted compatibility, and entropy failure policy. The approved borrowed-state/legacy-compatibility contract is recorded in the design. (`RNS-NOSTD-004`, `RNS-NOSTD-005`)
 - [ ] Capture the failing isolated dependency/target baseline at the exact base revision without modifying existing development checkouts. (`RNS-NOSTD-001`, `RNS-NOSTD-003`)
 
 ## 2. Establish the allocation-backed dependency boundary

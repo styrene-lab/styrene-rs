@@ -14,7 +14,7 @@ Design decisions belong in [design.md](design.md). Execution work belongs in [ta
 
 1. Use the approved D3 borrowed-state API and provider failure contract in [design.md](design.md#approved-entropy-and-api-boundary).
    Any API deviation requires coordinator review before implementation.
-2. Use the user-approved `aarch64-unknown-none` target. Approve the separate link/execution environment before provisioning.
+2. Use the user-approved `aarch64-unknown-none` target and the independently reviewed D2 QEMU harness contract.
    Target selection does not imply that its libraries or runner are installed.
    Record allocator, pointer-width/64-bit atomic support and clock assumptions against design decisions D1–D3.
 3. Resolve Cargo and rustc to the installed, matching Rust **1.97.0** toolchain.
@@ -54,7 +54,7 @@ Other paths are repository-relative. **Proposed** loci do not exist as implement
 | RNS-NOSTD-008 | Hosted feature/API compatibility | Existing: RNS tests and feature checks; **proposed:** profile assertions | Default and explicit `std` preserve hosted APIs; `transport` implies `std`; `serial` implies transport. Linux checks pass. Required Apple checks have separate evidence. Compilation establishes no serial-device or radio acceptance. | NOT RUN |
 | RNS-NOSTD-009 | Hosted persistence and key fallback | Existing RNS src: `key_manager.rs`, `private_file.rs`, destination and transport ratchet-store tests | Existing persistence bytes remain readable and encoding-compatible. Private atomic-write behavior is retained. Key fallback remains restricted to established availability failures; rejection cannot silently become fallback. | NOT RUN |
 | RNS-NOSTD-010 | Direct consumers and retained crypto features | Existing: LXMF, mesh, tunnel and daemon checks; **proposed:** resolved-feature review | Affected direct consumers compile with intended hosted features. Review confirms retained zeroization and other required crypto capabilities, including explicitly restored non-std defaults. No whole-stack no-std claim follows. | NOT RUN |
-| RNS-NOSTD-011 | Independent consumer link and execution | **Proposed:** isolated std-less smoke binary, allocator, supplied clock and approved provider/runner | Binary links and executes bounded encoding, signing, encryption, decryption and ratchet assertions on the chosen target/runner. Record allocator/provider/clock setup and result. Report compile, link, emulated execution and hardware evidence separately. Never substitute a host run. | BLOCKED: target, runner, harness and provider decisions |
+| RNS-NOSTD-011 | Independent consumer link and execution | **Proposed:** isolated std-less smoke binary, allocator, supplied clock and approved provider/runner | Binary links and executes bounded encoding, signing, encryption, decryption and ratchet assertions on the chosen target/runner. Record allocator/provider/clock setup and result. Report compile, link, emulated execution and hardware evidence separately. Never substitute a host run. | BLOCKED: target libraries, harness implementation and code review |
 | RNS-NOSTD-012 | CI gate validity and attributable evidence | Existing: `.github/workflows/ci.yml`, `justfile`; **proposed:** independent true-target job and disposable negative control | Positive consumer builds pass; enabling target `std` in the negative control fails for the intended std-less-target reason. Capture complete source/environment records. Failed, missing or blocked lanes cannot count as passes. | NOT RUN |
 
 ## Coverage details
@@ -74,6 +74,10 @@ Other paths are repository-relative. **Proposed** loci do not exist as implement
 - For 011, a deterministic RNG is permitted only in an explicitly synthetic, non-production harness.
   Use no live identity, peer, network traffic or hardware operation in that harness.
   A linked artifact is not an execution result. An emulator result is not hardware acceptance.
+  Review the fixture-only unsafe boundary against D2 without weakening product lints.
+  Cover allocator alignment, exact fit, overflow/exhaustion, and live-allocation non-overlap.
+  Exercise allocation-free panic/OOM failures and reject marker-only, zero-exit-only, and timeout outcomes.
+  Semihosting must be limited to fixed output and termination, not host filesystem access.
 
 ## Existing focused commands — verified command surfaces, not new results
 
