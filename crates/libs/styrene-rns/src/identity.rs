@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret, StaticSecret};
 
 use crate::{
-    crypt::fernet::{Fernet, PlainText, Token},
+    crypt::fernet::{CachedFernet, PlainText, Token},
     error::RnsError,
     hash::{AddressHash, Hash},
 };
@@ -22,6 +22,10 @@ pub const DERIVED_KEY_LENGTH: usize = 256 / 8;
 #[cfg(not(feature = "fernet-aes128"))]
 pub const DERIVED_KEY_LENGTH: usize = 512 / 8;
 
+/// Legacy encryption interface for copyable handles to advancing providers.
+///
+/// Copying PRNG state snapshots can repeat randomness. Concrete identities also
+/// provide `encrypt_with_rng` for caller-owned mutable cryptographic state.
 pub trait EncryptIdentity {
     fn encrypt<'a, R: CryptoRngCore + Copy>(
         &self,
@@ -32,6 +36,7 @@ pub trait EncryptIdentity {
     ) -> Result<&'a [u8], RnsError>;
 }
 
+/// Legacy decryption interface. Built-in identities ignore the RNG argument.
 pub trait DecryptIdentity {
     fn decrypt<'a, R: CryptoRngCore + Copy>(
         &self,
@@ -125,7 +130,7 @@ impl Identity {
         self.verifying_key.verify_strict(data, signature).map_err(|_| RnsError::IncorrectSignature)
     }
 
-    pub fn derive_key<R: CryptoRngCore + Copy>(&self, rng: R, salt: Option<&[u8]>) -> DerivedKey {
+    pub fn derive_key<R: CryptoRngCore>(&self, rng: R, salt: Option<&[u8]>) -> DerivedKey {
         DerivedKey::new_from_ephemeral_key(rng, &self.public_key, salt)
     }
 }
@@ -146,7 +151,23 @@ impl HashIdentity for Identity {
 impl EncryptIdentity for Identity {
     fn encrypt<'a, R: CryptoRngCore + Copy>(
         &self,
-        rng: R,
+        mut rng: R,
+        text: &[u8],
+        derived_key: &DerivedKey,
+        out_buf: &'a mut [u8],
+    ) -> Result<&'a [u8], RnsError> {
+        self.encrypt_with_rng(&mut rng, text, derived_key, out_buf)
+    }
+}
+
+impl Identity {
+    /// Encrypt using caller-owned, advancing cryptographic state.
+    ///
+    /// The provider must be initialized and healthy. Entropy failure may panic;
+    /// this result does not promise recovery from entropy loss.
+    pub fn encrypt_with_rng<'a, R: CryptoRngCore + ?Sized>(
+        &self,
+        rng: &mut R,
         text: &[u8],
         derived_key: &DerivedKey,
         out_buf: &'a mut [u8],
@@ -166,12 +187,11 @@ impl EncryptIdentity for Identity {
         out_buf[..ephemeral_public_bytes.len()].copy_from_slice(ephemeral_public_bytes);
         out_offset += ephemeral_public_bytes.len();
 
-        let token = Fernet::new_from_slices(
+        let token = CachedFernet::new_from_slices(
             &derived_key.as_bytes()[..16],
             &derived_key.as_bytes()[16..],
-            rng,
         )
-        .encrypt(PlainText::from(text), &mut out_buf[out_offset..])?;
+        .encrypt(rng, PlainText::from(text), &mut out_buf[out_offset..])?;
 
         out_offset += token.as_bytes().len();
 
@@ -190,18 +210,12 @@ impl HashIdentity for EmptyIdentity {
 impl EncryptIdentity for EmptyIdentity {
     fn encrypt<'a, R: CryptoRngCore + Copy>(
         &self,
-        _rng: R,
+        mut rng: R,
         text: &[u8],
-        _derived_key: &DerivedKey,
+        derived_key: &DerivedKey,
         out_buf: &'a mut [u8],
     ) -> Result<&'a [u8], RnsError> {
-        if text.len() > out_buf.len() {
-            return Err(RnsError::OutOfMemory);
-        }
-
-        let result = &mut out_buf[..text.len()];
-        result.copy_from_slice(text);
-        Ok(result)
+        self.encrypt_with_rng(&mut rng, text, derived_key, out_buf)
     }
 }
 
@@ -209,6 +223,29 @@ impl DecryptIdentity for EmptyIdentity {
     fn decrypt<'a, R: CryptoRngCore + Copy>(
         &self,
         _rng: R,
+        data: &[u8],
+        derived_key: &DerivedKey,
+        out_buf: &'a mut [u8],
+    ) -> Result<&'a [u8], RnsError> {
+        self.decrypt_with_derived_key(data, derived_key, out_buf)
+    }
+}
+
+impl EmptyIdentity {
+    /// Copy plaintext without consuming randomness or using the derived key.
+    pub fn encrypt_with_rng<'a, R: CryptoRngCore + ?Sized>(
+        &self,
+        _rng: &mut R,
+        text: &[u8],
+        derived_key: &DerivedKey,
+        out_buf: &'a mut [u8],
+    ) -> Result<&'a [u8], RnsError> {
+        self.decrypt_with_derived_key(text, derived_key, out_buf)
+    }
+
+    /// Copy plaintext without an RNG or cryptographic processing.
+    pub fn decrypt_with_derived_key<'a>(
+        &self,
         data: &[u8],
         _derived_key: &DerivedKey,
         out_buf: &'a mut [u8],
@@ -358,19 +395,34 @@ impl HashIdentity for PrivateIdentity {
 impl EncryptIdentity for PrivateIdentity {
     fn encrypt<'a, R: CryptoRngCore + Copy>(
         &self,
-        rng: R,
+        mut rng: R,
+        text: &[u8],
+        derived_key: &DerivedKey,
+        out_buf: &'a mut [u8],
+    ) -> Result<&'a [u8], RnsError> {
+        self.encrypt_with_rng(&mut rng, text, derived_key, out_buf)
+    }
+}
+
+impl PrivateIdentity {
+    /// Encrypt using caller-owned, advancing cryptographic state.
+    ///
+    /// The provider must be initialized and healthy. Entropy failure may panic;
+    /// this result does not promise recovery from entropy loss.
+    pub fn encrypt_with_rng<'a, R: CryptoRngCore + ?Sized>(
+        &self,
+        rng: &mut R,
         text: &[u8],
         derived_key: &DerivedKey,
         out_buf: &'a mut [u8],
     ) -> Result<&'a [u8], RnsError> {
         let mut out_offset = 0;
 
-        let token = Fernet::new_from_slices(
+        let token = CachedFernet::new_from_slices(
             &derived_key.as_bytes()[..DERIVED_KEY_LENGTH / 2],
             &derived_key.as_bytes()[DERIVED_KEY_LENGTH / 2..],
-            rng,
         )
-        .encrypt(PlainText::from(text), &mut out_buf[out_offset..])?;
+        .encrypt(rng, PlainText::from(text), &mut out_buf[out_offset..])?;
 
         out_offset += token.len();
 
@@ -381,7 +433,20 @@ impl EncryptIdentity for PrivateIdentity {
 impl DecryptIdentity for PrivateIdentity {
     fn decrypt<'a, R: CryptoRngCore + Copy>(
         &self,
-        rng: R,
+        _rng: R,
+        data: &[u8],
+        derived_key: &DerivedKey,
+        out_buf: &'a mut [u8],
+    ) -> Result<&'a [u8], RnsError> {
+        self.decrypt_with_derived_key(data, derived_key, out_buf)
+    }
+}
+
+impl PrivateIdentity {
+    /// Authenticate and decrypt a token without requesting randomness.
+    /// The token must exclude any ephemeral-public-key prefix.
+    pub fn decrypt_with_derived_key<'a>(
+        &self,
         data: &[u8],
         derived_key: &DerivedKey,
         out_buf: &'a mut [u8],
@@ -390,10 +455,9 @@ impl DecryptIdentity for PrivateIdentity {
             return Err(RnsError::InvalidArgument);
         }
 
-        let fernet = Fernet::new_from_slices(
+        let fernet = CachedFernet::new_from_slices(
             &derived_key.as_bytes()[..DERIVED_KEY_LENGTH / 2],
             &derived_key.as_bytes()[DERIVED_KEY_LENGTH / 2..],
-            rng,
         );
 
         let token = Token::from(data);
@@ -462,7 +526,7 @@ impl DerivedKey {
         Self::new(&priv_key.diffie_hellman(pub_key), salt)
     }
 
-    pub fn new_from_ephemeral_key<R: CryptoRngCore + Copy>(
+    pub fn new_from_ephemeral_key<R: CryptoRngCore>(
         rng: R,
         pub_key: &PublicKey,
         salt: Option<&[u8]>,

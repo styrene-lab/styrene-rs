@@ -2,7 +2,7 @@
 
 mod common;
 
-use rand_core::OsRng;
+use rand_core::{CryptoRng, OsRng, RngCore};
 use rns_core::crypt::fernet::{CachedFernet, Fernet, Token};
 
 #[derive(serde::Deserialize)]
@@ -61,6 +61,67 @@ fn fernet_decrypt_python_tokens() {
             "{}: plaintext mismatch",
             v.description
         );
+
+        let cached = CachedFernet::new_from_slices(&sign_key, &enc_key);
+        let verified = cached
+            .verify(Token::from(token_bytes.as_slice()))
+            .unwrap_or_else(|e| panic!("{}: cached verify failed: {e:?}", v.description));
+        assert_eq!(
+            cached.decrypt(verified, &mut out_buf).expect("cached fixture plaintext").as_bytes(),
+            expected_plaintext.as_slice(),
+            "{}: RNG-free plaintext mismatch",
+            v.description
+        );
+    }
+}
+
+// Non-Copy, non-Clone fixture-only provider. Each canonical token supplies one IV.
+struct FixtureIv {
+    iv: [u8; 16],
+    requests: usize,
+}
+
+impl RngCore for FixtureIv {
+    fn next_u32(&mut self) -> u32 {
+        panic!("unexpected fixture word request")
+    }
+    fn next_u64(&mut self) -> u64 {
+        panic!("unexpected fixture word request")
+    }
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        assert_eq!(self.requests, 0, "fixture IV must be consumed exactly once");
+        self.requests += 1;
+        dest.copy_from_slice(&self.iv);
+    }
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+impl CryptoRng for FixtureIv {}
+
+#[test]
+fn borrowed_encryption_reproduces_canonical_python_tokens() {
+    let vectors: Vec<FernetVector> = common::load_fixture("fernet_vectors.json");
+    assert!(!vectors.is_empty(), "no fernet vectors loaded");
+    for v in vectors {
+        let sign_key = common::hex_decode(&v.sign_key_hex);
+        let enc_key = common::hex_decode(&v.enc_key_hex);
+        let plaintext = common::hex_decode(&v.plaintext_hex);
+        let token = common::hex_decode(&v.token_hex);
+        let mut rng = FixtureIv { iv: token[..16].try_into().expect("fixture IV"), requests: 0 };
+        let mut output = vec![0; token.len()];
+        let cached = CachedFernet::new_from_slices(&sign_key, &enc_key);
+        assert_eq!(
+            cached
+                .encrypt(&mut rng, plaintext.as_slice().into(), &mut output)
+                .expect("fixture encryption")
+                .as_bytes(),
+            token,
+            "{}: canonical ciphertext mismatch",
+            v.description
+        );
+        assert_eq!(rng.requests, 1);
     }
 }
 

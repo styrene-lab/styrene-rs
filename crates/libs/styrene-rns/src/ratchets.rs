@@ -5,25 +5,27 @@ use rand_core::CryptoRngCore;
 use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
 
 use crate::crypt::fernet::{
-    FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE, Fernet, PlainText, Token,
+    CachedFernet, FERNET_MAX_PADDING_SIZE, FERNET_OVERHEAD_SIZE, PlainText, Token,
 };
 use crate::error::RnsError;
 use crate::identity::{DerivedKey, PUBLIC_KEY_LENGTH, PrivateIdentity};
 
-pub fn encrypt_for_public_key<R: CryptoRngCore + Copy>(
+/// Encrypt with the supplied cryptographic provider. Pass `&mut rng` to advance
+/// the same caller-owned state for the ephemeral key and IV.
+pub fn encrypt_for_public_key<R: CryptoRngCore>(
     public_key: &PublicKey,
     salt: &[u8],
     plaintext: &[u8],
-    rng: R,
+    mut rng: R,
 ) -> Result<Vec<u8>, RnsError> {
-    let secret = EphemeralSecret::random_from_rng(rng);
+    let secret = EphemeralSecret::random_from_rng(&mut rng);
     let ephemeral_public = PublicKey::from(&secret);
     let shared = secret.diffie_hellman(public_key);
     let derived = DerivedKey::new(&shared, Some(salt));
     let key_bytes = derived.as_bytes();
     let split = key_bytes.len() / 2;
 
-    let fernet = Fernet::new_from_slices(&key_bytes[..split], &key_bytes[split..], rng);
+    let fernet = CachedFernet::new_from_slices(&key_bytes[..split], &key_bytes[split..]);
     let mut out =
         vec![
             0u8;
@@ -31,7 +33,7 @@ pub fn encrypt_for_public_key<R: CryptoRngCore + Copy>(
         ];
     out[..PUBLIC_KEY_LENGTH].copy_from_slice(ephemeral_public.as_bytes());
     let token = fernet
-        .encrypt(PlainText::from(plaintext), &mut out[PUBLIC_KEY_LENGTH..])
+        .encrypt(&mut rng, PlainText::from(plaintext), &mut out[PUBLIC_KEY_LENGTH..])
         .map_err(|_| RnsError::CryptoError)?;
     let total = PUBLIC_KEY_LENGTH + token.len();
     out.truncate(total);
@@ -54,8 +56,7 @@ pub fn decrypt_with_private_key(
     let key_bytes = derived.as_bytes();
     let split = key_bytes.len() / 2;
 
-    let fernet =
-        Fernet::new_from_slices(&key_bytes[..split], &key_bytes[split..], rand_core::OsRng);
+    let fernet = CachedFernet::new_from_slices(&key_bytes[..split], &key_bytes[split..]);
     let token = Token::from(&ciphertext[PUBLIC_KEY_LENGTH..]);
     let verified = fernet.verify(token).map_err(|_| RnsError::CryptoError)?;
     let mut out = vec![0u8; ciphertext.len()];
@@ -78,8 +79,7 @@ pub fn decrypt_with_identity(
     let key_bytes = derived.as_bytes();
     let split = key_bytes.len() / 2;
 
-    let fernet =
-        Fernet::new_from_slices(&key_bytes[..split], &key_bytes[split..], rand_core::OsRng);
+    let fernet = CachedFernet::new_from_slices(&key_bytes[..split], &key_bytes[split..]);
     let token = Token::from(&ciphertext[PUBLIC_KEY_LENGTH..]);
     let verified = fernet.verify(token).map_err(|_| RnsError::CryptoError)?;
     let mut out = vec![0u8; ciphertext.len()];
