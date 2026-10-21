@@ -16,15 +16,17 @@ name = "rns_core"
 aes.workspace = true
 cbc.workspace = true
 crypto-common = { workspace = true, features = ["rand_core"] }
-ed25519-dalek = { workspace = true, features = ["rand_core"] }
-hex.workspace = true
+# Keep these requirements aligned with the workspace: edition 2024 cannot disable
+# inherited defaults when the workspace dependency enables them.
+ed25519-dalek = { version = "=2.1.1", default-features = false, features = ["alloc", "fast", "zeroize", "rand_core"] }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hkdf.workspace = true
 hmac.workspace = true
-rand_core = { workspace = true, features = ["getrandom"] }
-rmp-serde.workspace = true
-serde = { workspace = true, features = ["derive"] }
-serde_bytes.workspace = true
-sha2.workspace = true
+rand_core.workspace = true
+rmp-serde = { workspace = true, optional = true }
+serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
+serde_bytes = { workspace = true, optional = true }
+sha2 = { version = "0.10", default-features = false }
 x25519-dalek = { workspace = true, features = ["static_secrets"] }
 
 # Transport-only dependencies (optional, gated by "transport" feature)
@@ -47,7 +49,15 @@ tokio = { workspace = true, features = ["test-util"] }
 
 [features]
 default = ["std"]
-std = []
+std = [
+    "ed25519-dalek/std",
+    "hex/std",
+    "rand_core/getrandom",
+    "dep:rmp-serde",
+    "serde/std",
+    "dep:serde_bytes",
+    "sha2/std",
+]
 alloc = []
 fernet-aes128 = []
 interop-tests = ["std"]
