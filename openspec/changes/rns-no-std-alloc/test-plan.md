@@ -1,62 +1,67 @@
 # RNS no-std + alloc acceptance plan
 
-This is a planned acceptance corpus for [issue #78](https://github.com/styrene-lab/styrene-rs/issues/78).
-This plan defines verification for [the delta spec](specs/rns-core-portability.md).
-Design decisions belong in [design.md](design.md). Execution work belongs in [tasks.md](tasks.md).
+This corpus defines acceptance criteria for [issue #78](https://github.com/styrene-lab/styrene-rs/issues/78)
+and [the delta spec](specs/rns-core-portability.md). It references the implemented
+fixture and runner. Commands below are procedures, not new execution results.
 
-- Planning base: `ab46aa1f13de5663c684225dc27dfcba330d965f`.
-- Planning branch: `fix/rns-no-std-78`.
-- All initial case results are **NOT RUN** or **BLOCKED**. This document records no acceptance passes.
-- [verification.md](verification.md) records environment readiness and reviewed execution evidence.
-- **NOT RUN** means no case execution exists. **BLOCKED** identifies an unresolved prerequisite.
-- Historical diagnostics below cannot satisfy a case against a changed revision.
+[design.md](design.md) owns design decisions. [execution-plan.md](execution-plan.md)
+owns authority and delivery gates. [tasks.md](tasks.md) tracks execution work.
+[verification.md](verification.md) is the sole ledger for current case results,
+source revisions, environment readiness, review evidence, and required remote CI/macOS checks.
+Historical diagnostics below cannot satisfy a case against a changed revision.
 
 ## Preconditions and ownership
 
 1. Use the approved D3 borrowed-state API and provider failure contract in [design.md](design.md#approved-entropy-and-api-boundary).
    Any API deviation requires coordinator review before implementation.
-2. Use the user-approved `aarch64-unknown-none` target and the independently reviewed D2 QEMU harness contract.
-   Target selection does not imply that its libraries or runner are installed.
-   Record allocator, pointer-width/64-bit atomic support and clock assumptions against design decisions D1–D3.
-3. Resolve Cargo and rustc to the installed, matching Rust **1.97.0** toolchain.
-   Confirm target libraries, linker and runner availability separately. Missing prerequisites remain BLOCKED.
-4. Do not install tools or targets implicitly. Do not change Nucleus system or Nix configuration through this plan.
-   A later provisioning action needs explicit authorization and the owning configuration procedure.
-5. Use an isolated Cargo home with reviewed cached dependencies and an external target directory.
-   The commands below use `--offline --locked`; an unavailable cache or lockfile is a blocker.
-6. Place the independent consumer outside the product workspace, with its own workspace and lockfile.
-   Use resolver 3, edition 2024, Rust 1.97 and `publish = false`.
-   Inherit edition/MSRV from its own workspace settings, or record an approved test-fixture policy exception.
-   Review its path dependency, version constraint, feature forwarding and resolved sources before execution.
-7. Decide and review the fixture's own lockfile policy before using `--locked`.
-   The product lockfile does not govern an independent consumer. Do not silently generate or replace either lockfile.
+2. Use the approved `aarch64-unknown-none` target with pointer-width and 64-bit atomics.
+   Cortex-M is excluded. Record allocator, memory-attribute and clock assumptions against D1–D3.
+3. Select matching Cargo/rustc **1.97.0** explicitly. On Nucleus, use the retained
+   `~/.local/state/styrene-lab/profiles/rns-no-std` profile.
+   Target execution requires QEMU **11.1.0** and the toolchain's bundled `rust-lld`.
+   Missing tools, target libraries or cached dependencies remain blockers.
+4. Keep host configuration under `/home/wilson/nix-config` ownership.
+   The separately authorized target profile does not authorize further provisioning,
+   default-toolchain changes, service changes, host activation or deployment.
+5. Use reviewed cached dependencies and external outputs. Local validation is
+   `--offline --locked`; cache acquisition is a separate, explicit CI setup step below.
+6. Use the checked-in templates in `tests/compile/rns-no-std/` through the runner.
+   It materializes an independent workspace outside the product tree with resolver 3,
+   edition 2024, Rust 1.97 and `publish = false`.
+   Review its exact RNS source path, `^0.1.0` requirement, disabled defaults,
+   feature forwarding and resolved sources. Product Cargo configuration must not leak into it.
+7. Use the fixture's reviewed lockfiles under the
+   [fixture lock policy](../../../tests/compile/rns-no-std/README.md#fixture-and-lock-ownership).
+   The product lockfile does not govern this independent consumer. Any refresh requires
+   deliberate external generation and review, not an implicit validation-time update.
 8. Nucleus owns Linux checks and retained local evidence. Apple checks belong to the Apple host.
    Changes affecting Apple consumers require separately attributed Apple evidence.
-9. The executor owns a unique `/tmp/opencode/` run directory and its cleanup.
-    Retain source-controlled harness definitions separately from generated logs, binaries and caches.
-    Do not commit build outputs, credentials, private identities or live traffic captures.
+9. The runner owns a unique `/tmp/opencode/rns-no-std-*` directory per invocation.
+   Keep generated logs, binaries and caches outside source. Do not commit build
+   outputs, credentials, private identities or live traffic captures.
 10. Preserve reviewed run evidence in the durable store defined by [execution-plan.md](execution-plan.md#evidence-custody).
     Scratch cleanup must not remove the only copy of acceptance evidence.
 
 ## Acceptance matrix
 
 `RNS src` means `crates/libs/styrene-rns/src/`. `RNS tests` means `crates/libs/styrene-rns/tests/`.
-Other paths are repository-relative. **Proposed** loci do not exist as implemented test APIs.
+`Fixture` means `tests/compile/rns-no-std/`. Other paths are repository-relative.
+The runner is `scripts/check-rns-no-std.py`. This table defines criteria without recording outcomes.
 
-| Case | Requirement | Test locus | Objective pass criteria | Initial status |
-|---|---|---|---|---|
-| RNS-NOSTD-001 | Independent minimal dependency graph | **Proposed:** standalone consumer, RNS dependency with defaults disabled; resolved normal/build feature trees | Target library graph has no `std`, `rmp-serde`, `serde_bytes`, transport stack or OS `getrandom` dependency. Host proc macros/build scripts may use `std`; classify edges rather than rejecting every textual `std` occurrence. | NOT RUN |
-| RNS-NOSTD-002 | Explicit allocation-backed profile | **Proposed:** same consumer with `alloc` forwarded to RNS | Minimal and explicit-alloc configurations expose the agreed allocation-backed contract and satisfy the same target graph exclusions. Neither claims an allocation-free profile. | NOT RUN |
-| RNS-NOSTD-003 | Real std-less target compilation | **Proposed:** independent consumer library on approved target | Pinned Rust 1.97.0 checks succeed for minimal, `alloc`, and `alloc,fernet-aes128`. Capture actual target/compiler invocation. A native-host build cannot substitute. | BLOCKED: fixture and integrated implementation |
-| RNS-NOSTD-004 | Caller-owned cryptographic randomness | Existing RNS src: `identity.rs`, `crypt/fernet.rs`, `destination/`, `ratchets.rs`; **proposed:** provider instrumentation | Non-Copy caller RNG reaches identity generation, ephemeral keys, IV/group encryption, announce random bytes and ratchet rotation. State advances across calls without duplicated-state replay. Approved provider failure behavior and legacy trait compatibility are exercised. Test RNGs remain synthetic-only. | NOT RUN |
-| RNS-NOSTD-005 | Randomness-free authenticated decryption | Existing: Fernet, identity, group and ratchet tests; **proposed:** zero-request instrumentation | Every decrypt outcome makes zero RNG requests. Malformed, wrong-key, tampered, truncated and undersized-buffer cases preserve established error and output-buffer behavior where applicable. Authentication failure exposes no unauthenticated plaintext. | NOT RUN |
-| RNS-NOSTD-006 | Embedded-time behavior | Existing: `crates/libs/styrene-rns/tests/embedded_time.rs`; proposed provider adaptation | Uninitialized or cleared time produces the existing typed error. Supplied/advanced time drives announce timestamps and ratchet rotation consistently. Existing unavailable-time and interval assertions remain effective. | NOT RUN |
-| RNS-NOSTD-007 | Security and wire compatibility | Existing RNS tests: `common/mod.rs`, `fixture_index.rs`, `interop_*.rs`; crypto tests and shared interop runner | Canonical loader/index and digest-checked fixtures remain authoritative. Verify-before-decrypt and the constant-time verifier remain intact. Signature/tag, truncation and padding rejection cases pass for applicable default/alternate Fernet profiles. | NOT RUN |
-| RNS-NOSTD-008 | Hosted feature/API compatibility | Existing: RNS tests and feature checks; **proposed:** profile assertions | Default and explicit `std` preserve hosted APIs; `transport` implies `std`; `serial` implies transport. Linux checks pass. Required Apple checks have separate evidence. Compilation establishes no serial-device or radio acceptance. | NOT RUN |
-| RNS-NOSTD-009 | Hosted persistence and key fallback | Existing RNS src: `key_manager.rs`, `private_file.rs`, destination and transport ratchet-store tests | Existing persistence bytes remain readable and encoding-compatible. Private atomic-write behavior is retained. Key fallback remains restricted to established availability failures; rejection cannot silently become fallback. | NOT RUN |
-| RNS-NOSTD-010 | Direct consumers and retained crypto features | Existing: LXMF, mesh, tunnel and daemon checks; **proposed:** resolved-feature review | Affected direct consumers compile with intended hosted features. Review confirms retained zeroization and other required crypto capabilities, including explicitly restored non-std defaults. No whole-stack no-std claim follows. | NOT RUN |
-| RNS-NOSTD-011 | Independent consumer link and execution | **Proposed:** isolated std-less smoke binary, allocator, supplied clock and approved provider/runner | Binary links and executes bounded encoding, signing, encryption, decryption and ratchet assertions on the chosen target/runner. Record allocator/provider/clock setup and result. Report compile, link, emulated execution and hardware evidence separately. Never substitute a host run. | BLOCKED: harness implementation, integrated tests and code review |
-| RNS-NOSTD-012 | CI gate validity and attributable evidence | Existing: `.github/workflows/ci.yml`, `justfile`; **proposed:** independent true-target job and disposable negative control | Positive consumer builds pass; enabling target `std` in the negative control fails for the intended std-less-target reason. Capture complete source/environment records. Failed, missing or blocked lanes cannot count as passes. | NOT RUN |
+| Case | Requirement | Test locus | Objective pass criteria |
+|---|---|---|---|
+| RNS-NOSTD-001 | Independent minimal dependency graph | Fixture `smoke/Cargo.toml.in`; runner `check` trees and metadata | Target library graph has no `std`, `rmp-serde`, `serde_bytes`, transport stack or OS `getrandom` dependency. Host proc macros/build scripts may use `std`; classify edges rather than rejecting every textual `std` occurrence. |
+| RNS-NOSTD-002 | Explicit allocation-backed profile | Fixture `smoke` with `alloc` forwarded to RNS; runner profile matrix | Minimal and explicit-alloc configurations expose the agreed allocation-backed contract and satisfy the same target graph exclusions. Neither claims an allocation-free profile. |
+| RNS-NOSTD-003 | Real std-less target compilation | Independent fixture `smoke` library; runner `check` | Pinned Rust 1.97.0 checks succeed for minimal, `alloc`, and `alloc,fernet-aes128`. Capture actual target/compiler invocation. A native-host build cannot substitute. |
+| RNS-NOSTD-004 | Caller-owned cryptographic randomness | RNS tests: `portable_rng.rs`, `support/rng.rs`; fixture `smoke/src/lib.rs` | Non-Copy caller RNG reaches identity generation, ephemeral keys, IV/group encryption, announce random bytes and ratchet rotation. State advances across calls without duplicated-state replay. Approved provider failure behavior and legacy trait compatibility are exercised. Test RNGs remain synthetic-only. |
+| RNS-NOSTD-005 | Randomness-free authenticated decryption | RNS tests: `decrypt_without_rng.rs`, `support/rng.rs`; Fernet, identity, group and ratchet tests | Every decrypt outcome makes zero RNG requests. Malformed, wrong-key, tampered, truncated and undersized-buffer cases preserve established error and output-buffer behavior where applicable. Authentication failure exposes no unauthenticated plaintext. |
+| RNS-NOSTD-006 | Embedded-time behavior | RNS tests: `embedded_time.rs`; fixture `smoke/src/lib.rs` | Uninitialized or cleared time produces the existing typed error. Supplied/advanced time drives announce timestamps and ratchet rotation consistently. Existing unavailable-time and interval assertions remain effective. |
+| RNS-NOSTD-007 | Security and wire compatibility | RNS tests: `common/mod.rs`, `fixture_index.rs`, `interop_*.rs`; crypto tests and shared interop runner | Canonical loader/index and digest-checked fixtures remain authoritative. Verify-before-decrypt and the constant-time verifier remain intact. Signature/tag, truncation and padding rejection cases pass for applicable default/alternate Fernet profiles. |
+| RNS-NOSTD-008 | Hosted feature/API compatibility | RNS manifest, package tests and hosted profile checks below; fixture legacy callers | Default and explicit `std` preserve hosted APIs; `transport` implies `std`; `serial` implies transport. Linux checks pass. Required Apple checks have separate evidence. Compilation establishes no serial-device or radio acceptance. |
+| RNS-NOSTD-009 | Hosted persistence and key fallback | RNS src: `key_manager.rs`, `private_file.rs`, destination and transport ratchet-store tests; RNS tests: `ratchet_persistence.rs` | Existing persistence bytes remain readable and encoding-compatible. Private atomic-write behavior is retained. Key fallback remains restricted to established availability failures; rejection cannot silently become fallback. |
+| RNS-NOSTD-010 | Direct consumers and retained crypto features | LXMF, mesh, tunnel and daemon checks; RNS manifest and independent resolved-feature review | Affected direct consumers compile with intended hosted features. Review confirms retained zeroization and other required crypto capabilities, including explicitly restored non-std defaults. No whole-stack no-std claim follows. |
+| RNS-NOSTD-011 | Independent consumer link and execution | Fixture `smoke` and `boot`; runner `execute` and boundary tests | Binary links and executes bounded encoding, signing, encryption, decryption and ratchet assertions on the chosen target/runner. Record allocator/provider/clock setup and result. Enforce the fault and runner conditions below. Report compile, link, emulated execution and hardware evidence separately. Never substitute a host run. |
+| RNS-NOSTD-012 | CI gate validity and attributable evidence | `.github/workflows/ci.yml` job `rns-no-std`, `justfile`, runner/tests and fixture `negative` | Positive consumer builds pass; importing target `std` in the separate negative control fails with the intended E0463 diagnostic and exit 101. Capture complete source/environment records. Failed, missing or blocked lanes cannot count as passes. |
 
 ## Coverage details
 
@@ -79,103 +84,155 @@ Other paths are repository-relative. **Proposed** loci do not exist as implement
   Cover allocator alignment, exact fit, overflow/exhaustion, and live-allocation non-overlap.
   Exercise allocation-free panic/OOM failures and reject marker-only, zero-exit-only, and timeout outcomes.
   Semihosting must be limited to fixed output and termination, not host filesystem access.
+- For 011/012, retain the reviewed runner correction conditions:
+  - Panic/OOM controls require exactly `RNS-NOSTD:ARMED-PANIC` or
+    `RNS-NOSTD:ARMED-OOM`, then `RNS-NOSTD:PANIC-OR-OOM`, with exit 1 and no timeout.
+    Emit the armed marker immediately before the intended fault operation.
+    Reject unexpected allocation success (`RNS-NOSTD:OOM-RETURNED`, exit 3)
+    and an earlier unarmed panic as evidence of the intended fault.
+  - SIGTERM must stop the owned process group, restore the previous handler,
+    record cancellation and return 143. Retain logs when finalization can complete.
+    Cancellation must not become success or terminate unrelated processes.
+  - Reject symlinks in RNS crate and fixture roots, their ancestors and descendants
+    before resolution or content reads. Enforce source-root containment. Reject symlinked
+    or source-overlapping outputs. Regular Git worktree `.git` pointer files remain valid.
+    Any source or materialized-fixture mutation invalidates the run.
 
-## Existing focused commands — verified command surfaces, not new results
+## Independent target commands
 
-Run from the selected product source after the preconditions hold.
-Resolve `cargo`/`rustc` to the matching pinned toolchain and export the approved external
-`CARGO_HOME` and `CARGO_TARGET_DIR`. These commands do not provision prerequisites.
+The [fixture README](../../../tests/compile/rns-no-std/README.md#run-existing-tools)
+owns detailed CLI, lockfile, boot and evidence procedures. The
+[runner source](../../../scripts/check-rns-no-std.py) defines its argument interface.
+Run from the selected checkout using existing tools and reviewed cache data.
+
+On Nucleus, select the retained Rust **1.97.0** profile explicitly:
 
 ```sh
-cargo check --offline --locked --lib -p styrene-rns --no-default-features
-cargo clippy --offline --locked --lib --no-default-features --no-deps -p styrene-rns -- -D warnings
-cargo test --offline --locked --no-default-features -p styrene-rns --test embedded_time
-cargo test --offline --locked -p styrene-rns
-cargo test --offline --locked -p styrene-rns --test fixture_index
-cargo test --offline --locked -p styrene-rns --features interop-tests,transport
-cargo test --offline --locked -p styrene-rns --features fernet-aes128 --lib crypt::fernet
-cargo test --offline --locked -p styrene-interop-runner --test rns_fixtures --test rns_handoff_manifests --test pinned_evidence_record
+PINNED_PROFILE="$HOME/.local/state/styrene-lab/profiles/rns-no-std"
+PINNED_CARGO="$PINNED_PROFILE/bin/cargo"
+PINNED_RUSTC="$PINNED_PROFILE/bin/rustc"
+: "${REVIEWED_CARGO_HOME:?existing reviewed Cargo home containing registry cache}"
+
+python3 -B scripts/check-rns-no-std-tests.py
+python3 -B scripts/check-rns-no-std.py check \
+  --cargo "$PINNED_CARGO" --rustc "$PINNED_RUSTC" --cache "$REVIEWED_CARGO_HOME"
 ```
 
-The following use existing feature/package names for planned hosted matrix checks:
+`check` materializes the independent fixture and fixes the target to
+`aarch64-unknown-none`. It runs host allocator tests, the separate negative
+consumer, and trees, metadata and library checks for no defaults, `alloc`, and
+`alloc,fernet-aes128`. Review the resolved graphs for 001/002/010.
+Host-only build tools may use `std`. The runner does not infer graph acceptance
+from a textual search for `std`.
+
+For independent linking and synthetic execution:
+
+```sh
+QEMU="$PINNED_PROFILE/bin/qemu-system-aarch64"
+python3 -B scripts/check-rns-no-std.py execute \
+  --cargo "$PINNED_CARGO" --rustc "$PINNED_RUSTC" --cache "$REVIEWED_CARGO_HOME" \
+  --qemu "$QEMU" --timeout 60
+```
+
+`execute` includes `check`, then links and runs the fault controls and all three
+smoke profiles. It selects QEMU `virt-11.1`, Cortex-A53, single-thread TCG, one CPU
+and 128 MiB RAM, with network, display, serial and monitor connections disabled.
+Each positive smoke execution requires exactly one `RNS-NOSTD:COMPLETE` line,
+no conflicting `RNS-NOSTD:` marker, exit zero and no timeout.
+Review the retained ELF, linker map, startup and Normal-memory atomic assumptions.
+
+The runner copies only public registry data from `--cache` into its own Cargo
+home. It sets `CARGO_NET_OFFLINE=true` and uses `--offline --locked` for Cargo
+validation. Outputs are fixed by the runner, not caller-supplied output flags:
+
+- Scratch: `/tmp/opencode/<run-id>/`, where the run ID starts with `rns-no-std-`.
+  Each run contains `fixture/`, `cargo-home/` and `target/`.
+- Durable evidence: `~/.local/state/styrene-lab/issue-78/runs/validation/<run-id>/`.
+
+By default, product and fixture inputs come from the runner's checkout. For a
+separate reviewed product checkout, pass `--product-source` and its full
+`--product-revision` as documented in the README. That checkout must be clean at
+the exact SHA. Both source fingerprints must remain stable throughout validation.
+
+`bootstrap` uses the same tool/cache/QEMU arguments as `execute`, but proves only
+the boot substrate and fault controls. Its `RNS-NOSTD:BOOT-ONLY` marker cannot
+satisfy product execution. The separate `negative` consumer has its own manifest
+and lockfile; it is not a product feature or source mutation. Its only accepted
+compiler errors are E0463 for missing `std` in `rns_no_std_negative`'s `src/lib.rs`,
+with Cargo exit 101. Missing `core`, packages, lockfiles or unrelated errors do not validate the gate.
+
+### CI acquisition and offline validation
+
+The existing [CI workflow](../../../.github/workflows/ci.yml) owns the fresh-runner
+sequence for job `rns-no-std`:
+
+1. Select Rust 1.97.0 with `aarch64-unknown-none` target libraries.
+2. Run `prepare` with explicit `--cargo` and `--rustc` paths. It prints the external
+   scratch directory and probes prerequisites without compiling or fetching dependencies.
+3. From that directory's `fixture/`, run `cargo fetch --locked --target aarch64-unknown-none`.
+   Set `CARGO_HOME` to its `cargo-home/` and `CARGO_TARGET_DIR` to its `target/`.
+   This network-capable acquisition step belongs to CI setup only.
+4. Run `check` with the same tool paths and `--cache` set to the prepared `cargo-home/`.
+   Validation is offline and QEMU-independent. Retain the workflow's evidence artifact.
+
+This CI sequence does not authorize local fetching or provisioning. A cached
+local rehearsal cannot establish fresh-runner acquisition, artifact upload or PR-head CI results.
+
+## Focused hosted commands
+
+Use the pinned executables selected above. Before direct Cargo commands, select
+an isolated, reviewed offline `CARGO_HOME` and external `CARGO_TARGET_DIR`.
+These inputs apply to direct Cargo calls; the independent runner creates its own.
+Use the existing declared native-library environment for transport/consumer checks.
+
+```sh
+: "${CARGO_HOME:?isolated reviewed offline Cargo home}"
+: "${CARGO_TARGET_DIR:?external build-output directory}"
+export CARGO_HOME CARGO_TARGET_DIR
+export RUSTC="$PINNED_RUSTC"
+export RUSTDOC="$PINNED_PROFILE/bin/rustdoc"
+export PATH="$PINNED_PROFILE/bin:$PATH"
+
+"$PINNED_CARGO" check --offline --locked --lib -p styrene-rns --no-default-features
+"$PINNED_CARGO" clippy --offline --locked --lib --no-default-features --no-deps -p styrene-rns -- -D warnings
+"$PINNED_CARGO" test --offline --locked --no-default-features -p styrene-rns --test portable_rng --test decrypt_without_rng --test embedded_time
+"$PINNED_CARGO" test --offline --locked -p styrene-rns
+"$PINNED_CARGO" test --offline --locked --no-default-features --features std -p styrene-rns
+"$PINNED_CARGO" test --offline --locked -p styrene-rns --test fixture_index
+"$PINNED_CARGO" test --offline --locked -p styrene-rns --features interop-tests,transport
+"$PINNED_CARGO" test --offline --locked -p styrene-rns --features fernet-aes128 --lib crypt::fernet
+"$PINNED_CARGO" test --offline --locked -p styrene-interop-runner --test rns_fixtures --test rns_handoff_manifests --test pinned_evidence_record
+```
+
+Repeat the portable RNG/decrypt/time invocation with `--features alloc` and
+`--features alloc,fernet-aes128`. Check hosted feature profiles and direct consumers:
 
 ```sh
 for profile in std alloc transport serial; do
-  cargo check --offline --locked --lib -p styrene-rns --no-default-features --features "$profile" || exit
+  "$PINNED_CARGO" check --offline --locked --lib -p styrene-rns --no-default-features --features "$profile" || exit
 done
-cargo check --offline --locked -p styrene-lxmf -p styrene-mesh -p styrene-tunnel -p styrened
+"$PINNED_CARGO" check --offline --locked -p styrene-lxmf -p styrene-mesh -p styrene-tunnel -p styrened
 ```
 
-Each invocation needs its own recorded exit status. Stop on failure rather than hiding it in a loop's final status.
-The unit-test command above has one positional filter. Add separate invocations for other filters.
-Repository-wide tests and `--all-targets` are useful hosted regressions, not independent no-std proof.
-Dev-dependencies and other selected consumers can unify `std` features back into the graph.
+Record each invocation's exit status and stop on failure. The Fernet command has
+one positional filter; use separate invocations for other filters.
+Repository-wide tests and `--all-targets` are hosted regressions, not independent
+no-std proof. Dev-dependencies and selected consumers can restore `std` features.
 
-## TEMPLATE: future independent consumer and true-target checks
+## Evidence review and closure
 
-These templates are **UNBOUND** until the fixture, target and environment are approved.
-The proposed fixture forwards `alloc` and `fernet-aes128` to RNS, disables RNS defaults,
-and has no default features of its own. No such harness is claimed implemented here.
-
-```sh
-: "${PINNED_CARGO:?UNBOUND: existing Cargo 1.97.0 executable}"
-: "${RUSTC:?UNBOUND: matching Rust 1.97.0 rustc executable}"
-: "${CONSUMER_MANIFEST:?UNBOUND: approved independent fixture Cargo.toml}"
-: "${TARGET:?UNBOUND: approved std-less target with installed libraries}"
-: "${CARGO_HOME:?UNBOUND: isolated reviewed cache}"
-: "${CARGO_TARGET_DIR:?UNBOUND: external build-output directory}"
-export RUSTC CARGO_HOME CARGO_TARGET_DIR
-"$PINNED_CARGO" tree --offline --locked --manifest-path "$CONSUMER_MANIFEST" \
-  --no-default-features --target "$TARGET" -e normal,build,features
-"$PINNED_CARGO" check --offline --locked --manifest-path "$CONSUMER_MANIFEST" \
-  --lib --no-default-features --target "$TARGET"
-for profile in alloc alloc,fernet-aes128; do
-  "$PINNED_CARGO" check --offline --locked --manifest-path "$CONSUMER_MANIFEST" \
-    --lib --no-default-features --features "$profile" --target "$TARGET" || exit
-done
-```
-
-Repeat the tree capture with `--features alloc` for 002 and retain both resolved graphs.
-Do not accept every build failure as a regression demonstration: identify its causal diagnostic.
-
-### TEMPLATE: link/execution and negative control
-
-Linking requires an approved allocator, startup/panic arrangement, linker and memory layout.
-The separate smoke manifest must forward the planned `alloc` feature and use the approved provider.
-
-```sh
-: "${SMOKE_MANIFEST:?UNBOUND: approved std-less executable manifest}"
-: "${SMOKE_BIN:?UNBOUND: approved smoke binary target name}"
-"$PINNED_CARGO" build --offline --locked --manifest-path "$SMOKE_MANIFEST" \
-  --bin "$SMOKE_BIN" --no-default-features --features alloc --target "$TARGET"
-```
-
-Execution command: **UNBOUND**. Approve the emulator/runner invocation, exact linked artifact,
-bounded timeout and expected result record before execution. No runner script or API is assumed.
-
-For 012, use a disposable copy of the fixture, never a product-source mutation.
-Its proposed `std-negative-control` feature enables target `std` and deliberately references it.
-
-```sh
-: "${NEGATIVE_MANIFEST:?UNBOUND: approved disposable negative-control manifest}"
-"$PINNED_CARGO" check --offline --locked --manifest-path "$NEGATIVE_MANIFEST" \
-  --lib --no-default-features --features std-negative-control --target "$TARGET"
-```
-
-The negative command must fail specifically because target `std` is unavailable or forbidden.
-A missing lockfile, missing `core`, unavailable package or malformed manifest does not validate the gate.
-
-## Regression-first sequence and closure
-
-1. Approve blocked design/environment decisions and review fixture policy and lockfiles.
-2. Capture the base revision's minimal graph and the smallest true-target failure with its cause.
-   Capture hosted security, persistence and embedded-time behavior before changing those paths.
-3. Add focused assertions for provider state, zero-randomness decrypt and existing failure outputs.
-   Reuse canonical fixtures and retain baseline observations beside the future changed-source results.
-4. After implementation, repeat the minimal case first, then its explicit-alloc and alternate-Fernet variants.
-5. Run applicable hosted regressions, direct consumers, link/execution smoke and the gate's negative control.
-6. Review every case against the spec. Close only when required cases have attributable passing evidence.
-   A blocked required case keeps the change open. Any scope revision needs an explicit reviewed spec decision.
+1. Bind validation to the reviewed integrated source and fixture state.
+   Use the [exact-base regression record](verification.md#exact-base-regression-proof)
+   for the historical failure and its cause. Preserve prior security, persistence
+   and embedded-time observations when comparing changed-source results.
+2. Run the independent minimal, explicit-alloc and alternate-Fernet matrix,
+   focused hosted regressions, direct consumers and linked execution controls.
+3. Review every case against the spec and retain attributable evidence in `verification.md`.
+   Obtain required remote CI and separately attributed Apple evidence through the
+   [delivery gates](execution-plan.md#review-and-delivery-gates).
+4. Close only when required cases have passing evidence and the final acceptor
+   authorizes closure. A blocked required case keeps the change open. Any scope
+   revision needs an explicit reviewed spec decision.
 
 For every execution, retain: case ID, UTC time, host, source SHA, dirty/untracked state and content
 fingerprint, product/fixture lock hashes, fixture revision/hash, resolved dependency sources,
@@ -185,10 +242,14 @@ Record blocked reasons and missing prerequisites explicitly. Do not retain crede
 
 ## Historical diagnostics — not acceptance results
 
+The original planning branch was `fix/rns-no-std-78` at product base
+`ab46aa1f13de5663c684225dc27dfcba330d965f`.
+
 The earlier assessment used an export of `ab46aa1f13de5663c684225dc27dfcba330d965f`,
 with unchanged lockfile, under `/tmp/opencode/styrene-issue78-sxkdtf8r`.
 Its Rust 1.97.0 native RNS no-default check succeeded. Its graphs still enabled target `std` dependencies.
 A dependency-only Rust 1.98.1 `wasm32v1-none` check failed in `num-traits` for missing `std`.
 That was neither the pinned-toolchain RNS target check nor a linked/executed consumer smoke.
 Canonical CI run [33833175316](https://github.com/styrene-lab/styrene-rs/actions/runs/33833175316)
-passed hosted checks on that SHA. These observations establish context only. All case statuses above remain unchanged.
+passed hosted checks on that SHA. These observations establish context only.
+Current results and the pinned-target regression proof belong in `verification.md`.

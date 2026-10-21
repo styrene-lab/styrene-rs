@@ -1,7 +1,8 @@
 # Execution and verification record
 
-This record distinguishes environment readiness from product acceptance.
-No RNS acceptance case has passed on an integrated change revision yet.
+This record distinguishes local validation from operator acceptance.
+The integrated candidate has passing local evidence. Required macOS/remote CI
+checks and final acceptance remain open.
 
 ## Source and handoff identities
 
@@ -14,6 +15,7 @@ No RNS acceptance case has passed on an integrated change revision yet.
 | B: core | `work/issue78-core` | Planning baseline |
 | C: validation | `work/issue78-validation` | D2 contract amendment |
 | Combined A+B validation input | Detached validation worktree | `27cf0af68d5b58a30f9f94ff5ec5e3217c880679` |
+| Combined A+B+C local candidate | Detached validation worktree | `02643d7c9c4bd306bd2ff181b7c230137bbbdc06` |
 
 Lane results and the integrated validation revision must be recorded here before
 acceptance. A completed environment probe is not a lane handoff.
@@ -135,7 +137,7 @@ The baseline archive SHA-256 is
 The evidence inventory SHA-256 is
 `3f7063037a22a21756391fd83ffa9647f4fbdc2cf62fb227e8a944aa554ad98d`.
 
-## Lane C review in progress
+## Lane C review and corrections
 
 Lane C returned commits `efcdb2aff936ae1a546b0978b331c0f57474a387` and
 `0cf5f83c33c8c8143a59cc21e001e3a67fa28005` against the D2 amendment. Its recorded
@@ -143,23 +145,75 @@ positive runs compile, link, and execute all three profiles with product input
 `27cf0af68d5b58a30f9f94ff5ec5e3217c880679`. Review verified the source binding,
 47 indexed evidence hashes, and the positive target results.
 
-The initial handoff is not accepted for integration. Independent review requires:
+The initial handoff was withheld from integration. Independent review required:
 
 | Finding | Required correction | Status |
 |---|---|---|
-| C-1: OOM false acceptance | Distinguish unexpected allocation success from actual OOM; require the intended fault point and test rejection | Returned to lane C |
-| C-2: cancellation cleanup | Route SIGTERM through owned-child cleanup and test cancellation without a successful result | Returned to lane C |
-| C-3: symlink provenance | Reject input-root and ancestor symlinks before resolution/materialization; test containment | Returned to lane C |
+| C-1: OOM false acceptance | Distinguish unexpected allocation success from actual OOM; require the intended fault point and test rejection | Corrected in `1da7b648`; independent re-review closed |
+| C-2: cancellation cleanup | Route SIGTERM through owned-child cleanup and test cancellation without a successful result | Corrected in `c716bb24`; independent re-review closed |
+| C-3: symlink provenance | Reject input-root and ancestor symlinks before resolution/materialization; test containment | Corrected in `7dd36ba1`; independent re-review closed |
 
 Other reviewed boot properties include confined unsafe modules, checked bump
 allocation, EL1/interrupt/FP initialization, Normal-memory translation, and bounded
-ELF regions. This review does not waive the three findings or final revalidation.
+ELF regions. Both reviewers approved corrected result
+`7dd36ba16b932ac6f494f37d0b5514833475737c` for integration after checking the new
+controls, source binding, and 55 evidence-file hashes.
 
 Initial evidence:
 
 ```text
 ~/.local/state/styrene-lab/issue-78/runs/validation/rns-no-std-7a3_kdcx/handoff.json
 ```
+
+Corrected handoff:
+
+```text
+~/.local/state/styrene-lab/issue-78/runs/validation/rns-no-std-wbrd16g7/handoff.json
+```
+
+Its SHA-256 is
+`27d4bc2fc1947d05c3f30a6730204e09230b6f9d26bb08c8546044a9ebf732b1`.
+
+## Final integrated local validation
+
+Product and fixture both came from clean integrated candidate
+`02643d7c9c4bd306bd2ff181b7c230137bbbdc06`. Initial/final source, index,
+configuration, and lockfile fingerprints match. All 51 outer commands passed.
+The 38 runner child records retain their expected negative statuses rather than
+rewriting negative-control failures as successful compilation.
+
+- The 40-command matrix passed: 608 Rust test executions and nine policy tests.
+- Seventeen runner tests passed. Each independent runner invocation passed three
+  allocator tests.
+- All three independent profiles compiled, linked, and executed in QEMU with
+  exactly the completion marker and exit zero.
+- The negative consumer failed with the intended missing-target-`std` E0463.
+- Armed panic/OOM probes exited one with their expected handshakes.
+- Unexpected allocation success exited three and was rejected. Early unarmed
+  panic exited one and was rejected.
+- Formatting, OpenSpec structure, and the cached CI command-shape rehearsal passed.
+
+Seven executed ELFs and linker maps are retained. Counts represent test
+executions, not distinct tests or physical-device coverage.
+
+Evidence:
+
+```text
+~/.local/state/styrene-lab/issue-78/runs/integration/20261021T021357Z-final-wmywplmr/
+```
+
+`HANDOFF.md`, `RESULTS.md`, and `CASES.md` identify the environment, all commands,
+results, durations, log hashes, and per-case limits. The evidence inventory digest
+is `bd2093faf42ebc143f9799f45989746afc2fd87a2fa07456d8464edd15b1109f`.
+
+Independent final integration review verified all 34 reviewed lane files and Git
+modes, all 361 indexed evidence files, and same-revision product/fixture binding.
+It found no new implementation blockers. Additional integration changes were
+documentation/OpenSpec only, and the product lockfile remained unchanged.
+
+This ledger records evidence for the exact candidate above. Later ledger-only
+commits must not be described as that tested SHA. PR-head CI and any changed
+implementation require their own attributable validation.
 
 ## Environment readiness
 
@@ -207,11 +261,67 @@ RNS target compilation, executable linking, guest execution, or hardware support
 
 ## Acceptance state
 
-Cases `RNS-NOSTD-001` through `RNS-NOSTD-012` remain unaccepted on a final A+B+C
-revision. Environment readiness and reviewed A+B implementation/validation are
-complete. Lane C corrections, final integration, required remaining validation,
-and final acceptance remain outstanding.
+Local PASS means the stated check completed at `02643d7c`, not operator acceptance.
+
+| Cases | Local result | Remaining scope |
+|---|---|---|
+| 001–007 | PASS | Required delivery review and CI gates remain separate |
+| 008 | PARTIAL | Required macOS checks remain unexecuted |
+| 009–011 | PASS | Synthetic/fixture evidence does not establish physical hardware acceptance |
+| 012 | PARTIAL | Remote GitHub Actions, fresh-runner acquisition, and artifact upload remain unexecuted |
+
+## Broader workspace assessment
+
+The broader assessment also used clean candidate
+`02643d7c9c4bd306bd2ff181b7c230137bbbdc06`, without provisioning or source edits.
+Workspace/all-target compilation and Clippy passed. Additional successful
+selections included 1,027 core tests, 21 RNode tests, 58 IPC-server tests,
+17 offline E2E tests, two CLI tests, and 189 Identity repository-signing tests.
+Minimal-library, five daemon compile profiles, and offline-boundary/corpus/
+attribution/fixture-preservation checks also passed.
+
+The daemon library gate failed: **573 passed, six failed, three ignored**.
+Cargo did not execute its 23 selected integration-test targets after the library
+failure. The Perl-dependent escaped-session test returned early because
+`/usr/bin/perl` was absent, so its cleanup behavior was not exercised.
+
+Production dynamic-page cleanup launches absolute `/bin/ps`, which is absent on
+this NixOS host. Fixtures also require absent `/bin/sleep` and `/usr/bin/touch`.
+The utilities exist at Nix paths, but changing PATH cannot satisfy absolute
+lookups. Both affected source files are unchanged from canonical `ab46aa1`.
+Independent review verified the causal diagnostics, unchanged files, and all
+180 indexed evidence files. It classified this as a pre-existing daemon host-layout
+assumption affecting production cleanup as well as fixtures.
+
+No failed assertion was weakened, skipped, retried, or converted to a pass.
+No command timed out. Standard local workspace readiness remains blocked.
+An authorized compatible environment must run the complete daemon selection and
+actually exercise the Perl-dependent test before merge and acceptance.
+
+Evidence:
+
+```text
+~/.local/state/styrene-lab/issue-78/runs/integration/20261021T023409Z-workspace-readiness-nxl0xcpx/
+```
+
+`HANDOFF.md`, `RESULTS.md`, and `DAEMON-BLOCKER.md` retain all 39 commands and
+causal details. The inventory SHA-256 is
+`f6871826868b37a9fb45a89fd02eb7defb7c7ca01f2d2cf921fc968be14b79a4`.
+
+## Draft publication and remaining gates
+
+On 2026-10-21, Wilson authorized pushing the feature branch and opening an
+explicitly blocked draft PR, with the failed and unexecuted daemon checks disclosed.
+Canonical `main` was rechecked at `ab46aa1f13de5663c684225dc27dfcba330d965f` before
+publication preparation. No competing open PR was found.
+
+The tested implementation candidate remains `02643d7c`; subsequent changes are
+evidence/acceptance-documentation updates. Required PR-head Linux/macOS CI,
+complete hosted daemon validation, and final acceptance remain outstanding.
+Publication is not a readiness waiver. Merge, release, issue closure, and archival
+remain separately approval-gated.
 
 The [test plan](test-plan.md) defines case criteria. The
 [execution plan](execution-plan.md) defines authority and required evidence.
-No push, PR, merge, issue closure, archive, or release is authorized by this record.
+Only the explicitly authorized branch push, draft PR, and CI monitoring may
+proceed. This record does not authorize merge, issue closure, archive, or release.

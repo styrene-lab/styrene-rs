@@ -20,6 +20,12 @@ opening a GitHub PR, merging, issue closure, OpenSpec archival, and release.
 The repository uses GitHub PRs, not GitLab MRs. A green local result does not
 authorize any of these external or lifecycle actions.
 
+On 2026-10-21, Wilson explicitly authorized pushing `fix/rns-no-std-78` to
+`styrene-lab/styrene-rs`, opening a blocked draft PR against `main`, and monitoring
+its CI. The draft must disclose the existing NixOS daemon failures and unexecuted
+checks. This does not authorize force-pushing, merging, releasing, issue closure,
+or OpenSpec archival.
+
 The user separately authorized the dedicated Rust 1.97 AArch64 target profile
 through `/home/wilson/nix-config`. The environment agent owns only that bounded
 configuration/profile work. It may not change default profiles, services, or

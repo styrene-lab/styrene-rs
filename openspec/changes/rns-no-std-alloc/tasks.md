@@ -44,12 +44,12 @@ assigns work packages, exclusive paths, handoffs, and delivery gates.
 ## 5. Add isolated target and execution gates
 <!-- specs: rns-core-portability -->
 
-- [ ] Add an independent downstream consumer fixture with reviewed workspace-policy treatment, resolver, toolchain, and lockfile ownership. (`RNS-NOSTD-001`, `RNS-NOSTD-002`)
-- [ ] Add the approved true-target library matrix for minimal, alloc, and alternate-Fernet profiles. (`RNS-NOSTD-003`)
-- [ ] Add and execute the bounded target smoke workflow with synthetic state and owned cleanup. (`RNS-NOSTD-011`)
-- [ ] Add a disposable negative control that introduces target-side `std` and verify the intended gate failure. (`RNS-NOSTD-012`)
-- [ ] Wire the target gate into CI and a documented repository command without replacing existing host checks. (`RNS-NOSTD-003`, `RNS-NOSTD-012`)
-- [ ] Retain source, lockfile, toolchain, feature, target, command, and result evidence for each case. (`RNS-NOSTD-012`)
+- [x] Add an independent downstream consumer fixture with reviewed workspace-policy treatment, resolver, toolchain, and lockfile ownership. (`RNS-NOSTD-001`, `RNS-NOSTD-002`)
+- [x] Add the approved true-target library matrix for minimal, alloc, and alternate-Fernet profiles. (`RNS-NOSTD-003`)
+- [x] Add and execute the bounded target smoke workflow with synthetic state and owned cleanup. Review findings C-1 through C-3 were corrected and independently closed. (`RNS-NOSTD-011`)
+- [x] Add a disposable negative control that introduces target-side `std` and verify the intended gate failure. (`RNS-NOSTD-012`)
+- [x] Wire the target gate into CI and a documented repository command without replacing existing host checks. Local command-shape rehearsal passed; remote CI remains an acceptance gate. (`RNS-NOSTD-003`, `RNS-NOSTD-012`)
+- [x] Retain source, lockfile, toolchain, feature, target, command, and result evidence for each case. Local evidence and remaining remote/platform gaps are indexed in `verification.md`. (`RNS-NOSTD-012`)
 
 ## 6. Review completion and compatibility
 <!-- specs: rns-core-portability -->
