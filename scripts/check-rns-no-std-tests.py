@@ -206,6 +206,10 @@ sys.exit(128 + result['cancelled_signal'] if result['cancelled_signal'] else 1)
         git("add", "tracked")
         git("commit", "-m", "fixture")
         before = gate.snapshot(source)
+        worktree = self.root / "linked-worktree"
+        git("worktree", "add", "--detach", str(worktree), "HEAD")
+        self.assertTrue((worktree / ".git").is_file())
+        self.assertEqual(gate.snapshot(worktree)["head"], before["head"])
         gate.unchanged(source, before)
         self.assertEqual(gate.reviewed_product(source, before["head"]), before)
         with self.assertRaisesRegex(gate.GateError, "full --product-revision"):
@@ -222,6 +226,11 @@ sys.exit(128 + result['cancelled_signal'] if result['cancelled_signal'] else 1)
         self.assertNotEqual(gate.snapshot(source)["content_sha256"], dirty["content_sha256"])
         (source / "untracked").write_text("fixture only")
         self.assertIn("untracked", gate.snapshot(source)["files"])
+        outside_asset = self.root / "user-asset"
+        outside_asset.write_text("must not be read as source content")
+        (source / "asset-link").symlink_to(outside_asset)
+        self.assertEqual(gate.snapshot(source)["files"]["asset-link"][1],
+                         gate.hashlib.sha256(os.fsencode(str(outside_asset))).hexdigest())
 
     def test_materialized_fixture_has_independent_policy(self) -> None:
         destination = self.root / "fixture"
@@ -243,6 +252,9 @@ sys.exit(128 + result['cancelled_signal'] if result['cancelled_signal'] else 1)
         self.assertEqual(smoke["features"]["default"], [])
         separate = self.root / "separate"
         product = self.root / "reviewed-product"
+        (product / gate.RNS).mkdir(parents=True)
+        (product / "Cargo.toml").write_text("[workspace]\n")
+        (product / gate.RNS / "Cargo.toml").write_text("[package]\nname = 'fixture'\n")
         gate.materialize(gate.SOURCE, separate, product)
         selected = tomllib.loads((separate / "Cargo.toml").read_text())
         self.assertEqual(selected["workspace"]["dependencies"]["rns_core"]["path"],
@@ -274,6 +286,62 @@ sys.exit(128 + result['cancelled_signal'] if result['cancelled_signal'] else 1)
         (fixture / "outside").symlink_to(self.root / "elsewhere")
         with self.assertRaisesRegex(gate.GateError, "symlink"):
             gate.fixture_snapshot(fixture)
+
+    def make_source_inputs(self, source: Path) -> None:
+        (source / gate.RNS).mkdir(parents=True)
+        (source / gate.FIXTURE).mkdir(parents=True)
+        (source / "Cargo.toml").write_text("[workspace]\n")
+        (source / gate.RNS / "Cargo.toml").write_text("[package]\nname = 'fixture'\n")
+        (source / gate.FIXTURE / "Cargo.toml.in").write_text("path = @RNS_PATH@\n")
+
+    def test_crate_and_fixture_roots_and_ancestors_cannot_escape(self) -> None:
+        paths = ("crates", "crates/libs", str(gate.RNS),
+                 "tests", "tests/compile", str(gate.FIXTURE))
+        for index, relative in enumerate(paths):
+            with self.subTest(relative=relative):
+                source = self.root / f"source-{index}"
+                self.make_source_inputs(source)
+                original = source / relative
+                outside = self.root / f"outside-{index}"
+                original.rename(outside)
+                original.symlink_to(outside, target_is_directory=True)
+                with self.assertRaisesRegex(gate.GateError, "symlink in build input path"):
+                    gate.snapshot(source)
+                destination = self.root / f"output-{index}"
+                with self.assertRaisesRegex(gate.GateError, "symlink in build input path"):
+                    gate.materialize(source, destination)
+                self.assertFalse(destination.exists(), "must refuse before materialization")
+
+    def test_checkout_aliases_are_rejected_before_resolution(self) -> None:
+        source = self.root / "real/checkout"
+        self.make_source_inputs(source)
+        direct = self.root / "checkout-alias"
+        direct.symlink_to(source, target_is_directory=True)
+        ancestor = self.root / "ancestor-alias"
+        ancestor.symlink_to(source.parent, target_is_directory=True)
+        for alias in (direct, ancestor / "checkout"):
+            with self.subTest(alias=alias):
+                with self.assertRaisesRegex(gate.GateError, "symlink"):
+                    gate.reviewed_product(alias, "0" * 40)
+                with self.assertRaisesRegex(gate.GateError, "symlink"):
+                    gate.materialize(alias, self.root / "output")
+                # A separate product argument must receive the same checks.
+                with self.assertRaisesRegex(gate.GateError, "symlink"):
+                    gate.materialize(source, self.root / "output", alias)
+        with self.assertRaisesRegex(gate.GateError, "escapes source root"):
+            gate.checked_input_path(source / "..", within=source)
+
+    def test_materialized_fixture_root_and_ancestor_aliases_are_rejected(self) -> None:
+        fixture = self.root / "real/fixture"
+        fixture.mkdir(parents=True)
+        (fixture / "lib.rs").write_text("synthetic")
+        direct = self.root / "fixture-alias"
+        direct.symlink_to(fixture, target_is_directory=True)
+        ancestor = self.root / "ancestor-alias"
+        ancestor.symlink_to(fixture.parent, target_is_directory=True)
+        for alias in (direct, ancestor / "fixture"):
+            with self.assertRaisesRegex(gate.GateError, "symlink"):
+                gate.fixture_snapshot(alias)
 
 
 if __name__ == "__main__":

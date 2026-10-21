@@ -31,7 +31,9 @@ FAILURE = "RNS-NOSTD:PANIC-OR-OOM"
 OOM_RETURNED = "RNS-NOSTD:OOM-RETURNED"
 PROFILES = ("", "alloc", "alloc,fernet-aes128")
 FIXTURE = Path("tests/compile/rns-no-std")
-SOURCE = Path(__file__).resolve().parents[1]
+RNS = Path("crates/libs/styrene-rns")
+# Keep the caller's spelling until checked_input_path rejects alias components.
+SOURCE = Path(__file__).absolute().parents[1]
 MAX_LOG = 64 * 1024 * 1024
 
 
@@ -57,13 +59,38 @@ def probe(args: list[str], cwd: Path, *, trim: bool = True) -> str:
     return result.stdout.strip() if trim else result.stdout
 
 
+def checked_input_path(path: Path, *, within: Path | None = None, required: bool = True) -> Path:
+    """Check each lexical component before resolve can erase a symlink alias."""
+    original = path.expanduser().absolute()
+    # Inspect ancestors first: never inspect descendants through an alias.
+    for component in reversed((original, *original.parents)):
+        try:
+            mode = component.lstat().st_mode
+        except FileNotFoundError:
+            if required:
+                raise GateError(f"missing build input: {component}") from None
+            break
+        if stat.S_ISLNK(mode):
+            raise GateError(f"symlink in build input path: {component}")
+    resolved = original.resolve(strict=required)
+    if within is not None and not resolved.is_relative_to(checked_input_path(within)):
+        raise GateError(f"build input escapes source root: {original}")
+    return resolved
+
+
 def snapshot(source: Path) -> dict[str, Any]:
+    source = checked_input_path(source)
+    # Some snapshots have no fixture yet. Still inspect every existing ancestor
+    # of both roots, including the roots themselves, before Git or file reads.
+    for relative in (RNS, FIXTURE, Path("Cargo.toml"), Path("Cargo.lock")):
+        checked_input_path(source / relative, within=source, required=False)
     names = probe(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], source, trim=False)
     files = {}
     for name in sorted(set(names.rstrip("\0").split("\0")) - {""}):
         path = source / name
+        checked_input_path(path.parent, within=source, required=False)
         if path.is_symlink():
-            if name.startswith(("crates/libs/styrene-rns/", str(FIXTURE) + "/")):
+            if any(name == str(root) or name.startswith(str(root) + "/") for root in (RNS, FIXTURE)):
                 raise GateError(f"symlink in build input: {name}")
             content = hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()
         elif path.is_file():
@@ -72,7 +99,10 @@ def snapshot(source: Path) -> dict[str, Any]:
             content = "deleted"
         else:
             raise GateError(f"unsupported source entry: {name}")
-        mode = stat.S_IMODE(path.lstat().st_mode) if path.exists() or path.is_symlink() else 0
+        try:
+            mode = stat.S_IMODE(path.lstat().st_mode)
+        except FileNotFoundError:
+            mode = 0
         files[name] = [mode, content]
     return {
         "head": probe(["git", "rev-parse", "HEAD"], source),
@@ -97,10 +127,10 @@ def reviewed_product(source: Path, revision: str | None) -> dict[str, Any]:
 
 
 def fixture_snapshot(root: Path) -> dict[str, str]:
+    root = checked_input_path(root)
     files = {}
     for path in sorted(root.rglob("*")):
-        if path.is_symlink():
-            raise GateError(f"symlink in materialized fixture: {path}")
+        checked_input_path(path, within=root)
         if path.is_file():
             files[str(path.relative_to(root))] = sha256(path)
     return files
@@ -122,20 +152,25 @@ def external_root(path: Path, source: Path) -> Path:
 
 def materialize(source: Path, destination: Path, product: Path | None = None) -> None:
     """Copy templates, resolving only the exact RNS path; never run Cargo in source."""
+    source = checked_input_path(source)
+    product = checked_input_path(product or source)
+    fixture_root = checked_input_path(source / FIXTURE, within=source)
+    rns_root = checked_input_path(product / RNS, within=product)
+    checked_input_path(product / "Cargo.toml", within=product)
+    checked_input_path(rns_root / "Cargo.toml", within=product)
     destination.mkdir()
-    for path in sorted((source / FIXTURE).rglob("*")):
-        if path.is_symlink():
-            raise GateError(f"symlink in fixture: {path}")
+    for path in sorted(fixture_root.rglob("*")):
+        checked_input_path(path, within=fixture_root)
         if not path.is_file() or path.name == "README.md":
             continue
-        relative = path.relative_to(source / FIXTURE)
+        relative = path.relative_to(fixture_root)
         target = destination / relative
         if path.name.endswith(".in"):
             target = target.with_suffix("")
         target.parent.mkdir(parents=True, exist_ok=True)
         if path.name.endswith(".in"):
             text = path.read_text().replace(
-                "@RNS_PATH@", json.dumps(str((product or source) / "crates/libs/styrene-rns"))
+                "@RNS_PATH@", json.dumps(str(rns_root))
             )
             target.write_text(text)
         else:
@@ -283,7 +318,12 @@ def main() -> int:
     parser.add_argument("--product-revision", help="required full SHA for a separate product checkout")
     parser.add_argument("--timeout", type=int, default=60, choices=range(1, 121), metavar="1..120")
     args = parser.parse_args()
-    source = SOURCE
+    try:
+        source = checked_input_path(SOURCE)
+        checked_input_path(Path(__file__), within=source)
+    except GateError as error:
+        print(f"rns-no-std: {error}", file=sys.stderr)
+        return 1
     scratch = external_root(Path("/tmp/opencode"), source)
     run = Path(tempfile.mkdtemp(prefix="rns-no-std-", dir=scratch))
     store = external_root(Path.home() / ".local/state/styrene-lab/issue-78/runs/validation", source)
@@ -309,7 +349,7 @@ def main() -> int:
         before = snapshot(source)
         report["source_before"] = before
         if args.product_source is not None:
-            product = args.product_source.expanduser().resolve(strict=True)
+            product = checked_input_path(args.product_source)
             product_before = reviewed_product(product, args.product_revision)
         elif args.product_revision is not None:
             raise GateError("--product-revision requires --product-source")

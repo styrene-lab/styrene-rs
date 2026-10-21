@@ -137,7 +137,11 @@ libraries, artifact hashes and linker maps below:
 
 Each summary is labeled unreviewed until the independent reviewer accepts it.
 Source mutation invalidates a run. Symlinked or source-overlapping output roots
-are refused. The runner does not retain ambient environment variables, private
+are refused. Input checks reject symlinks in the product crate and fixture roots,
+their ancestors and descendants before resolving aliases or reading content.
+Resolved inputs must remain within their source root. Regular Git worktree
+`.git` pointer files retain their normal Git semantics.
+The runner does not retain ambient environment variables, private
 identities, credentials, or traffic. Review retained summaries before sharing.
 Scratch and retained evidence require an explicit cleanup decision.
 
