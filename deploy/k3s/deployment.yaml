@@ -62,7 +62,13 @@ spec:
               memory: 64Mi
             limits:
               cpu: 500m
-              memory: 256Mi
+              memory: 4Gi
+          startupProbe:
+            exec:
+              command: ["wget", "-qO-", "http://127.0.0.1:4243/readyz"]
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 180
           readinessProbe:
             exec:
               command: ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4243/readyz"]
